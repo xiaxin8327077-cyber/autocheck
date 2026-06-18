@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>准星 · 监管报送助手 - Logo 设计方案</title>
+  <style>
+    :root {
+      --blue: #3b82f6;
+      --cyan: #06b6d4;
+      --purple: #8b5cf6;
+      --surface: #f8fafc;
+      --surface-low: #ffffff;
+      --text: #0f172a;
+      --text-sec: #475569;
+      --text-muted: #94a3b8;
+      --border: #e2e8f0;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--surface);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .header {
+      text-align: center;
+      padding: 60px 20px 40px;
+      background: linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6);
+      color: #fff;
+    }
+
+    .header h1 { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+    .header p { font-size: 16px; opacity: 0.9; }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+    }
+
+    /* Each scheme card */
+    .scheme {
+      background: var(--surface-low);
+      border-radius: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+      margin-bottom: 48px;
+      overflow: hidden;
+    }
+
+    .scheme-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 24px 32px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .scheme-badge {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+      color: #fff;
+      display: grid; place-items: center;
+      font-weight: 700; font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .scheme-header h2 { font-size: 20px; font-weight: 700; }
+    .scheme-header .style-tag {
+      margin-left: auto;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      background: #f0f9ff;
+      color: var(--blue);
+      border: 1px solid #bae6fd;
+    }
+
+    .scheme-body {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+
+    @media (max-width: 768px) {
+      .scheme-body { grid-template-columns: 1fr; }
+    }
+
+    .scheme-preview {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      background: linear-gradient(135deg, #f0f9ff 0%, #faf5ff 50%, #ecfeff 100%);
+      min-height: 320px;
+      position: relative;
+    }
+
+    .scheme-desc {
+      padding: 32px;
+      border-left: 1px solid var(--border);
+    }
+
+    .scheme-desc h3 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--blue);
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .scheme-desc p {
+      font-size: 14px;
+      color: var(--text-sec);
+      margin-bottom: 16px;
+      line-height: 1.8;
+    }
+
+    .scheme-desc p:last-child { margin-bottom: 0; }
+
+    .color-swatches {
+      display: flex;
+      gap: 10px;
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+
+    .swatch {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-sec);
+      font-family: monospace;
+    }
+
+    .swatch-color {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      border: 2px solid rgba(0,0,0,0.08);
+      flex-shrink: 0;
+    }
+
+    .size-tags {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .size-tag {
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      background: #f1f5f9;
+      color: var(--text-sec);
+    }
+
+    .dark-preview {
+      background: #1e293b !important;
+    }
+
+    .scheme-preview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      width: 100%;
+    }
+
+    .preview-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      border-radius: 12px;
+    }
+
+    .preview-cell.light-cell { background: #fff; border: 1px solid var(--border); }
+    .preview-cell.dark-cell { background: #1e293b; border: 1px solid #334155; }
+    .preview-cell.transparent-cell { background-image:
+      linear-gradient(45deg, #e5e7eb 25%, transparent 25%),
+      linear-gradient(-45deg, #e5e7eb 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #e5e7eb 75%),
+      linear-gradient(-45deg, transparent 75%, #e5e7eb 75%);
+      background-size: 12px 12px;
+      background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+      border: 1px solid var(--border);
+    }
+
+    .preview-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .preview-cell.dark-cell .preview-label { color: #64748b; }
+
+    /* Summary table */
+    .summary {
+      background: var(--surface-low);
+      border-radius: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+      padding: 32px;
+      margin-top: 40px;
+    }
+
+    .summary h2 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .summary table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .summary th, .summary td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .summary th {
+      background: #f8fafc;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .summary td { color: var(--text-sec); }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>准星 · 监管报送助手</h1>
+  <p>Logo 设计方案预览 — 5 种不同风格方向</p>
+</div>
+
+<div class="container">
+
+  <!-- ============ 方案一 ============ -->
+  <div class="scheme">
+    <div class="scheme-header">
+      <div class="scheme-badge">1</div>
+      <h2>准星十字 · 数据流</h2>
+      <span class="style-tag">扁平化风格</span>
+    </div>
+    <div class="scheme-body">
+      <div class="scheme-preview">
+        <div class="scheme-preview-grid">
+          <div class="preview-cell light-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g1" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <!-- 外圆 -->
+              <circle cx="50" cy="50" r="44" fill="none" stroke="url(#g1)" stroke-width="4" opacity="0.3"/>
+              <!-- 十字准星 -->
+              <line x1="50" y1="8" x2="50" y2="32" stroke="url(#g1)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="50" y1="68" x2="50" y2="92" stroke="url(#g1)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="8" y1="50" x2="32" y2="50" stroke="url(#g1)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="68" y1="50" x2="92" y2="50" stroke="url(#g1)" stroke-width="4" stroke-linecap="round"/>
+              <!-- 中心圆 -->
+              <circle cx="50" cy="50" r="14" fill="url(#g1)"/>
+              <!-- 数据点 -->
+              <circle cx="50" cy="20" r="3" fill="#3b82f6"/>
+              <circle cx="80" cy="50" r="3" fill="#06b6d4"/>
+              <circle cx="50" cy="80" r="3" fill="#8b5cf6"/>
+              <circle cx="20" cy="50" r="3" fill="#3b82f6"/>
+            </svg>
+            <span class="preview-label">白色背景</span>
+          </div>
+          <div class="preview-cell dark-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g1b" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="44" fill="none" stroke="url(#g1b)" stroke-width="4" opacity="0.4"/>
+              <line x1="50" y1="8" x2="50" y2="32" stroke="url(#g1b)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="50" y1="68" x2="50" y2="92" stroke="url(#g1b)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="8" y1="50" x2="32" y2="50" stroke="url(#g1b)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="68" y1="50" x2="92" y2="50" stroke="url(#g1b)" stroke-width="4" stroke-linecap="round"/>
+              <circle cx="50" cy="50" r="14" fill="url(#g1b)"/>
+              <circle cx="50" cy="20" r="3" fill="#3b82f6"/>
+              <circle cx="80" cy="50" r="3" fill="#06b6d4"/>
+              <circle cx="50" cy="80" r="3" fill="#8b5cf6"/>
+              <circle cx="20" cy="50" r="3" fill="#3b82f6"/>
+            </svg>
+            <span class="preview-label">暗色背景</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g1c" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="44" fill="none" stroke="url(#g1c)" stroke-width="4" opacity="0.3"/>
+              <line x1="50" y1="8" x2="50" y2="32" stroke="url(#g1c)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="50" y1="68" x2="50" y2="92" stroke="url(#g1c)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="8" y1="50" x2="32" y2="50" stroke="url(#g1c)" stroke-width="4" stroke-linecap="round"/>
+              <line x1="68" y1="50" x2="92" y2="50" stroke="url(#g1c)" stroke-width="4" stroke-linecap="round"/>
+              <circle cx="50" cy="50" r="14" fill="url(#g1c)"/>
+              <circle cx="50" cy="20" r="3" fill="#3b82f6"/>
+              <circle cx="80" cy="50" r="3" fill="#06b6d4"/>
+              <circle cx="50" cy="80" r="3" fill="#8b5cf6"/>
+              <circle cx="20" cy="50" r="3" fill="#3b82f6"/>
+            </svg>
+            <span class="preview-label">64px 图标</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g1d" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="14" fill="url(#g1d)"/>
+              <line x1="50" y1="14" x2="50" y2="30" stroke="url(#g1d)" stroke-width="6" stroke-linecap="round"/>
+              <line x1="50" y1="70" x2="50" y2="86" stroke="url(#g1d)" stroke-width="6" stroke-linecap="round"/>
+              <line x1="14" y1="50" x2="30" y2="50" stroke="url(#g1d)" stroke-width="6" stroke-linecap="round"/>
+              <line x1="70" y1="50" x2="86" y2="50" stroke="url(#g1d)" stroke-width="6" stroke-linecap="round"/>
+            </svg>
+            <span class="preview-label">32px 图标</span>
+          </div>
+        </div>
+      </div>
+      <div class="scheme-desc">
+        <h3>设计理念</h3>
+        <p><strong>核心视觉：</strong>以"准星"为灵感来源——经典的光学瞄准十字线 + 中心圆点，外圈辅以低透明度环形轨道，四象限各有一个数据节点圆点。</p>
+        <p><strong>寓意：</strong>"准星"代表精准核对、零差错；十字线向外延伸至数据节点，象征从核心精准定位到四面八方数据的全面覆盖。外圈环形轨道暗含"监管报送"的闭环流程。</p>
+        <p><strong>风格特点：</strong>纯扁平化、无阴影无渐变（仅渐变色描边）、线条简洁干净，具有现代科技感和专业感。在极小尺寸下可简化为中心圆+十字线。</p>
+
+        <h3>配色方案</h3>
+        <div class="color-swatches">
+          <span class="swatch"><span class="swatch-color" style="background:#3b82f6"></span> #3b82f6 蓝</span>
+          <span class="swatch"><span class="swatch-color" style="background:#06b6d4"></span> #06b6d4 青</span>
+          <span class="swatch"><span class="swatch-color" style="background:#8b5cf6"></span> #8b5cf6 紫</span>
+        </div>
+
+        <h3>推荐尺寸</h3>
+        <div class="size-tags">
+          <span class="size-tag">32×32 Favicon</span>
+          <span class="size-tag">64×64 侧栏</span>
+          <span class="size-tag">128×128 登录页</span>
+          <span class="size-tag">256×256 EXE 图标</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案二 ============ -->
+  <div class="scheme">
+    <div class="scheme-header">
+      <div class="scheme-badge">2</div>
+      <h2>同心靶环 · 文档</h2>
+      <span class="style-tag">极简线条风格</span>
+    </div>
+    <div class="scheme-body">
+      <div class="scheme-preview">
+        <div class="scheme-preview-grid">
+          <div class="preview-cell light-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <!-- 同心圆 -->
+              <circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" stroke-width="2.5" opacity="0.25"/>
+              <circle cx="50" cy="50" r="28" fill="none" stroke="#06b6d4" stroke-width="2.5" opacity="0.4"/>
+              <circle cx="50" cy="50" r="16" fill="none" stroke="#8b5cf6" stroke-width="2.5" opacity="0.6"/>
+              <!-- 中心实心 -->
+              <circle cx="50" cy="50" r="6" fill="url(#g2)"/>
+              <!-- 文档折角轮廓 -->
+              <path d="M62 62 L72 62 L72 72 L67 72 L62 67 Z" fill="none" stroke="url(#g2)" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M67 62 L67 67 L72 67" fill="none" stroke="url(#g2)" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">白色背景</span>
+          </div>
+          <div class="preview-cell dark-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g2b" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" stroke-width="2.5" opacity="0.35"/>
+              <circle cx="50" cy="50" r="28" fill="none" stroke="#06b6d4" stroke-width="2.5" opacity="0.5"/>
+              <circle cx="50" cy="50" r="16" fill="none" stroke="#8b5cf6" stroke-width="2.5" opacity="0.7"/>
+              <circle cx="50" cy="50" r="6" fill="url(#g2b)"/>
+              <path d="M62 62 L72 62 L72 72 L67 72 L62 67 Z" fill="none" stroke="url(#g2b)" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M67 62 L67 67 L72 67" fill="none" stroke="url(#g2b)" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">暗色背景</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g2c" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" stroke-width="3" opacity="0.25"/>
+              <circle cx="50" cy="50" r="28" fill="none" stroke="#06b6d4" stroke-width="3" opacity="0.4"/>
+              <circle cx="50" cy="50" r="16" fill="none" stroke="#8b5cf6" stroke-width="3" opacity="0.6"/>
+              <circle cx="50" cy="50" r="6" fill="url(#g2c)"/>
+              <path d="M62 62 L72 62 L72 72 L67 72 L62 67 Z" fill="none" stroke="url(#g2c)" stroke-width="2.5" stroke-linejoin="round"/>
+              <path d="M67 62 L67 67 L72 67" fill="none" stroke="url(#g2c)" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">64px 图标</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g2d" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="40" fill="none" stroke="#3b82f6" stroke-width="4" opacity="0.3"/>
+              <circle cx="50" cy="50" r="28" fill="none" stroke="#8b5cf6" stroke-width="4" opacity="0.6"/>
+              <circle cx="50" cy="50" r="6" fill="url(#g2d)"/>
+            </svg>
+            <span class="preview-label">32px 图标</span>
+          </div>
+        </div>
+      </div>
+      <div class="scheme-desc">
+        <h3>设计理念</h3>
+        <p><strong>核心视觉：</strong>三层同心圆（靶环）从外向内透明度递减，中心为一个渐变色实心点。右下角叠加一个精致的"文档折角"图标（象征报送文件）。</p>
+        <p><strong>寓意：</strong>三层同心圆代表监管报送的三层校验体系（数据读取 → 完整性验证 → 差异分析），从外到内层层收敛，最终精准命中靶心。文档折角元素直白传达"报送"属性，让人一目了然。</p>
+        <p><strong>风格特点：</strong>纯线条构成（line-art），无填充块面（仅中心点），大量留白。极简到极致的克制美学，具有金融/监管行业特有的严谨感。适合暗色模式下通过透明度调节营造层次感。</p>
+
+        <h3>配色方案</h3>
+        <div class="color-swatches">
+          <span class="swatch"><span class="swatch-color" style="background:#3b82f6"></span> #3b82f6 外环</span>
+          <span class="swatch"><span class="swatch-color" style="background:#06b6d4"></span> #06b6d4 中环</span>
+          <span class="swatch"><span class="swatch-color" style="background:#8b5cf6"></span> #8b5cf6 内环/文档</span>
+        </div>
+
+        <h3>推荐尺寸</h3>
+        <div class="size-tags">
+          <span class="size-tag">32×32 简化三环</span>
+          <span class="size-tag">64×64 标准版</span>
+          <span class="size-tag">128×128 含文档</span>
+          <span class="size-tag">256×256 含文档</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案三 ============ -->
+  <div class="scheme">
+    <div class="scheme-header">
+      <div class="scheme-badge">3</div>
+      <h2>盾牌徽章 · 对勾</h2>
+      <span class="style-tag">徽章式风格</span>
+    </div>
+    <div class="scheme-body">
+      <div class="scheme-preview">
+        <div class="scheme-preview-grid">
+          <div class="preview-cell light-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g3" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+                <linearGradient id="g3bg" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.1"/>
+                  <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.15"/>
+                </linearGradient>
+              </defs>
+              <!-- 盾牌外形 -->
+              <path d="M50 10 L82 24 L82 50 C82 70 68 86 50 92 C32 86 18 70 18 50 L18 24 Z" fill="url(#g3bg)" stroke="url(#g3)" stroke-width="3.5" stroke-linejoin="round"/>
+              <!-- 内部准星十字 -->
+              <line x1="50" y1="30" x2="50" y2="42" stroke="url(#g3)" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+              <line x1="50" y1="58" x2="50" y2="70" stroke="url(#g3)" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+              <line x1="30" y1="50" x2="42" y2="50" stroke="url(#g3)" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+              <line x1="58" y1="50" x2="70" y2="50" stroke="url(#g3)" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+              <!-- 中心对勾 -->
+              <path d="M42 52 L48 58 L60 44" fill="none" stroke="url(#g3)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">白色背景</span>
+          </div>
+          <div class="preview-cell dark-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g3b" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+                <linearGradient id="g3bg2" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.2"/>
+                  <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.25"/>
+                </linearGradient>
+              </defs>
+              <path d="M50 10 L82 24 L82 50 C82 70 68 86 50 92 C32 86 18 70 18 50 L18 24 Z" fill="url(#g3bg2)" stroke="url(#g3b)" stroke-width="3.5" stroke-linejoin="round"/>
+              <line x1="50" y1="30" x2="50" y2="42" stroke="url(#g3b)" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+              <line x1="50" y1="58" x2="50" y2="70" stroke="url(#g3b)" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+              <line x1="30" y1="50" x2="42" y2="50" stroke="url(#g3b)" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+              <line x1="58" y1="50" x2="70" y2="50" stroke="url(#g3b)" stroke-width="3" stroke-linecap="round" opacity="0.7"/>
+              <path d="M42 52 L48 58 L60 44" fill="none" stroke="url(#g3b)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">暗色背景</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g3c" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+                <linearGradient id="g3bg3" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.1"/>
+                  <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.15"/>
+                </linearGradient>
+              </defs>
+              <path d="M50 10 L82 24 L82 50 C82 70 68 86 50 92 C32 86 18 70 18 50 L18 24 Z" fill="url(#g3bg3)" stroke="url(#g3c)" stroke-width="4" stroke-linejoin="round"/>
+              <path d="M42 52 L48 58 L60 44" fill="none" stroke="url(#g3c)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">64px 简化版</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g3d" x1="50" y1="10" x2="50" y2="90" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <path d="M50 10 L82 24 L82 50 C82 70 68 86 50 92 C32 86 18 70 18 50 L18 24 Z" fill="none" stroke="url(#g3d)" stroke-width="5" stroke-linejoin="round"/>
+              <path d="M42 52 L48 58 L60 44" fill="none" stroke="url(#g3d)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="preview-label">32px 极简版</span>
+          </div>
+        </div>
+      </div>
+      <div class="scheme-desc">
+        <h3>设计理念</h3>
+        <p><strong>核心视觉：</strong>经典盾牌徽章外形（上宽下尖），内部融合准星十字线 + 对勾符号（✓）。盾牌内有半透明渐变色填充。</p>
+        <p><strong>寓意：</strong>盾牌是安全、可信、权威的通用符号，在监管/合规领域具有天然的信任感；准星十字代表精准核对，对勾代表校验通过、无误。整体传达"精准、可信、合规"的核心理念。</p>
+        <p><strong>风格特点：</strong>徽章式（badge/heraldic）设计，具有正式感和仪式感，适合金融/监管类产品。大尺寸展示完整细节（十字+对勾），小尺寸保留盾牌+对勾即可。</p>
+
+        <h3>配色方案</h3>
+        <div class="color-swatches">
+          <span class="swatch"><span class="swatch-color" style="background:#3b82f6"></span> #3b82f6 盾顶</span>
+          <span class="swatch"><span class="swatch-color" style="background:#06b6d4"></span> #06b6d4 中腰</span>
+          <span class="swatch"><span class="swatch-color" style="background:#8b5cf6"></span> #8b5cf6 盾底</span>
+          <span class="swatch"><span class="swatch-color" style="background:rgba(59,130,246,0.1)"></span> 渐变填充</span>
+        </div>
+
+        <h3>推荐尺寸</h3>
+        <div class="size-tags">
+          <span class="size-tag">32×32 盾牌+对勾</span>
+          <span class="size-tag">64×64 盾牌+对勾</span>
+          <span class="size-tag">128×128 含准星</span>
+          <span class="size-tag">256×256 完整版</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案四 ============ -->
+  <div class="scheme">
+    <div class="scheme-header">
+      <div class="scheme-badge">4</div>
+      <h2>ZX 字母 · 数据网格</h2>
+      <span class="style-tag">文字组合式风格</span>
+    </div>
+    <div class="scheme-body">
+      <div class="scheme-preview">
+        <div class="scheme-preview-grid">
+          <div class="preview-cell light-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="120" height="100" viewBox="0 0 120 100">
+              <defs>
+                <linearGradient id="g4" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <!-- 数据网格背景 -->
+              <rect x="8" y="12" width="10" height="10" rx="2" fill="#3b82f6" opacity="0.12"/>
+              <rect x="22" y="12" width="10" height="10" rx="2" fill="#06b6d4" opacity="0.08"/>
+              <rect x="8" y="26" width="10" height="10" rx="2" fill="#06b6d4" opacity="0.12"/>
+              <rect x="22" y="26" width="10" height="10" rx="2" fill="#8b5cf6" opacity="0.08"/>
+              <!-- Z 字母 -->
+              <path d="M38 28 L72 28 L48 60 L82 60" fill="none" stroke="url(#g4)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <!-- X 字母 -->
+              <line x1="86" y1="28" x2="110" y2="60" stroke="url(#g4)" stroke-width="5" stroke-linecap="round"/>
+              <line x1="110" y1="28" x2="86" y2="60" stroke="url(#g4)" stroke-width="5" stroke-linecap="round"/>
+              <!-- 底部文字 "准星" -->
+              <text x="60" y="82" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="url(#g4)">准星</text>
+            </svg>
+            <span class="preview-label">白色背景</span>
+          </div>
+          <div class="preview-cell dark-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="120" height="100" viewBox="0 0 120 100">
+              <defs>
+                <linearGradient id="g4b" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <rect x="8" y="12" width="10" height="10" rx="2" fill="#3b82f6" opacity="0.2"/>
+              <rect x="22" y="12" width="10" height="10" rx="2" fill="#06b6d4" opacity="0.15"/>
+              <rect x="8" y="26" width="10" height="10" rx="2" fill="#06b6d4" opacity="0.2"/>
+              <rect x="22" y="26" width="10" height="10" rx="2" fill="#8b5cf6" opacity="0.15"/>
+              <path d="M38 28 L72 28 L48 60 L82 60" fill="none" stroke="url(#g4b)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="86" y1="28" x2="110" y2="60" stroke="url(#g4b)" stroke-width="5" stroke-linecap="round"/>
+              <line x1="110" y1="28" x2="86" y2="60" stroke="url(#g4b)" stroke-width="5" stroke-linecap="round"/>
+              <text x="60" y="82" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="600" fill="url(#g4b)">准星</text>
+            </svg>
+            <span class="preview-label">暗色背景</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g4c" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <!-- ZX 简化 -->
+              <path d="M25 25 L65 25 L42 55 L75 55" fill="none" stroke="url(#g4c)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="68" y1="25" x2="88" y2="55" stroke="url(#g4c)" stroke-width="6" stroke-linecap="round"/>
+              <line x1="88" y1="25" x2="68" y2="55" stroke="url(#g4c)" stroke-width="6" stroke-linecap="round"/>
+            </svg>
+            <span class="preview-label">64px ZX 图标</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g4d" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="50%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <path d="M25 25 L65 25 L42 55 L75 55" fill="none" stroke="url(#g4d)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+              <line x1="68" y1="25" x2="88" y2="55" stroke="url(#g4d)" stroke-width="8" stroke-linecap="round"/>
+              <line x1="88" y1="25" x2="68" y2="55" stroke="url(#g4d)" stroke-width="8" stroke-linecap="round"/>
+            </svg>
+            <span class="preview-label">32px ZX</span>
+          </div>
+        </div>
+      </div>
+      <div class="scheme-desc">
+        <h3>设计理念</h3>
+        <p><strong>核心视觉：</strong>将"准星"拼音首字母"ZX"作为主体视觉符号，用渐变描边的现代线条字体呈现。左上角搭配 2×2 数据网格小方块（象征数据结构/表格），底部可附加"准星"中文字样。</p>
+        <p><strong>寓意：</strong>"ZX"是品牌标识的字母抽象化，便于品牌记忆和国际化传播。数据网格方块代表底层数据结构，与"核对/对账"的数据属性呼应。字母 + 数据的组合直接传达产品核心能力。</p>
+        <p><strong>风格特点：</strong>文字驱动（typography-driven）的 logo，将字母本身作为图形符号处理，线条圆润（round linecap），现代、活泼、科技感。大尺寸可加入"准星"文字形成完整组合（logo+wordmark），小尺寸纯 ZX 图形即可识别。</p>
+
+        <h3>配色方案</h3>
+        <div class="color-swatches">
+          <span class="swatch"><span class="swatch-color" style="background:#3b82f6"></span> #3b82f6 Z左段</span>
+          <span class="swatch"><span class="swatch-color" style="background:#06b6d4"></span> #06b6d4 Z右/X左</span>
+          <span class="swatch"><span class="swatch-color" style="background:#8b5cf6"></span> #8b5cf6 X右段</span>
+        </div>
+
+        <h3>推荐尺寸</h3>
+        <div class="size-tags">
+          <span class="size-tag">32×32 纯ZX</span>
+          <span class="size-tag">64×64 纯ZX</span>
+          <span class="size-tag">120×100 ZX+准星</span>
+          <span class="size-tag">256×120 ZX+准星+副标题</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案五 ============ -->
+  <div class="scheme">
+    <div class="scheme-header">
+      <div class="scheme-badge">5</div>
+      <h2>六边形 · 数据节点</h2>
+      <span class="style-tag">渐变几何风格</span>
+    </div>
+    <div class="scheme-body">
+      <div class="scheme-preview">
+        <div class="scheme-preview-grid">
+          <div class="preview-cell light-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g5a" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#06b6d4"/>
+                </linearGradient>
+                <linearGradient id="g5b" x1="100%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+                <linearGradient id="g5c" x1="50%" y1="100%" x2="50%" y2="0%">
+                  <stop offset="0%" stop-color="#8b5cf6"/>
+                  <stop offset="100%" stop-color="#3b82f6"/>
+                </linearGradient>
+                <linearGradient id="g5bg" x1="50" y1="8" x2="50" y2="92" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.08"/>
+                  <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.06"/>
+                </linearGradient>
+              </defs>
+              <!-- 六边形 -->
+              <polygon points="50,8 84,27 84,73 50,92 16,73 16,27" fill="url(#g5bg)" stroke="url(#g5a)" stroke-width="3" stroke-linejoin="round"/>
+              <!-- 三个数据三角面 -->
+              <polygon points="50,8 84,27 50,50" fill="url(#g5a)" opacity="0.2"/>
+              <polygon points="84,27 84,73 50,50" fill="url(#g5b)" opacity="0.15"/>
+              <polygon points="50,8 16,27 50,50" fill="url(#g5c)" opacity="0.1"/>
+              <!-- 中心节点 -->
+              <circle cx="50" cy="50" r="8" fill="url(#g5a)"/>
+              <circle cx="50" cy="50" r="3" fill="#fff" opacity="0.9"/>
+              <!-- 连接线 -->
+              <line x1="50" y1="50" x2="50" y2="20" stroke="url(#g5a)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="50" y1="50" x2="75" y2="38" stroke="url(#g5b)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="50" y1="50" x2="75" y2="62" stroke="url(#g5b)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="50" y1="50" x2="50" y2="80" stroke="url(#g5c)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="50" y1="50" x2="25" y2="62" stroke="url(#g5c)" stroke-width="1.5" opacity="0.5"/>
+              <line x1="50" y1="50" x2="25" y2="38" stroke="url(#g5a)" stroke-width="1.5" opacity="0.5"/>
+              <!-- 顶点小圆 -->
+              <circle cx="50" cy="20" r="3" fill="#3b82f6" opacity="0.7"/>
+              <circle cx="75" cy="38" r="3" fill="#06b6d4" opacity="0.7"/>
+              <circle cx="75" cy="62" r="3" fill="#06b6d4" opacity="0.7"/>
+              <circle cx="50" cy="80" r="3" fill="#8b5cf6" opacity="0.7"/>
+              <circle cx="25" cy="62" r="3" fill="#8b5cf6" opacity="0.7"/>
+              <circle cx="25" cy="38" r="3" fill="#3b82f6" opacity="0.7"/>
+            </svg>
+            <span class="preview-label">白色背景</span>
+          </div>
+          <div class="preview-cell dark-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g5a2" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#06b6d4"/>
+                </linearGradient>
+                <linearGradient id="g5b2" x1="100%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+                <linearGradient id="g5c2" x1="50%" y1="100%" x2="50%" y2="0%">
+                  <stop offset="0%" stop-color="#8b5cf6"/>
+                  <stop offset="100%" stop-color="#3b82f6"/>
+                </linearGradient>
+                <linearGradient id="g5bg2" x1="50" y1="8" x2="50" y2="92" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.15"/>
+                  <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.12"/>
+                </linearGradient>
+              </defs>
+              <polygon points="50,8 84,27 84,73 50,92 16,73 16,27" fill="url(#g5bg2)" stroke="url(#g5a2)" stroke-width="3" stroke-linejoin="round"/>
+              <polygon points="50,8 84,27 50,50" fill="url(#g5a2)" opacity="0.25"/>
+              <polygon points="84,27 84,73 50,50" fill="url(#g5b2)" opacity="0.2"/>
+              <polygon points="50,8 16,27 50,50" fill="url(#g5c2)" opacity="0.15"/>
+              <circle cx="50" cy="50" r="8" fill="url(#g5a2)"/>
+              <circle cx="50" cy="50" r="3" fill="#1e293b" opacity="0.9"/>
+              <line x1="50" y1="50" x2="50" y2="20" stroke="url(#g5a2)" stroke-width="1.5" opacity="0.6"/>
+              <line x1="50" y1="50" x2="75" y2="38" stroke="url(#g5b2)" stroke-width="1.5" opacity="0.6"/>
+              <line x1="50" y1="50" x2="75" y2="62" stroke="url(#g5b2)" stroke-width="1.5" opacity="0.6"/>
+              <line x1="50" y1="50" x2="50" y2="80" stroke="url(#g5c2)" stroke-width="1.5" opacity="0.6"/>
+              <line x1="50" y1="50" x2="25" y2="62" stroke="url(#g5c2)" stroke-width="1.5" opacity="0.6"/>
+              <line x1="50" y1="50" x2="25" y2="38" stroke="url(#g5a2)" stroke-width="1.5" opacity="0.6"/>
+              <circle cx="50" cy="20" r="3" fill="#3b82f6" opacity="0.8"/>
+              <circle cx="75" cy="38" r="3" fill="#06b6d4" opacity="0.8"/>
+              <circle cx="75" cy="62" r="3" fill="#06b6d4" opacity="0.8"/>
+              <circle cx="50" cy="80" r="3" fill="#8b5cf6" opacity="0.8"/>
+              <circle cx="25" cy="62" r="3" fill="#8b5cf6" opacity="0.8"/>
+              <circle cx="25" cy="38" r="3" fill="#3b82f6" opacity="0.8"/>
+            </svg>
+            <span class="preview-label">暗色背景</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g5a3" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#06b6d4"/>
+                </linearGradient>
+                <linearGradient id="g5b3" x1="100%" y1="0%" x2="0%" y2="100%">
+                  <stop offset="0%" stop-color="#06b6d4"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+                <linearGradient id="g5c3" x1="50%" y1="100%" x2="50%" y2="0%">
+                  <stop offset="0%" stop-color="#8b5cf6"/>
+                  <stop offset="100%" stop-color="#3b82f6"/>
+                </linearGradient>
+                <linearGradient id="g5bg3" x1="50" y1="8" x2="50" y2="92" gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.08"/>
+                  <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.06"/>
+                </linearGradient>
+              </defs>
+              <polygon points="50,8 84,27 84,73 50,92 16,73 16,27" fill="url(#g5bg3)" stroke="url(#g5a3)" stroke-width="3.5" stroke-linejoin="round"/>
+              <polygon points="50,8 84,27 50,50" fill="url(#g5a3)" opacity="0.2"/>
+              <polygon points="84,27 84,73 50,50" fill="url(#g5b3)" opacity="0.15"/>
+              <polygon points="50,8 16,27 50,50" fill="url(#g5c3)" opacity="0.1"/>
+              <circle cx="50" cy="50" r="8" fill="url(#g5a3)"/>
+              <circle cx="50" cy="50" r="3" fill="#fff" opacity="0.9"/>
+            </svg>
+            <span class="preview-label">64px 简化版</span>
+          </div>
+          <div class="preview-cell transparent-cell">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="g5a4" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#3b82f6"/>
+                  <stop offset="100%" stop-color="#8b5cf6"/>
+                </linearGradient>
+              </defs>
+              <polygon points="50,8 84,27 84,73 50,92 16,73 16,27" fill="url(#g5a4)" opacity="0.85"/>
+              <circle cx="50" cy="50" r="6" fill="#fff" opacity="0.9"/>
+            </svg>
+            <span class="preview-label">32px 极简版</span>
+          </div>
+        </div>
+      </div>
+      <div class="scheme-desc">
+        <h3>设计理念</h3>
+        <p><strong>核心视觉：</strong>正六边形外框（蜂窝/晶格形态），内部由中心点向六个顶点放射连线，每个面用不同渐变色半透明填充（模拟3D晶面效果），顶点各有一个数据圆点。</p>
+        <p><strong>寓意：</strong>六边形是自然界中最稳定的结构（蜂巢/石墨烯），象征系统的稳固、可靠与高效。中心节点向外辐射的连线代表数据从核心向六个维度的流转——对应"读取、验证、分析、生成、完成、导出"的完整工作流。与太空主题的"晶格阵列"设计风格一脉相承。</p>
+        <p><strong>风格特点：</strong>渐变几何（gradient-geometric），利用多色渐变三角面构建准3D立体感，视觉层次丰富，科技感最强。与现有太空主题的晶格卡片设计语言高度统一。小尺寸可简化为纯色六边形 + 中心白点。</p>
+
+        <h3>配色方案</h3>
+        <div class="color-swatches">
+          <span class="swatch"><span class="swatch-color" style="background:#3b82f6"></span> #3b82f6 上/左上</span>
+          <span class="swatch"><span class="swatch-color" style="background:#06b6d4"></span> #06b6d4 右上/右</span>
+          <span class="swatch"><span class="swatch-color" style="background:#8b5cf6"></span> #8b5cf6 下/左下</span>
+        </div>
+
+        <h3>推荐尺寸</h3>
+        <div class="size-tags">
+          <span class="size-tag">32×32 纯色六边形</span>
+          <span class="size-tag">64×64 三角面简化</span>
+          <span class="size-tag">128×128 完整晶格</span>
+          <span class="size-tag">256×256 完整+节点</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 方案对比总结 ============ -->
+  <div class="summary">
+    <h2>方案对比总结</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>方案</th>
+          <th>风格</th>
+          <th>核心符号</th>
+          <th>关键词</th>
+          <th>推荐场景</th>
+          <th>小尺寸适配</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>方案一</strong></td>
+          <td>扁平化</td>
+          <td>准星十字 + 数据节点</td>
+          <td>精准、全面、数据</td>
+          <td>通用性最强，Favicon/侧栏/登录页</td>
+          <td>★★★★★ 可仅保留中心圆+十字</td>
+        </tr>
+        <tr>
+          <td><strong>方案二</strong></td>
+          <td>极简线条</td>
+          <td>同心靶环 + 文档折角</td>
+          <td>严谨、校验、报送</td>
+          <td>适合正式文档、报告封面、PDF导出</td>
+          <td>★★★★ 小尺寸去掉文档元素</td>
+        </tr>
+        <tr>
+          <td><strong>方案三</strong></td>
+          <td>徽章盾牌</td>
+          <td>盾牌 + 准星 + 对勾</td>
+          <td>可信、权威、合规</td>
+          <td>适合产品官网、品牌物料、EXE图标</td>
+          <td>★★★★ 小尺寸保留盾牌+对勾</td>
+        </tr>
+        <tr>
+          <td><strong>方案四</strong></td>
+          <td>文字组合</td>
+          <td>ZX字母 + 数据网格</td>
+          <td>品牌记忆、国际化</td>
+          <td>适合品牌传播、社交媒体、营销物料</td>
+          <td>★★★★ 32px下ZX仍可识别</td>
+        </tr>
+        <tr>
+          <td><strong>方案五</strong></td>
+          <td>渐变几何</td>
+          <td>六边形晶格 + 数据节点</td>
+          <td>科技、稳固、流程</td>
+          <td>与太空主题最契合，适合应用内UI</td>
+          <td>★★★★ 小尺寸退化为纯色六边形</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+</body>
+</html>

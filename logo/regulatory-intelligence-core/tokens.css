@@ -1,0 +1,16 @@
+:root {
+  --ric-ink: #0f172a;
+  --ric-slate: #536277;
+  --ric-line: #dbe4f0;
+  --ric-paper: #f8fafc;
+  --ric-white: #ffffff;
+  --ric-blue-900: #173b7a;
+  --ric-blue-700: #3466d9;
+  --ric-blue-400: #6aa4ff;
+  --ric-cyan-500: #2aa7c8;
+  --ric-gold-700: #d98711;
+  --ric-gold-400: #ffbd38;
+  --ric-gold-200: #ffe6a3;
+  --ric-dark-bg: #07111f;
+  --ric-shadow: 0 18px 44px rgba(15, 23, 42, 0.14);
+}

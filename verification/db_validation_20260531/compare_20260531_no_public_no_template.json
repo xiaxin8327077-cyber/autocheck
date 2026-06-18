@@ -1,0 +1,41 @@
+{
+  "baseline": "D:\\xiaxin\\rhexe\\结果\\20260531-资管产品数据审核结果-模板校验（否）-公开信息校验（否）(Ver.20260202).xlsx",
+  "new_file": "D:\\xiaxin\\auto_check\\verification\\db_validation_20260531\\20260531-资管产品数据审核结果-模板校验（否）-公开信息校验（否）(Ver.20260202).xlsx",
+  "baseline_sha256": "c4aa9efdebd2ff7820bfb8289d0d825fddf0bc3787e95bbc43522512972cd7b2",
+  "new_sha256": "fea28d05cf088b97198dc577fc29d5bdec20defc2280b424713ba68ce0cadd6f",
+  "binary_equal": false,
+  "old_sheet_names": [
+    "Sheet1"
+  ],
+  "new_sheet_names": [
+    "Sheet1"
+  ],
+  "old_dims": {
+    "Sheet1": {
+      "rows": 2193,
+      "cols": 12
+    }
+  },
+  "new_dims": {
+    "Sheet1": {
+      "rows": 2193,
+      "cols": 12
+    }
+  },
+  "result_row_count": 2192,
+  "result_error_count": 2192,
+  "warnings": [
+    "ZG12 当期表无数据：zgzgzh_zg12"
+  ],
+  "diff_count": 0,
+  "diff_samples": [],
+  "missing_sheets_in_new": [],
+  "extra_sheets_in_new": [],
+  "first_sheet": "Sheet1",
+  "old_body_row_count": 2192,
+  "new_body_row_count": 2192,
+  "body_rows_missing_in_new_count": 0,
+  "body_rows_extra_in_new_count": 0,
+  "body_rows_missing_in_new_samples": [],
+  "body_rows_extra_in_new_samples": []
+}

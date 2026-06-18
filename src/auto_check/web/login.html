@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="zh-CN" data-login-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>监管智核</title>
+    <link rel="icon" href="/assets/favicon-64x64.svg?v=2.0.8-regulatory-intelligence-core" />
+    <style>
+      :root {
+        --bg: #f0fdf4;
+        --surface: rgba(255, 255, 255, 0.7);
+        --shadow-light: #ffffff;
+        --shadow-dark: rgba(0, 0, 0, 0.05);
+        --primary: #10b981;
+        --primary-dark: #8b5cf6;
+        --primary-mid: #3b82f6;
+        --text-primary: #1e293b;
+        --text-secondary: #94a3b8;
+        --field-text: #475569;
+        --field-border: rgba(203, 213, 225, 0.6);
+        --error: #dc2626;
+        --success: #047857;
+      }
+
+      :root[data-login-theme="dark"] {
+        --bg: #20242d;
+        --surface: #252a35;
+        --shadow-light: #303747;
+        --shadow-dark: #151922;
+        --primary: #8b5cf6;
+        --primary-dark: #6366f1;
+        --primary-mid: #6366f1;
+        --text-primary: #f4f7fb;
+        --text-secondary: #a7b0c0;
+        --field-text: #a7b0c0;
+        --field-border: transparent;
+        --error: #f87171;
+        --success: #34d399;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        color: var(--text-primary);
+        background: linear-gradient(135deg, #f0fdf4 0%, #ecfeff 30%, #fdf2f8 60%, #fefce8 100%);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      :root[data-login-theme="dark"] body {
+        background: var(--bg);
+      }
+
+      @keyframes float {
+        0%, 100% { transform: translateY(0) scale(1); }
+        50% { transform: translateY(-12px) scale(1.03); }
+      }
+
+      @keyframes lightBrandBubbleFloat {
+        0%, 10% { transform: translate3d(-28px, 7px, 0) scale(1); }
+        16% { transform: translate3d(-25px, -2px, 0) scale(1.002, 0.999); }
+        24% { transform: translate3d(-18px, -14px, 0) scale(0.998, 1.004); }
+        32% { transform: translate3d(-8px, -22px, 0) scale(0.994, 1.008); }
+        40% { transform: translate3d(4px, -12px, 0) scale(0.998, 1.004); }
+        48% { transform: translate3d(12px, 0, 0) scale(1.004, 0.998); }
+        56% { transform: translate3d(22px, 7px, 0) scale(1.008, 0.996); }
+        64% { transform: translate3d(32px, 0, 0) scale(1.004, 0.998); }
+        72% { transform: translate3d(40px, -12px, 0) scale(0.998, 1.004); }
+        80% { transform: translate3d(52px, -22px, 0) scale(0.994, 1.008); }
+        86% { transform: translate3d(58px, -16px, 0) scale(0.996, 1.006); }
+        91% { transform: translate3d(63px, -5px, 0) scale(1.002, 0.999); }
+        96%, 100% { transform: translate3d(68px, 7px, 0) scale(1); }
+      }
+
+      @keyframes lightBrandBubbleWarmth {
+        0%, 22% { opacity: 0; }
+        42% { opacity: 0.22; }
+        68% { opacity: 0.38; }
+        96%, 100% { opacity: 0.46; }
+      }
+
+      .deco {
+        position: fixed;
+        border-radius: 50%;
+        pointer-events: none;
+        filter: blur(80px);
+        opacity: 0.35;
+      }
+
+      .deco-1 {
+        width: 320px;
+        height: 320px;
+        top: -60px;
+        left: -80px;
+        background: #a7f3d0;
+        animation: float 8s ease-in-out infinite;
+      }
+
+      .deco-2 {
+        width: 260px;
+        height: 260px;
+        right: -60px;
+        bottom: -40px;
+        background: #f9a8d4;
+        animation: float 10s ease-in-out infinite 1s;
+      }
+
+      .deco-3 {
+        width: 200px;
+        height: 200px;
+        top: 40%;
+        left: 55%;
+        background: #93c5fd;
+        animation: float 7s ease-in-out infinite 2s;
+      }
+
+      :root[data-login-theme="dark"] .deco {
+        display: none;
+      }
+
+      .theme-toggle {
+        position: fixed;
+        top: 22px;
+        right: 24px;
+        width: 48px;
+        height: 48px;
+        border: 0;
+        border-radius: 16px;
+        z-index: 3;
+        color: #475569;
+        background: rgba(255, 255, 255, 0.7);
+        cursor: pointer;
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+      }
+
+      :root[data-login-theme="dark"] .theme-toggle {
+        color: var(--text-primary);
+        background: var(--bg);
+        border: 0;
+        box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+      }
+
+      .login-container {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        max-width: 440px;
+        padding: 20px;
+      }
+
+      :root[data-login-theme="dark"] .login-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        max-width: 860px;
+        min-height: 500px;
+        padding: 0;
+        overflow: hidden;
+        background: var(--bg);
+        border-radius: 30px;
+        box-shadow: 20px 20px 60px var(--shadow-dark), -20px -20px 60px var(--shadow-light);
+      }
+
+      .left-panel,
+      .right-panel {
+        padding: 52px 44px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+
+      .left-panel { display: none; position: relative; overflow: hidden; }
+
+      :root[data-login-theme="dark"] .left-panel {
+        display: flex;
+      }
+
+      .right-panel {
+        padding: 34px 32px 34px;
+        background: rgba(255, 255, 255, 0.7);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        border-radius: 24px;
+        overflow: hidden;
+        box-shadow: 0 8px 40px rgba(0, 0, 0, 0.05), 0 2px 8px rgba(0, 0, 0, 0.03);
+      }
+
+      :root[data-login-theme="dark"] .right-panel {
+        padding: 52px 44px;
+        background: transparent;
+        backdrop-filter: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .floating-shapes {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        z-index: 0;
+      }
+
+      .shape {
+        position: absolute;
+        border-radius: 50%;
+        opacity: 0.14;
+        background: linear-gradient(135deg, #2563eb, #06b6d4, #7c3aed);
+        animation: float 6s ease-in-out infinite;
+      }
+
+      .shape-1 { width: 150px; height: 150px; top: 10%; left: 10%; }
+      .shape-2 { width: 100px; height: 100px; bottom: 20%; right: 10%; animation-delay: 2s; }
+      .shape-3 { width: 80px; height: 80px; top: 50%; right: 30%; animation-delay: 4s; }
+
+      .brand-content { position: relative; z-index: 1; }
+
+      .light-brand {
+        position: relative;
+        isolation: isolate;
+        min-height: 128px;
+        display: flex;
+        align-items: center;
+        text-align: left;
+        margin-bottom: 14px;
+      }
+
+      .light-brand::before,
+      .light-brand::after {
+        content: "";
+        position: absolute;
+        width: 150px;
+        height: 150px;
+        top: 6px;
+        left: 12px;
+        z-index: 0;
+        border-radius: 50%;
+        pointer-events: none;
+        transform-origin: center;
+        will-change: transform, opacity;
+        animation: lightBrandBubbleFloat 14s linear infinite alternate;
+      }
+
+      .light-brand::before {
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(6, 182, 212, 0.12), rgba(124, 58, 237, 0.16));
+        box-shadow: 0 24px 54px rgba(37, 99, 235, 0.13);
+      }
+
+      .light-brand::after {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.34), rgba(250, 204, 21, 0.28), rgba(251, 191, 36, 0.22));
+        box-shadow: 0 16px 36px rgba(217, 119, 6, 0.13);
+        opacity: 0;
+        animation: lightBrandBubbleFloat 14s linear infinite alternate, lightBrandBubbleWarmth 14s linear infinite alternate;
+      }
+
+      .login-brand-logo {
+        position: relative;
+        z-index: 1;
+        display: block;
+        width: min(360px, 100%);
+        height: auto;
+        margin: 0;
+      }
+
+      :root[data-login-theme="dark"] .light-brand {
+        display: none;
+      }
+
+      .login-brand-logo--dark {
+        width: min(300px, 88%);
+        max-width: none;
+        margin: 0 0 28px;
+      }
+
+      .feature-card {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+        padding: 16px;
+        border-radius: 16px;
+        background: var(--bg);
+        box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+      }
+
+      .feature-icon {
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        border-radius: 12px;
+        color: #fff;
+        background: linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6);
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .feature-text h4 {
+        margin-bottom: 2px;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .feature-text p {
+        color: var(--text-secondary);
+        font-size: 11px;
+      }
+
+      .welcome-title {
+        display: none;
+        margin-bottom: 8px;
+        color: var(--text-primary);
+        font-size: 28px;
+        font-weight: 800;
+      }
+
+      .welcome-subtitle {
+        display: none;
+        margin-bottom: 28px;
+        color: var(--text-secondary);
+        font-size: 14px;
+      }
+
+      :root[data-login-theme="dark"] .welcome-title,
+      :root[data-login-theme="dark"] .welcome-subtitle {
+        display: block;
+      }
+
+      .form-group { margin-bottom: 18px; }
+
+      .form-label {
+        display: block;
+        margin-bottom: 6px;
+        color: #475569;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      :root[data-login-theme="dark"] .form-label {
+        display: none;
+      }
+
+      .password-field {
+        position: relative;
+      }
+
+      .form-input {
+        width: 100%;
+        height: 50px;
+        padding: 0 18px;
+        border: 1.5px solid rgba(203, 213, 225, 0.6);
+        border-radius: 14px;
+        outline: none;
+        color: #1e293b;
+        background: rgba(255, 255, 255, 0.7);
+        font-size: 15px;
+        box-shadow: none;
+        transition: all 0.25s ease;
+      }
+
+      .form-input::placeholder { color: #cbd5e1; }
+
+      :root[data-login-theme="dark"] .form-input {
+        height: 56px;
+        padding: 0 20px;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        border-radius: 16px;
+        color: var(--text-primary);
+        background: #20242d;
+        font-size: 14px;
+        box-shadow: inset 6px 6px 12px var(--shadow-dark), inset -6px -6px 12px var(--shadow-light);
+      }
+
+      :root[data-login-theme="dark"] .form-input::placeholder {
+        color: var(--text-secondary);
+      }
+
+      :root[data-login-theme="dark"] .form-input:-webkit-autofill,
+      :root[data-login-theme="dark"] .form-input:-webkit-autofill:hover,
+      :root[data-login-theme="dark"] .form-input:-webkit-autofill:focus {
+        caret-color: var(--text-primary);
+        border-color: rgba(99, 102, 241, 0.38);
+        -webkit-text-fill-color: var(--text-primary);
+        -webkit-box-shadow:
+          0 0 0 1000px #20242d inset,
+          inset 6px 6px 12px var(--shadow-dark),
+          inset -6px -6px 12px var(--shadow-light);
+        transition: background-color 9999s ease-out, color 9999s ease-out;
+      }
+
+      .password-field .form-input {
+        padding-right: 58px;
+      }
+
+      .password-field .form-input::-ms-reveal,
+      .password-field .form-input::-ms-clear {
+        display: none;
+      }
+
+      .password-toggle {
+        position: absolute;
+        top: calc(50% + 13px);
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        transform: translateY(-50%);
+        border: 0;
+        border-radius: 12px;
+        color: var(--text-secondary);
+        background: transparent;
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      .password-toggle:hover {
+        color: var(--primary);
+        background: color-mix(in srgb, var(--primary) 12%, transparent);
+      }
+
+      :root[data-login-theme="dark"] .password-toggle {
+        top: 50%;
+      }
+
+      .form-input:focus {
+        border-color: #10b981;
+        background: #fff;
+        box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.08);
+      }
+
+      :root[data-login-theme="dark"] .form-input:focus {
+        background: #20242d;
+        box-shadow:
+          inset 4px 4px 8px var(--shadow-dark),
+          inset -4px -4px 8px var(--shadow-light),
+          0 0 0 2px var(--primary);
+      }
+
+      .form-options {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 16px 0 28px;
+      }
+
+      .remember-me {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .remember-me input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: var(--primary);
+        cursor: pointer;
+      }
+
+      .remember-me label {
+        color: var(--text-secondary);
+        cursor: pointer;
+        font-size: 13px;
+      }
+
+      .forgot-password {
+        border: 0;
+        background: transparent;
+        color: #3b82f6;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      :root[data-login-theme="dark"] .forgot-password {
+        color: #38bdf8;
+      }
+
+      .login-btn {
+        width: 100%;
+        height: 52px;
+        margin-top: 8px;
+        border: 0;
+        border-radius: 14px;
+        color: #fff;
+        background: linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6);
+        background-size: 200% 100%;
+        background-position: 0% 50%;
+        cursor: pointer;
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        box-shadow: none;
+        transition: background-position 0.4s ease, transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .login-btn:hover {
+        background-position: 100% 50%;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(59, 130, 246, 0.25);
+      }
+
+      .login-btn:disabled { cursor: wait; opacity: 0.72; transform: none; }
+
+      :root[data-login-theme="dark"] .login-btn {
+        height: 56px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, #2563eb, #06b6d4, #7c3aed);
+        background-size: auto;
+        font-size: 15px;
+        letter-spacing: 0;
+        box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      :root[data-login-theme="dark"] .login-btn:hover {
+        background-position: 0% 50%;
+        box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+      }
+
+      .login-message {
+        min-height: 22px;
+        margin-top: 18px;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .login-message.error { color: var(--error); }
+      .login-message.success { color: var(--success); }
+
+      .login-footer {
+        margin-top: 24px;
+        color: #94a3b8;
+        text-align: center;
+        font-size: 13px;
+      }
+
+      .login-footer a {
+        color: #8b5cf6;
+        text-decoration: none;
+        font-weight: 500;
+      }
+
+      .login-footer a:hover {
+        text-decoration: underline;
+      }
+
+      :root[data-login-theme="dark"] .login-footer {
+        display: none;
+      }
+
+      .divider {
+        display: flex;
+        align-items: center;
+        margin: 32px 0;
+      }
+
+      :root:not([data-login-theme="dark"]) .divider,
+      :root:not([data-login-theme="dark"]) .social-login {
+        display: none;
+      }
+
+      .divider-line {
+        flex: 1;
+        height: 1px;
+        background: var(--shadow-dark);
+      }
+
+      .divider-text {
+        padding: 0 16px;
+        color: var(--text-secondary);
+        font-size: 12px;
+      }
+
+      .social-login {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+
+      .social-btn {
+        height: 56px;
+        border: 0;
+        border-radius: 16px;
+        background: var(--bg);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 20px;
+        box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+        transition: transform 0.2s ease;
+      }
+
+      .social-btn:hover { transform: translateY(-2px); }
+
+      @media (max-width: 900px) {
+        :root[data-login-theme="dark"] .login-container {
+          grid-template-columns: 1fr;
+          max-width: 480px;
+        }
+        :root[data-login-theme="dark"] .left-panel,
+        :root[data-login-theme="dark"] .right-panel {
+          padding: 40px 30px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="deco deco-1" aria-hidden="true"></div>
+    <div class="deco deco-2" aria-hidden="true"></div>
+    <div class="deco deco-3" aria-hidden="true"></div>
+    <button class="theme-toggle" id="loginThemeToggle" type="button" title="切换明暗模式" aria-label="切换明暗模式">☾</button>
+    <div class="login-container">
+      <div class="left-panel">
+        <div class="floating-shapes" aria-hidden="true">
+          <div class="shape shape-1"></div>
+          <div class="shape shape-2"></div>
+          <div class="shape shape-3"></div>
+        </div>
+        <div class="brand-content">
+          <img class="login-brand-logo login-brand-logo--dark" src="/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />
+          <div class="feature-card">
+            <div class="feature-icon">📊</div>
+            <div class="feature-text"><h4>智能分析</h4><p>自动识别差异原因和核对状态</p></div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text"><h4>安全导入</h4><p>限制上传大小并校验目标表名</p></div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon">🔒</div>
+            <div class="feature-text"><h4>敏感数据保护</h4><p>配置密码加密保存且不回传前端</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="right-panel">
+        <div class="light-brand">
+          <img class="login-brand-logo" src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />
+        </div>
+        <h2 class="welcome-title" id="loginTitle">欢迎登录</h2>
+        <p class="welcome-subtitle" id="loginSubtitle">请输入管理员密码继续访问系统。</p>
+        <form id="loginForm" autocomplete="off">
+          <div class="form-group">
+            <label class="form-label" for="loginUsername">用户名</label>
+            <input id="loginUsername" class="form-input" type="text" placeholder="请输入用户名" autocomplete="username" />
+          </div>
+          <div class="form-group password-field">
+            <label class="form-label" for="loginPassword">密码</label>
+            <input id="loginPassword" class="form-input" type="password" placeholder="请输入密码" autocomplete="current-password" required />
+            <button id="loginPasswordToggle" class="password-toggle" type="button" aria-label="显示密码" title="显示密码">
+              <span class="password-toggle-icon" aria-hidden="true">👁</span>
+            </button>
+          </div>
+          <div class="form-group password-field" id="confirmGroup" hidden>
+            <label class="form-label" for="loginPasswordConfirm">确认密码</label>
+            <input id="loginPasswordConfirm" class="form-input" type="password" placeholder="再次输入密码" autocomplete="new-password" />
+          </div>
+          <div class="form-options">
+            <div class="remember-me">
+              <input type="checkbox" id="rememberLogin" />
+              <label for="rememberLogin">记住我</label>
+            </div>
+            <button class="forgot-password" id="forgotPasswordBtn" type="button">忘记密码？</button>
+          </div>
+          <button class="login-btn" id="loginSubmit" type="submit">登录</button>
+          <div class="login-message" id="loginMessage" role="status"></div>
+        </form>
+        <div class="login-footer">还没有账户？<a href="#" id="contactAdminLink">去联系管理员</a></div>
+        <div class="divider">
+          <div class="divider-line"></div>
+          <span class="divider-text">其他登录方式</span>
+          <div class="divider-line"></div>
+        </div>
+        <div class="social-login">
+          <button class="social-btn" type="button" title="微信" data-provider="微信">💬</button>
+          <button class="social-btn" type="button" title="钉钉" data-provider="钉钉">📱</button>
+          <button class="social-btn" type="button" title="LDAP" data-provider="LDAP">🔐</button>
+        </div>
+      </div>
+    </div>
+    <script src="/crypto_fallback.js"></script>
+    <script>
+      const root = document.documentElement;
+      const themeToggle = document.getElementById("loginThemeToggle");
+      const form = document.getElementById("loginForm");
+      const usernameInput = document.getElementById("loginUsername");
+      const passwordInput = document.getElementById("loginPassword");
+      const passwordToggle = document.getElementById("loginPasswordToggle");
+      const confirmInput = document.getElementById("loginPasswordConfirm");
+      const confirmGroup = document.getElementById("confirmGroup");
+      const message = document.getElementById("loginMessage");
+      const submitBtn = document.getElementById("loginSubmit");
+      const forgotPasswordBtn = document.getElementById("forgotPasswordBtn");
+      const contactAdminLink = document.getElementById("contactAdminLink");
+      const rememberLogin = document.getElementById("rememberLogin");
+      const REMEMBERED_USERNAME_KEY = "autoCheckRememberedUsername";
+      const MAIN_ENTRY_ANIMATION_KEY = "autoCheckMainEntryAnimation";
+      const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
+      const USER_AVATAR_VARIANT_COUNT = 6;
+      let setupRequired = false;
+      let loginSubmitting = false;
+
+      function applyTheme(theme) {
+        const normalized = theme === "dark" ? "dark" : "light";
+        root.setAttribute("data-login-theme", normalized);
+        themeToggle.textContent = normalized === "dark" ? "☀" : "☾";
+        localStorage.setItem("autoCheckLoginTheme", normalized);
+      }
+
+      function togglePasswordVisibility() {
+        passwordInput.type = passwordInput.type === "password" ? "text" : "password";
+        const visible = passwordInput.type === "text";
+        passwordToggle.setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
+        passwordToggle.title = visible ? "隐藏密码" : "显示密码";
+      }
+
+      function loadRememberedUsername() {
+        const remembered = localStorage.getItem(REMEMBERED_USERNAME_KEY) || "";
+        rememberLogin.checked = Boolean(remembered);
+        return remembered;
+      }
+
+      function saveRememberedUsername(username) {
+        if (rememberLogin.checked) {
+          localStorage.setItem(REMEMBERED_USERNAME_KEY, username);
+        } else {
+          localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+        }
+      }
+
+      function refreshUserAvatarVariant() {
+        try {
+          sessionStorage.setItem(USER_AVATAR_SESSION_KEY, String(Math.floor(Math.random() * USER_AVATAR_VARIANT_COUNT)));
+        } catch (_) {}
+      }
+
+      function setMessage(text, type = "") {
+        message.textContent = text;
+        message.className = "login-message" + (type ? " " + type : "");
+      }
+
+      function getLoginErrorMessage(error) {
+        const raw = String(error?.message || error || "");
+        if (raw.includes("Failed to fetch") || raw.includes("NetworkError")) return "网络连接异常，请确认服务已启动后重试。";
+        if (raw.includes("user not found") || raw.includes("invalid credentials") || raw.includes("invalid password")) return "账号或密码不正确，请检查后重试。";
+        if (raw.includes("account disabled")) return "账号已停用，请联系管理员启用。";
+        if (raw.includes("password not configured")) return "账号密码未初始化，请联系管理员重置。";
+        if (raw.includes("encrypted password is invalid") || raw.includes("encrypted password is required")) return "密码传输加密失败，请刷新页面后重试。";
+        if (raw.includes("password must be at least 6 characters and include a letter")) return "密码长度至少 6 位，且需包含至少 1 个字母。";
+        if (raw.includes("admin password already configured")) return "管理员密码已初始化，请直接登录。";
+        return raw || "登录失败，请稍后重试。";
+      }
+
+      async function apiAuth(path, options = {}) {
+        const response = await fetch(path, {
+          headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+          ...options,
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `请求失败: ${response.status}`);
+        return payload;
+      }
+
+      async function encryptPasswordForTransport(password) {
+        return window.autoCheckCrypto.encryptPasswordForTransport(password, () => apiAuth("/api/auth/key"));
+      }
+
+      async function loadAuthState() {
+        const state = await apiAuth("/api/auth/status");
+        if (state.authenticated) {
+          window.location.href = "/";
+          return;
+        }
+        setupRequired = Boolean(state.setup_required);
+        const titleText = setupRequired ? "初始化管理员密码" : "欢迎登录";
+        const subtitleText = setupRequired ? "首次使用前，请设置一个至少 6 位且包含字母的管理员密码。" : "请输入账号和密码继续访问系统。";
+        document.getElementById("loginTitle").textContent = titleText;
+        document.getElementById("loginSubtitle").textContent = subtitleText;
+        passwordInput.placeholder = setupRequired ? "管理员密码" : "请输入密码";
+        confirmInput.placeholder = "再次输入密码";
+        usernameInput.value = setupRequired ? "admin" : (usernameInput.value || loadRememberedUsername());
+        usernameInput.readOnly = setupRequired;
+        confirmGroup.hidden = !setupRequired;
+        confirmInput.required = setupRequired;
+        submitBtn.textContent = setupRequired ? "初始化并登录" : "登录";
+      }
+
+      themeToggle.addEventListener("click", () => {
+        applyTheme(root.getAttribute("data-login-theme") === "dark" ? "light" : "dark");
+      });
+      passwordToggle.addEventListener("click", togglePasswordVisibility);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (loginSubmitting) return;
+        const password = passwordInput.value;
+        if (setupRequired && password !== confirmInput.value) {
+          setMessage("两次输入的密码不一致。", "error");
+          return;
+        }
+        if (!setupRequired && !usernameInput.value.trim()) {
+          setMessage("请输入用户名。", "error");
+          return;
+        }
+        if (!password) {
+          setMessage("请输入密码。", "error");
+          return;
+        }
+        let loginSucceeded = false;
+        loginSubmitting = true;
+        submitBtn.disabled = true;
+        setMessage(setupRequired ? "正在初始化..." : "正在登录...");
+        try {
+          const encryptedPassword = await encryptPasswordForTransport(password);
+          const username = setupRequired ? "admin" : usernameInput.value.trim();
+          if (setupRequired) {
+            await apiAuth("/api/auth/setup", {
+              method: "POST",
+              body: JSON.stringify({ password_encrypted: encryptedPassword }),
+            });
+          } else {
+            await apiAuth("/api/auth/login", {
+              method: "POST",
+              body: JSON.stringify({ username, password_encrypted: encryptedPassword }),
+            });
+          }
+          setMessage("登录成功，正在进入系统。", "success");
+          if (!setupRequired) saveRememberedUsername(username);
+          refreshUserAvatarVariant();
+          loginSucceeded = true;
+          try {
+            sessionStorage.setItem(MAIN_ENTRY_ANIMATION_KEY, "login");
+          } catch (_) {}
+          window.location.href = "/";
+        } catch (error) {
+          setMessage(getLoginErrorMessage(error), "error");
+        } finally {
+          if (!loginSucceeded) {
+            loginSubmitting = false;
+            submitBtn.disabled = false;
+          }
+        }
+      });
+
+      forgotPasswordBtn.addEventListener("click", () => {
+        setMessage("暂不支持找回密码，请联系系统管理员重置。", "error");
+      });
+      contactAdminLink.addEventListener("click", (event) => {
+        event.preventDefault();
+        setMessage("请联系系统管理员创建或重置账号。", "error");
+      });
+
+      document.querySelectorAll(".social-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          setMessage(`${button.dataset.provider} 登录暂不支持。`, "error");
+        });
+      });
+
+      applyTheme(localStorage.getItem("autoCheckLoginTheme") || "light");
+      loadAuthState().catch((error) => setMessage(error.message, "error"));
+    </script>
+  </body>
+</html>

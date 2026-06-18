@@ -1,0 +1,27 @@
+{
+  "name": "监管智核",
+  "englishName": "Regulatory Intelligence Core",
+  "assetPrefix": "ric",
+  "sourceConcept": "Based on the interlocking blue/gold checkmark logo from the provided brand proposal.",
+  "colors": {
+    "ink": "#0f172a",
+    "slate": "#536277",
+    "blue700": "#3466d9",
+    "blue400": "#6aa4ff",
+    "cyan500": "#2aa7c8",
+    "gold700": "#d98711",
+    "gold400": "#ffbd38",
+    "darkBg": "#07111f"
+  },
+  "assets": [
+    "mark.svg",
+    "favicon-64x64.svg",
+    "logo-horizontal.svg",
+    "logo-horizontal-dark.svg",
+    "logo-stacked.svg",
+    "app-icon.svg",
+    "tokens.css",
+    "brand-preview.html",
+    "preview-screenshot.png"
+  ]
+}

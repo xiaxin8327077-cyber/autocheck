@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>准星品牌字体 - 多方案对比</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+    padding: 40px;
+    background: #f7fafc;
+    color: #181c1e;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    color: #64748b;
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+
+  /* 方案 1: 科技未来感 - 等宽字体 + 蓝紫渐变 */
+  .style-1 {
+    font-family: "Consolas", "Courier New", monospace;
+    background: linear-gradient(135deg, #38bdf8, #818cf8, #c084fc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(56, 189, 248, 0.2));
+    font-size: 38px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+  }
+
+  /* 方案 2: 现代黑体 - 超粗 + 纯蓝渐变 */
+  .style-2 {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #0ea5e9, #3b82f6, #2563eb);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(14, 165, 233, 0.25));
+    font-size: 42px;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+  }
+
+  /* 方案 3: 宋体雅致 - 细体 + 翠绿渐变 */
+  .style-3 {
+    font-family: "SimSun", "Songti SC", serif;
+    background: linear-gradient(135deg, #10b981, #06b6d4, #0ea5e9);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(16, 185, 129, 0.2));
+    font-size: 38px;
+    font-weight: 400;
+    letter-spacing: 0.2em;
+  }
+
+  /* 方案 4: 圆体友好 - 圆角 + 金橙渐变 */
+  .style-4 {
+    font-family: "YouYuan", "Yuanti SC", sans-serif;
+    background: linear-gradient(135deg, #f59e0b, #f97316, #ef4444);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(245, 158, 11, 0.2));
+    font-size: 40px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+  }
+
+  /* 方案 5: 粗犷工业 - 极粗 + 粉紫渐变 */
+  .style-5 {
+    font-family: "Impact", "Arial Black", sans-serif;
+    background: linear-gradient(135deg, #ec4899, #a855f7, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(236, 72, 153, 0.25));
+    font-size: 44px;
+    font-weight: 900;
+    letter-spacing: -0.02em;
+  }
+
+  /* 方案 6: 纤细细体 - 超细 + 深蓝渐变 */
+  .style-6 {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #1e3a8a, #2563eb, #38bdf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(37, 99, 235, 0.2));
+    font-size: 40px;
+    font-weight: 200;
+    letter-spacing: 0.25em;
+  }
+
+  /* 方案 7: 书法风格 - 楷体 + 黑金渐变 */
+  .style-7 {
+    font-family: "KaiTi", "Kaiti SC", serif;
+    background: linear-gradient(135deg, #92400e, #b45309, #f59e0b, #b45309);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(245, 158, 11, 0.15));
+    font-size: 42px;
+    font-weight: 400;
+    letter-spacing: 0.15em;
+  }
+
+  /* 方案 8: 几何极简 - 等宽 + 纯黑 + 边框 */
+  .style-8 {
+    font-family: "Consolas", "Courier New", monospace;
+    color: #0f172a;
+    font-size: 38px;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    -webkit-text-stroke: 1px #0f172a;
+    -webkit-text-fill-color: transparent;
+  }
+
+  /* 方案 9: 立体效果 - 阴影层次 */
+  .style-9 {
+    font-family: "Microsoft YaHei", sans-serif;
+    font-size: 40px;
+    font-weight: 900;
+    letter-spacing: 0.05em;
+    color: #7c3aed;
+    text-shadow: 
+      2px 2px 0 #a78bfa,
+      4px 4px 0 #c4b5fd,
+      6px 6px 8px rgba(124, 58, 237, 0.3);
+  }
+
+  /* 方案 10: 分割线风格 */
+  .style-10 {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 42px;
+    font-weight: 800;
+    letter-spacing: 0.3em;
+    background: linear-gradient(135deg, #06b6d4, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    border-bottom: 3px solid #06b6d4;
+    padding-bottom: 4px;
+  }
+
+  /* 方案 11: 外发光描边 */
+  .style-11 {
+    font-family: "Microsoft YaHei", sans-serif;
+    font-size: 40px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: transparent;
+    -webkit-text-stroke: 2px #3b82f6;
+    filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.5));
+  }
+
+  /* 方案 12: 渐变叠加 */
+  .style-12 {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 44px;
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    background: 
+      linear-gradient(135deg, #f59e0b 50%, #ef4444 50%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    filter: drop-shadow(0 2px 4px rgba(245, 158, 11, 0.2));
+  }
+
+  .brand-size {
+    display: inline-block;
+  }
+
+  .preview-card {
+    background: #ffffff;
+    padding: 24px;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 2px solid transparent;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+
+  .preview-card:hover {
+    border-color: #38bdf8;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+
+  .preview-card.selected {
+    border-color: #38bdf8;
+    background: #f0f9ff;
+  }
+
+  .preview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .style-number {
+    background: #e2e8f0;
+    color: #475569;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .style-desc {
+    color: #64748b;
+    font-size: 13px;
+    margin-top: 12px;
+  }
+
+  .style-tags {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+
+  .style-tag {
+    background: #f1f5f9;
+    color: #64748b;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+  }
+
+  .brand-wordmark-sub {
+    color: #64748b;
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+
+  .dark-mode-section {
+    background: #0a0a0d;
+    padding: 40px;
+    border-radius: 16px;
+  }
+
+  .dark-mode-section h2 {
+    color: #94a3b8;
+    margin-bottom: 24px;
+  }
+
+  .dark-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+  }
+
+  .dark-card {
+    background: #1a1b1f;
+    padding: 24px;
+    border-radius: 12px;
+    border: 2px solid #2a2b2f;
+  }
+
+  .dark-card .style-1 {
+    font-family: "Consolas", "Courier New", monospace;
+    background: linear-gradient(135deg, #7dd3fc, #a78bfa, #e879f9);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 2px 6px rgba(125, 211, 252, 0.3));
+  }
+
+  .dark-card .style-2 {
+    background: linear-gradient(135deg, #38bdf8, #60a5fa, #3b82f6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 2px 6px rgba(56, 189, 248, 0.3));
+  }
+
+  .dark-card .style-3 {
+    font-family: "SimSun", "Songti SC", serif;
+    background: linear-gradient(135deg, #34d399, #22d3ee, #38bdf8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 2px 6px rgba(52, 211, 153, 0.3));
+  }
+
+  .dark-card .style-7 {
+    font-family: "KaiTi", "Kaiti SC", serif;
+    background: linear-gradient(135deg, #d97706, #f59e0b, #fbbf24, #d97706);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 2px 6px rgba(251, 191, 36, 0.2));
+  }
+
+  .dark-card .style-8 {
+    -webkit-text-stroke: 1px #e2e8f0;
+    color: transparent;
+  }
+
+  .dark-card .style-9 {
+    color: #a78bfa;
+    text-shadow: 
+      2px 2px 0 #c4b5fd,
+      4px 4px 0 #ddd6fe,
+      6px 6px 8px rgba(167, 139, 250, 0.3);
+  }
+
+  .dark-card .style-11 {
+    -webkit-text-stroke: 2px #60a5fa;
+    filter: drop-shadow(0 0 8px rgba(96, 165, 250, 0.5));
+  }
+</style>
+</head>
+<body>
+  <div>
+    <h1>准星品牌字体 - 多方案预览</h1>
+    <p class="subtitle">包含不同字体、粗细、间距、颜色、特效的组合方案</p>
+  </div>
+
+  <h2>明色模式</h2>
+  <div class="grid">
+    <div class="preview-card" onclick="select(this, 1)">
+      <div class="preview-header">
+        <span class="style-number">方案 1</span>
+      </div>
+      <span class="brand-size style-1">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">等宽字体 + 蓝紫渐变，科技未来感</p>
+      <div class="style-tags">
+        <span class="style-tag">等宽</span>
+        <span class="style-tag">渐变</span>
+        <span class="style-tag">大字间距</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 2)">
+      <div class="preview-header">
+        <span class="style-number">方案 2</span>
+      </div>
+      <span class="brand-size style-2">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">现代黑体超粗 + 纯蓝渐变，强烈视觉</p>
+      <div class="style-tags">
+        <span class="style-tag">黑体</span>
+        <span class="style-tag">超粗900</span>
+        <span class="style-tag">渐变</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 3)">
+      <div class="preview-header">
+        <span class="style-number">方案 3</span>
+      </div>
+      <span class="brand-size style-3">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">宋体细体 + 翠绿渐变，雅致书卷气</p>
+      <div class="style-tags">
+        <span class="style-tag">宋体</span>
+        <span class="style-tag">细体400</span>
+        <span class="style-tag">大字间距</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 4)">
+      <div class="preview-header">
+        <span class="style-number">方案 4</span>
+      </div>
+      <span class="brand-size style-4">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">圆体中粗 + 金橙渐变，亲和力强</p>
+      <div class="style-tags">
+        <span class="style-tag">圆体</span>
+        <span class="style-tag">中粗600</span>
+        <span class="style-tag">暖色</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 5)">
+      <div class="preview-header">
+        <span class="style-number">方案 5</span>
+      </div>
+      <span class="brand-size style-5">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">Impact极粗 + 粉紫渐变，粗犷有力</p>
+      <div class="style-tags">
+        <span class="style-tag">Impact</span>
+        <span class="style-tag">极粗900</span>
+        <span class="style-tag">紧凑</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 6)">
+      <div class="preview-header">
+        <span class="style-number">方案 6</span>
+      </div>
+      <span class="brand-size style-6">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">黑体超细 + 深蓝渐变，轻盈优雅</p>
+      <div class="style-tags">
+        <span class="style-tag">黑体</span>
+        <span class="style-tag">超细200</span>
+        <span class="style-tag">超大间距</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 7)">
+      <div class="preview-header">
+        <span class="style-number">方案 7</span>
+      </div>
+      <span class="brand-size style-7">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">楷体 + 黑金渐变，传统书法感</p>
+      <div class="style-tags">
+        <span class="style-tag">楷体</span>
+        <span class="style-tag">书法</span>
+        <span class="style-tag">黑金</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 8)">
+      <div class="preview-header">
+        <span class="style-number">方案 8</span>
+      </div>
+      <span class="brand-size style-8">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">等宽镂空 + 纯黑描边，极简工业</p>
+      <div class="style-tags">
+        <span class="style-tag">等宽</span>
+        <span class="style-tag">镂空</span>
+        <span class="style-tag">描边</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 9)">
+      <div class="preview-header">
+        <span class="style-number">方案 9</span>
+      </div>
+      <span class="brand-size style-9">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">多层立体阴影，复古3D效果</p>
+      <div class="style-tags">
+        <span class="style-tag">黑体</span>
+        <span class="style-tag">立体</span>
+        <span class="style-tag">多层阴影</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 10)">
+      <div class="preview-header">
+        <span class="style-number">方案 10</span>
+      </div>
+      <span class="brand-size style-10">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">超大字间距 + 底部横线，品牌标识感</p>
+      <div class="style-tags">
+        <span class="style-tag">黑体</span>
+        <span class="style-tag">超大间距</span>
+        <span class="style-tag">下划线</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 11)">
+      <div class="preview-header">
+        <span class="style-number">方案 11</span>
+      </div>
+      <span class="brand-size style-11">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">纯描边 + 外发光，霓虹灯效果</p>
+      <div class="style-tags">
+        <span class="style-tag">黑体</span>
+        <span class="style-tag">描边</span>
+        <span class="style-tag">发光</span>
+      </div>
+    </div>
+
+    <div class="preview-card" onclick="select(this, 12)">
+      <div class="preview-header">
+        <span class="style-number">方案 12</span>
+      </div>
+      <span class="brand-size style-12">准星</span>
+      <div class="brand-wordmark-sub">监管报送助手</div>
+      <p class="style-desc">半色分割渐变，独特视觉设计</p>
+      <div class="style-tags">
+        <span class="style-tag">黑体</span>
+        <span class="style-tag">双色分割</span>
+        <span class="style-tag">超粗</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="dark-mode-section">
+    <h2>暗色模式预览（部分方案）</h2>
+    <div class="dark-grid">
+      <div class="dark-card">
+        <span class="brand-size style-1">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+      <div class="dark-card">
+        <span class="brand-size style-2">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+      <div class="dark-card">
+        <span class="brand-size style-3">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+      <div class="dark-card">
+        <span class="brand-size style-7">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+      <div class="dark-card">
+        <span class="brand-size style-8">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+      <div class="dark-card">
+        <span class="brand-size style-9">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+      <div class="dark-card">
+        <span class="brand-size style-11">准星</span>
+        <div class="brand-wordmark-sub">监管报送助手</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function select(card, num) {
+      document.querySelectorAll('.preview-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      console.log('选择方案', num);
+    }
+  </script>
+</body>
+</html>

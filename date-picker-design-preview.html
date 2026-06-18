@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>日期选择组件方案预览</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --surface: rgba(255, 255, 255, 0.86);
+      --surface-strong: #ffffff;
+      --text: #152033;
+      --muted: #64748b;
+      --line: rgba(59, 130, 246, 0.18);
+      --blue: #3b82f6;
+      --cyan: #06b6d4;
+      --purple: #8b5cf6;
+      --green: #10b981;
+      --shadow: 0 18px 42px rgba(15, 23, 42, 0.10);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 8% 12%, rgba(59, 130, 246, 0.16), transparent 32%),
+        radial-gradient(circle at 88% 8%, rgba(6, 182, 212, 0.12), transparent 30%),
+        linear-gradient(135deg, #f8fbff 0%, #eef4fb 100%);
+    }
+
+    .page {
+      width: min(1180px, calc(100vw - 40px));
+      margin: 0 auto;
+      padding: 34px 0 44px;
+    }
+
+    .title {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0;
+    }
+
+    .title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      height: 34px;
+      padding: 0 14px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      border-radius: 999px;
+      color: #2563eb;
+      background: rgba(255, 255, 255, 0.72);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      position: relative;
+      min-height: 300px;
+      padding: 22px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card.dark {
+      color: #e5edf7;
+      background:
+        radial-gradient(circle at 18% 10%, rgba(34, 211, 238, 0.16), transparent 30%),
+        linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(30, 31, 47, 0.94));
+      border-color: rgba(148, 163, 184, 0.18);
+    }
+
+    .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    .card h2 {
+      margin: 0 0 7px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .card .desc {
+      margin: 0;
+      max-width: 420px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .dark .desc { color: #aab8ca; }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.10);
+      color: #2563eb;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .dark .tag {
+      color: #67e8f9;
+      background: rgba(34, 211, 238, 0.12);
+    }
+
+    .mock-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .mock-label {
+      width: 74px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dark .mock-label { color: #9fb0c4; }
+
+    .mock-button {
+      height: 36px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 8px;
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      font-weight: 600;
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.22);
+    }
+
+    .calendar-icon {
+      width: 16px;
+      height: 16px;
+      border: 1.6px solid currentColor;
+      border-top-width: 4px;
+      border-radius: 4px;
+      flex: 0 0 auto;
+    }
+
+    .date-a {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 172px;
+      height: 38px;
+      padding: 0 38px 0 13px;
+      border: 1px solid rgba(59, 130, 246, 0.24);
+      border-radius: 999px;
+      color: #1e293b;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .date-a::after {
+      content: "";
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      width: 7px;
+      height: 7px;
+      border-right: 1.8px solid var(--blue);
+      border-bottom: 1.8px solid var(--blue);
+      transform: translateY(-64%) rotate(45deg);
+    }
+
+    .date-a:hover,
+    .date-a:focus-within {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    }
+
+    .date-b {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 184px;
+      height: 42px;
+      padding: 0 42px 0 14px;
+      border: 1px solid rgba(34, 211, 238, 0.30);
+      border-radius: 8px;
+      color: #e5edf7;
+      background:
+        radial-gradient(circle at 18% 22%, rgba(34, 211, 238, 0.16), transparent 34%),
+        radial-gradient(circle at 84% 72%, rgba(139, 92, 246, 0.16), transparent 28%),
+        rgba(15, 23, 42, 0.76);
+      box-shadow: 0 0 20px rgba(34, 211, 238, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(12px);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    .date-b::after {
+      content: "";
+      position: absolute;
+      right: 14px;
+      top: 50%;
+      width: 16px;
+      height: 16px;
+      border: 1.5px solid #67e8f9;
+      border-top-width: 4px;
+      border-radius: 4px;
+      transform: translateY(-50%);
+      filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.65));
+    }
+
+    .particle {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #67e8f9;
+      box-shadow: 0 0 9px rgba(103, 232, 249, 0.9);
+      animation: drift 3s ease-in-out infinite;
+    }
+
+    .particle.p1 { left: 11%; top: 24%; }
+    .particle.p2 { right: 16%; top: 62%; animation-delay: .7s; }
+    .particle.p3 { left: 54%; bottom: 20%; animation-delay: 1.2s; }
+
+    @keyframes drift {
+      0%, 100% { transform: translateY(0); opacity: .55; }
+      50% { transform: translateY(-7px); opacity: 1; }
+    }
+
+    .date-c {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 40px;
+      padding: 4px;
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.78);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+    }
+
+    .date-c span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 30px;
+      min-width: 42px;
+      padding: 0 10px;
+      border-radius: 6px;
+      background: rgba(241, 245, 249, 0.94);
+      color: #1e293b;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .date-c span:first-child { min-width: 62px; color: #2563eb; }
+    .date-c i { color: #94a3b8; font-style: normal; }
+
+    .date-d {
+      display: inline-grid;
+      grid-template-columns: 68px 1fr 34px;
+      align-items: center;
+      min-width: 222px;
+      height: 40px;
+      overflow: hidden;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
+      font-size: 13px;
+    }
+
+    .date-d .label {
+      height: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #0f766e;
+      background: rgba(20, 184, 166, 0.10);
+      font-weight: 700;
+    }
+
+    .date-d .value {
+      padding: 0 12px;
+      color: #1e293b;
+      font-family: Consolas, "Courier New", monospace;
+      font-weight: 600;
+    }
+
+    .date-d .icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #0f766e;
+    }
+
+    .preview-panel {
+      margin-top: 26px;
+      padding: 16px;
+      border: 1px dashed rgba(148, 163, 184, 0.35);
+      border-radius: 8px;
+      background: rgba(248, 250, 252, 0.62);
+    }
+
+    .dark .preview-panel {
+      background: rgba(15, 23, 42, 0.48);
+      border-color: rgba(148, 163, 184, 0.22);
+    }
+
+    .mini-calendar {
+      width: 232px;
+      border: 1px solid rgba(59, 130, 246, 0.16);
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 18px 30px rgba(15, 23, 42, 0.10);
+    }
+
+    .dark .mini-calendar {
+      background: rgba(15, 23, 42, 0.82);
+      border-color: rgba(34, 211, 238, 0.18);
+    }
+
+    .mini-cal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 12px;
+      color: #2563eb;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .dark .mini-cal-head { color: #67e8f9; }
+
+    .mini-cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      padding: 0 10px 12px;
+      text-align: center;
+      font-size: 12px;
+    }
+
+    .mini-cal-grid span {
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      color: #64748b;
+    }
+
+    .dark .mini-cal-grid span { color: #9fb0c4; }
+    .mini-cal-grid .day { color: #1e293b; }
+    .dark .mini-cal-grid .day { color: #e5edf7; }
+    .mini-cal-grid .active {
+      color: white;
+      background: linear-gradient(135deg, #3b82f6, #06b6d4);
+      font-weight: 700;
+    }
+
+    .summary {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 860px) {
+      .grid { grid-template-columns: 1fr; }
+      .title { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="title">
+      <div>
+        <h1>日期选择组件方案预览</h1>
+        <p>用于选择“运行日期 / 默认运行日期 / 报告期”的视觉方向。这里只做样式示例，不改正式系统逻辑。</p>
+      </div>
+      <span class="mode-pill">默认太空主题 + 暗色适配参考</span>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <h2>方案 A：轻量胶囊</h2>
+            <p class="desc">克制、干净，适合工作台顶部。视觉变化明显但不会抢按钮和图表的注意力。</p>
+          </div>
+          <span class="tag">推荐：稳妥</span>
+        </div>
+        <div class="mock-row">
+          <span class="mock-label">运行日期</span>
+          <div class="date-a"><span class="calendar-icon"></span><span>2026-06-06</span></div>
+          <button class="mock-button">开始</button>
+        </div>
+        <div class="preview-panel">
+          <div class="mini-calendar">
+            <div class="mini-cal-head"><span>2026 年 6 月</span><span>&lt; &gt;</span></div>
+            <div class="mini-cal-grid">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+              <span class="day">1</span><span class="day">2</span><span class="day">3</span><span class="day">4</span><span class="day">5</span><span class="day active">6</span><span class="day">7</span>
+            </div>
+          </div>
+        </div>
+        <p class="summary">优点：实现成本低，兼容现有布局，适合全站统一。</p>
+      </article>
+
+      <article class="card dark">
+        <div class="card-head">
+          <div>
+            <h2>方案 B：太空粒子</h2>
+            <p class="desc">和当前下拉框、输入框粒子效果最统一，暗色模式下辨识度最好。</p>
+          </div>
+          <span class="tag">推荐：主题统一</span>
+        </div>
+        <div class="mock-row">
+          <span class="mock-label">报告期</span>
+          <div class="date-b">
+            <span class="particle p1"></span>
+            <span class="particle p2"></span>
+            <span class="particle p3"></span>
+            <span>2026-06-06</span>
+          </div>
+        </div>
+        <div class="preview-panel">
+          <div class="mini-calendar">
+            <div class="mini-cal-head"><span>2026 年 6 月</span><span>&lt; &gt;</span></div>
+            <div class="mini-cal-grid">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+              <span class="day">1</span><span class="day">2</span><span class="day">3</span><span class="day">4</span><span class="day">5</span><span class="day active">6</span><span class="day">7</span>
+            </div>
+          </div>
+        </div>
+        <p class="summary">优点：高级感强；缺点：比 A 更显眼。</p>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <h2>方案 C：分段日期</h2>
+            <p class="desc">把年月日分成三个稳定区域，适合设置页和参数区，信息读取很快。</p>
+          </div>
+          <span class="tag">推荐：配置项</span>
+        </div>
+        <div class="mock-row">
+          <span class="mock-label">默认日期</span>
+          <div class="date-c"><span>2026</span><i>/</i><span>06</span><i>/</i><span>06</span></div>
+        </div>
+        <div class="preview-panel">
+          <div class="mini-calendar">
+            <div class="mini-cal-head"><span>快速选择</span><span>今天</span></div>
+            <div class="mini-cal-grid">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+              <span class="day">1</span><span class="day">2</span><span class="day">3</span><span class="day">4</span><span class="day">5</span><span class="day active">6</span><span class="day">7</span>
+            </div>
+          </div>
+        </div>
+        <p class="summary">优点：专业、清晰；缺点：不像传统输入框。</p>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <h2>方案 D：报表标签</h2>
+            <p class="desc">更偏监管报表系统，左侧固定业务标签，右侧显示日期值，稳重克制。</p>
+          </div>
+          <span class="tag">推荐：业务稳重</span>
+        </div>
+        <div class="mock-row">
+          <div class="date-d">
+            <span class="label">报告期</span>
+            <span class="value">2026-06-06</span>
+            <span class="icon"><span class="calendar-icon"></span></span>
+          </div>
+        </div>
+        <div class="preview-panel">
+          <div class="mini-calendar">
+            <div class="mini-cal-head"><span>报告期选择</span><span>&lt; &gt;</span></div>
+            <div class="mini-cal-grid">
+              <span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span>
+              <span class="day">1</span><span class="day">2</span><span class="day">3</span><span class="day">4</span><span class="day">5</span><span class="day active">6</span><span class="day">7</span>
+            </div>
+          </div>
+        </div>
+        <p class="summary">优点：和业务语义绑定强；缺点：不同位置可能需要不同标签。</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

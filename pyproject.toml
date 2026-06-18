@@ -1,0 +1,24 @@
+[project]
+name = "auto-check"
+version = "0.1.0"
+description = "Local reconciliation tool for project balance differences"
+requires-python = ">=3.12"
+dependencies = [
+  "openpyxl>=3.1.0",
+  "pycryptodomex>=3.20.0",
+  "py7zr>=1.0.0",
+  "psycopg[binary]>=3.2.0",
+  "PyMySQL>=1.1.0",
+  "rarfile>=4.2",
+  "xlrd>=2.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pyinstaller>=6.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

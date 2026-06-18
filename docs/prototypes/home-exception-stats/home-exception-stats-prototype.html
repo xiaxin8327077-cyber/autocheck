@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>首页重点异常统计原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #eef6ff;
+      --bg-2: #f8fbff;
+      --panel: rgba(255, 255, 255, 0.78);
+      --panel-solid: #ffffff;
+      --line: rgba(114, 145, 184, 0.28);
+      --text: #16324f;
+      --muted: #6a7c92;
+      --blue: #1d8dff;
+      --cyan: #15b7d9;
+      --orange: #f08a24;
+      --red: #e84f5c;
+      --green: #22a86b;
+      --shadow: 0 18px 42px rgba(54, 103, 158, 0.16);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+
+    [data-mode="dark"] {
+      color-scheme: dark;
+      --bg: #091321;
+      --bg-2: #111c2b;
+      --panel: rgba(18, 31, 48, 0.84);
+      --panel-solid: #142238;
+      --line: rgba(132, 169, 211, 0.22);
+      --text: #e7f1ff;
+      --muted: #9fb2c7;
+      --shadow: 0 22px 52px rgba(0, 0, 0, 0.34);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 8%, rgba(29, 141, 255, 0.18), transparent 26%),
+        radial-gradient(circle at 86% 12%, rgba(21, 183, 217, 0.15), transparent 28%),
+        linear-gradient(160deg, var(--bg), var(--bg-2));
+    }
+
+    button, select {
+      font: inherit;
+    }
+
+    .shell {
+      width: min(1520px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 24px 0 48px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      min-height: 64px;
+      padding: 10px 14px 10px 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+      position: sticky;
+      top: 12px;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .logo {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      box-shadow: 0 10px 22px rgba(29, 141, 255, 0.28);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1.2;
+    }
+
+    .brand span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav button {
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 14px;
+      color: var(--text);
+      background: transparent;
+      cursor: default;
+    }
+
+    .nav .active {
+      color: white;
+      background: linear-gradient(135deg, var(--blue), #6657ff);
+      box-shadow: 0 12px 24px rgba(29, 141, 255, 0.28);
+    }
+
+    .mode-toggle {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 12px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.35);
+      cursor: pointer;
+    }
+
+    [data-mode="dark"] .mode-toggle {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .page-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin: 28px 0 16px;
+    }
+
+    .page-head h1 {
+      margin: 0;
+      font-size: 26px;
+      letter-spacing: 0;
+    }
+
+    .page-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .period-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .period-control label {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .period-control select {
+      min-width: 168px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--panel-solid);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.75fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .focus-card {
+      padding: 18px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .section-title span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .stat-button {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      gap: 14px;
+      min-height: 154px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.84), rgba(237, 247, 255, 0.74));
+      text-align: left;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    [data-mode="dark"] .stat-button {
+      background: linear-gradient(145deg, rgba(24, 41, 63, 0.92), rgba(16, 31, 49, 0.78));
+    }
+
+    .stat-button:hover {
+      transform: translateY(-2px);
+      border-color: rgba(29, 141, 255, 0.52);
+      box-shadow: 0 20px 40px rgba(29, 141, 255, 0.16);
+    }
+
+    .stat-button::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 4px;
+      background: linear-gradient(90deg, var(--blue), var(--cyan));
+    }
+
+    .stat-button.danger::before {
+      background: linear-gradient(90deg, var(--orange), var(--red));
+    }
+
+    .stat-kicker {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .stat-label {
+      display: block;
+      margin-top: 8px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .stat-sub {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .stat-value {
+      align-self: center;
+      min-width: 118px;
+      text-align: right;
+    }
+
+    .stat-value strong {
+      display: block;
+      font-size: 52px;
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    .stat-value span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .summary-card {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .summary-row {
+      display: grid;
+      grid-template-columns: 108px 1fr;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.42);
+    }
+
+    [data-mode="dark"] .summary-row {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .summary-row span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .summary-row strong {
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .minor-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .minor-card {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .minor-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .minor-card strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 22px;
+    }
+
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .chart-card {
+      padding: 18px;
+      min-height: 318px;
+    }
+
+    .chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .chart-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .chart-select {
+      min-width: 156px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      color: var(--text);
+      background: var(--panel-solid);
+    }
+
+    .chart-tabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .chart-tabs button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .chart-tabs .active {
+      color: white;
+      border-color: transparent;
+      background: var(--blue);
+    }
+
+    .chart-area {
+      position: relative;
+      height: 230px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background:
+        linear-gradient(to right, transparent 0 19%, rgba(118, 153, 192, 0.16) 20%, transparent 21% 39%, rgba(118, 153, 192, 0.16) 40%, transparent 41% 59%, rgba(118, 153, 192, 0.16) 60%, transparent 61% 79%, rgba(118, 153, 192, 0.16) 80%, transparent 81%),
+        linear-gradient(to bottom, transparent 0 24%, rgba(118, 153, 192, 0.16) 25%, transparent 26% 49%, rgba(118, 153, 192, 0.16) 50%, transparent 51% 74%, rgba(118, 153, 192, 0.16) 75%, transparent 76%);
+    }
+
+    .chart-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .legend {
+      display: flex;
+      gap: 18px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 6px;
+      border-radius: 50%;
+      vertical-align: -1px;
+      background: var(--blue);
+    }
+
+    .legend .orange i { background: var(--orange); }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: stretch end;
+      padding: 24px;
+      background: rgba(7, 16, 28, 0.36);
+      z-index: 20;
+    }
+
+    .drawer-backdrop.open {
+      display: grid;
+    }
+
+    .drawer {
+      width: min(820px, 100%);
+      max-height: calc(100vh - 48px);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-solid);
+      box-shadow: 0 28px 80px rgba(5, 13, 25, 0.34);
+      overflow: hidden;
+    }
+
+    .drawer-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .drawer-head h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .drawer-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .close-btn {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .drawer-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .drawer-tools input {
+      width: min(360px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      background: var(--bg-2);
+    }
+
+    .drawer-tools .count-chip {
+      white-space: nowrap;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: white;
+      background: var(--blue);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .project-list {
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .project-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg-2);
+    }
+
+    .project-item + .project-item {
+      margin-top: 10px;
+    }
+
+    .project-main strong {
+      display: block;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .project-main span {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .project-meta {
+      min-width: 160px;
+      text-align: right;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .project-meta button {
+      margin-top: 10px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: white;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      cursor: pointer;
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        width: min(100% - 24px, 760px);
+        padding-top: 12px;
+      }
+
+      .topbar,
+      .page-head,
+      .hero-grid,
+      .drawer-tools {
+        align-items: stretch;
+      }
+
+      .topbar,
+      .page-head {
+        flex-direction: column;
+      }
+
+      .nav {
+        justify-content: flex-start;
+      }
+
+      .hero-grid,
+      .stat-row,
+      .minor-grid,
+      .charts {
+        grid-template-columns: 1fr;
+      }
+
+      .stat-button {
+        min-height: 132px;
+      }
+
+      .drawer-backdrop {
+        padding: 10px;
+      }
+
+      .drawer {
+        max-height: calc(100vh - 20px);
+      }
+
+      .project-item {
+        grid-template-columns: 1fr;
+      }
+
+      .project-meta {
+        min-width: 0;
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">AC</div>
+        <div>
+          <strong>Auto Check</strong>
+          <span>首页重点异常统计原型</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button class="active">首页</button>
+        <button>自动对数</button>
+        <button>核对历史</button>
+        <button>工具</button>
+        <button>系统设置</button>
+        <button class="mode-toggle" id="modeToggle" type="button">暗色</button>
+      </nav>
+    </header>
+
+    <main>
+      <div class="page-head">
+        <div>
+          <h1>首页</h1>
+          <p>把需要立即处理的异常放到首屏，趋势图下移作为辅助观察。</p>
+        </div>
+        <div class="period-control">
+          <label for="periodSelect">报送期</label>
+          <select id="periodSelect">
+            <option>2026-05-31 最新执行</option>
+            <option>2026-04-30 最新执行</option>
+            <option>2026-03-31 最新执行</option>
+          </select>
+        </div>
+      </div>
+
+      <section class="hero-grid" aria-label="首页重点概览">
+        <div class="card focus-card">
+          <div class="section-title">
+            <h2>重点异常统计</h2>
+            <span>点击数字块查看对应项目清单</span>
+          </div>
+          <div class="stat-row">
+            <button class="stat-button danger" type="button" data-kind="received">
+              <span>
+                <span class="stat-kicker">按项目结果归并</span>
+                <span class="stat-label">实收信托不一致</span>
+                <span class="stat-sub">包含实收本金差异、缺失、重复等结果</span>
+              </span>
+              <span class="stat-value">
+                <strong>12</strong>
+                <span>个项目</span>
+              </span>
+            </button>
+            <button class="stat-button" type="button" data-kind="target">
+              <span>
+                <span class="stat-kicker">按 FA / AM 判断归并</span>
+                <span class="stat-label">标的不一致</span>
+                <span class="stat-sub">包含直接标的不一致和资产缺失细化判断</span>
+              </span>
+              <span class="stat-value">
+                <strong>8</strong>
+                <span>个项目</span>
+              </span>
+            </button>
+          </div>
+          <div class="minor-grid">
+            <div class="minor-card">
+              <span>本期总差异</span>
+              <strong>46</strong>
+            </div>
+            <div class="minor-card">
+              <span>新增差异</span>
+              <strong>9</strong>
+            </div>
+            <div class="minor-card">
+              <span>减少差异</span>
+              <strong>5</strong>
+            </div>
+          </div>
+        </div>
+
+        <aside class="card summary-card">
+          <div class="section-title">
+            <h2>最新执行</h2>
+            <span>核对历史来源</span>
+          </div>
+          <div class="summary-row">
+            <span>执行时间</span>
+            <strong>2026-06-12 09:42:18</strong>
+          </div>
+          <div class="summary-row">
+            <span>数据源</span>
+            <strong>报表库生产数据源</strong>
+          </div>
+          <div class="summary-row">
+            <span>执行人</span>
+            <strong>管理员</strong>
+          </div>
+          <div class="summary-row">
+            <span>跳转逻辑</span>
+            <strong>数字块打开首页项目清单，再进入历史详情定位项目</strong>
+          </div>
+        </aside>
+      </section>
+
+      <section class="charts" aria-label="趋势图区域">
+        <article class="card chart-card">
+          <div class="chart-head">
+            <h2>最新趋势</h2>
+            <select class="chart-select" aria-label="选择核对日期">
+              <option>2026-05-31</option>
+              <option>2026-04-30</option>
+              <option>2026-03-31</option>
+            </select>
+          </div>
+          <div class="chart-area" role="img" aria-label="最新趋势原型图">
+            <svg class="chart-svg" viewBox="0 0 960 230" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M40 188 L40 126" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M160 188 L160 94" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M280 188 L280 144" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M400 188 L400 70" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M520 188 L520 118" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M640 188 L640 152" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M760 188 L760 84" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M880 188 L880 136" stroke="#1d8dff" stroke-width="18" stroke-linecap="round" />
+              <path d="M40 176 C160 132 284 148 398 106 C520 62 650 134 762 96 C820 76 858 84 918 58" fill="none" stroke="#f08a24" stroke-width="5" stroke-linecap="round" />
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i></i>差异类型数量</span>
+            <span class="orange"><i></i>重点异常</span>
+          </div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="chart-head">
+            <h2>总趋势</h2>
+            <div class="chart-tabs" aria-label="趋势范围">
+              <button>全部</button>
+              <button>近三月</button>
+              <button class="active">近半年</button>
+              <button>近一年</button>
+            </div>
+          </div>
+          <div class="chart-area" role="img" aria-label="差异趋势原型图">
+            <svg class="chart-svg" viewBox="0 0 960 230" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M40 176 C138 142 210 168 292 118 C376 66 454 82 532 112 C628 148 698 76 782 92 C852 106 890 78 928 54" fill="none" stroke="#1d8dff" stroke-width="5" stroke-linecap="round" />
+              <path d="M40 196 C126 178 202 184 286 156 C372 126 450 132 538 146 C626 164 704 126 784 138 C854 148 892 128 928 112" fill="none" stroke="#f08a24" stroke-width="5" stroke-linecap="round" />
+              <circle cx="928" cy="54" r="7" fill="#1d8dff" />
+              <circle cx="928" cy="112" r="7" fill="#f08a24" />
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i></i>总差异</span>
+            <span class="orange"><i></i>重点异常</span>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" aria-hidden="true">
+    <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+      <div class="drawer-head">
+        <div>
+          <h2 id="drawerTitle">实收信托不一致项目</h2>
+          <p id="drawerSubtitle">2026-05-31 最新执行，按项目结果归并展示。</p>
+        </div>
+        <button class="close-btn" id="closeDrawer" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="drawer-tools">
+        <input id="searchInput" type="search" placeholder="搜索项目名称、代码或原因" />
+        <span class="count-chip" id="drawerCount">12 个项目</span>
+      </div>
+      <div class="project-list" id="projectList"></div>
+    </section>
+  </div>
+
+  <script>
+    const data = {
+      received: {
+        title: "实收信托不一致项目",
+        subtitle: "2026-05-31 最新执行，包含实收本金差异、缺失、重复等结果。",
+        count: 12,
+        rows: [
+          ["ZX202605001", "长安信托-稳健收益集合资金信托计划", "实收本金差异：FA 4001 与 c1000 存在差异，差异值 320,000.00", "差异金额 32.00 万"],
+          ["ZX202605017", "中海信托-月度开放式资产管理计划", "实收本金缺失：当前报送期未匹配到 c1000 实收记录", "缺失记录 1 条"],
+          ["ZX202605026", "华融信托-专项投资集合信托", "实收本金重复：同一项目存在多条实收记录", "重复记录 2 条"],
+          ["ZX202605033", "外贸信托-精选资产配置计划", "资产差异 + 实收本金差异：需优先核对实收口径", "差异金额 18.50 万"]
+        ]
+      },
+      target: {
+        title: "标的不一致项目",
+        subtitle: "2026-05-31 最新执行，包含 FA/AM 直接不一致和资产缺失细化判断。",
+        count: 8,
+        rows: [
+          ["ZX202605006", "建信信托-基础设施收益权信托", "FA 与 AM 标的不一致：估值表证券代码和资产明细代码不一致", "标的 1 个"],
+          ["ZX202605014", "五矿信托-优选债券投资计划", "FA 和 AM 标的不一致：资产缺失细化判断命中", "标的 3 个"],
+          ["ZX202605022", "平安信托-混合资产配置计划", "标的代码核对：AM 项目投资明细无法匹配 FA 估值标的", "标的 2 个"],
+          ["ZX202605031", "中航信托-稳利集合资金信托", "FA 与 AM 标的不一致：项目下估值资产与 AM 资产不一致", "标的 1 个"]
+        ]
+      }
+    };
+
+    const root = document.documentElement;
+    const drawerBackdrop = document.getElementById("drawerBackdrop");
+    const drawerTitle = document.getElementById("drawerTitle");
+    const drawerSubtitle = document.getElementById("drawerSubtitle");
+    const drawerCount = document.getElementById("drawerCount");
+    const projectList = document.getElementById("projectList");
+    const searchInput = document.getElementById("searchInput");
+    let activeKind = "received";
+
+    function renderRows() {
+      const keyword = searchInput.value.trim().toLowerCase();
+      const rows = data[activeKind].rows.filter((row) => row.join(" ").toLowerCase().includes(keyword));
+      projectList.innerHTML = rows.map((row) => `
+        <article class="project-item">
+          <div class="project-main">
+            <strong>${row[1]}</strong>
+            <span>${row[0]} · ${row[2]}</span>
+          </div>
+          <div class="project-meta">
+            <div>${row[3]}</div>
+            <button type="button">查看项目详情</button>
+          </div>
+        </article>
+      `).join("") || '<div class="project-item"><div class="project-main"><strong>没有匹配项目</strong><span>请调整搜索条件。</span></div></div>';
+      drawerCount.textContent = `${rows.length} / ${data[activeKind].count} 个项目`;
+    }
+
+    function openDrawer(kind) {
+      activeKind = kind;
+      drawerTitle.textContent = data[kind].title;
+      drawerSubtitle.textContent = data[kind].subtitle;
+      searchInput.value = "";
+      renderRows();
+      drawerBackdrop.classList.add("open");
+      drawerBackdrop.setAttribute("aria-hidden", "false");
+      searchInput.focus();
+    }
+
+    document.querySelectorAll(".stat-button").forEach((button) => {
+      button.addEventListener("click", () => openDrawer(button.dataset.kind));
+    });
+
+    document.getElementById("closeDrawer").addEventListener("click", () => {
+      drawerBackdrop.classList.remove("open");
+      drawerBackdrop.setAttribute("aria-hidden", "true");
+    });
+
+    drawerBackdrop.addEventListener("click", (event) => {
+      if (event.target === drawerBackdrop) {
+        drawerBackdrop.classList.remove("open");
+        drawerBackdrop.setAttribute("aria-hidden", "true");
+      }
+    });
+
+    searchInput.addEventListener("input", renderRows);
+
+    document.getElementById("modeToggle").addEventListener("click", () => {
+      const dark = root.getAttribute("data-mode") === "dark";
+      root.setAttribute("data-mode", dark ? "light" : "dark");
+      document.getElementById("modeToggle").textContent = dark ? "暗色" : "亮色";
+    });
+  </script>
+</body>
+</html>

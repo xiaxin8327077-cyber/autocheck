@@ -1,0 +1,85 @@
+# AGENTS.md
+
+## 适用范围
+
+本文件适用于整个仓库。
+
+## 项目概况
+
+Auto Check（对外名称"监管智核"）是一个本地 Windows Web 应用，用于自动对数、人行全量产品导入、人行逐笔校验和相关数据核对流程。
+
+核心目录布局：
+
+- `src/auto_check/app/`：本地 Web 服务、配置、数据访问、历史记录、流程工具、PBC 导入、安全与仓储查询
+- `src/auto_check/engine/`：自动对数规则、金额比较、匹配模型（`reconcile.py`、`matching.py`、`money.py`）
+- `src/auto_check/db_validation/`：人行逐笔校验引擎，含规则、规则文档、Excel 读取、表结构 DDL 与元数据
+- `src/auto_check/resources/`：内置资源数据
+- `src/auto_check/web/`：前端静态资源（页面、样式、导出详情脚本、加密兜底）
+- `tests/`：单元测试和前端静态结构测试
+- `docs/`：中文规则说明和设计说明（详见下方"相关文档"）
+- `scripts/`：本地测试辅助脚本和打包脚本
+- `sql/`：本地测试库 DDL 和造数脚本
+- `config/`：本地测试配置样例
+- `dist\auto-check.exe`：打包产物
+
+支持的数据源类型为 PostgreSQL 和 MySQL，界面上维护 DWS 数据源与报表数据源两类连接配置。
+
+## 常用命令
+
+- 运行测试：`python -m pytest -q`
+- 打包 Windows 可执行文件：`powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1`
+- 打包产物路径：`dist\auto-check.exe`
+
+如果需要指定 Python 运行时：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath "<path-to-python.exe>"
+```
+
+## 开发约定
+
+- 优先沿用现有代码风格和项目结构，避免无关重构。
+- 不要回退用户或工作区中已有的无关改动。
+- 搜索文件或文本时优先使用 `rg`。
+- 测试、验证或任务可清晰拆分时，可以自动开启子代理并行处理；主会话负责协调、检查结果和必要的后续修正。
+- 子代理或后台线程多轮等待仍无回复、影响当前任务推进时，可以切回主会话直接处理或补做必要验证，并在结果说明中注明原因。
+- 每次修改后都需要说明修改内容，说明应包含涉及的代码内容、配置/文档内容和行为变化。
+- 前端改动需要兼容默认太空主题和暗色模式。
+- 各功能模块的图标及按钮形态、背景色等要尽量符合不同主题下各自色彩的风格。
+- 人行全量产品一键导入需要保持四步流程：上传文件、字段映射、开始导入、完成。
+- 修改上传、解析、映射或导入逻辑时，需要同步更新后端测试和前端静态测试。
+- 修改可见 UI、版本号或更新日志时，需要同步更新 `README.md`、`src/auto_check/web/app.js` 中的系统更新日志，以及相关测试，除非用户明确要求某一处不更新。
+- `src/auto_check/web/app.js` 中系统设置的更新日志应保持精简：新增功能列出具体功能；系统界面布局、美化、体验优化、问题修复等统一写为“系统优化及BUG修复”，不要展开细节。
+- `README.md` 中的版本说明仍需要保留详细变更内容，正常列出关键优化、修复和行为变化，不套用应用内更新日志的精简口径。
+- 登录和用户管理的新密码规则为：至少 6 位且至少包含 1 个字母；初始化管理员密码、新建用户、管理员修改/重置用户密码都必须执行该限制，已有用户密码和登录验证不受新规则影响。
+- 修改自动对数核心逻辑、对数仓储查询、差异类型/具体原因展示或导出逻辑时，必须同步更新 `docs/reconcile-execution-flow.zh-CN.md`。
+- 修改人行逐笔校验引擎的规则、表结构 DDL、字段映射、Excel 读取或元数据时，需要同步更新 `src/auto_check/db_validation/rules_document.py` 中的规则文档内容，以及对应的后端测试（`tests/test_db_validation_*.py`），并确认"对账业务设置/业务字段清单"页面展示与实际逻辑一致。
+- 修改流程执行工具、流程链定义、后台执行或浮动提示等逻辑时，需要参照 `docs/flow-bg-execution-design.zh-CN.md` 并同步相关测试。
+
+## 相关文档
+
+- `docs/reconcile-execution-flow.zh-CN.md`：自动对数执行流程、仓储查询、差异类型与导出逻辑的权威说明，改动对应逻辑时必须同步。
+- `docs/reconcile-rules.zh-CN.md` / `docs/对账逻辑说明.md`：自动对数规则与逻辑历史说明。
+- `docs/reconcile-logic-history.zh-CN.md`：自动对数逻辑演进历史。
+- `docs/flow-bg-execution-design.zh-CN.md`：流程执行工具后台执行与浮动提示设计。
+- `docs/check-history-design.zh-CN.md`：核对历史相关设计。
+- `docs/business-schema-config-roadmap.zh-CN.md`：对账业务设置/业务字段清单路线图。
+- `docs/asset-missing-refinement-*.zh-CN.md`：资产缺失细分相关设计与临时方案。
+- `docs/reconcile-candidate-report-check-mapping.zh-CN.md`：候选不唯一与导出备注映射说明。
+- `docs/deployment.zh-CN.md`：跨平台部署说明。
+- `docs/prototypes/`：原型与设计预览（可包含 HTML 原型），不属于正式产物。
+- `README.md`：对外说明与版本变更记录，修改可见 UI、版本号或更新日志时需同步。
+
+## 验证要求
+
+- 代码改动后运行：`python -m pytest -q`
+- 影响源码或前端展示且需要交付应用时，运行打包脚本刷新 `dist\auto-check.exe`。
+- 打包前先确认没有正在运行的 `dist\auto-check.exe` 占用文件。
+- `git diff --check` 中的 CRLF/LF 提示通常只是换行符提示；若出现实际 whitespace error，需要修复。
+
+## Git 约定
+
+- 提交应聚焦当前请求，不混入无关改动。
+- 不要提交 `build/` 等生成目录，除非用户明确要求。
+- 用户要求提交或推送时，先完成测试和必要打包，再提交并推送当前分支。
+- 当 GitHub 连接失败时，从 Gitee 拉取代码（地址：`https://gitee.com/xiaxin8327077-cyber/autocheck.git`）。

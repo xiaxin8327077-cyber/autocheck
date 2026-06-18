@@ -1,0 +1,1576 @@
+<!doctype html>
+<html lang="zh-CN" class="auth-pending">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>监管智核</title>
+    <link rel="icon" href="/assets/favicon-64x64.svg?v=2.0.8-regulatory-intelligence-core" />
+    <script id="initialThemeScript">
+      (() => {
+        try {
+          const activeThemeUser = localStorage.getItem("autoCheckThemeUserKey") || "";
+          const theme = (activeThemeUser && localStorage.getItem(`autoCheckTheme:${activeThemeUser}`)) || localStorage.getItem("autoCheckTheme");
+          const darkMode = (activeThemeUser && localStorage.getItem(`autoCheckDarkMode:${activeThemeUser}`)) || localStorage.getItem("autoCheckDarkMode");
+          document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "space-tech");
+          document.documentElement.setAttribute("data-color-mode", darkMode === "true" ? "dark" : "light");
+        } catch (_) {
+          document.documentElement.setAttribute("data-theme", "space-tech");
+          document.documentElement.setAttribute("data-color-mode", "light");
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <button class="brand-theme-toggle sidebar-brand-theme-toggle" type="button" data-theme-toggle-logo title="切换主题" aria-label="切换主题">
+          <img class="brand-icon" src="/assets/logo-full.svg" alt="监管智核 Logo" />
+        </button>
+        <h1 class="brand-wordmark brand-wordmark--stack">
+          <span class="brand-wordmark-main">监管智核</span>
+          <span class="brand-wordmark-sub">监管报送核验平台</span>
+        </h1>
+      </div>
+      <nav class="sidebar-nav">
+        <a class="nav-item" data-page="home" href="#">
+          <span class="nav-icon">&#9673;</span>
+          <span>首页</span>
+        </a>
+        <a class="nav-item" data-page="auto-check" href="#">
+          <span class="nav-icon">&#9743;</span>
+          <span>自动对数</span>
+        </a>
+        <a class="nav-item" data-page="history" href="#">
+          <span class="nav-icon">&#9716;</span>
+          <span>核对历史</span>
+        </a>
+        <a class="nav-item" data-page="tools" href="#">
+          <span class="nav-icon">&#9881;</span>
+          <span>工具</span>
+        </a>
+        <a class="nav-item" data-page="settings" href="#">
+          <span class="nav-icon">&#9730;</span>
+          <span>系统设置</span>
+        </a>
+        <a class="nav-item admin-only" data-page="users" href="#">
+          <span class="nav-icon nav-icon-users" aria-hidden="true"></span>
+          <span>用户管理</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-footer-main">
+          <button id="sidebarDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
+            <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
+          </button>
+          <span class="status" id="statusText">v2.0.8</span>
+        </div>
+        <div class="user-menu user-menu--sidebar" id="sidebarUserMenu">
+          <button class="user-menu-trigger" type="button" data-current-username>
+            <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
+            <span data-current-username-text>admin</span>
+          </button>
+          <div class="user-menu-panel">
+            <button class="user-menu-logout" type="button" data-logout-btn>退出登录</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <header class="top-nav">
+      <div class="top-nav-brand">
+        <button class="brand-theme-toggle top-nav-mark" type="button" data-theme-toggle-logo title="切换主题" aria-label="切换主题">
+          <img src="/assets/favicon-64x64.svg" alt="监管智核 Logo" />
+        </button>
+        <span class="brand-wordmark top-nav-wordmark">
+          <span class="brand-wordmark-main">监管智核</span>
+          <span class="brand-wordmark-sub">监管报送核验平台</span>
+        </span>
+        <span class="top-nav-status" id="topNavStatus" title="v2.0.8">v2.0.8</span>
+      </div>
+      <nav class="top-nav-tabs">
+        <button id="topDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
+          <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
+        </button>
+        <a class="top-nav-item" data-page="home" href="#">首页</a>
+        <a class="top-nav-item" data-page="auto-check" href="#">自动对数</a>
+        <a class="top-nav-item" data-page="history" href="#">核对历史</a>
+        <a class="top-nav-item" data-page="tools" href="#">工具</a>
+        <a class="top-nav-item" data-page="settings" href="#">系统设置</a>
+        <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
+        <div class="user-menu user-menu--top" id="topUserMenu">
+          <button class="user-menu-trigger" type="button" data-current-username>
+            <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
+            <span data-current-username-text>admin</span>
+          </button>
+          <div class="user-menu-panel">
+            <button class="user-menu-logout" type="button" data-logout-btn>退出登录</button>
+          </div>
+        </div>
+      </nav>
+      </header>
+
+    <main class="main-content">
+      <!-- 首页 -->
+      <section class="page" id="page-home">
+        <div class="page-header">
+          <h2>首页</h2>
+        </div>
+        <div class="home-grid">
+          <!-- 统计卡片行 -->
+          <div class="home-stats-row">
+            <div class="home-stat-card glass-stat-card home-stat-card--clickable home-stat-card--report-period" role="button" tabindex="0" data-home-stat="reportPeriod">
+              <div class="home-stat-icon home-stat-icon--purple">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="1"/><rect x="3" y="14" width="8" height="7" rx="1"/><rect x="15" y="14" width="6" height="7" rx="1"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-label">报告期</span>
+                <strong class="home-stat-value" id="homeStatReportPeriod">--</strong>
+                <small class="home-stat-subvalue" id="homeStatReportRunAt">--</small>
+              </div>
+            </div>
+            <div class="home-stat-card glass-stat-card home-stat-card--clickable" role="button" tabindex="0" data-home-stat="total">
+              <div class="home-stat-icon home-stat-icon--blue">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-label">总差异数</span>
+                <strong class="home-stat-value" id="homeStatTotalDiff">--</strong>
+                <small class="home-stat-delta" id="homeStatTotalDiffDelta">--</small>
+              </div>
+            </div>
+            <div class="home-stat-card glass-stat-card home-stat-card--clickable" role="button" tabindex="0" data-home-stat="unresolved">
+              <div class="home-stat-icon home-stat-icon--orange">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-label">未解释</span>
+                <strong class="home-stat-value" id="homeStatUnresolved">--</strong>
+                <small class="home-stat-delta" id="homeStatUnresolvedDelta">--</small>
+              </div>
+            </div>
+            <div class="home-stat-card glass-stat-card home-stat-card--clickable" role="button" tabindex="0" data-home-stat="explained">
+              <div class="home-stat-icon home-stat-icon--green">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-label">已解释</span>
+                <strong class="home-stat-value" id="homeStatExplained">--</strong>
+                <small class="home-stat-delta" id="homeStatExplainedDelta">--</small>
+              </div>
+            </div>
+            <div class="home-stat-card glass-stat-card home-stat-card--clickable" role="button" tabindex="0" data-home-stat="paidIn">
+              <div class="home-stat-icon home-stat-icon--red">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-label">实收本金不一致</span>
+                <strong class="home-stat-value" id="homeStatPaidIn">--</strong>
+                <small class="home-stat-delta" id="homeStatPaidInDelta">--</small>
+              </div>
+            </div>
+            <div class="home-stat-card glass-stat-card home-stat-card--clickable" role="button" tabindex="0" data-home-stat="targetCode">
+              <div class="home-stat-icon home-stat-icon--teal">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
+              </div>
+              <div class="home-stat-info">
+                <span class="home-stat-label">标的代码不一致</span>
+                <strong class="home-stat-value" id="homeStatTargetCode">--</strong>
+                <small class="home-stat-delta" id="homeStatTargetCodeDelta">--</small>
+              </div>
+            </div>
+          </div>
+          <!-- 趋势图行 -->
+          <div class="home-charts-row">
+            <div class="card glass-card">
+              <div class="card-title">
+                <span class="card-title-icon">&#9679;</span>
+                <span>执行趋势</span>
+                <select id="chartDateSelect" class="chart-date-select"></select>
+                <span class="card-subtitle" id="chartInfo"></span>
+              </div>
+              <div class="chart-container" id="chartContainer">
+                <canvas id="chartCanvas"></canvas>
+                <p class="placeholder-text" id="chartEmpty">暂无核对数据</p>
+                <div class="chart-loading-indicator" hidden><span></span><p>加载趋势数据...</p></div>
+              </div>
+            </div>
+            <div class="card glass-card">
+              <div class="card-title card-title--trend">
+                <span class="card-title-icon">&#9679;</span>
+                <div class="trend-quick-btns">
+                  <button class="trend-quick-btn" data-range="all">全部</button>
+                  <button class="trend-quick-btn" data-range="3m">近三月</button>
+                  <button class="trend-quick-btn active" data-range="6m">近半年</button>
+                  <button class="trend-quick-btn" data-range="1y">近一年</button>
+                  <button class="trend-quick-btn" data-range="2y">近两年</button>
+                </div>
+                <span class="trend-legend" aria-label="指标颜色说明">
+                  <span><i class="trend-legend-dot trend-legend-dot--first-run"></i>每期差异个数</span>
+                  <span><i class="trend-legend-dot trend-legend-dot--runs"></i>每期执行次数</span>
+                </span>
+                <span class="card-subtitle" id="trendInfo"></span>
+              </div>
+              <div class="chart-container" id="trendContainer">
+                <canvas id="trendCanvas"></canvas>
+                <p class="placeholder-text" id="trendEmpty">暂无核对数据</p>
+                <div class="chart-loading-indicator" hidden><span></span><p>加载趋势数据...</p></div>
+              </div>
+            </div>
+          </div>
+          <!-- 首页分析卡片行 -->
+          <div class="home-analysis-row">
+            <div class="home-analysis-card glass-stat-card">
+              <div class="card-title">
+                <span class="card-title-icon">&#9679;</span>
+                <span>对数质量</span>
+                <span class="card-subtitle" id="homeQualityScope">近12期</span>
+              </div>
+              <div class="home-quality-body">
+                <div class="home-quality-ring" style="--quality-progress: 0">
+                  <span id="homeQualityScore">--</span>
+                  <small>质量分</small>
+                </div>
+                <div class="home-quality-info">
+                  <span class="home-quality-tag" id="homeQualityTag">暂无数据</span>
+                  <div class="home-quality-bars" id="homeQualityRows">
+                    <p class="home-analysis-empty">暂无核对数据</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="home-analysis-card glass-stat-card">
+              <div class="card-title">
+                <span class="card-title-icon">&#9679;</span>
+                <span>差异类型分布</span>
+                <span class="card-subtitle" id="homeReasonScope">近12期</span>
+              </div>
+              <div class="home-reason-list" id="homeReasonList">
+                <p class="home-analysis-empty">暂无核对数据</p>
+              </div>
+            </div>
+            <div class="home-analysis-card glass-stat-card">
+              <div class="card-title">
+                <span class="card-title-icon">&#9679;</span>
+                <span>高频差异项目</span>
+                <span class="card-subtitle" id="homeFocusScope">近12期</span>
+              </div>
+              <div class="home-focus-list" id="homeFocusList">
+                <p class="home-analysis-empty">暂无核对数据</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 自动对数 -->
+      <section class="page" id="page-auto-check">
+        <div class="page-header">
+          <h2>工作台</h2>
+        </div>
+
+        <!-- 执行对数 -->
+        <section class="card">
+          <div class="run-bar">
+            <div class="date-picker">
+              <input id="runDate" type="date" />
+            </div>
+            <button id="runBtn" type="button" class="btn-primary">
+              <span class="btn-icon">&#8635;</span> 开始
+            </button>
+            <button id="stopRunBtn" type="button" class="btn-stop" title="停止执行" hidden>
+              <span class="stop-icon"></span>
+            </button>
+            <div class="run-progress" id="waveProgressContainer" hidden>
+              <span class="progress-step-name" id="waveStepName">读取数据</span>
+              <div class="wave-progress">
+                <div class="wave-progress-bar" id="waveProgressBar" style="width: 0%"></div>
+                <div class="wave-progress-text" id="waveProgressText">0%</div>
+              </div>
+            </div>
+            <span class="last-run-time" id="lastRunTime" hidden></span>
+          </div>
+          <div class="run-log-panel" id="runLogPanel" hidden>
+            <button class="run-log-title" id="runLogToggleBtn" type="button" aria-expanded="true">
+              <span>执行日志</span>
+              <span class="run-log-toggle-icon">⌃</span>
+            </button>
+            <div class="run-log-list" id="runLogList"></div>
+          </div>
+        </section>
+
+        <!-- 结果 -->
+        <section class="card result-card">
+          <div class="card-title card-title--spread">
+            <div class="card-title-left">
+              <span class="card-title-icon">&#9640;</span>
+              <span>结果详情</span>
+              <span class="result-filter-hint" id="resultFilterHint" hidden></span>
+            </div>
+            <div class="filters-row">
+              <span class="filter-clear-shell filter-clear-shell--text">
+                <input id="keywordFilter" class="filter-input" placeholder="搜索项目编号/名称" type="text" />
+                <button id="clearKeywordFilter" class="filter-clear-button" type="button" aria-label="清除项目筛选">&times;</button>
+              </span>
+              <span class="filter-clear-shell filter-clear-shell--select result-reason-filter-shell">
+                <select id="reasonFilter" class="filter-select">
+                  <option value="">全部差异类型</option>
+                  <option value="资产缺失">资产缺失</option>
+                  <option value="资产重复">资产重复</option>
+                  <option value="资产差异">资产差异</option>
+                  <option value="负债及权益科目差异">负债及权益科目差异</option>
+                  <option value="负债及权益科目缺失">负债及权益科目缺失</option>
+                  <option value="负债及权益科目重复">负债及权益科目重复</option>
+                  <option value="实收本金差异">实收本金差异</option>
+                  <option value="实收本金缺失">实收本金缺失</option>
+                  <option value="实收本金重复">实收本金重复</option>
+                  <option value="暂无法确定">暂无法确定</option>
+                </select>
+                <button id="clearReasonFilter" class="filter-clear-button" type="button" aria-label="清除差异类型筛选">&times;</button>
+              </span>
+              <span class="filter-clear-shell filter-clear-shell--select">
+                <select id="statusFilter" class="filter-select">
+                  <option value="">全部状态</option>
+                  <option value="已解释">已解释</option>
+                  <option value="未解释">未解释</option>
+                  <option value="候选不唯一">候选不唯一</option>
+                  <option value="组合候选过多">组合候选过多</option>
+                </select>
+                <button id="clearStatusFilter" class="filter-clear-button" type="button" aria-label="清除状态筛选">&times;</button>
+              </span>
+              <button class="btn-primary" id="exportBtn"><span class="btn-icon" aria-hidden="true">&#8681;</span><span data-export-label>导出</span></button>
+              <span class="export-progress" id="exportProgress" hidden>
+                <span class="loading-spinner export-progress-spinner" aria-hidden="true"></span>
+                <span id="exportProgressText">准备导出...</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="result-table">
+              <colgroup>
+                <col class="col-expand" />
+                <col class="col-code" />
+                <col class="col-name" />
+                <col class="col-money" />
+                <col class="col-money" />
+                <col class="col-money-wide" />
+                <col class="col-diff" />
+                <col class="col-reason" />
+                <col class="col-status" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>项目编号</th>
+                  <th>项目名称</th>
+                  <th>资产合计（估值表）</th>
+                  <th>资产合计 (元)</th>
+                  <th>负债及权益合计 (元)</th>
+                  <th>差异金额</th>
+                  <th>差异类型</th>
+                  <th>匹配状态</th>
+                </tr>
+              </thead>
+              <tbody id="resultBody">
+                <tr><td colspan="9" class="empty">暂无结果</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pagination" id="pagination">
+            <span class="pagination-info" id="pageInfo">暂无数据</span>
+            <div class="pagination-controls">
+              <button class="page-btn" id="prevPage" disabled>&#9664;</button>
+              <span class="page-current" id="pageCurrent">1</span>
+              <button class="page-btn" id="nextPage" disabled>&#9654;</button>
+              <span class="pagination-jump">
+                跳至 <input id="jumpPage" type="number" min="1" /> 页
+              </span>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- 核对历史 -->
+      <section class="page" id="page-history">
+        <div class="page-header">
+          <h2>核对历史</h2>
+        </div>
+
+        <section class="card result-card">
+          <div class="card-title card-title--spread">
+            <div class="card-title-left">
+              <span class="card-title-icon">&#9716;</span>
+              <span>历史记录</span>
+            </div>
+            <div class="history-toolbar">
+              <label class="history-filter-field">
+                <span>报告期</span>
+                <span class="filter-clear-shell filter-clear-shell--date history-filter-clear-shell">
+                  <input id="historyReportFilter" class="filter-input history-filter-input" type="date" />
+                  <button id="clearHistoryReportFilter" class="filter-clear-button" type="button" aria-label="清除报告期筛选">&times;</button>
+                </span>
+              </label>
+              <label class="history-filter-field">
+                <span>执行人</span>
+                <span class="filter-clear-shell filter-clear-shell--select history-filter-clear-shell">
+                  <select id="historyExecutorFilter" class="filter-select history-filter-input">
+                    <option value="">全部执行人</option>
+                  </select>
+                  <button id="clearHistoryExecutorFilter" class="filter-clear-button" type="button" aria-label="清除执行人筛选">&times;</button>
+                </span>
+              </label>
+              <button id="historyRefreshBtn" type="button" class="btn-outline btn-sm">刷新</button>
+            </div>
+          </div>
+          <div class="table-wrap history-table-wrap">
+            <table class="result-table history-table">
+              <thead>
+                <tr>
+                  <th>报告期</th>
+                  <th>执行时间</th>
+                  <th>执行人</th>
+                  <th class="admin-only">数据源</th>
+                  <th>总差异</th>
+                  <th>已解释</th>
+                  <th>新增差异</th>
+                  <th>减少差异</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody">
+                <tr><td colspan="9" class="empty">暂无历史记录</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination history-pagination" id="historyPagination">
+            <span class="pagination-info" id="historyPageInfo">暂无数据</span>
+            <div class="pagination-controls">
+              <button class="page-btn" id="historyPrevPage" disabled>&#9664;</button>
+              <span class="page-current" id="historyPageCurrent">-</span>
+              <button class="page-btn" id="historyNextPage" disabled>&#9654;</button>
+              <span class="pagination-jump">
+                跳至 <input id="historyJumpPage" type="number" min="1" /> 页
+              </span>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- 工具 -->
+      <section class="page" id="page-tools">
+        <div class="page-header">
+          <h2>工具</h2>
+          <p class="page-subtitle">高效工具矩阵，精准处理每一项任务</p>
+        </div>
+
+        <div class="tools-grid">
+          <div class="tool-card tool-card-pbc" id="toolCardPbc">
+            <div class="tool-card-bar tool-card-bar--pbc"></div>
+            <div class="tool-card-body">
+              <div class="tool-card-icon-row">
+                <div class="tool-card-icon tool-card-icon--pbc">&#x1F4E5;</div>
+                <span class="tool-card-badge tool-card-badge--pbc">核心</span>
+              </div>
+              <div class="tool-card-title">一键导入工具</div>
+              <div class="tool-card-desc">支持任何数据批量导入，自动校验数据完整性与格式合规性，快速完成导入流程。</div>
+              <div class="tool-card-footer">
+                <span>启动工具</span>
+                <svg class="tool-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </div>
+            </div>
+          </div>
+          <div class="tool-card tool-card-db-validation" id="toolCardDbValidation">
+            <div class="tool-card-bar tool-card-bar--db-validation"></div>
+            <div class="tool-card-body">
+              <div class="tool-card-icon-row">
+                <div class="tool-card-icon tool-card-icon--db-validation">&#128202;</div>
+                <span class="tool-card-badge tool-card-badge--db-validation">校验</span>
+              </div>
+              <div class="tool-card-title">人行逐笔校验引擎</div>
+              <div class="tool-card-desc">按当前报告期读取逐笔当期和上期表，执行数据库规则校验并输出 Excel。</div>
+              <div class="tool-card-footer">
+                <span>启动校验</span>
+                <svg class="tool-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </div>
+            </div>
+          </div>
+          <div class="tool-card tool-card-flow" id="toolCardFlow">
+            <div class="tool-card-bar tool-card-bar--flow"></div>
+            <div class="tool-card-body">
+              <div class="tool-card-icon-row">
+                <div class="tool-card-icon tool-card-icon--flow">&#128257;</div>
+                <span class="tool-card-badge tool-card-badge--flow">流程</span>
+              </div>
+              <div class="tool-card-title">流程执行</div>
+              <div class="tool-card-desc">按系统设置中的流程链顺序执行，等待当前流程结束后再执行下一流程。</div>
+              <div class="tool-card-footer">
+                <span>启动流程</span>
+                <svg class="tool-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PBC 导入弹窗 -->
+      <div class="pbc-modal-overlay" id="pbcModalOverlay">
+        <div class="pbc-modal" id="pbcModal">
+          <button class="pbc-modal-close" id="pbcModalClose">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+
+          <div class="pbc-modal-header">
+            <div class="pbc-modal-header-left">
+              <div class="pbc-modal-icon">&#x1F4E5;</div>
+              <div>
+                <h2>一键导入</h2>
+                <p>上传数据文件，自动映射列，一键完成数据库导入</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Steps indicator -->
+          <div class="pbc-steps" id="pbcSteps">
+            <div class="pbc-step pbc-step--active" data-step="1">
+              <div class="pbc-step-num">1</div>
+              <div class="pbc-step-label">上传文件</div>
+            </div>
+            <div class="pbc-step-connector"></div>
+            <div class="pbc-step" data-step="2">
+              <div class="pbc-step-num">2</div>
+              <div class="pbc-step-label">字段映射</div>
+            </div>
+            <div class="pbc-step-connector"></div>
+            <div class="pbc-step" data-step="3">
+              <div class="pbc-step-num">3</div>
+              <div class="pbc-step-label">开始导入</div>
+            </div>
+            <div class="pbc-step-connector"></div>
+            <div class="pbc-step" data-step="4">
+              <div class="pbc-step-num">4</div>
+              <div class="pbc-step-label">完成</div>
+            </div>
+          </div>
+
+          <!-- Step 1: Upload -->
+          <div class="pbc-step-content pbc-step-content--active" id="pbcStep1">
+            <div class="pbc-upload-area" id="pbcUploadArea">
+              <div class="pbc-upload-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+              </div>
+              <div class="pbc-upload-text">点击上传或拖拽文件到此处</div>
+              <div class="pbc-upload-hint">支持 .zip .rar .7z .xlsx .xls .csv</div>
+              <div class="pbc-upload-progress" id="pbcUploadProgress" hidden>
+                <div class="pbc-upload-progress-info">
+                  <span id="pbcUploadProgressText">正在上传...</span>
+                  <strong id="pbcUploadProgressPercent">0%</strong>
+                </div>
+                <div class="pbc-upload-progress-track">
+                  <div class="pbc-upload-progress-fill" id="pbcUploadProgressFill" style="width: 0%"></div>
+                </div>
+              </div>
+              <input type="file" id="pbcZipFile" class="pbc-file-input" accept=".zip,.rar,.7z,.xlsx,.xls,.csv" />
+            </div>
+            <div id="pbcFileList" class="pbc-file-list" hidden>
+              <div class="pbc-file-list-header">
+                <span>文件名</span>
+                <span>列数</span>
+                <span>操作</span>
+              </div>
+              <div id="pbcFileListBody"></div>
+            </div>
+          </div>
+
+          <!-- Step 2: Mapping -->
+          <div class="pbc-step-content" id="pbcStep2">
+            <div class="pbc-mapping-config">
+              <div class="pbc-mapping-config-left">
+                <h4 class="pbc-mapping-section-title">导入配置</h4>
+                <div class="pbc-mapping-form">
+                  <div class="pbc-form-row">
+                    <label>
+                      <span>数据源</span>
+                      <select id="pbcDataSource"></select>
+                    </label>
+                    <label>
+                      <span>目标表名</span>
+                      <input id="pbcTargetTable" list="pbcRecentTables" placeholder="" />
+                      <datalist id="pbcRecentTables"></datalist>
+                    </label>
+                    <label>
+                      <span>导入方式</span>
+                      <select id="pbcImportMode">
+                        <option value="append">追加导入</option>
+                        <option value="replace" selected>清空后导入</option>
+                      </select>
+                    </label>
+                  </div>
+                  <button id="pbcLoadMappingsBtn" type="button" class="pbc-btn pbc-btn--outline">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                    读取目标列并自动映射
+                  </button>
+                </div>
+              </div>
+              <div class="pbc-mapping-config-right">
+                <h4 class="pbc-mapping-section-title">
+                  字段映射
+                  <span class="pbc-mapping-count" id="pbcMappingCount"></span>
+                </h4>
+                <div id="pbcColumnNotice" class="pbc-column-notice" hidden></div>
+                <div id="pbcMappingList" class="pbc-mapping-list">
+                  <p class="placeholder-text">读取目标列后显示映射关系</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Import progress -->
+          <div class="pbc-step-content" id="pbcStep3">
+            <div class="pbc-import-progress">
+              <div class="pbc-progress-header">
+                <div class="pbc-progress-icon pbc-progress-icon--spinning" id="pbcProgressIcon">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                </div>
+                <div>
+                  <div class="pbc-progress-title" id="pbcProgressTitle">正在导入中</div>
+                  <div class="pbc-progress-subtitle" id="pbcProgressSubtitle">请勿关闭页面，数据正在写入数据库</div>
+                </div>
+              </div>
+              <div class="pbc-progress-bar-track">
+                <div class="pbc-progress-bar-fill" id="pbcProgressFill" style="width: 0%"></div>
+              </div>
+              <div class="pbc-progress-percent" id="pbcProgressPercent">0%</div>
+              <div id="pbcImportLog" class="pbc-import-log">
+                <div class="pbc-log-entry pbc-log-entry--info">准备开始导入...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 4: Complete -->
+          <div class="pbc-step-content" id="pbcStep4">
+            <div class="pbc-complete">
+              <div class="pbc-complete-icon">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </div>
+              <div class="pbc-complete-title">导入完成！</div>
+              <div class="pbc-complete-desc" id="pbcCompleteDesc">数据已成功导入到目标数据库</div>
+              <div class="pbc-complete-stats" id="pbcCompleteStats"></div>
+            </div>
+          </div>
+
+          <!-- Footer buttons -->
+          <div class="pbc-modal-footer" id="pbcModalFooter">
+            <button type="button" class="pbc-btn pbc-btn--secondary" id="pbcPrevBtn" hidden>上一步</button>
+            <div class="pbc-modal-footer-actions">
+              <span class="pbc-upload-summary" id="pbcUploadSummary" hidden>共 0 个文件</span>
+              <button type="button" class="pbc-btn pbc-btn--ghost" id="pbcClearFilesBtn" disabled>一键清空</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcNextBtn">下一步</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcRetryBtn" hidden>重试</button>
+            </div>
+            <button type="button" class="pbc-btn pbc-btn--success" id="pbcFinishBtn" hidden>完成</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 数据库校验弹窗 -->
+      <div class="pbc-modal-overlay db-validation-modal-overlay" id="dbValidationModalOverlay">
+        <div class="pbc-modal db-validation-modal" id="dbValidationModal">
+          <button class="pbc-modal-close" id="dbValidationModalClose">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+
+          <div class="pbc-modal-header">
+            <div class="pbc-modal-header-left">
+              <div class="pbc-modal-icon db-validation-modal-icon">&#128202;</div>
+              <div>
+                <h2>人行逐笔校验引擎</h2>
+                <p>选择逐笔表数据源和报告期，校验完成后下载 Excel</p>
+              </div>
+              <button type="button" class="pbc-btn pbc-btn--secondary db-validation-history-btn" id="dbValidationHistoryBtn">执行历史</button>
+            </div>
+          </div>
+
+          <div class="db-validation-grid">
+            <div class="db-validation-panel">
+              <h4 class="pbc-mapping-section-title">运行参数</h4>
+              <div class="db-validation-form">
+                <label class="db-validation-date-field">
+                  <span>报告期</span>
+                  <input type="date" id="dbValidationReportDate" />
+                </label>
+                <div class="db-validation-checkbox-row">
+                  <div class="db-validation-checkbox">
+                    <input type="checkbox" id="dbValidationPublicInfoCheck" />
+                    <span>公开信息</span>
+                  </div>
+                  <div class="db-validation-checkbox">
+                    <input type="checkbox" id="dbValidationTemplateCheck" />
+                    <span>模板</span>
+                  </div>
+                </div>
+              </div>
+              <div class="db-validation-table-header">
+                <span>校验表单</span>
+                  <label class="db-validation-select-all-label">
+                    <input type="checkbox" id="dbValidationSelectAllTablesBtn" checked />
+                    <span>全选</span>
+                  </label>
+              </div>
+              <div class="db-validation-table-list" id="dbValidationTableList"></div>
+            </div>
+
+            <div class="db-validation-panel">
+              <h4 class="pbc-mapping-section-title">执行状态</h4>
+              <div class="pbc-import-progress db-validation-progress">
+                <div class="pbc-progress-header">
+                  <div class="pbc-progress-icon pbc-progress-icon--spinning" id="dbValidationProgressIcon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                  </div>
+                  <div>
+                    <div class="pbc-progress-title" id="dbValidationProgressTitle">等待开始</div>
+                    <div class="pbc-progress-subtitle" id="dbValidationProgressSubtitle">确认参数后开始数据库校验</div>
+                  </div>
+                </div>
+                <div class="pbc-progress-bar-track">
+                  <div class="pbc-progress-bar-fill" id="dbValidationProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="pbc-progress-percent" id="dbValidationProgressPercent">0%</div>
+                <div id="dbValidationLog" class="pbc-import-log">
+                  <div class="pbc-log-entry pbc-log-entry--info">准备开始校验...</div>
+                </div>
+              </div>
+              <div class="pbc-complete-stats db-validation-stats" id="dbValidationStats"></div>
+            </div>
+          </div>
+
+          <div class="pbc-modal-footer">
+            <span class="modal-status" id="dbValidationStatus"></span>
+            <div class="pbc-modal-footer-actions">
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationRulesDocBtn">下载规则说明</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationCloseBtn">关闭</button>
+              <button type="button" class="pbc-btn pbc-btn--success" id="dbValidationDownloadBtn" disabled>下载结果</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="dbValidationStartBtn">开始校验</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pbc-modal-overlay db-validation-history-overlay" id="dbValidationHistoryOverlay">
+        <div class="pbc-modal db-validation-history-modal">
+          <button class="pbc-modal-close" id="dbValidationHistoryClose">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div class="pbc-modal-header">
+            <div class="pbc-modal-header-left">
+              <div class="pbc-modal-icon db-validation-modal-icon">&#128202;</div>
+              <div>
+                <h2>执行历史</h2>
+                <p>查看每次数据库校验执行记录，并下载对应结果 Excel</p>
+              </div>
+            </div>
+          </div>
+          <div class="db-validation-history-table-wrap">
+            <table class="result-table db-validation-history-table">
+              <thead>
+                <tr>
+                  <th>执行时间</th>
+                  <th>报告期</th>
+                  <th>结果条数</th>
+                  <th>公开信息</th>
+                  <th>模板</th>
+                  <th>表单数</th>
+                </tr>
+              </thead>
+              <tbody id="dbValidationHistoryBody">
+                <tr><td colspan="6" class="empty">暂无历史记录</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="pbc-modal-overlay flow-modal-overlay" id="flowModalOverlay">
+        <div class="pbc-modal flow-modal" id="flowModal">
+          <button class="pbc-modal-close" id="flowModalClose">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div class="pbc-modal-header">
+            <div class="pbc-modal-header-left">
+              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
+              <div>
+                <h2>流程执行</h2>
+                <p>选择已配置的流程链，按顺序执行并等待每个流程结束</p>
+              </div>
+              <button type="button" class="pbc-btn pbc-btn--secondary flow-history-btn" id="flowHistoryBtn">执行记录</button>
+            </div>
+          </div>
+          <div class="flow-run-grid">
+            <div class="flow-run-panel flow-chain-select-panel">
+              <div class="flow-chain-select-header">
+                <h4 class="pbc-mapping-section-title">流程链选择</h4>
+                <span class="flow-chain-selected-count">已选 0 个</span>
+              </div>
+              <div class="flow-chain-list" id="flowChainList"></div>
+              <div class="flow-chain-selection-summary" id="flowChainSelectionSummary">
+                <p>请选择要执行的流程链</p>
+              </div>
+            </div>
+            <div class="flow-run-panel">
+              <h4 class="pbc-mapping-section-title">执行状态</h4>
+              <div class="pbc-import-progress flow-progress">
+                <div class="pbc-progress-header">
+                  <div class="pbc-progress-icon" id="flowProgressIcon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                  </div>
+                  <div>
+                    <div class="pbc-progress-title" id="flowProgressTitle">等待开始</div>
+                    <div class="pbc-progress-subtitle" id="flowProgressSubtitle">选择流程链后开始执行</div>
+                  </div>
+                </div>
+                <div class="pbc-progress-bar-track">
+                  <div class="pbc-progress-bar-fill" id="flowProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="pbc-progress-percent" id="flowProgressPercent">0%</div>
+                <div id="flowLog" class="pbc-import-log">
+                  <div class="pbc-log-entry pbc-log-entry--info">准备开始执行...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="pbc-modal-footer">
+            <span class="modal-status" id="flowStatus"></span>
+            <div class="pbc-modal-footer-actions">
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" disabled>停止</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="flowStartBtn">开始执行</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pbc-modal-overlay flow-history-overlay" id="flowHistoryOverlay">
+        <div class="pbc-modal flow-history-modal">
+          <button class="pbc-modal-close" id="flowHistoryClose">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div class="pbc-modal-header">
+            <div class="pbc-modal-header-left">
+              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
+              <div>
+                <h2>流程执行记录</h2>
+                <p>查看手工执行记录</p>
+              </div>
+            </div>
+          </div>
+          <div class="flow-history-table-wrap">
+            <table class="result-table flow-history-table">
+              <thead>
+                <tr>
+                  <th>执行时间</th>
+                  <th>流程链</th>
+                  <th>触发方式</th>
+                  <th>状态</th>
+                  <th>流程数</th>
+                  <th>结束时间</th>
+                </tr>
+              </thead>
+              <tbody id="flowHistoryBody">
+                <tr><td colspan="6" class="empty">暂无执行记录</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="pbc-modal-overlay flow-chain-editor-overlay" id="flowChainEditorOverlay">
+        <div class="pbc-modal flow-chain-editor-modal">
+          <button class="pbc-modal-close" id="flowChainEditorClose">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div class="pbc-modal-header">
+            <div class="pbc-modal-header-left">
+              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
+              <div>
+                <h2 id="flowChainEditorTitle">新增流程链</h2>
+                <p>配置链路名称和流程执行顺序</p>
+              </div>
+            </div>
+          </div>
+          <div class="flow-chain-editor-body">
+            <div class="flow-chain-editor-grid">
+              <label class="modal-field">
+                <span>链路名称</span>
+                <input id="flowChainEditorName" class="setting-input" placeholder="资管新规1" />
+              </label>
+              <label class="flow-inline-check">
+                <input id="flowChainEditorEnabled" type="checkbox" checked />
+                <span>启用链路</span>
+              </label>
+            </div>
+            <div class="flow-step-builder">
+              <section class="flow-step-builder-panel">
+                <div class="flow-step-builder-head">
+                  <strong>可选流程</strong>
+                  <button type="button" class="btn-outline btn-sm" id="flowDefinitionRefreshBtn">刷新</button>
+                </div>
+                <input id="flowDefinitionSearch" class="setting-input" placeholder="搜索流程名称" />
+                <div class="flow-definition-table" id="flowDefinitionTable">
+                  <p class="placeholder-text">打开弹框后加载流程表</p>
+                </div>
+              </section>
+              <section class="flow-step-builder-panel">
+                <div class="flow-step-builder-head">
+                  <strong>已选流程</strong>
+                  <span>按列表顺序串行执行</span>
+                </div>
+                <div class="flow-selected-step-list" id="flowSelectedStepList"></div>
+              </section>
+            </div>
+          </div>
+          <div class="pbc-modal-footer">
+            <span class="modal-status" id="flowChainEditorStatus"></span>
+            <div class="pbc-modal-footer-actions">
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel">取消</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="flowChainEditorSave">保存链路</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 用户管理 -->
+      <section class="page" id="page-users">
+        <div class="user-management" id="userManagementPage">
+          <div class="user-toolbar">
+            <div class="user-toolbar-text">
+              <p class="section-kicker">ACCESS CONTROL</p>
+              <h2>用户管理</h2>
+              <p>管理员可维护系统登录账号、角色和启用状态。</p>
+            </div>
+            <div class="user-toolbar-actions">
+              <button id="exportUsersBtn" type="button" class="btn-outline" data-export-users-btn>📥 导出列表</button>
+              <button id="newUserBtn" type="button" class="btn-primary" data-new-user-btn>+ 新建用户</button>
+            </div>
+          </div>
+
+          <div class="user-stats">
+            <div class="user-stat-card">
+              <span class="user-stat-icon user-stat-icon--blue">👥</span>
+              <div><span>用户总数</span><strong id="userStatTotal">0</strong><small id="userStatTotalHint">当前账号</small></div>
+            </div>
+            <div class="user-stat-card">
+              <span class="user-stat-icon user-stat-icon--teal">🛡️</span>
+              <div><span>管理员</span><strong id="userStatAdmin">0</strong><small id="userStatAdminHint">占比 0%</small></div>
+            </div>
+            <div class="user-stat-card">
+              <span class="user-stat-icon user-stat-icon--green">✅</span>
+              <div><span>已启用</span><strong id="userStatEnabled">0</strong><small id="userStatEnabledHint">活跃率 0%</small></div>
+            </div>
+            <div class="user-stat-card user-stat-card--disabled">
+              <span class="user-stat-icon user-stat-icon--red">⏸️</span>
+              <div><span>已停用</span><strong id="userStatDisabled">0</strong><small id="userStatDisabledHint">停用账号</small></div>
+            </div>
+          </div>
+
+          <div class="user-filter-bar">
+            <input id="userSearch" class="filter-input" type="search" placeholder="🔍 搜索用户姓名 / 用户账号 / 角色" />
+            <select id="userRoleFilter" class="filter-select">
+              <option value="">全部角色</option>
+              <option value="admin">管理员</option>
+              <option value="user">普通用户</option>
+            </select>
+            <select id="userStatusFilter" class="filter-select">
+              <option value="">全部状态</option>
+              <option value="enabled">已启用</option>
+              <option value="disabled">已停用</option>
+            </select>
+            <div class="user-filter-pills" aria-label="用户筛选">
+              <button type="button" class="user-filter-pill active" data-user-filter="all">全部 <span id="userFilterAllCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="admin">管理员 <span id="userFilterAdminCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="user">普通用户 <span id="userFilterUserCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="enabled">已启用 <span id="userFilterEnabledCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="disabled">已停用 <span id="userFilterDisabledCount">0</span></button>
+            </div>
+            <div class="user-filter-actions-space">
+              <button type="button" class="btn-outline" data-export-users-btn>📥 导出列表</button>
+              <button type="button" class="btn-primary" data-new-user-btn>+ 新建用户</button>
+            </div>
+          </div>
+
+          <section class="user-table-card">
+            <table class="user-table">
+              <colgroup>
+                <col class="user-name-col" />
+                <col class="user-role-col" />
+                <col class="user-status-col" />
+                <col class="user-time-col" />
+                <col class="user-time-col" />
+                <col class="user-actions-col" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>用户</th>
+                  <th>角色</th>
+                  <th>状态</th>
+                  <th>创建时间</th>
+                  <th>最近登录时间</th>
+                  <th class="user-actions-heading">操作</th>
+                </tr>
+              </thead>
+              <tbody id="userTableBody">
+                <tr class="user-loading-row">
+                  <td><span class="user-skeleton user-skeleton-name"></span><span class="user-skeleton user-skeleton-sub"></span></td>
+                  <td><span class="user-skeleton user-skeleton-pill"></span></td>
+                  <td><span class="user-skeleton user-skeleton-pill"></span></td>
+                  <td><span class="user-skeleton user-skeleton-time"></span></td>
+                  <td><span class="user-skeleton user-skeleton-time"></span></td>
+                  <td><span class="user-skeleton user-skeleton-actions"></span></td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="user-pagination" id="userPagination">
+              <span id="userPageInfo">共 0 条</span>
+              <div class="user-pagination-actions">
+                <button id="userPrevPage" type="button" class="btn-outline btn-xs">上一页</button>
+                <button id="userNextPage" type="button" class="btn-outline btn-xs">下一页</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <!-- 系统设置 -->
+      <section class="page" id="page-settings">
+        <div class="settings-container">
+          <div class="page-header settings-page-header">
+            <h2>系统设置</h2>
+          </div>
+
+          <div class="dashboard-grid settings-dashboard-grid">
+            <!-- 系统信息 -->
+            <section class="card settings-dashboard-card card-system-info">
+              <div class="card-header" id="sysInfoToggle">
+                <div class="card-icon card-icon-blue">&#9432;</div>
+                <div class="card-title">
+                  <h3>系统信息</h3>
+                  <p>系统版本、运行状态和数据库连接</p>
+                </div>
+              </div>
+              <div class="card-body" id="sysInfoBody">
+                <div class="status-metrics">
+                  <div class="metric-item">
+                    <span class="metric-label">版本号</span>
+                    <span class="metric-value" id="sysVersion">2.0</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">运行状态</span>
+                    <span class="metric-value" id="sysStatus">
+                      <span class="status-dot status-ok"></span> 运行中
+                    </span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">历史核对次数</span>
+                    <span class="metric-value" id="historyRunCount">-</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">登录用户</span>
+                    <span class="metric-value" id="loginUserInfo">-</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">首页自动刷新</span>
+                    <span class="metric-value" id="autoRefreshInfo">-</span>
+                  </div>
+                  <div class="metric-item">
+                    <span class="metric-label">配置数量</span>
+                    <span class="metric-value" id="configCount">-</span>
+                  </div>
+                </div>
+                <div class="sys-info-actions">
+                  <button id="refreshInfoBtn" type="button" class="btn-outline btn-sm admin-action">刷新信息</button>
+                </div>
+                <div id="sysInfoFeedback" class="sys-info-feedback" hidden></div>
+              </div>
+            </section>
+
+            <!-- 数据管理 -->
+            <section class="card settings-dashboard-card card-data admin-only">
+              <div class="card-header" id="dataManageToggle">
+                <div class="card-icon card-icon-orange">&#128451;</div>
+                <div class="card-title">
+                  <h3>数据管理</h3>
+                  <p>清理历史、导入和导出配置</p>
+                </div>
+              </div>
+              <div class="card-body" id="dataManageBody">
+                <div class="data-manage-grid">
+                  <div class="data-manage-item">
+                    <div class="data-manage-info">
+                      <h4>清理历史记录</h4>
+                      <p>删除所有核对历史记录，释放存储空间</p>
+                    </div>
+                    <button id="clearHistoryBtn" type="button" class="btn-danger btn-sm">清理</button>
+                  </div>
+                  <div class="data-manage-item">
+                    <div class="data-manage-info">
+                      <h4>导出配置</h4>
+                      <p>将所有数据源配置导出为 JSON 文件</p>
+                    </div>
+                    <button id="exportConfigBtn" type="button" class="btn-outline btn-sm">导出</button>
+                  </div>
+                  <div class="data-manage-item">
+                    <div class="data-manage-info">
+                      <h4>导入配置</h4>
+                      <p>从 JSON 文件导入数据源配置</p>
+                    </div>
+                    <button id="importConfigBtn" type="button" class="btn-outline btn-sm">导入</button>
+                    <input type="file" id="importConfigFile" accept=".json" hidden />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- 默认设置 -->
+            <!-- class="card settings-dashboard-card card-default" -->
+            <section class="card settings-dashboard-card card-default admin-only">
+              <div class="card-header" id="defaultSettingsToggle">
+                <div class="card-icon card-icon-cyan">&#9881;</div>
+                <div class="card-title">
+                  <h3>默认设置</h3>
+                  <p>配置默认运行参数和页面行为</p>
+                </div>
+              </div>
+              <div class="card-body" id="defaultSettingsBody">
+                <div class="settings-grid">
+                  <label class="setting-item">
+                    <span class="setting-label">会话过期时间</span>
+                    <input type="number" id="sessionExpireHours" class="setting-input" min="1" max="168" step="1" value="8" />
+                    <span class="setting-hint">单位小时；登录后无操作超过该时长将自动退出</span>
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">每页显示条数</span>
+                    <select id="pageSize" class="setting-input">
+                      <option value="10">10 条</option>
+                      <option value="20">20 条</option>
+                      <option value="50">50 条</option>
+                      <option value="100">100 条</option>
+                    </select>
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">组合候选阈值</span>
+                    <input type="number" id="combinationLimit" class="setting-input" min="1" max="500" step="1" value="50" />
+                    <span class="setting-hint">估值科目组合匹配的最大候选行数，默认 50</span>
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">自动刷新首页</span>
+                    <select id="autoRefreshHome" class="setting-input">
+                      <option value="false">关闭</option>
+                      <option value="true">开启</option>
+                    </select>
+                    <span class="setting-hint">进入首页时自动刷新图表数据</span>
+                  </label>
+                </div>
+                <div class="settings-actions">
+                  <button id="saveSettingsBtn" type="button" class="btn-primary btn-sm">保存设置</button>
+                  <button id="resetSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card settings-dashboard-card card-db-validation admin-only">
+              <div class="card-header" id="dbValidationSettingsToggle">
+                <div class="card-icon card-icon-purple">&#128202;</div>
+                <div class="card-title">
+                  <h3>人行逐笔校验引擎</h3>
+                  <p>配置报表信息、逐笔、公开信息和模板数据源</p>
+                </div>
+              </div>
+              <div class="card-body" id="dbValidationSettingsBody">
+                <div class="db-validation-settings-grid">
+                  <div class="db-validation-source-row db-validation-source-row--meta">
+                    <div class="db-validation-source-title">
+                      <strong>报表信息配置数据源</strong>
+                      <span>baseinfo 和 field_info 所在数据源</span>
+                    </div>
+                    <label class="setting-item db-validation-source-select">
+                      <span class="setting-label">数据源</span>
+                      <select id="dbValidationMetadataSource" class="setting-input"></select>
+                    </label>
+                    <input id="dbValidationBaseinfoTable" type="hidden" value="xt_reg_table_baseinfo" />
+                    <input id="dbValidationFieldInfoTable" type="hidden" value="xt_reg_table_field_info" />
+                  </div>
+                  <div class="db-validation-source-row">
+                    <div class="db-validation-source-title">
+                      <strong>逐笔数据源</strong>
+                      <span>逐笔表读取范围</span>
+                    </div>
+                    <label class="setting-item db-validation-source-select">
+                      <span class="setting-label">数据源</span>
+                      <select id="dbValidationDetailSource" class="setting-input"></select>
+                    </label>
+                    <label class="setting-item db-validation-filter-input">
+                      <span class="setting-label">报送子系统编号</span>
+                      <input id="dbValidationDetailSysManageId" class="setting-input" placeholder="填写报送子系统编号，多个用;分隔" />
+                    </label>
+                    <label class="setting-item db-validation-filter-input">
+                      <span class="setting-label">分类编号</span>
+                      <input id="dbValidationDetailClassificationId" class="setting-input" placeholder="填写分类编号，多个用;分隔" />
+                    </label>
+                  </div>
+                  <div class="db-validation-source-row">
+                    <div class="db-validation-source-title">
+                      <strong>公开信息数据源</strong>
+                      <span>公开信息表读取范围</span>
+                    </div>
+                    <label class="setting-item db-validation-source-select">
+                      <span class="setting-label">数据源</span>
+                      <select id="dbValidationPublicInfoSource" class="setting-input"></select>
+                    </label>
+                    <label class="setting-item db-validation-filter-input">
+                      <span class="setting-label">报送子系统编号</span>
+                      <input id="dbValidationPublicInfoSysManageId" class="setting-input" placeholder="填写报送子系统编号，多个用;分隔" />
+                    </label>
+                    <label class="setting-item db-validation-filter-input">
+                      <span class="setting-label">分类编号</span>
+                      <input id="dbValidationPublicInfoClassificationId" class="setting-input" placeholder="填写分类编号，多个用;分隔" />
+                    </label>
+                    <input id="dbValidationPublicInfoTable" type="hidden" value="public_information_rh" />
+                  </div>
+                  <div class="db-validation-source-row">
+                    <div class="db-validation-source-title">
+                      <strong>模板数据源</strong>
+                      <span>模板表读取范围</span>
+                    </div>
+                    <label class="setting-item db-validation-source-select">
+                      <span class="setting-label">数据源</span>
+                      <select id="dbValidationTemplateSource" class="setting-input"></select>
+                    </label>
+                    <label class="setting-item db-validation-filter-input">
+                      <span class="setting-label">报送子系统编号</span>
+                      <input id="dbValidationTemplateSysManageId" class="setting-input" placeholder="填写报送子系统编号，多个用;分隔" />
+                    </label>
+                    <label class="setting-item db-validation-filter-input">
+                      <span class="setting-label">分类编号</span>
+                      <input id="dbValidationTemplateClassificationId" class="setting-input" placeholder="填写分类编号，多个用;分隔" />
+                    </label>
+                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button id="saveDbValidationSettingsBtn" type="button" class="btn-primary btn-sm">保存配置</button>
+                  <button id="dbValidationRefreshFieldMappingBtn" type="button" class="btn-outline btn-sm">刷新逐笔字段映射</button>
+                  <span class="modal-status" id="dbValidationSettingsStatus"></span>
+                </div>
+              </div>
+            </section>
+
+            <section class="card settings-dashboard-card card-flow admin-only">
+              <div class="card-header" id="flowSettingsToggle">
+                <div class="card-icon card-icon-cyan">&#128257;</div>
+                <div class="card-title">
+                  <h3>流程链配置</h3>
+                  <p>配置流程数据源、执行接口和流程顺序</p>
+                </div>
+              </div>
+              <div class="card-body" id="flowSettingsBody">
+                <div class="flow-settings-grid">
+                  <label class="setting-item">
+                    <span class="setting-label">流程数据源</span>
+                    <select id="flowSource" class="setting-input"></select>
+                  </label>
+                  <label class="setting-item flow-settings-url">
+                    <span class="setting-label">执行接口</span>
+                    <input id="flowExecuteUrl" class="setting-input" placeholder="http://192.168.107.81/assmag/spiderFlow/spider/testRun" />
+                    <span class="setting-hint">填写平台 testRun 基础地址，必须以 http:// 或 https:// 开头；不要带 id 参数，系统会自动追加 ?id=flow_id。</span>
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">流程表</span>
+                    <input id="flowFlowTable" class="setting-input" value="sp_flow" />
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">日志表</span>
+                    <input id="flowTaskTable" class="setting-input" value="sp_task" />
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">轮询间隔(秒)</span>
+                    <input id="flowPollInterval" class="setting-input" type="number" min="1" max="300" value="5" />
+                  </label>
+                  <label class="setting-item">
+                    <span class="setting-label">单流程超时(分钟)</span>
+                    <input id="flowStepTimeout" class="setting-input" type="number" min="1" max="1440" value="60" />
+                  </label>
+                </div>
+                <div class="flow-chain-settings-header">
+                  <strong>流程链</strong>
+                  <button id="addFlowChainBtn" type="button" class="btn-outline btn-sm">新增链路</button>
+                </div>
+                <div class="flow-chain-settings-list" id="flowChainSettingsList"></div>
+                <div class="settings-actions">
+                  <button id="saveFlowSettingsBtn" type="button" class="btn-primary btn-sm">保存配置</button>
+                  <span class="modal-status" id="flowSettingsStatus"></span>
+                </div>
+              </div>
+            </section>
+
+            <!-- 数据源配置 -->
+            <!-- class="card settings-dashboard-card card-datasource" -->
+            <section class="card settings-dashboard-card card-datasource admin-only">
+              <div class="card-header" id="configToggle">
+                <div class="card-icon card-icon-pink">&#9678;</div>
+                <div class="card-title">
+                  <h3>数据源配置</h3>
+                  <p>管理系统数据库连接</p>
+                </div>
+                <span class="collapse-arrow" id="collapseArrow" hidden>&#9662;</span>
+              </div>
+              <div class="card-body" id="configBody">
+                <div class="config-toolbar">
+                  <button id="newConfigBtn" type="button" class="btn-primary btn-sm">+ 新建数据源</button>
+                </div>
+                <div class="config-list" id="configList">
+                  <p class="placeholder-text">暂无数据源配置</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- 业务设置 -->
+            <!-- class="card settings-dashboard-card card-business" -->
+            <section class="card settings-dashboard-card card-business admin-only">
+              <div class="card-header">
+                <div class="card-icon card-icon-green">&#128203;</div>
+                <div class="card-title">
+                  <h3>对账业务设置</h3>
+                  <p>配置对账数据源，并查看对数逻辑字段</p>
+                </div>
+              </div>
+              <div id="businessSettingsBody" class="card-body settings-business-scroll">
+                <div class="reconcile-settings-panel">
+                  <div class="reconcile-settings-title">
+                    <strong>对账数据源</strong>
+                    <span>首页趋势、核对历史和自动对数均按此报表库数据源归集</span>
+                  </div>
+                  <div class="reconcile-settings-grid">
+                    <label class="setting-item">
+                      <span class="setting-label">对账 DWS 数据源</span>
+                      <select id="reconcileDwsSource" class="setting-input"></select>
+                    </label>
+                    <label class="setting-item">
+                      <span class="setting-label">对账报表库数据源</span>
+                      <select id="reconcileBusinessSource" class="setting-input"></select>
+                    </label>
+                  </div>
+                  <div class="reconcile-settings-actions">
+                    <button id="saveReconcileSourcesBtn" type="button" class="btn-outline btn-sm">保存对账数据源</button>
+                    <span class="modal-status" id="reconcileSourcesStatus"></span>
+                  </div>
+                </div>
+                <div id="businessSettingsNote" class="business-settings-note">
+                  以下为当前对数逻辑涉及的表、字段、业务含义和用途。每次表名或字段调整时，需要同步更新此业务设置。
+                </div>
+                <div id="businessSettingsContent" class="business-settings-content"></div>
+              </div>
+            </section>
+
+            <!-- 关于系统 -->
+            <section class="card settings-dashboard-card card-about">
+              <div class="card-header" id="aboutToggle">
+                <div class="card-icon card-icon-blue">&#9733;</div>
+                <div class="card-title">
+                  <h3>关于系统</h3>
+                  <p>系统简介和帮助入口</p>
+                </div>
+              </div>
+              <div class="card-body" id="aboutBody">
+                <div class="about-content">
+                  <div class="about-header">
+                    <img class="about-icon" src="/assets/logo-full.svg" alt="监管智核 Logo" />
+                  </div>
+                  <div class="about-description">
+                    <p>本系统用于自动核对项目余额差异，支持多种数据源，提供详细的差异分析和历史记录功能。</p>
+                  </div>
+                  <div class="about-features about-admin-detail">
+                    <h4>主要功能</h4>
+                    <ul>
+                      <li>自动对数：根据预设规则自动核对项目余额</li>
+                      <li>差异分析：智能识别差异原因并提供详细说明</li>
+                      <li>历史记录：保存每次核对结果，支持对比分析</li>
+                      <li>数据导出：支持导出核对结果为 Excel 文件</li>
+                      <li>多数据源：支持 PostgreSQL 和 MySQL 数据库</li>
+                    </ul>
+                  </div>
+                  <div class="about-tech about-admin-detail">
+                    <h4>技术栈</h4>
+                    <ul>
+                      <li>后端：Python 3.12 + psycopg + PyMySQL</li>
+                      <li>前端：原生 HTML/CSS/JavaScript</li>
+                      <li>打包：PyInstaller</li>
+                    </ul>
+                  </div>
+                  <div class="about-links">
+                    <a href="#" id="aboutHelp">使用帮助</a>
+                    <a href="#" id="aboutChangelog">更新日志</a>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- 确认弹窗 -->
+      <div class="modal-overlay" id="confirmModal" hidden>
+        <div class="modal modal-confirm">
+          <div class="modal-header">
+            <h3 id="confirmTitle">确认操作</h3>
+          </div>
+          <div class="modal-body">
+            <p id="confirmMessage">确定要执行此操作吗？</p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-outline" id="confirmCancel">取消</button>
+            <button id="confirmOk" class="btn-confirm-primary">确定</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 输入弹窗 -->
+      <div class="modal-overlay" id="promptModal" hidden>
+        <div class="modal modal-confirm modal-prompt">
+          <div class="modal-header">
+            <h3 id="promptTitle">请输入</h3>
+          </div>
+          <div class="modal-body">
+            <p id="promptMessage">请输入内容</p>
+            <input id="promptInput" class="prompt-input" autocomplete="off" />
+          </div>
+          <div class="modal-footer">
+            <button class="btn-outline" id="promptCancel">取消</button>
+            <button id="promptOk" class="btn-confirm-primary">确定</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 信息弹窗 -->
+      <div class="modal-overlay" id="infoModal" hidden>
+        <div class="modal modal-info">
+          <div class="modal-header">
+            <div class="modal-title-row">
+              <h3 id="infoTitle">信息</h3>
+              <button class="info-detail-action" id="infoDetailAction" type="button" hidden>查看明细</button>
+            </div>
+            <button class="btn-close" id="infoClose">&times;</button>
+          </div>
+          <div class="modal-body" id="infoBody">
+          </div>
+        </div>
+      </div>
+
+      <!-- 用户管理弹窗 -->
+      <div class="modal-overlay" id="userModal" hidden>
+        <div class="modal user-modal">
+          <div class="modal-header user-modal-header">
+            <div class="user-modal-title">
+              <span class="user-modal-icon" id="userModalIcon" aria-hidden="true">👥</span>
+              <h3 id="userModalTitle">新建用户</h3>
+            </div>
+            <button class="btn-close user-modal-close" id="userModalClose" type="button">&times;</button>
+          </div>
+          <div class="modal-body user-modal-body">
+            <input id="userId" type="hidden" />
+            <div class="user-modal-form">
+              <label class="user-form-group">
+                <span class="user-form-label">用户名 <b>*</b></span>
+                <input id="userUsername" class="user-form-control" autocomplete="off" placeholder="3-20位字母/数字/下划线" />
+                <span class="user-form-help">用户名创建后不可修改，将作为登录账号</span>
+              </label>
+
+              <label class="user-form-group">
+                <span class="user-form-label">用户姓名</span>
+                <input id="userDisplayName" class="user-form-control" autocomplete="new-name" placeholder="为空时默认使用用户账号" />
+                <span class="user-form-help">列表、导航栏和执行记录优先显示用户姓名</span>
+              </label>
+
+              <label class="user-form-group">
+                <span class="user-form-label">密码 <b>*</b><small>至少 6 位且包含字母</small></span>
+                <input id="userPassword" class="user-form-control" type="password" autocomplete="new-password" placeholder="新建时必填，编辑时留空不修改" />
+              </label>
+
+              <div class="user-form-group">
+                <span class="user-form-label">角色 <b>*</b></span>
+                <input id="userRole" type="hidden" value="user" />
+                <div class="user-role-cards">
+                  <label class="user-role-card" data-user-role-card="admin">
+                    <input type="radio" name="userRoleChoice" value="admin" />
+                    <span class="user-role-card-icon">🛡️</span>
+                    <span><strong>管理员</strong><small>拥有全部功能权限</small></span>
+                  </label>
+                  <label class="user-role-card" data-user-role-card="user">
+                    <input type="radio" name="userRoleChoice" value="user" />
+                    <span class="user-role-card-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
+                    <span><strong>普通用户</strong><small>仅业务功能权限</small></span>
+                  </label>
+                </div>
+                <span class="user-form-help">至少需保留一个启用的管理员账号</span>
+              </div>
+
+              <div class="user-enable-row">
+                <div>
+                  <strong>启用账号</strong>
+                  <span>停用后该用户将无法登录系统</span>
+                </div>
+                <input id="userEnabled" type="hidden" value="true" />
+                <button type="button" class="user-enable-switch" id="userEnabledSwitch" aria-pressed="true"></button>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer user-modal-footer">
+            <span class="modal-status" id="userModalStatus"></span>
+            <button id="userModalCancel" type="button" class="btn-outline btn-sm">取消</button>
+            <button id="userModalSave" type="button" class="btn-primary btn-sm">确定</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 配置弹窗 -->
+      <div class="modal-overlay" id="configModal" hidden>
+        <div class="modal">
+          <div class="modal-header">
+            <h3 id="modalTitle">新建数据源</h3>
+            <button class="btn-close" id="modalClose">&times;</button>
+          </div>
+          <div class="modal-body">
+            <label class="modal-field">
+              <span>配置名称</span><input id="modalName" placeholder="如：本地测试环境" />
+            </label>
+
+            <div class="modal-section">
+              <div class="modal-section-header">
+                <span>数据库连接</span>
+              </div>
+              <div class="modal-section-body" id="sourceBody">
+                <div class="modal-grid">
+                  <label class="modal-field"><span>类型</span><select id="mdSourceType"><option value="postgresql">PostgreSQL</option><option value="mysql">MySQL</option></select></label>
+                  <label class="modal-field"><span>主机</span><input id="mdSourceHost" placeholder="127.0.0.1:5432" /></label>
+                  <label class="modal-field"><span>数据库</span><input id="mdSourceDb" /></label>
+                  <label class="modal-field" id="mdSourceSchemaField"><span>Schema</span><input id="mdSourceSchema" /></label>
+                  <label class="modal-field"><span>用户名</span><input id="mdSourceUser" /></label>
+                  <label class="modal-field"><span>密码</span><input id="mdSourcePwd" type="password" /></label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <span class="modal-status" id="modalStatus"></span>
+            <button id="modalTestBtn" type="button" class="btn-outline btn-sm">测试连接</button>
+            <button id="modalSaveBtn" type="button" class="btn-primary btn-sm">保存</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Toast container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/crypto_fallback.js"></script>
+    <script src="/export_detail.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

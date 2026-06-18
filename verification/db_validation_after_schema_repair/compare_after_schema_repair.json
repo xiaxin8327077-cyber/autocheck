@@ -1,0 +1,23 @@
+{
+  "baseline": "D:\\xiaxin\\rhexe\\结果\\20260531-资管产品数据审核结果-模板校验（否）-公开信息校验（否）(Ver.20260202).xlsx",
+  "new_file": "D:\\xiaxin\\auto_check\\verification\\db_validation_after_schema_repair\\20260531-资管产品数据审核结果-模板校验（否）-公开信息校验（否）(Ver.20260202).xlsx",
+  "rows": 2192,
+  "errors": 2192,
+  "warnings": [
+    "ZG12 当期表无数据：zgzgzh_zg12"
+  ],
+  "old_dims": {
+    "Sheet1": [
+      2193,
+      12
+    ]
+  },
+  "new_dims": {
+    "Sheet1": [
+      2193,
+      12
+    ]
+  },
+  "diff_count": 0,
+  "samples": []
+}

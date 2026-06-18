@@ -1,0 +1,1161 @@
+<!doctype html>
+<html lang="zh-CN" data-color-mode="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>首页重点异常统计宽版活力原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page-gutter: 32px;
+      --surface: #f8fafc;
+      --surface-soft: #eef6ff;
+      --panel: rgba(255, 255, 255, 0.74);
+      --panel-strong: rgba(255, 255, 255, 0.9);
+      --line: rgba(148, 163, 184, 0.42);
+      --text: #0f172a;
+      --muted: #52657d;
+      --blue: #3b82f6;
+      --cyan: #06b6d4;
+      --violet: #8b5cf6;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+      --shadow: 0 18px 44px rgba(15, 23, 42, 0.1);
+      --space-gradient-primary: linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+
+    [data-color-mode="dark"] {
+      color-scheme: dark;
+      --surface: #07111f;
+      --surface-soft: #101d31;
+      --panel: rgba(17, 30, 49, 0.78);
+      --panel-strong: rgba(18, 32, 52, 0.94);
+      --line: rgba(148, 163, 184, 0.26);
+      --text: #eaf2ff;
+      --muted: #9fb3cb;
+      --shadow: 0 22px 52px rgba(0, 0, 0, 0.34);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      min-height: 100%;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 8% 8%, rgba(59, 130, 246, 0.14), transparent 26%),
+        radial-gradient(circle at 86% 18%, rgba(6, 182, 212, 0.16), transparent 28%),
+        linear-gradient(135deg, var(--surface) 0%, var(--surface-soft) 48%, var(--surface) 100%);
+      font-size: 14px;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      left: var(--page-gutter);
+      right: var(--page-gutter);
+      top: 0;
+      height: 108px;
+      pointer-events: none;
+      background: rgba(239, 248, 255, 0.24);
+      backdrop-filter: blur(30px) saturate(1.2);
+      -webkit-backdrop-filter: blur(30px) saturate(1.2);
+      mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,0.78) 24%, rgba(0,0,0,0) 100%);
+      -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,0.78) 24%, rgba(0,0,0,0) 100%);
+      z-index: 1;
+    }
+
+    [data-color-mode="dark"] body::before {
+      background: rgba(10, 22, 38, 0.34);
+    }
+
+    button, select, input {
+      font: inherit;
+    }
+
+    .top-nav {
+      position: fixed;
+      top: 12px;
+      left: var(--page-gutter);
+      right: var(--page-gutter);
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: 48px;
+      padding: 8px 10px 8px 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 248, 255, 0.72)),
+        linear-gradient(90deg, rgba(59, 130, 246, 0.12), rgba(6, 182, 212, 0.1));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(24px) saturate(1.18);
+      -webkit-backdrop-filter: blur(24px) saturate(1.18);
+    }
+
+    [data-color-mode="dark"] .top-nav {
+      background:
+        linear-gradient(180deg, rgba(17, 30, 49, 0.96), rgba(15, 29, 48, 0.78)),
+        linear-gradient(90deg, rgba(59, 130, 246, 0.18), rgba(6, 182, 212, 0.14));
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 280px;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 800;
+      background: var(--space-gradient-primary);
+      box-shadow: 0 8px 18px rgba(59, 130, 246, 0.26);
+    }
+
+    .brand strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1.2;
+    }
+
+    .brand span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .tabs button,
+    .nav-action {
+      border: 0;
+      border-radius: 8px;
+      color: var(--text);
+      background: transparent;
+      padding: 9px 14px;
+      cursor: default;
+      white-space: nowrap;
+    }
+
+    .tabs .active {
+      color: #fff;
+      background: var(--space-gradient-primary);
+      box-shadow: 0 8px 18px rgba(59, 130, 246, 0.24);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 220px;
+      justify-content: flex-end;
+    }
+
+    .nav-action {
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+      cursor: pointer;
+    }
+
+    .workspace {
+      position: relative;
+      z-index: 2;
+      width: calc(100vw - (var(--page-gutter) * 2));
+      margin: 0 var(--page-gutter);
+      padding: 76px 0 34px;
+    }
+
+    .headline {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+      margin: 6px 0 16px;
+    }
+
+    .headline h1 {
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+
+    .headline p {
+      margin: 6px 0 0;
+      color: var(--muted);
+    }
+
+    .period-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.07);
+      backdrop-filter: blur(16px);
+    }
+
+    .period-box span {
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .period-box select {
+      min-width: 190px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--panel-strong);
+    }
+
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .overview {
+      display: grid;
+      grid-template-columns: minmax(660px, 1.52fr) minmax(380px, 0.72fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .focus-panel {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto auto auto;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .panel-title h2 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+
+    .panel-title span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .focus-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      min-height: 150px;
+    }
+
+    .focus-button {
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 138px;
+      padding: 18px;
+      border: 1px solid rgba(148, 163, 184, 0.46);
+      border-radius: 8px;
+      color: var(--text);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 248, 255, 0.76)),
+        linear-gradient(135deg, rgba(244, 63, 94, 0.1), transparent 48%);
+      text-align: left;
+      cursor: pointer;
+      transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+    }
+
+    .focus-button.total {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 248, 255, 0.76)),
+        linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.1));
+    }
+
+    .focus-button.target {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(239, 248, 255, 0.76)),
+        linear-gradient(135deg, rgba(6, 182, 212, 0.13), rgba(139, 92, 246, 0.09));
+    }
+
+    [data-color-mode="dark"] .focus-button.total,
+    [data-color-mode="dark"] .focus-button,
+    [data-color-mode="dark"] .focus-button.target {
+      background:
+        linear-gradient(180deg, rgba(20, 36, 59, 0.94), rgba(15, 29, 48, 0.84)),
+        linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(139, 92, 246, 0.11));
+    }
+
+    .focus-button:hover {
+      transform: translateY(-2px);
+      border-color: rgba(59, 130, 246, 0.58);
+      box-shadow: 0 22px 46px rgba(59, 130, 246, 0.16);
+    }
+
+    .focus-button::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--amber), var(--rose));
+    }
+
+    .focus-button.total::before {
+      background: linear-gradient(90deg, var(--green), var(--blue));
+    }
+
+    .focus-button.target::before {
+      background: var(--space-gradient-primary);
+    }
+
+    .focus-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .focus-kicker i {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--rose);
+    }
+
+    .total .focus-kicker i {
+      background: var(--green);
+    }
+
+    .target .focus-kicker i {
+      background: var(--cyan);
+    }
+
+    .focus-label {
+      display: block;
+      margin-top: 10px;
+      font-size: 19px;
+      font-weight: 800;
+      line-height: 1.24;
+    }
+
+    .focus-desc {
+      display: block;
+      margin-top: 9px;
+      max-width: 280px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .focus-num {
+      min-width: 86px;
+      text-align: right;
+    }
+
+    .focus-num strong {
+      display: block;
+      font-size: 48px;
+      line-height: 0.95;
+      letter-spacing: 0;
+    }
+
+    .focus-num span {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .mini-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .mini-metric {
+      display: grid;
+      gap: 6px;
+      min-height: 78px;
+      padding: 12px 14px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    [data-color-mode="dark"] .mini-metric {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .mini-metric span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .mini-metric strong {
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .run-panel {
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 14px;
+    }
+
+    .run-status {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.1));
+    }
+
+    .run-status span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .run-status strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 18px;
+    }
+
+    .pulse {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--green), var(--cyan));
+      box-shadow: 0 12px 26px rgba(16, 185, 129, 0.24);
+      font-weight: 800;
+    }
+
+    .run-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .run-row {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.44);
+    }
+
+    [data-color-mode="dark"] .run-row {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .run-row span {
+      color: var(--muted);
+    }
+
+    .run-row strong {
+      overflow-wrap: anywhere;
+    }
+
+    .quick-actions {
+      align-self: end;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .quick-actions button {
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--panel-strong);
+      cursor: default;
+    }
+
+    .quick-actions .primary {
+      color: #fff;
+      border-color: transparent;
+      background: var(--space-gradient-primary);
+      box-shadow: 0 10px 22px rgba(59, 130, 246, 0.22);
+    }
+
+    .charts {
+      display: grid;
+      grid-template-columns: minmax(0, 1.04fr) minmax(0, 1fr);
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .chart-panel {
+      min-height: 336px;
+      padding: 18px;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 14px;
+    }
+
+    .chart-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .chart-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .chart-select {
+      min-width: 156px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text);
+      background: var(--panel-strong);
+    }
+
+    .segmented {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .segmented button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .segmented .active {
+      color: #fff;
+      border-color: transparent;
+      background: var(--blue);
+    }
+
+    .chart-box {
+      position: relative;
+      min-height: 228px;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 8px;
+      background:
+        linear-gradient(to right, transparent 0 19%, rgba(100, 116, 139, 0.14) 20%, transparent 21% 39%, rgba(100, 116, 139, 0.14) 40%, transparent 41% 59%, rgba(100, 116, 139, 0.14) 60%, transparent 61% 79%, rgba(100, 116, 139, 0.14) 80%, transparent 81%),
+        linear-gradient(to bottom, transparent 0 24%, rgba(100, 116, 139, 0.14) 25%, transparent 26% 49%, rgba(100, 116, 139, 0.14) 50%, transparent 51% 74%, rgba(100, 116, 139, 0.14) 75%, transparent 76%),
+        rgba(255, 255, 255, 0.28);
+    }
+
+    [data-color-mode="dark"] .chart-box {
+      background:
+        linear-gradient(to right, transparent 0 19%, rgba(148, 163, 184, 0.14) 20%, transparent 21% 39%, rgba(148, 163, 184, 0.14) 40%, transparent 41% 59%, rgba(148, 163, 184, 0.14) 60%, transparent 61% 79%, rgba(148, 163, 184, 0.14) 80%, transparent 81%),
+        linear-gradient(to bottom, transparent 0 24%, rgba(148, 163, 184, 0.14) 25%, transparent 26% 49%, rgba(148, 163, 184, 0.14) 50%, transparent 51% 74%, rgba(148, 163, 184, 0.14) 75%, transparent 76%),
+        rgba(255, 255, 255, 0.03);
+    }
+
+    .chart-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--blue);
+      vertical-align: -1px;
+    }
+
+    .legend .accent i { background: var(--amber); }
+    .legend .ok i { background: var(--green); }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      justify-content: end;
+      padding: 20px var(--page-gutter);
+      background: rgba(8, 15, 28, 0.34);
+    }
+
+    .drawer-backdrop.open {
+      display: flex;
+    }
+
+    .drawer {
+      width: min(920px, 100%);
+      max-height: calc(100vh - 40px);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-strong);
+      box-shadow: 0 28px 80px rgba(5, 13, 25, 0.34);
+      overflow: hidden;
+    }
+
+    .drawer-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 16px;
+      padding: 20px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .drawer-head h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .drawer-head p {
+      margin: 7px 0 0;
+      color: var(--muted);
+    }
+
+    .close-btn {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .drawer-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .drawer-tools input {
+      width: min(420px, 100%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      background: var(--surface);
+    }
+
+    .count-chip {
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #fff;
+      background: var(--space-gradient-primary);
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .project-list {
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .project-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.34);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .project-item + .project-item {
+      margin-top: 10px;
+    }
+
+    .project-main strong {
+      display: block;
+      font-size: 15px;
+      line-height: 1.35;
+    }
+
+    .project-main span {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .project-meta {
+      min-width: 164px;
+      text-align: right;
+      color: var(--muted);
+    }
+
+    .project-meta button {
+      margin-top: 10px;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      cursor: default;
+    }
+
+    @media (min-width: 1720px) {
+      .overview {
+        grid-template-columns: minmax(840px, 1.62fr) minmax(420px, 0.68fr);
+      }
+
+      .focus-button {
+        min-height: 210px;
+      }
+
+      .chart-panel {
+        min-height: 372px;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      :root {
+        --page-gutter: 20px;
+      }
+
+      .top-nav,
+      .headline,
+      .overview,
+      .charts {
+        grid-template-columns: 1fr;
+      }
+
+      .top-nav {
+        position: static;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      body::before {
+        display: none;
+      }
+
+      .brand,
+      .nav-actions {
+        min-width: 0;
+      }
+
+      .tabs {
+        order: 3;
+        flex-basis: 100%;
+        justify-content: flex-start;
+        overflow-x: auto;
+      }
+
+      .workspace {
+        padding-top: 18px;
+      }
+    }
+
+    @media (max-width: 760px) {
+      :root {
+        --page-gutter: 12px;
+      }
+
+      .headline,
+      .period-box,
+      .panel-title,
+      .chart-head,
+      .drawer-tools {
+        align-items: stretch;
+      }
+
+      .headline,
+      .period-box,
+      .panel-title,
+      .chart-head,
+      .drawer-tools {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .focus-grid,
+      .mini-metrics,
+      .quick-actions {
+        grid-template-columns: 1fr;
+      }
+
+      .focus-button {
+        grid-template-columns: 1fr;
+        min-height: 0;
+      }
+
+      .focus-num {
+        text-align: left;
+      }
+
+      .drawer-backdrop {
+        padding: 10px;
+      }
+
+      .drawer {
+        max-height: calc(100vh - 20px);
+      }
+
+      .project-item {
+        grid-template-columns: 1fr;
+      }
+
+      .project-meta {
+        min-width: 0;
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="top-nav">
+    <div class="brand">
+      <div class="brand-mark">AC</div>
+      <div>
+        <strong>Auto Check</strong>
+        <span>宽版活力主题 · 首页异常统计原型</span>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="主导航">
+      <button class="active">首页</button>
+      <button>自动对数</button>
+      <button>核对历史</button>
+      <button>工具</button>
+      <button>系统设置</button>
+      <button>用户管理</button>
+    </nav>
+    <div class="nav-actions">
+      <button class="nav-action" id="modeToggle" type="button">暗色</button>
+      <button class="nav-action" type="button">管理员</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="headline">
+      <div>
+        <h1>首页</h1>
+        <p>宽版布局贴合活力主题导航边距，首屏优先呈现需要处理的异常。</p>
+      </div>
+      <label class="period-box">
+        <span>报送期</span>
+        <select>
+          <option>2026-05-31 最新执行</option>
+          <option>2026-04-30 最新执行</option>
+          <option>2026-03-31 最新执行</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="overview">
+      <article class="panel focus-panel">
+        <div class="panel-title">
+          <h2>重点异常统计</h2>
+          <span>数字块打开首页项目清单，不打断当前工作台</span>
+        </div>
+
+        <div class="focus-grid">
+          <button class="focus-button total" type="button" data-kind="all">
+            <span>
+              <span class="focus-kicker"><i></i>最新执行汇总</span>
+              <span class="focus-label">本期总差异</span>
+              <span class="focus-desc">查看本报送期完整差异结果，作为进入明细的总览入口。</span>
+            </span>
+            <span class="focus-num">
+              <strong>46</strong>
+              <span>条结果</span>
+            </span>
+          </button>
+
+          <button class="focus-button" type="button" data-kind="received">
+            <span>
+              <span class="focus-kicker"><i></i>按项目结果归并</span>
+              <span class="focus-label">实收信托不一致</span>
+              <span class="focus-desc">包含实收本金差异、缺失、重复等需要核对实收口径的项目。</span>
+            </span>
+            <span class="focus-num">
+              <strong>12</strong>
+              <span>个项目</span>
+            </span>
+          </button>
+
+          <button class="focus-button target" type="button" data-kind="target">
+            <span>
+              <span class="focus-kicker"><i></i>按 FA / AM 判断归并</span>
+              <span class="focus-label">标的不一致</span>
+              <span class="focus-desc">包含直接标的不一致，以及资产缺失细化中的 FA / AM 标的不一致。</span>
+            </span>
+            <span class="focus-num">
+              <strong>8</strong>
+              <span>个项目</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="mini-metrics">
+          <div class="mini-metric"><span>新增差异</span><strong>9</strong></div>
+          <div class="mini-metric"><span>减少差异</span><strong>5</strong></div>
+          <div class="mini-metric"><span>重点异常占比</span><strong>43%</strong></div>
+        </div>
+      </article>
+
+      <aside class="panel run-panel">
+        <div class="panel-title">
+          <h2>最新执行</h2>
+          <span>核对历史来源</span>
+        </div>
+
+        <div class="run-status">
+          <div>
+            <span>当前状态</span>
+            <strong>最新结果已归集</strong>
+          </div>
+          <div class="pulse">OK</div>
+        </div>
+
+        <div class="run-list">
+          <div class="run-row"><span>执行时间</span><strong>2026-06-12 09:42:18</strong></div>
+          <div class="run-row"><span>执行人</span><strong>管理员</strong></div>
+        </div>
+
+        <div class="quick-actions">
+          <button class="primary" type="button">查看最新结果</button>
+          <button type="button">核对历史</button>
+        </div>
+      </aside>
+    </section>
+
+    <section class="charts" aria-label="趋势图">
+      <article class="panel chart-panel">
+        <div class="chart-head">
+          <h2>最新趋势</h2>
+          <select class="chart-select" aria-label="选择核对日期">
+            <option>2026-05-31</option>
+            <option>2026-04-30</option>
+            <option>2026-03-31</option>
+          </select>
+        </div>
+        <div class="chart-box" role="img" aria-label="最新趋势原型图">
+          <svg class="chart-svg" viewBox="0 0 960 260" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M52 218 L52 146" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M168 218 L168 110" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M284 218 L284 164" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M400 218 L400 78" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M516 218 L516 136" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M632 218 L632 176" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M748 218 L748 98" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M864 218 L864 156" stroke="#3b82f6" stroke-width="20" stroke-linecap="round" />
+            <path d="M52 206 C154 158 256 178 380 128 C498 82 620 156 744 116 C806 96 850 94 914 66" fill="none" stroke="#f59e0b" stroke-width="6" stroke-linecap="round" />
+          </svg>
+        </div>
+        <div class="legend">
+          <span><i></i>差异类型数量</span>
+          <span class="accent"><i></i>重点异常</span>
+        </div>
+      </article>
+
+      <article class="panel chart-panel">
+        <div class="chart-head">
+          <h2>总趋势</h2>
+          <div class="segmented">
+            <button>全部</button>
+            <button>近三月</button>
+            <button class="active">近半年</button>
+            <button>近一年</button>
+            <button>近两年</button>
+          </div>
+        </div>
+        <div class="chart-box" role="img" aria-label="总趋势原型图">
+          <svg class="chart-svg" viewBox="0 0 960 260" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M46 214 C132 176 204 176 286 126 C370 76 450 90 530 126 C626 170 704 86 788 104 C858 118 894 86 928 58" fill="none" stroke="#3b82f6" stroke-width="6" stroke-linecap="round" />
+            <path d="M46 228 C138 198 210 204 292 172 C378 138 460 146 542 160 C634 178 714 138 792 150 C862 160 896 140 928 122" fill="none" stroke="#f59e0b" stroke-width="6" stroke-linecap="round" />
+            <path d="M46 236 C146 222 248 212 346 198 C464 178 576 188 690 176 C790 166 866 158 928 146" fill="none" stroke="#10b981" stroke-width="5" stroke-linecap="round" />
+            <circle cx="928" cy="58" r="8" fill="#3b82f6" />
+            <circle cx="928" cy="122" r="8" fill="#f59e0b" />
+            <circle cx="928" cy="146" r="7" fill="#10b981" />
+          </svg>
+        </div>
+        <div class="legend">
+          <span><i></i>总差异</span>
+          <span class="accent"><i></i>重点异常</span>
+          <span class="ok"><i></i>已减少差异</span>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <div class="drawer-backdrop" id="drawerBackdrop" aria-hidden="true">
+    <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+      <div class="drawer-head">
+        <div>
+          <h2 id="drawerTitle">实收信托不一致项目</h2>
+          <p id="drawerSubtitle">2026-05-31 最新执行，按项目结果归并展示。</p>
+        </div>
+        <button class="close-btn" id="closeDrawer" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="drawer-tools">
+        <input id="searchInput" type="search" placeholder="搜索项目名称、代码或原因" />
+        <span class="count-chip" id="drawerCount">12 个项目</span>
+      </div>
+      <div class="project-list" id="projectList"></div>
+    </section>
+  </div>
+
+  <script>
+    const rows = {
+      all: {
+        title: "本期总差异项目",
+        subtitle: "2026-05-31 最新执行，展示本报送期完整差异结果入口。",
+        count: 46,
+        rows: [
+          ["ZX202605001", "长安信托-稳健收益集合资金信托计划", "实收本金差异：FA 4001 与 c1000 存在差异，差异值 320,000.00", "实收信托"],
+          ["ZX202605006", "建信信托-基础设施收益权信托", "FA 与 AM 标的不一致：估值表证券代码和资产明细代码不一致", "标的不一致"],
+          ["ZX202605011", "中铁信托-债券投资集合计划", "资产差异：估值表存在资产，AM 项目投资未匹配", "资产差异"],
+          ["ZX202605017", "中海信托-月度开放式资产管理计划", "实收本金缺失：当前报送期未匹配到 c1000 实收记录", "实收信托"]
+        ]
+      },
+      received: {
+        title: "实收信托不一致项目",
+        subtitle: "2026-05-31 最新执行，包含实收本金差异、缺失、重复等结果。",
+        count: 12,
+        rows: [
+          ["ZX202605001", "长安信托-稳健收益集合资金信托计划", "实收本金差异：FA 4001 与 c1000 存在差异，差异值 320,000.00", "差异金额 32.00 万"],
+          ["ZX202605017", "中海信托-月度开放式资产管理计划", "实收本金缺失：当前报送期未匹配到 c1000 实收记录", "缺失记录 1 条"],
+          ["ZX202605026", "华融信托-专项投资集合信托", "实收本金重复：同一项目存在多条实收记录", "重复记录 2 条"],
+          ["ZX202605033", "外贸信托-精选资产配置计划", "资产差异 + 实收本金差异：需优先核对实收口径", "差异金额 18.50 万"]
+        ]
+      },
+      target: {
+        title: "标的不一致项目",
+        subtitle: "2026-05-31 最新执行，包含 FA/AM 直接不一致和资产缺失细化判断。",
+        count: 8,
+        rows: [
+          ["ZX202605006", "建信信托-基础设施收益权信托", "FA 与 AM 标的不一致：估值表证券代码和资产明细代码不一致", "标的 1 个"],
+          ["ZX202605014", "五矿信托-优选债券投资计划", "FA 和 AM 标的不一致：资产缺失细化判断命中", "标的 3 个"],
+          ["ZX202605022", "平安信托-混合资产配置计划", "标的代码核对：AM 项目投资明细无法匹配 FA 估值标的", "标的 2 个"],
+          ["ZX202605031", "中航信托-稳利集合资金信托", "FA 与 AM 标的不一致：项目下估值资产与 AM 资产不一致", "标的 1 个"]
+        ]
+      }
+    };
+
+    const root = document.documentElement;
+    const backdrop = document.getElementById("drawerBackdrop");
+    const title = document.getElementById("drawerTitle");
+    const subtitle = document.getElementById("drawerSubtitle");
+    const count = document.getElementById("drawerCount");
+    const list = document.getElementById("projectList");
+    const search = document.getElementById("searchInput");
+    let active = "received";
+
+    function renderList() {
+      const keyword = search.value.trim().toLowerCase();
+      const filtered = rows[active].rows.filter((item) => item.join(" ").toLowerCase().includes(keyword));
+      list.innerHTML = filtered.map((item) => `
+        <article class="project-item">
+          <div class="project-main">
+            <strong>${item[1]}</strong>
+            <span>${item[0]} · ${item[2]}</span>
+          </div>
+          <div class="project-meta">
+            <div>${item[3]}</div>
+            <button type="button">查看项目详情</button>
+          </div>
+        </article>
+      `).join("") || '<article class="project-item"><div class="project-main"><strong>没有匹配项目</strong><span>请调整搜索条件。</span></div></article>';
+      count.textContent = `${filtered.length} / ${rows[active].count} 个项目`;
+    }
+
+    function openDrawer(kind) {
+      active = kind;
+      title.textContent = rows[kind].title;
+      subtitle.textContent = rows[kind].subtitle;
+      search.value = "";
+      renderList();
+      backdrop.classList.add("open");
+      backdrop.setAttribute("aria-hidden", "false");
+      search.focus();
+    }
+
+    document.querySelectorAll(".focus-button").forEach((button) => {
+      button.addEventListener("click", () => openDrawer(button.dataset.kind));
+    });
+
+    document.getElementById("closeDrawer").addEventListener("click", () => {
+      backdrop.classList.remove("open");
+      backdrop.setAttribute("aria-hidden", "true");
+    });
+
+    backdrop.addEventListener("click", (event) => {
+      if (event.target === backdrop) {
+        backdrop.classList.remove("open");
+        backdrop.setAttribute("aria-hidden", "true");
+      }
+    });
+
+    search.addEventListener("input", renderList);
+
+    document.getElementById("modeToggle").addEventListener("click", () => {
+      const dark = root.getAttribute("data-color-mode") === "dark";
+      root.setAttribute("data-color-mode", dark ? "light" : "dark");
+      document.getElementById("modeToggle").textContent = dark ? "暗色" : "亮色";
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 360" width="360" height="360" role="img" aria-labelledby="title desc">
+  <title id="title">监管智核竖向标志</title>
+  <desc id="desc">监管智核竖向品牌标志，适用于卡片、启动页和居中展示。</desc>
+  <defs>
+    <linearGradient id="ric-stacked-blue" x1="82" y1="74" x2="154" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3466d9"/>
+      <stop offset="100%" stop-color="#6aa4ff"/>
+    </linearGradient>
+    <linearGradient id="ric-stacked-gold" x1="162" y1="74" x2="234" y2="178" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d98711"/>
+      <stop offset="100%" stop-color="#ffbd38"/>
+    </linearGradient>
+    <linearGradient id="ric-stacked-accent" x1="108" y1="285" x2="252" y2="285" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3466d9"/>
+      <stop offset="55%" stop-color="#2aa7c8"/>
+      <stop offset="100%" stop-color="#ffbd38"/>
+    </linearGradient>
+    <filter id="ric-stacked-shadow" x="70" y="70" width="220" height="156" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#15305f" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <g filter="url(#ric-stacked-shadow)">
+    <circle cx="136" cy="140" r="46" fill="url(#ric-stacked-blue)" opacity="0.96"/>
+    <circle cx="224" cy="140" r="46" fill="url(#ric-stacked-gold)" opacity="0.96"/>
+    <ellipse cx="180" cy="140" rx="25" ry="46" fill="#ffffff" opacity="0.30"/>
+    <path d="M116 141L130 155L156 122" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M204 141L218 155L244 122" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <path d="M180 188V220" fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 7"/>
+  <circle cx="180" cy="230" r="7" fill="#3466d9"/>
+  <text x="180" y="272" text-anchor="middle" fill="#0f172a" font-size="42" font-weight="800" font-family="Microsoft YaHei, PingFang SC, Source Han Sans SC, Noto Sans CJK SC, sans-serif">监管智核</text>
+  <rect x="108" y="286" width="144" height="4" rx="2" fill="url(#ric-stacked-accent)"/>
+  <text x="180" y="315" text-anchor="middle" fill="#536277" font-size="12" font-weight="700" font-family="Segoe UI, Arial, sans-serif">REGULATORY INTELLIGENCE CORE</text>
+</svg>

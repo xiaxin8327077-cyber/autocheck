@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="title desc">
+  <title id="title">监管智核浏览器图标</title>
+  <desc id="desc">监管智核双环对勾小尺寸图标。</desc>
+  <defs>
+    <linearGradient id="ric-favicon-blue" x1="8" y1="10" x2="34" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3466d9"/>
+      <stop offset="100%" stop-color="#6aa4ff"/>
+    </linearGradient>
+    <linearGradient id="ric-favicon-gold" x1="30" y1="10" x2="56" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#d98711"/>
+      <stop offset="100%" stop-color="#ffbd38"/>
+    </linearGradient>
+  </defs>
+  <circle cx="23" cy="27" r="15" fill="url(#ric-favicon-blue)" opacity="0.96"/>
+  <circle cx="41" cy="27" r="15" fill="url(#ric-favicon-gold)" opacity="0.96"/>
+  <ellipse cx="32" cy="27" rx="8" ry="15" fill="#ffffff" opacity="0.30"/>
+  <path d="M17 27.5L21.5 32L30 21.5" fill="none" stroke="#ffffff" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M34 27.5L38.5 32L47 21.5" fill="none" stroke="#ffffff" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M32 42V52" fill="none" stroke="#94a3b8" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="3 3"/>
+  <circle cx="32" cy="56" r="3" fill="#3466d9"/>
+</svg>

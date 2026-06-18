@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>准星 · 视觉设计方案</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 40px 20px;
+    }
+    h1 { text-align: center; font-size: 28px; margin-bottom: 8px; }
+    .subtitle { text-align: center; color: #94a3b8; margin-bottom: 40px; font-size: 14px; }
+
+    .scheme-grid {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+      gap: 28px;
+    }
+
+    .scheme-card {
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(148,163,184,0.2);
+      background: rgba(30,41,59,0.6);
+      backdrop-filter: blur(12px);
+    }
+
+    .scheme-preview {
+      height: 280px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+    }
+
+    /* === Scheme 1: 深蓝海雾 === */
+    .scheme-1 .preview-bg {
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%);
+    }
+    .scheme-1 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 15% 30%, rgba(59,130,246,0.25), transparent 50%),
+        radial-gradient(circle at 85% 70%, rgba(6,182,212,0.20), transparent 40%);
+    }
+    .scheme-1 .sidebar-preview {
+      width: 140px;
+      background: rgba(15,23,42,0.65);
+      backdrop-filter: blur(24px) saturate(1.3);
+      border-right: 1px solid rgba(148,163,184,0.15);
+      padding: 20px 12px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-1 .sidebar-item {
+      height: 28px; border-radius: 8px;
+      background: rgba(255,255,255,0.04);
+      margin-bottom: 2px;
+    }
+    .scheme-1 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(59,130,246,0.4), rgba(6,182,212,0.3));
+      box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+    }
+    .scheme-1 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-1 .glass-panel {
+      flex: 1; border-radius: 12px;
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(20px) saturate(1.4);
+      border: 1px solid rgba(148,163,184,0.18);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+      padding: 14px;
+      animation: float-slow 6s ease-in-out infinite;
+    }
+    @keyframes float-slow {
+      0%,100% { transform: translateY(0); }
+      50% { transform: translateY(-3px); }
+    }
+
+    /* === Scheme 2: 极光翡翠 === */
+    .scheme-2 .preview-bg {
+      position: absolute; inset: 0;
+      background: linear-gradient(160deg, #042f2e 0%, #064e3b 40%, #022c22 100%);
+    }
+    .scheme-2 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 25% 20%, rgba(16,185,129,0.3), transparent 45%),
+        radial-gradient(circle at 75% 80%, rgba(52,211,153,0.2), transparent 40%);
+      animation: aurora-glow 8s ease-in-out infinite;
+    }
+    @keyframes aurora-glow {
+      0%,100% { opacity: 0.7; }
+      50% { opacity: 1; }
+    }
+    .scheme-2 .sidebar-preview {
+      width: 140px;
+      background: rgba(4,47,46,0.7);
+      backdrop-filter: blur(28px) saturate(1.5);
+      border-right: 1px solid rgba(16,185,129,0.15);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-2 .sidebar-item {
+      height: 28px; border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      margin-bottom: 2px;
+    }
+    .scheme-2 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(16,185,129,0.5), rgba(52,211,153,0.35));
+      box-shadow: 0 2px 10px rgba(16,185,129,0.4);
+    }
+    .scheme-2 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-2 .glass-panel {
+      flex: 1; border-radius: 12px;
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(22px) saturate(1.5);
+      border: 1px solid rgba(16,185,129,0.2);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      padding: 14px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* === Scheme 3: 紫晶幻境 === */
+    .scheme-3 .preview-bg {
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, #1e1b4b 0%, #2e1065 50%, #0f172a 100%);
+    }
+    .scheme-3 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 20% 25%, rgba(139,92,246,0.35), transparent 50%),
+        radial-gradient(circle at 80% 65%, rgba(192,132,252,0.25), transparent 45%);
+      animation: purple-shift 10s ease-in-out infinite;
+    }
+    @keyframes purple-shift {
+      0%,100% { transform: scale(1) rotate(0deg); }
+      50% { transform: scale(1.05) rotate(2deg); }
+    }
+    .scheme-3 .sidebar-preview {
+      width: 140px;
+      background: rgba(30,27,75,0.7);
+      backdrop-filter: blur(26px) saturate(1.4);
+      border-right: 1px solid rgba(139,92,246,0.18);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-3 .sidebar-item {
+      height: 28px; border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      margin-bottom: 2px;
+    }
+    .scheme-3 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(139,92,246,0.5), rgba(192,132,252,0.35));
+      box-shadow: 0 2px 12px rgba(139,92,246,0.4);
+    }
+    .scheme-3 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-3 .glass-panel {
+      flex: 1; border-radius: 16px;
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(24px) saturate(1.3);
+      border: 1px solid rgba(139,92,246,0.22);
+      box-shadow: 0 12px 40px rgba(139,92,246,0.15);
+      padding: 14px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    /* === Scheme 4: 冰蓝透明 === */
+    .scheme-4 .preview-bg {
+      position: absolute; inset: 0;
+      background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 30%, #bae6fd 100%);
+    }
+    .scheme-4 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 30% 40%, rgba(56,189,248,0.2), transparent 50%),
+        radial-gradient(circle at 70% 30%, rgba(14,165,233,0.15), transparent 40%);
+    }
+    .scheme-4 .sidebar-preview {
+      width: 140px;
+      background: rgba(255,255,255,0.55);
+      backdrop-filter: blur(28px) saturate(1.6);
+      border-right: 1px solid rgba(56,189,248,0.2);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-4 .sidebar-item {
+      height: 28px; border-radius: 8px;
+      background: rgba(14,165,233,0.06);
+      margin-bottom: 2px;
+    }
+    .scheme-4 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(14,165,233,0.35), rgba(56,189,248,0.25));
+      box-shadow: 0 2px 8px rgba(14,165,233,0.25);
+    }
+    .scheme-4 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-4 .glass-panel {
+      flex: 1; border-radius: 14px;
+      background: rgba(255,255,255,0.45);
+      backdrop-filter: blur(20px) saturate(1.6);
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: 0 8px 28px rgba(14,165,233,0.1), inset 0 1px 0 rgba(255,255,255,0.9);
+      padding: 14px;
+    }
+
+    /* === Scheme 5: 暗黑霓虹 === */
+    .scheme-5 .preview-bg {
+      position: absolute; inset: 0;
+      background: #0a0a0a;
+    }
+    .scheme-5 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 10% 20%, rgba(236,72,153,0.2), transparent 35%),
+        radial-gradient(circle at 90% 80%, rgba(34,211,238,0.2), transparent 35%),
+        radial-gradient(circle at 50% 50%, rgba(139,92,246,0.1), transparent 50%);
+      animation: neon-pulse 4s ease-in-out infinite;
+    }
+    @keyframes neon-pulse {
+      0%,100% { opacity: 0.6; filter: blur(0px); }
+      50% { opacity: 1; filter: blur(1px); }
+    }
+    .scheme-5 .sidebar-preview {
+      width: 140px;
+      background: rgba(10,10,10,0.7);
+      backdrop-filter: blur(32px) saturate(1.5);
+      border-right: 1px solid rgba(255,255,255,0.08);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-5 .sidebar-item {
+      height: 28px; border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      margin-bottom: 2px;
+    }
+    .scheme-5 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(236,72,153,0.4), rgba(139,92,246,0.3));
+      box-shadow: 0 0 16px rgba(236,72,153,0.5), 0 0 32px rgba(139,92,246,0.3);
+    }
+    .scheme-5 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-5 .glass-panel {
+      flex: 1; border-radius: 12px;
+      background: rgba(255,255,255,0.03);
+      backdrop-filter: blur(30px) saturate(1.6);
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 0 30px rgba(139,92,246,0.1), inset 0 1px 0 rgba(255,255,255,0.05);
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+    .scheme-5 .glass-panel::after {
+      content: '';
+      position: absolute; top: -50%; left: -50%;
+      width: 200%; height: 200%;
+      background: conic-gradient(from 0deg, transparent, rgba(236,72,153,0.05), transparent, rgba(34,211,238,0.05), transparent);
+      animation: rotate-scan 8s linear infinite;
+    }
+    @keyframes rotate-scan {
+      to { transform: rotate(360deg); }
+    }
+
+    /* === Scheme 6: 暖金琥珀 === */
+    .scheme-6 .preview-bg {
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, #1c1917 0%, #292524 50%, #1c1917 100%);
+    }
+    .scheme-6 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 20% 30%, rgba(245,158,11,0.2), transparent 45%),
+        radial-gradient(circle at 80% 70%, rgba(251,191,36,0.15), transparent 40%);
+    }
+    .scheme-6 .sidebar-preview {
+      width: 140px;
+      background: rgba(28,25,23,0.7);
+      backdrop-filter: blur(26px) saturate(1.4);
+      border-right: 1px solid rgba(245,158,11,0.15);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-6 .sidebar-item {
+      height: 28px; border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      margin-bottom: 2px;
+    }
+    .scheme-6 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(245,158,11,0.4), rgba(251,191,36,0.3));
+      box-shadow: 0 2px 10px rgba(245,158,11,0.35);
+    }
+    .scheme-6 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-6 .glass-panel {
+      flex: 1; border-radius: 14px;
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(24px) saturate(1.3);
+      border: 1px solid rgba(245,158,11,0.18);
+      box-shadow: 0 8px 32px rgba(245,158,11,0.1);
+      padding: 14px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* === Scheme 7: 量子融合 === */
+    .scheme-7 .preview-bg {
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, #0f172a 0%, #1a1a2e 50%, #16213e 100%);
+    }
+    .scheme-7 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 15% 35%, rgba(59,130,246,0.25), transparent 40%),
+        radial-gradient(circle at 85% 25%, rgba(236,72,153,0.2), transparent 35%),
+        radial-gradient(circle at 50% 80%, rgba(16,185,129,0.15), transparent 40%);
+      animation: quantum-shift 12s ease-in-out infinite;
+    }
+    @keyframes quantum-shift {
+      0%,100% { transform: translate(0,0); }
+      25% { transform: translate(2%,-1%); }
+      50% { transform: translate(-1%,2%); }
+      75% { transform: translate(1%,-2%); }
+    }
+    .scheme-7 .sidebar-preview {
+      width: 140px;
+      background: rgba(15,23,42,0.6);
+      backdrop-filter: blur(30px) saturate(1.5);
+      border-right: 1px solid rgba(148,163,184,0.12);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-7 .sidebar-item {
+      height: 28px; border-radius: 10px;
+      background: rgba(255,255,255,0.04);
+      margin-bottom: 2px;
+      transition: all 0.3s ease;
+    }
+    .scheme-7 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(59,130,246,0.4), rgba(236,72,153,0.3));
+      box-shadow: 0 4px 16px rgba(59,130,246,0.3);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .scheme-7 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-7 .glass-panel {
+      flex: 1; border-radius: 16px;
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(26px) saturate(1.4);
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+      padding: 14px;
+      position: relative;
+    }
+    .scheme-7 .glass-panel::before {
+      content: '';
+      position: absolute; inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(135deg, rgba(59,130,246,0.08), transparent 40%, rgba(236,72,153,0.05));
+      pointer-events: none;
+    }
+
+    /* === Scheme 8: 太空深空 === */
+    .scheme-8 .preview-bg {
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 50% 0%, #1a2744 0%, #0a192f 60%, #020c1b 100%);
+    }
+    .scheme-8 .preview-bg::before {
+      content: '';
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(circle at 10% 10%, rgba(100,200,255,0.15), transparent 40%),
+        radial-gradient(circle at 90% 90%, rgba(120,100,255,0.1), transparent 35%);
+    }
+    .scheme-8 .sidebar-preview {
+      width: 140px;
+      background: rgba(10,25,47,0.7);
+      backdrop-filter: blur(32px) saturate(1.6);
+      border-right: 1px solid rgba(100,200,255,0.1);
+      padding: 20px 12px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .scheme-8 .sidebar-item {
+      height: 28px; border-radius: 10px;
+      background: rgba(100,200,255,0.04);
+      margin-bottom: 2px;
+    }
+    .scheme-8 .sidebar-item.active {
+      background: linear-gradient(135deg, rgba(100,200,255,0.35), rgba(120,100,255,0.25));
+      box-shadow: 0 2px 12px rgba(100,200,255,0.3);
+      border: 1px solid rgba(100,200,255,0.15);
+    }
+    .scheme-8 .content-area {
+      flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .scheme-8 .glass-panel {
+      flex: 1; border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(28px) saturate(1.5);
+      border: 1px solid rgba(100,200,255,0.12);
+      box-shadow: 0 12px 36px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.06);
+      padding: 14px;
+    }
+
+    /* Preview details */
+    .glass-line {
+      height: 6px; border-radius: 4px; margin-bottom: 8px;
+    }
+    .glass-line.short { width: 40%; }
+    .glass-line.medium { width: 70%; }
+    .glass-line.long { width: 90%; }
+
+    .glass-dot-row {
+      display: flex; gap: 4px; margin-top: 6px;
+    }
+    .glass-dot {
+      width: 18px; height: 18px; border-radius: 4px;
+    }
+
+    .scheme-info { padding: 20px 24px; }
+    .scheme-name {
+      font-size: 18px; font-weight: 700; margin-bottom: 6px;
+    }
+    .scheme-desc {
+      font-size: 13px; color: #94a3b8; line-height: 1.6; margin-bottom: 14px;
+    }
+    .scheme-tags {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .scheme-tag {
+      padding: 3px 10px; border-radius: 20px; font-size: 11px;
+      background: rgba(148,163,184,0.15); color: #cbd5e1;
+    }
+    .scheme-applicable {
+      font-size: 12px; color: #64748b; line-height: 1.7;
+    }
+    .scheme-applicable strong { color: #94a3b8; }
+
+    /* Comparison table */
+    .comparison-section {
+      max-width: 1400px; margin: 60px auto 0;
+    }
+    .comparison-table {
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }
+    .comparison-table th, .comparison-table td {
+      padding: 10px 14px; text-align: left;
+      border-bottom: 1px solid rgba(148,163,184,0.15);
+    }
+    .comparison-table th {
+      color: #64748b; font-weight: 600; font-size: 12px;
+    }
+    .comparison-table td { color: #cbd5e1; }
+    .color-swatch {
+      display: inline-block; width: 16px; height: 16px; border-radius: 4px; vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+
+<h1>准星 · 视觉设计方案</h1>
+<p class="subtitle">8套毛玻璃特效方案，覆盖全部页面元素（侧边栏/导航、首页卡片、数据表格、工具卡片、弹窗、设置面板、用户管理）</p>
+
+<div class="scheme-grid">
+
+  <!-- Scheme 1 -->
+  <div class="scheme-card scheme-1">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(59,130,246,0.3);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(59,130,246,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.08);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(59,130,246,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(6,182,212,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(59,130,246,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案1：深蓝海雾</div>
+      <p class="scheme-desc">以深蓝为基底，搭配渐变毛玻璃面板。侧边栏采用深色半透明+24px模糊，面板采用20px模糊+微光边框，整体沉稳专业，贴合金融监管场景。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 20-28px</span>
+        <span class="scheme-tag">深蓝渐变</span>
+        <span class="scheme-tag">悬浮微动</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>侧边栏导航、首页数据卡片、结果表格、数据源配置卡片、系统设置面板、弹窗背景
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 2 -->
+  <div class="scheme-card scheme-2">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(16,185,129,0.3);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(16,185,129,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.06);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(16,185,129,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(52,211,153,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(16,185,129,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案2：极光翡翠</div>
+      <p class="scheme-desc">翠绿色极光风格，毛玻璃采用28px超高模糊+saturate(1.5)增强色彩饱和度。面板顶部加入白色高光边框，模拟极光折射效果。呼吸光效动画让背景更有生命力。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 22-28px</span>
+        <span class="scheme-tag">翠绿极光</span>
+        <span class="scheme-tag">呼吸光效</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>侧边栏、首页趋势卡片、核对历史表格、人行逐笔校验引擎弹窗、导入进度面板
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 3 -->
+  <div class="scheme-card scheme-3">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(139,92,246,0.3);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(139,92,246,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.06);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(139,92,246,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(192,132,252,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(139,92,246,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案3：紫晶幻境</div>
+      <p class="scheme-desc">紫色系渐变毛玻璃，24px模糊配合微妙旋转背景动画。面板使用16px大圆角+紫色发光阴影，营造梦幻科技感。适合强调科技属性的金融系统。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 24-26px</span>
+        <span class="scheme-tag">紫晶渐变</span>
+        <span class="scheme-tag">旋转光效</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>侧边栏、工具页卡片矩阵、系统设置折叠面板、确认弹窗、用户管理统计卡片
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 4 -->
+  <div class="scheme-card scheme-4">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(14,165,233,0.2);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(14,165,233,0.3);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.5);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(14,165,233,0.25);"></div>
+            <div class="glass-dot" style="background:rgba(56,189,248,0.25);"></div>
+            <div class="glass-dot" style="background:rgba(14,165,233,0.15);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案4：冰蓝透明</div>
+      <p class="scheme-desc">浅色毛玻璃方案，白色半透明面板+28px超高模糊+saturate(1.6)色彩增强。配合明亮天蓝背景，整体通透清爽，适合明亮办公场景。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 20-28px</span>
+        <span class="scheme-tag">浅色通透</span>
+        <span class="scheme-tag">白色高光</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>顶部导航栏、首页玻璃卡片、数据表格、表单输入、设置页面整体
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 5 -->
+  <div class="scheme-card scheme-5">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(236,72,153,0.2);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(236,72,153,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.04);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(236,72,153,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(34,211,238,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(139,92,246,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案5：暗黑霓虹</div>
+      <p class="scheme-desc">纯黑基底+霓虹光效毛玻璃，30px超高模糊配合conic-gradient旋转扫描线。选中项带有霓虹发光阴影，极具视觉冲击力，适合追求炫酷效果的场景。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 30-32px</span>
+        <span class="scheme-tag">霓虹发光</span>
+        <span class="scheme-tag">旋转扫描</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>顶部导航、工具页卡片、人行逐笔校验引擎弹窗、导入弹窗、执行进度面板
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 6 -->
+  <div class="scheme-card scheme-6">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(245,158,11,0.3);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(245,158,11,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.06);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(245,158,11,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(251,191,36,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(245,158,11,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案6：暖金琥珀</div>
+      <p class="scheme-desc">暖色调琥珀金风格，24px模糊+暖色径向渐变背景。面板边框使用琥珀色高光，营造温暖专业感。适合希望区别于传统冷色调金融系统的场景。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 24-26px</span>
+        <span class="scheme-tag">琥珀金色</span>
+        <span class="scheme-tag">暖色光晕</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>侧边栏、首页卡片、系统设置面板、数据源配置、关于系统页面
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 7 -->
+  <div class="scheme-card scheme-7">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(59,130,246,0.3);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(59,130,246,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.06);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(59,130,246,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(236,72,153,0.25);"></div>
+            <div class="glass-dot" style="background:rgba(16,185,129,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案7：量子融合</div>
+      <p class="scheme-desc">多色渐变融合风格，蓝粉绿三色径向光斑在背景中缓慢漂移。面板叠加渐变色彩蒙版，16px大圆角。侧边栏选中项带白色半透明边框，层次丰富。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 26-30px</span>
+        <span class="scheme-tag">多色融合</span>
+        <span class="scheme-tag">漂移光斑</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>侧边栏导航、工具页卡片矩阵、首页趋势、用户管理页面、一键导入弹窗
+      </div>
+    </div>
+  </div>
+
+  <!-- Scheme 8 -->
+  <div class="scheme-card scheme-8">
+    <div class="scheme-preview">
+      <div class="preview-bg"></div>
+      <div class="sidebar-preview">
+        <div style="height:24px;width:60px;border-radius:6px;background:rgba(100,200,255,0.2);margin-bottom:12px;"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item active"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+        <div class="sidebar-item"></div>
+      </div>
+      <div class="content-area">
+        <div class="glass-panel">
+          <div class="glass-line short" style="background:rgba(100,200,255,0.4);"></div>
+          <div class="glass-line long" style="background:rgba(255,255,255,0.05);"></div>
+          <div class="glass-dot-row">
+            <div class="glass-dot" style="background:rgba(100,200,255,0.3);"></div>
+            <div class="glass-dot" style="background:rgba(120,100,255,0.25);"></div>
+            <div class="glass-dot" style="background:rgba(100,200,255,0.2);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="scheme-info">
+      <div class="scheme-name">方案8：太空深空</div>
+      <p class="scheme-desc">深空蓝渐变背景，32px极限模糊+saturate(1.6)。面板使用淡蓝边框+内发光效果，整体深邃沉稳。与当前space-tech主题一脉相承，但毛玻璃效果更极致。</p>
+      <div class="scheme-tags">
+        <span class="scheme-tag">blur 28-32px</span>
+        <span class="scheme-tag">深空蓝色</span>
+        <span class="scheme-tag">内发光效果</span>
+      </div>
+      <div class="scheme-applicable">
+        <strong>适用元素：</strong>顶部导航、首页卡片、侧边栏、数据表格、系统设置面板、所有弹窗
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="comparison-section">
+  <table class="comparison-table">
+    <thead>
+      <tr>
+        <th>方案</th>
+        <th>主色</th>
+        <th>毛玻璃模糊</th>
+        <th>饱和增强</th>
+        <th>风格定位</th>
+        <th>适合场景</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>1 深蓝海雾</strong></td>
+        <td><span class="color-swatch" style="background:#3b82f6;"></span> 深蓝</td>
+        <td>20-28px</td>
+        <td>1.3-1.4</td>
+        <td>沉稳专业</td>
+        <td>金融监管、数据核对</td>
+      </tr>
+      <tr>
+        <td><strong>2 极光翡翠</strong></td>
+        <td><span class="color-swatch" style="background:#10b981;"></span> 翠绿</td>
+        <td>22-28px</td>
+        <td>1.5</td>
+        <td>自然极光</td>
+        <td>校验引擎、导入工具</td>
+      </tr>
+      <tr>
+        <td><strong>3 紫晶幻境</strong></td>
+        <td><span class="color-swatch" style="background:#8b5cf6;"></span> 紫色</td>
+        <td>24-26px</td>
+        <td>1.3-1.4</td>
+        <td>梦幻科技</td>
+        <td>工具页、设置面板</td>
+      </tr>
+      <tr>
+        <td><strong>4 冰蓝透明</strong></td>
+        <td><span class="color-swatch" style="background:#38bdf8;"></span> 天蓝</td>
+        <td>20-28px</td>
+        <td>1.6</td>
+        <td>浅色通透</td>
+        <td>明亮办公环境</td>
+      </tr>
+      <tr>
+        <td><strong>5 暗黑霓虹</strong></td>
+        <td><span class="color-swatch" style="background:#ec4899;"></span> 霓虹</td>
+        <td>30-32px</td>
+        <td>1.5-1.6</td>
+        <td>炫酷冲击</td>
+        <td>追求视觉效果的场景</td>
+      </tr>
+      <tr>
+        <td><strong>6 暖金琥珀</strong></td>
+        <td><span class="color-swatch" style="background:#f59e0b;"></span> 琥珀</td>
+        <td>24-26px</td>
+        <td>1.3-1.4</td>
+        <td>温暖专业</td>
+        <td>区别于冷色调金融系统</td>
+      </tr>
+      <tr>
+        <td><strong>7 量子融合</strong></td>
+        <td><span class="color-swatch" style="background:linear-gradient(135deg,#3b82f6,#ec4899);"></span> 多色</td>
+        <td>26-30px</td>
+        <td>1.4-1.5</td>
+        <td>渐变融合</td>
+        <td>丰富层次需求</td>
+      </tr>
+      <tr>
+        <td><strong>8 太空深空</strong></td>
+        <td><span class="color-swatch" style="background:#64c8ff;"></span> 深空</td>
+        <td>28-32px</td>
+        <td>1.5-1.6</td>
+        <td>深邃沉稳</td>
+        <td>延续space-tech风格</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>
