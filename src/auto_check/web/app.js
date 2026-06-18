@@ -8164,14 +8164,16 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-version">v2.0.8</span>
         <span class="changelog-date">2026-06-12</span>
       </div>
-      <ul>
+       <ul>
         <li>新增监管智核品牌名称和系统 Logo。</li>
         <li>新增点击 Logo 切换主题能力。</li>
         <li>新增登录进入主界面动效。</li>
         <li>首页组合图表指标改为每期差异个数。</li>
         <li>流程链配置补充执行接口规则说明。</li>
+        <li>新增系统设置动画效果开关，支持统一关闭复杂渐变、毛玻璃、悬浮阴影和动态渲染。</li>
+        <li>新增流程后台执行悬浮提示，支持单流程链与多流程链进度区分显示。</li>
         <li>系统优化及BUG修复。</li>
-      </ul>
+       </ul>
     </div>
 
     <div class="changelog-item">
