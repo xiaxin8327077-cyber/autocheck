@@ -182,6 +182,7 @@ const flowLog = document.getElementById("flowLog");
 const flowStatus = document.getElementById("flowStatus");
 const flowStartBtn = document.getElementById("flowStartBtn");
 const flowCancelBtn = document.getElementById("flowCancelBtn");
+const flowBgRunBtn = document.getElementById("flowBgRunBtn");
 const flowHistoryBtn = document.getElementById("flowHistoryBtn");
 const flowHistoryOverlay = document.getElementById("flowHistoryOverlay");
 const flowHistoryClose = document.getElementById("flowHistoryClose");
@@ -257,6 +258,7 @@ let flowDataSources = [];
 let flowPollTimer = null;
 let flowCurrentJobId = "";
 let flowEditingChainIndex = -1;
+let flowCurrentChainInfo = null;
 let flowDefinitions = [];
 let flowDefinitionsLoaded = false;
 let flowChainEditorSelectedSteps = [];
@@ -1626,13 +1628,6 @@ function enhanceCustomSelect(select) {
   select.classList.add("custom-select-native");
   select.setAttribute("tabindex", "-1");
 
-  for (let i = 0; i < 5; i += 1) {
-    const particle = document.createElement("i");
-    particle.className = "custom-select-particle";
-    particle.setAttribute("aria-hidden", "true");
-    shell.appendChild(particle);
-  }
-
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "custom-select-trigger";
@@ -1822,12 +1817,6 @@ function enhanceCustomInput(input) {
   input.classList.add("custom-input-native");
   if (type === "date") enhanceCustomDateInput(input, shell);
 
-  for (let i = 0; i < 5; i += 1) {
-    const particle = document.createElement("i");
-    particle.className = "custom-input-particle";
-    particle.setAttribute("aria-hidden", "true");
-    shell.appendChild(particle);
-  }
 }
 
 function enhanceCustomSelects(root = document) {
@@ -6385,6 +6374,7 @@ async function loadFlowSettings() {
   flowDefinitionsLoaded = false;
   renderFlowChainSettings(flowSettings.chains || []);
   renderFlowChainPicker();
+  await loadFlowToastStatus();
   return flowSettings;
 }
 
@@ -6654,25 +6644,110 @@ function appendFlowLog(message, type = "") {
 
 async function openFlowModal() {
   flowModalOverlay?.classList.add("active");
+  try {
+    const statusPayload = await api("/api/flow-chain/status");
+    const activeJob = statusPayload.job || null;
+    if (activeJob && ["running", "pending", "cancelling"].includes(activeJob.status)) {
+      showFlowModalProgressMode(activeJob);
+      return;
+    }
+  } catch (_) {
+    // 404 = no active job, continue to new execution mode
+  }
   if (flowLog) flowLog.innerHTML = '<div class="pbc-log-entry pbc-log-entry--info">准备开始执行...</div>';
   setFlowProgress("等待开始", "选择流程链后开始执行", 0, false);
   if (flowStatus) flowStatus.textContent = "";
   if (flowStartBtn) flowStartBtn.disabled = false;
   if (flowCancelBtn) flowCancelBtn.disabled = true;
+  if (flowBgRunBtn) flowBgRunBtn.hidden = true;
   selectedFlowChainIds = [];
   isFlowExecuting = false;
   currentExecutingChainIndex = 0;
   await loadFlowSettings();
 }
 
+function showFlowModalProgressMode(job) {
+  const chainName = job.chain_name || "";
+  const executorName = job.executor_name || "";
+  const isMyJob = !executorName || executorName === (authState.user?.display_name || authState.user?.username || "");
+  const statusLabel = { running: "流程链执行中", pending: "等待执行", cancelling: "正在取消" }[job.status] || job.status;
+  setFlowProgress(statusLabel, chainName, job.progress || 0, job.status === "running");
+  if (flowStartBtn) flowStartBtn.disabled = true;
+  if (flowCancelBtn) flowCancelBtn.disabled = job.status !== "running" || !isMyJob;
+  if (flowBgRunBtn) flowBgRunBtn.hidden = !isMyJob || !["running", "pending"].includes(job.status);
+  if (flowStatus) {
+    if (isMyJob) {
+      flowStatus.textContent = "流程在后台运行中，可点击「后台运行」关闭弹窗";
+      flowStatus.dataset.type = "";
+    } else {
+      flowStatus.innerHTML = `<strong>${escapeHtml(executorName)}</strong> 正在执行，当前只读`;
+      flowStatus.dataset.type = "other-executor";
+    }
+  }
+  if (flowLog) {
+    flowLog.innerHTML = "";
+    (job.logs || []).forEach((log) => {
+      const msg = log.message || "";
+      const type = msg.includes("失败") ? "error" : msg.includes("完成") || msg.includes("结束") ? "success" : "info";
+      appendFlowLog(msg, type);
+    });
+  }
+  flowCurrentJobId = job.id || "";
+  isFlowExecuting = true;
+  startFlowModalBackgroundPoll(job.id);
+}
+
+function startFlowModalBackgroundPoll(jobId) {
+  if (flowPollTimer) clearInterval(flowPollTimer);
+  let lastLogCount = 0;
+  const poll = async () => {
+    try {
+      const payload = await api(`/api/tools/flow/status/${encodeURIComponent(jobId)}`);
+      const job = payload.job || {};
+      const chainName = job.chain_name || "";
+      const statusLabel = { running: "流程链执行中", pending: "等待执行", cancelling: "正在取消" }[job.status] || job.status;
+      setFlowProgress(statusLabel, chainName, job.progress || 0, job.status === "running");
+      const logs = job.logs || [];
+      logs.slice(lastLogCount).forEach((log) => {
+        const msg = log.message || "";
+        appendFlowLog(msg, msg.includes("失败") ? "error" : msg.includes("完成") || msg.includes("结束") ? "success" : "info");
+      });
+      lastLogCount = logs.length;
+      if (["completed", "failed", "cancelled"].includes(job.status)) {
+        clearInterval(flowPollTimer);
+        flowPollTimer = null;
+        isFlowExecuting = false;
+        if (flowStartBtn) flowStartBtn.disabled = false;
+        if (flowCancelBtn) flowCancelBtn.disabled = true;
+        if (flowBgRunBtn) flowBgRunBtn.hidden = true;
+        const doneLabel = { completed: "执行完成", failed: "执行失败", cancelled: "已取消" }[job.status] || "执行结束";
+        setFlowProgress(doneLabel, job.error || chainName, 100, false);
+        if (flowStatus) flowStatus.textContent = job.status === "completed" ? "执行完成，可关闭弹窗" : job.error || "执行结束";
+        handleFlowJobEnd(job);
+      }
+    } catch (e) {
+      clearInterval(flowPollTimer);
+      flowPollTimer = null;
+      isFlowExecuting = false;
+      if (flowStartBtn) flowStartBtn.disabled = false;
+      if (flowCancelBtn) flowCancelBtn.disabled = true;
+      if (flowBgRunBtn) flowBgRunBtn.hidden = true;
+      setFlowProgress("状态查询失败", e.message, 100, false);
+    }
+  };
+  flowPollTimer = setInterval(poll, 1500);
+  poll();
+}
+
 function closeFlowModal() {
   flowModalOverlay?.classList.remove("active");
-  if (flowPollTimer) {
+  if (!flowToastStarted && flowPollTimer) {
     clearInterval(flowPollTimer);
     flowPollTimer = null;
   }
-  isFlowExecuting = false;
-  currentExecutingChainIndex = 0;
+  if (!isFlowExecuting) {
+    currentExecutingChainIndex = 0;
+  }
 }
 
 async function startFlowChain() {
@@ -6691,7 +6766,9 @@ async function startFlowChain() {
   currentExecutingChainIndex = 0;
   if (flowStartBtn) flowStartBtn.disabled = true;
   if (flowCancelBtn) flowCancelBtn.disabled = false;
+  if (flowBgRunBtn) flowBgRunBtn.hidden = false;
   if (flowLog) flowLog.innerHTML = "";
+  if (flowStatus) flowStatus.textContent = "已提交，流程在后台运行中，可点击「后台运行」关闭弹窗";
   
   await executeNextFlowChain(chains);
 }
@@ -6709,6 +6786,7 @@ async function executeNextFlowChain(allChains) {
   }
   
   const chain = allChains[currentExecutingChainIndex];
+  flowCurrentChainInfo = chain;
   const totalSteps = allChains.reduce((sum, c) => sum + (c.steps || []).length, 0);
   const progressBase = (currentExecutingChainIndex / allChains.length) * 100;
   
@@ -6746,6 +6824,12 @@ async function pollFlowChainJob(jobId, allChains = null) {
       const payload = await api(`/api/tools/flow/status/${encodeURIComponent(jobId)}`);
       const job = payload.job || {};
       
+      // 同步更新浮动提示条
+      if (flowToastStarted && flowToastJob) {
+        flowToastJob = { ...flowToastJob, ...job };
+        renderFlowToast();
+      }
+
       // 计算整体进度
       let overallProgress = job.progress || 0;
       if (allChains && allChains.length > 1) {
@@ -6789,7 +6873,9 @@ async function pollFlowChainJob(jobId, allChains = null) {
         
         if (flowStartBtn) flowStartBtn.disabled = false;
         if (flowCancelBtn) flowCancelBtn.disabled = true;
+        if (flowBgRunBtn) flowBgRunBtn.hidden = true;
         setFlowProgress(job.status === "completed" ? "执行完成" : "执行结束", job.error || job.chain_name || "", 100, false);
+        handleFlowJobEnd(job);
         if (job.status === "completed" && (!allChains || allChains.length <= 1)) {
           showToast("流程执行完成", "success");
         }
@@ -6800,6 +6886,7 @@ async function pollFlowChainJob(jobId, allChains = null) {
       isFlowExecuting = false;
       if (flowStartBtn) flowStartBtn.disabled = false;
       if (flowCancelBtn) flowCancelBtn.disabled = true;
+      if (flowBgRunBtn) flowBgRunBtn.hidden = true;
       setFlowProgress("状态查询失败", e.message, 100, false);
       appendFlowLog("状态查询失败: " + e.message, "error");
     }
@@ -6851,7 +6938,7 @@ function renderFlowHistory(history = []) {
     <tr>
       <td>${escapeHtml((run.run_at || "").replace("T", " ") || "-")}</td>
       <td>${escapeHtml(run.chain_name || "-")}</td>
-      <td>${escapeHtml(flowTriggerText(run.trigger_type || ""))}</td>
+      <td>${escapeHtml(run.executor_name || flowTriggerText(run.trigger_type || ""))}</td>
       <td>${escapeHtml(flowJobStatusText(run.status || ""))}</td>
       <td class="money-cell">${formatMoney(run.step_count || (run.steps || []).length || 0)}</td>
       <td>${escapeHtml((run.finished_at || "").replace("T", " ") || "-")}</td>
@@ -6984,6 +7071,28 @@ toolCardFlow?.addEventListener("click", openFlowModal);
 flowModalClose?.addEventListener("click", closeFlowModal);
 flowStartBtn?.addEventListener("click", startFlowChain);
 flowCancelBtn?.addEventListener("click", cancelFlowChain);
+flowBgRunBtn?.addEventListener("click", () => {
+  if (flowCurrentJobId && flowCurrentChainInfo) {
+    flowToastStarted = true;
+    flowToastJob = {
+      id: flowCurrentJobId,
+      chain_id: flowCurrentChainInfo.id,
+      chain_name: flowCurrentChainInfo.name,
+      status: "running",
+      progress: 0,
+      step: "正在执行",
+      steps: (flowCurrentChainInfo.steps || []).map((s) => ({ flow_id: s.flow_id, flow_name: s.name || s.flow_id, status: "pending" })),
+      logs: [],
+      error: "",
+    };
+    flowToastSeenJobId = flowCurrentJobId;
+    flowToastDismissed = false;
+    if (flowToastAutoCloseTimer) { clearTimeout(flowToastAutoCloseTimer); flowToastAutoCloseTimer = null; }
+    renderFlowToast();
+    startFlowToastPollIfNeeded();
+  }
+  closeFlowModal();
+});
 flowHistoryBtn?.addEventListener("click", openFlowHistory);
 flowHistoryClose?.addEventListener("click", closeFlowHistory);
 flowHistoryOverlay?.addEventListener("click", (e) => {
@@ -7029,6 +7138,161 @@ flowSelectedStepList?.addEventListener("click", (e) => {
     moveFlowChainEditorStep(index, 1);
   } else if (button.dataset.action === "remove-selected-step") {
     removeFlowChainEditorStep(index);
+  }
+});
+
+/* ===== 流程后台执行浮动提示条 ===== */
+const flowToastContainer = document.getElementById("flowToastContainer");
+let flowToastJob = null;
+let flowToastSeenJobId = "";
+let flowToastDismissed = false;
+let flowToastPollTimer = null;
+let flowToastAutoCloseTimer = null;
+let flowToastStarted = false;
+
+function flowToastThemeClass() {
+  return document.documentElement.getAttribute("data-theme") === "space-tech" ? "flow-toast--vitality" : "flow-toast--calm";
+}
+
+function flowToastStatusText(status = "") {
+  return {
+    pending: "等待执行",
+    running: "流程链执行中",
+    completed: "执行完成",
+    failed: "执行失败",
+    cancelled: "已取消",
+  }[status] || status || "";
+}
+
+function flowToastIcon(status = "") {
+  return {completed: "✓", failed: "✗", cancelled: "⏹"}[status] || "⚙";
+}
+
+function flowToastSub(job = {}) {
+  if (!job || !job.status) return "";
+  if (job.status === "running") return job.step || "正在执行";
+  if (job.status === "completed") return "执行完成 · 1分钟后自动关闭";
+  if (job.status === "failed") return (job.error || "执行失败") + " · 1分钟后自动关闭";
+  return job.error || job.step || "";
+}
+
+function flowToastProgressPercent(job = {}) {
+  const percent = Math.max(0, Math.min(100, Number(job.progress) || 0));
+  return `${percent}%`;
+}
+
+function flowToastCurrentStep(job = {}) {
+  const steps = job.steps || [];
+  if (!steps.length) return "";
+  const completed = steps.filter((step) => ["completed", "failed", "cancelled"].includes(step.status)).length;
+  const current = job.status === "completed" ? steps.length : Math.min(completed + 1, steps.length);
+  return `${current}/${steps.length}`;
+}
+
+async function loadFlowToastStatus() {
+  try {
+    const payload = await api("/api/flow-chain/status");
+    const job = payload.job || null;
+    if (flowToastStarted && job) {
+      if (flowToastSeenJobId !== job.id) {
+        flowToastSeenJobId = job.id;
+        flowToastDismissed = false;
+      }
+      flowToastJob = job;
+      renderFlowToast();
+      startFlowToastPollIfNeeded();
+    }
+  } catch (_) {
+    // 404 or network error: keep existing toast state, don't clear
+    stopFlowToastPoll();
+  }
+}
+
+function startFlowToastPollIfNeeded() {
+  if (!flowToastJob || flowToastJob.status !== "running") {
+    stopFlowToastPoll();
+    return;
+  }
+  if (flowToastAutoCloseTimer) { clearTimeout(flowToastAutoCloseTimer); flowToastAutoCloseTimer = null; }
+  if (flowToastPollTimer) return;
+  flowToastPollTimer = setInterval(loadFlowToastStatus, 1000);
+}
+
+function stopFlowToastPoll() {
+  if (!flowToastPollTimer) return;
+  clearInterval(flowToastPollTimer);
+  flowToastPollTimer = null;
+}
+
+function handleFlowJobEnd(job = {}) {
+  stopFlowToastPoll();
+  if (!flowToastStarted && !flowToastJob) return;
+  flowToastJob = job || null;
+  flowToastSeenJobId = job?.id || flowToastSeenJobId;
+  flowToastStarted = false;
+  renderFlowToast();
+  if (flowToastAutoCloseTimer) clearTimeout(flowToastAutoCloseTimer);
+  flowToastAutoCloseTimer = setTimeout(() => {
+    flowToastDismissed = true;
+    flowToastContainer.innerHTML = "";
+    flowToastAutoCloseTimer = null;
+  }, 60000);
+}
+
+function renderFlowToast() {
+  if (!flowToastContainer) return;
+  const job = flowToastJob;
+  if (!job || flowToastDismissed) {
+    flowToastContainer.innerHTML = "";
+    return;
+  }
+  const theme = flowToastThemeClass();
+  const logs = (job.logs || []).slice(-50);
+  const expanded = flowToastContainer.dataset.expanded === "true";
+  flowToastContainer.innerHTML = `
+    <div class="flow-toast ${theme} ${job.status}${expanded ? " expanded" : ""}">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">${flowToastIcon(job.status)}</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">${escapeHtml(job.chain_name || "")} - ${escapeHtml(flowToastStatusText(job.status))}</div>
+          <div class="flow-toast-sub">${escapeHtml(flowToastSub(job))}</div>
+        </div>
+        <div class="flow-toast-step">${escapeHtml(flowToastCurrentStep(job))}</div>
+        <div class="flow-toast-actions">
+          <button type="button" class="flow-toast-action" data-action="toggle-flow-toast">${expanded ? "收起" : "展开"}</button>
+          ${job.status !== "running" ? '<button type="button" class="flow-toast-close" data-action="close-flow-toast" title="关闭">&times;</button>' : ""}
+        </div>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:${flowToastProgressPercent(job)}"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          ${logs.map((item) => `<li class="flow-toast-log-item"><span class="flow-toast-log-time">${escapeHtml(item.time || "")}</span><span class="flow-toast-log-msg">${escapeHtml(item.message || "")}</span></li>`).join("")}
+        </ul>
+      </div>
+    </div>
+  `;
+  const logList = flowToastContainer.querySelector(".flow-toast-log-list");
+  if (logList) logList.scrollTop = logList.scrollHeight;
+}
+
+flowToastContainer?.addEventListener("click", (event) => {
+  const toggleButton = event.target.closest("[data-action='toggle-flow-toast']");
+  if (toggleButton) {
+    const toast = toggleButton.closest(".flow-toast");
+    if (!toast) return;
+    toast.classList.toggle("expanded");
+    const isExpanded = toast.classList.contains("expanded");
+    toggleButton.textContent = isExpanded ? "收起" : "展开";
+    flowToastContainer.dataset.expanded = isExpanded ? "true" : "false";
+    return;
+  }
+  const closeButton = event.target.closest("[data-action='close-flow-toast']");
+  if (closeButton) {
+    flowToastDismissed = true;
+    flowToastContainer.dataset.expanded = "false";
+    flowToastContainer.innerHTML = "";
   }
 });
 
@@ -8069,4 +8333,5 @@ window.addEventListener("resize", scheduleHomeChartsResize);
   restoreLatestResultsSnapshot();
   await loadLatestHistoryResults();
   loadSystemInfo();
+  await loadFlowToastStatus();
 })();

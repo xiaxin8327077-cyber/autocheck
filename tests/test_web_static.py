@@ -1013,13 +1013,6 @@ def test_history_page_has_pagination_controls_and_logic():
     assert ".filter-clear-button" in css
     assert ".filter-clear-button::before" in css
     assert ".filter-clear-button::after" in css
-    hidden_particle_rule = re.search(
-        r"\.filter-clear-shell \.custom-input-particle,\s*"
-        r"\.filter-clear-shell \.custom-select-particle\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert hidden_particle_rule is None or "display: none" not in hidden_particle_rule.group("body")
     result_reason_shell = re.search(
         r"(?m)^\.result-card \.filters-row \.result-reason-filter-shell\s*\{(?P<body>.*?)\}",
         css,
@@ -3189,9 +3182,15 @@ def test_db_validation_history_sorts_by_execution_time_desc():
     assert "dbValidationHistoryExecutionTimeValue(right) - dbValidationHistoryExecutionTimeValue(left)" in app_js
 
 
-def test_selects_use_scheme_5_particle_glass_style():
+def test_selects_use_scheme_5_glass_style_without_particles():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
+
+    assert "custom-input-particle" not in app_js
+    assert "custom-select-particle" not in app_js
+    assert "custom-input-particle" not in css
+    assert "custom-select-particle" not in css
+    assert "float-particle" not in css
 
     for text in [
         "function initializeCustomSelects()",
@@ -3211,7 +3210,6 @@ def test_selects_use_scheme_5_particle_glass_style():
         "custom-select-option",
         "custom-input-shell",
         "custom-input-native",
-        "custom-input-particle",
         "custom-date-shell",
         "custom-date-dropdown",
         "custom-date-day",
@@ -3264,10 +3262,8 @@ def test_selects_use_scheme_5_particle_glass_style():
         ".custom-select-native",
         ".custom-select-trigger",
         ".custom-select-trigger::after",
-        ".custom-select-particle",
         ".custom-input-shell",
         "input.custom-input-native",
-        ".custom-input-particle",
         ".custom-date-shell",
         ".date-picker .custom-date-shell",
         ".db-validation-date-field",
@@ -3276,7 +3272,6 @@ def test_selects_use_scheme_5_particle_glass_style():
         "input.custom-date-input",
         ".custom-date-shell::after",
         ".custom-date-shell::before",
-        ".custom-date-shell .custom-input-particle:nth-of-type(3)",
         ".custom-date-dropdown",
         ".custom-date-head",
         ".custom-date-weekdays",
@@ -3292,7 +3287,6 @@ def test_selects_use_scheme_5_particle_glass_style():
         '[data-color-mode="dark"] input.custom-date-input',
         '[data-color-mode="dark"] .custom-date-dropdown',
         '[data-color-mode="dark"] .custom-date-shell::after',
-        '[data-color-mode="dark"] .custom-input-particle',
         ':root:not([data-theme="space-tech"]) input.custom-input-native',
         ':root:not([data-theme="space-tech"]) .custom-select-trigger',
         ':root:not([data-theme="space-tech"]) input.custom-date-input',
@@ -3330,7 +3324,6 @@ def test_selects_use_scheme_5_particle_glass_style():
         "border-color: color-mix(in srgb, var(--secondary) 52%, transparent)",
         "background: linear-gradient(135deg, var(--secondary), color-mix(in srgb, var(--secondary) 72%, var(--primary)))",
         "filter: drop-shadow(0 0 3px #3b82f6)",
-        "animation: float-particle 3s ease-in-out infinite",
         "animation: dropdown-slide 0.3s ease-out",
         "padding-left: 24px",
         "content: \"✓\"",
@@ -3899,3 +3892,31 @@ def test_dark_mode_is_separate_from_theme_choices_and_has_nav_toggles():
     assert "[data-color-mode=\"dark\"]" in css
     assert ".dark-mode-toggle" in css
     assert "[data-theme=\"space-tech\"] .top-nav .dark-mode-toggle" in css
+
+
+def test_flow_chain_background_toast_has_container_and_theme_styles():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert 'id="flowToastContainer"' in html
+    assert "loadFlowToastStatus" in app_js
+    assert "/api/flow-chain/status" in app_js
+    assert "data-action=\"toggle-flow-toast\"" in app_js
+    assert "data-action=\"close-flow-toast\"" in app_js
+    assert ".flow-toast-container" in css
+    assert ".flow-toast.flow-toast--vitality.running .flow-toast-header" in css
+    assert ".flow-toast.flow-toast--calm.running .flow-toast-header" in css
+    assert "@keyframes flow-pulse-blue" in css
+    assert "@keyframes flow-pulse-teal" in css
+    assert "[data-color-mode=\"dark\"] .flow-toast" in css
+
+
+def test_flow_modal_supports_background_progress_mode():
+    app_js = _read(APP_JS)
+
+    assert "showFlowModalProgressMode" in app_js
+    assert "startFlowModalBackgroundPoll" in app_js
+    assert "已提交，流程在后台运行中" in app_js
+    assert "flowBgRunBtn" in app_js
+    assert "后台运行" in app_js

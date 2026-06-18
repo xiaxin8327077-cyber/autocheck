@@ -55,6 +55,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath
 - 修改自动对数核心逻辑、对数仓储查询、差异类型/具体原因展示或导出逻辑时，必须同步更新 `docs/reconcile-execution-flow.zh-CN.md`。
 - 修改人行逐笔校验引擎的规则、表结构 DDL、字段映射、Excel 读取或元数据时，需要同步更新 `src/auto_check/db_validation/rules_document.py` 中的规则文档内容，以及对应的后端测试（`tests/test_db_validation_*.py`），并确认"对账业务设置/业务字段清单"页面展示与实际逻辑一致。
 - 修改流程执行工具、流程链定义、后台执行或浮动提示等逻辑时，需要参照 `docs/flow-bg-execution-design.zh-CN.md` 并同步相关测试。
+- 修改代码前需要写出方案，得到认可后才能改代码。
 
 ## 相关文档
 

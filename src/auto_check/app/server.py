@@ -397,9 +397,14 @@ class ApiRouter:
                 return 200, {"settings": flow_tool_settings_to_dict(store.flow_tool)}
             if method == "GET" and path == "/api/tools/flow/definitions":
                 return 200, {"flows": self._load_flow_definitions("")}
+            if method == "GET" and path == "/api/flow-chain/status":
+                active_job = self.get_active_flow_chain_job_payload()
+                if active_job is None:
+                    return 404, {"error": "no active flow chain job"}
+                return 200, {"job": active_job}
             if method == "POST" and path == "/api/tools/flow/start":
                 chain_id = str((body or {}).get("chain_id", "") or "").strip()
-                job = self._start_flow_chain_job(chain_id, trigger_type="manual")
+                job = self._start_flow_chain_job(chain_id, trigger_type="manual", current_user=current_user)
                 return 200, {"job_id": job.id}
             if method == "GET" and path.startswith("/api/tools/flow/status/"):
                 job_id = path.rsplit("/", 1)[-1]
@@ -885,7 +890,7 @@ class ApiRouter:
                 f"流程表读取失败：数据源 {data_source_entry.name}，流程表 {settings.flow_table or 'sp_flow'}，原因：{reason}"
             ) from exc
 
-    def _start_flow_chain_job(self, chain_id: str, *, trigger_type: str) -> "FlowChainJob":
+    def _start_flow_chain_job(self, chain_id: str, *, trigger_type: str, current_user: dict[str, Any] | None = None) -> "FlowChainJob":
         store = load_store(self.config_path)
         settings = store.flow_tool
         chain = _find_flow_chain(settings.chains, chain_id)
@@ -903,6 +908,7 @@ class ApiRouter:
             execute_url=settings.execute_url,
             poll_interval_seconds=settings.poll_interval_seconds,
             step_timeout_seconds=settings.step_timeout_minutes * 60,
+            executor_name=str((current_user or {}).get("display_name") or (current_user or {}).get("username") or ""),
         )
         gateway = DatabaseFlowGateway(data_source, flow_table=settings.flow_table, task_table=settings.task_table)
         job = FlowChainJob(chain=chain, context=context)
@@ -933,6 +939,11 @@ class ApiRouter:
                 }
         return None
 
+    def get_active_flow_chain_job_payload(self) -> dict[str, Any] | None:
+        with self._flow_chain_jobs_lock:
+            active = next((job for job in self._flow_chain_jobs.values() if job.is_active()), None)
+            return active.to_payload() if active is not None else None
+
     def _execute_flow_chain_job(self, job: "FlowChainJob", gateway: Any) -> None:
         job.start()
         try:
@@ -944,9 +955,22 @@ class ApiRouter:
                 log=job.log,
             )
             job.complete(result)
-            self.flow_chain_history_store.save_run(_flow_chain_history_entry(job, result))
+            try:
+                self.flow_chain_history_store.save_run(_flow_chain_history_entry(job, result))
+                print(f"[auto-check][flow] history saved: id={job.id}, status=completed", flush=True)
+            except Exception:
+                import traceback
+                print(f"[auto-check][flow] FAILED to save completed history:", flush=True)
+                traceback.print_exc()
         except Exception as exc:
             job.fail(_runtime_error_message(str(exc)))
+            try:
+                self.flow_chain_history_store.save_run(_flow_chain_history_entry_from_job(job))
+                print(f"[auto-check][flow] history saved: id={job.id}, status=failed, error={job.error}", flush=True)
+            except Exception:
+                import traceback
+                print(f"[auto-check][flow] FAILED to save failed history:", flush=True)
+                traceback.print_exc()
 
     def _create_runner(
         self,
@@ -1268,6 +1292,7 @@ class FlowChainJob:
                 "chain_id": self.chain.id,
                 "chain_name": self.chain.name,
                 "trigger_type": self.context.trigger_type,
+                "executor_name": self.context.executor_name,
                 "status": self.status,
                 "progress": self.progress,
                 "step": self.step,
@@ -1934,9 +1959,28 @@ def _flow_chain_history_entry(job: FlowChainJob, result: FlowChainRunResult) -> 
         "chain_id": job.chain.id,
         "chain_name": job.chain.name,
         "trigger_type": result.trigger_type,
+        "executor_name": job.context.executor_name,
         "status": job.status,
         "step_count": len(result.steps),
         "steps": payload["steps"],
+    }
+
+
+def _flow_chain_history_entry_from_job(job: FlowChainJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "run_at": _display_datetime(job.started_at),
+        "finished_at": _display_datetime(job.finished_at),
+        "run_date": _display_datetime(job.started_at)[:10],
+        "chain_id": job.chain.id,
+        "chain_name": job.chain.name,
+        "trigger_type": job.context.trigger_type,
+        "executor_name": job.context.executor_name,
+        "status": job.status,
+        "error": job.error,
+        "step_count": len(job.steps),
+        "steps": list(job.steps),
+        "logs": list(job.logs),
     }
 
 

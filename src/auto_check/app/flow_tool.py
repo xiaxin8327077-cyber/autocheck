@@ -33,6 +33,7 @@ class FlowChainRunContext:
     execute_url: str
     poll_interval_seconds: int
     step_timeout_seconds: int
+    executor_name: str = ""
 
 
 @dataclass

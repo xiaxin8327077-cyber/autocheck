@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>流程后台执行浮动提示条 - 设计预览</title>
+<style>
+  :root {
+    font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    --primary: #061623;
+    --primary-container: #1b2b38;
+    --on-primary: #ffffff;
+    --secondary: #25676e;
+    --secondary-container: #abeaf2;
+    --on-secondary: #ffffff;
+    --surface: #f7fafc;
+    --surface-container: #ebeef0;
+    --surface-container-low: #f1f4f6;
+    --surface-container-lowest: #ffffff;
+    --surface-container-high: #e5e9eb;
+    --surface-variant: #e0e3e5;
+    --outline: #74777c;
+    --outline-variant: #c4c7cc;
+    --on-surface: #181c1e;
+    --on-surface-variant: #43474b;
+    --error: #ba1a1a;
+    --success-bg: #e6f4ea;
+    --success-text: #137333;
+    --success-border: #ceead6;
+    --info-accent: #1976d2;
+    --info-bg: #e3f2fd;
+    --info-border: #bbdefb;
+    --warning-accent: #f57c00;
+    --warning-bg: #fff3e0;
+    --warning-border: #ffe0b2;
+    background: var(--surface);
+    color: var(--on-surface);
+  }
+
+  [data-color-mode="dark"] {
+    color: #e1e3e5;
+    --primary: #a0c4ff;
+    --primary-container: #1a3a5c;
+    --on-primary: #003258;
+    --on-primary-container: #d1e4ff;
+    --secondary: #80d4e0;
+    --secondary-container: #004f58;
+    --on-secondary: #00373d;
+    --surface: #121318;
+    --surface-container: #1e1f25;
+    --surface-container-low: #1a1b21;
+    --surface-container-lowest: #0d0e13;
+    --surface-container-high: #282a30;
+    --surface-variant: #43474e;
+    --outline: #8d9199;
+    --outline-variant: #43474e;
+    --on-surface: #e1e3e5;
+    --on-surface-variant: #c3c7cf;
+    --error: #ffb4ab;
+    --info-accent: #90caf9;
+    --info-bg: #0d2137;
+    --info-border: #1a3a5c;
+    --warning-accent: #ffb74d;
+    --warning-bg: #332200;
+    --warning-border: #4d3300;
+    --success-bg: #003d20;
+    --success-text: #6ddb9c;
+    --success-border: #00522b;
+    background: var(--surface);
+  }
+
+  body { margin: 0; min-height: 100vh; }
+
+  .preview-header {
+    text-align: center;
+    padding: 40px 20px 10px;
+  }
+  .preview-header h1 {
+    font-size: 22px;
+    margin: 0 0 8px;
+    color: var(--on-surface);
+  }
+  .preview-header p {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: 13px;
+  }
+
+  .mode-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 20px auto;
+  }
+  .mode-toggle button {
+    padding: 6px 18px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 6px;
+    background: var(--surface-container);
+    color: var(--on-surface);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  .mode-toggle button.active {
+    background: var(--secondary);
+    color: var(--on-secondary);
+    border-color: var(--secondary);
+  }
+
+  .scenario-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 30px;
+    max-width: 1100px;
+    margin: 30px auto;
+    padding: 0 30px 100px;
+  }
+  .scenario {
+    border: 1px solid var(--outline-variant);
+    border-radius: 12px;
+    padding: 20px;
+    background: var(--surface-container-lowest);
+    position: relative;
+    min-height: 200px;
+  }
+  .scenario-label {
+    font-size: 12px;
+    color: var(--on-surface-variant);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 14px;
+  }
+  .scenario h3 {
+    margin: 0 0 6px;
+    font-size: 15px;
+    color: var(--on-surface);
+  }
+  .scenario p {
+    margin: 0 0 16px;
+    font-size: 12px;
+    color: var(--on-surface-variant);
+  }
+
+  /* ========== 浮动提示条 ========== */
+  .flow-toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 9000;
+    min-width: 320px;
+    max-width: 420px;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  [data-color-mode="dark"] .flow-toast {
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.2);
+  }
+
+  /* 头部栏 */
+  .flow-toast-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+  .flow-toast-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 16px;
+  }
+  .flow-toast-info { flex: 1; min-width: 0; }
+  .flow-toast-title {
+    font-weight: 600;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .flow-toast-sub {
+    font-size: 11px;
+    opacity: 0.75;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .flow-toast-step {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.9;
+    font-family: monospace;
+  }
+  .flow-toast-action {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: none;
+    font-size: 12px;
+    cursor: pointer;
+    background: rgba(255,255,255,0.2);
+    color: inherit;
+    transition: background 0.2s;
+  }
+  .flow-toast-action:hover {
+    background: rgba(255,255,255,0.35);
+  }
+  .flow-toast-close {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    border-radius: 4px;
+    transition: opacity 0.2s;
+  }
+  .flow-toast-close:hover { opacity: 1; }
+
+  /* 进度条 */
+  .flow-toast-progress-track {
+    height: 3px;
+    background: rgba(255,255,255,0.2);
+  }
+  .flow-toast-progress-fill {
+    height: 100%;
+    transition: width 0.6s ease;
+    border-radius: 0 3px 3px 0;
+  }
+  [data-color-mode="dark"] .flow-toast-progress-track {
+    background: rgba(255,255,255,0.1);
+  }
+
+  /* 日志面板 */
+  .flow-toast-logs {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .flow-toast.expanded .flow-toast-logs {
+    max-height: 260px;
+  }
+  .flow-toast-log-list {
+    padding: 10px 16px 12px;
+    max-height: 220px;
+    overflow-y: auto;
+    list-style: none;
+    margin: 0;
+  }
+  .flow-toast-log-item {
+    padding: 4px 0;
+    font-size: 11px;
+    opacity: 0.85;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  }
+  .flow-toast-log-item:last-child { border-bottom: none; }
+  .flow-toast-log-time {
+    flex-shrink: 0;
+    opacity: 0.55;
+    font-size: 10px;
+    font-family: monospace;
+    padding-top: 1px;
+  }
+  .flow-toast-log-msg { flex: 1; }
+
+  /* ====== 主题：活力（太空蓝） ====== */
+  .toast--vitality .flow-toast-header {
+    background: linear-gradient(135deg, rgba(20,60,100,0.95), rgba(10,30,60,0.92));
+    color: #d0e8ff;
+  }
+  .toast--vitality .flow-toast-icon {
+    background: rgba(100,180,255,0.2);
+    color: #64b4ff;
+  }
+  .toast--vitality .flow-toast-title { color: #e8f4ff; }
+  .toast--vitality .flow-toast-step { color: #80c8ff; }
+  .toast--vitality .flow-toast-progress-track {
+    background: rgba(100,180,255,0.15);
+  }
+  .toast--vitality .flow-toast-progress-fill {
+    background: linear-gradient(90deg, #4da6ff, #80c8ff);
+  }
+  .toast--vitality .flow-toast-logs {
+    background: rgba(10,25,50,0.9);
+    color: #a0c8e8;
+  }
+  .toast--vitality .flow-toast-log-item {
+    border-bottom-color: rgba(100,180,255,0.08);
+  }
+
+  /* 运行中 - 蓝色脉冲 */
+  .toast--vitality.running .flow-toast-icon {
+    animation: pulse-blue 2s infinite;
+  }
+  @keyframes pulse-blue {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(77,166,255,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(77,166,255,0); }
+  }
+
+  /* 已完成 - 绿色 */
+  .toast--vitality.completed .flow-toast-header {
+    background: linear-gradient(135deg, rgba(10,80,50,0.95), rgba(5,50,30,0.92));
+    color: #a0f0c0;
+  }
+  .toast--vitality.completed .flow-toast-icon {
+    background: rgba(100,220,150,0.2);
+    color: #6ddb9c;
+  }
+  .toast--vitality.completed .flow-toast-step { color: #a0f0c0; }
+  .toast--vitality.completed .flow-toast-progress-fill {
+    background: linear-gradient(90deg, #4caf50, #81c784);
+  }
+  .toast--vitality.completed .flow-toast-logs {
+    background: rgba(5,40,25,0.9);
+    color: #a0d8b0;
+  }
+
+  /* 失败 - 红色 */
+  .toast--vitality.failed .flow-toast-header {
+    background: linear-gradient(135deg, rgba(100,20,20,0.95), rgba(60,10,10,0.92));
+    color: #ffcccc;
+  }
+  .toast--vitality.failed .flow-toast-icon {
+    background: rgba(255,100,100,0.2);
+    color: #ff8a80;
+  }
+  .toast--vitality.failed .flow-toast-step { color: #ff8a80; }
+  .toast--vitality.failed .flow-toast-progress-fill {
+    background: #e53935;
+  }
+
+  /* ====== 主题：沉稳（青绿色） ====== */
+  .toast--calm .flow-toast-header {
+    background: linear-gradient(135deg, rgba(37,103,110,0.95), rgba(25,70,78,0.92));
+    color: #d8f5f8;
+  }
+  .toast--calm .flow-toast-icon {
+    background: rgba(171,234,242,0.2);
+    color: #abeaf2;
+  }
+  .toast--calm .flow-toast-title { color: #e8fcff; }
+  .toast--calm .flow-toast-step { color: #abeaf2; }
+  .toast--calm .flow-toast-progress-track {
+    background: rgba(171,234,242,0.15);
+  }
+  .toast--calm .flow-toast-progress-fill {
+    background: linear-gradient(90deg, #3a9da5, #abeaf2);
+  }
+  .toast--calm .flow-toast-logs {
+    background: rgba(20,60,66,0.92);
+    color: #a0d8e0;
+  }
+  .toast--calm .flow-toast-log-item {
+    border-bottom-color: rgba(171,234,242,0.08);
+  }
+  .toast--calm.running .flow-toast-icon {
+    animation: pulse-teal 2s infinite;
+  }
+  @keyframes pulse-teal {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(58,157,165,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(58,157,165,0); }
+  }
+  .toast--calm.completed .flow-toast-header {
+    background: linear-gradient(135deg, rgba(20,80,55,0.95), rgba(10,55,35,0.92));
+    color: #a0f0c0;
+  }
+  .toast--calm.completed .flow-toast-icon {
+    background: rgba(100,220,150,0.2);
+    color: #6ddb9c;
+  }
+  .toast--calm.completed .flow-toast-step { color: #a0f0c0; }
+  .toast--calm.completed .flow-toast-progress-fill {
+    background: linear-gradient(90deg, #4caf50, #81c784);
+  }
+  .toast--calm.failed .flow-toast-header {
+    background: linear-gradient(135deg, rgba(100,30,30,0.95), rgba(65,15,15,0.92));
+    color: #ffcccc;
+  }
+  .toast--calm.failed .flow-toast-icon {
+    background: rgba(255,100,100,0.2);
+    color: #ff8a80;
+  }
+  .toast--calm.failed .flow-toast-step { color: #ff8a80; }
+  .toast--calm.failed .flow-toast-progress-fill {
+    background: #e53935;
+  }
+
+  /* 场景内静态放置的toast */
+  .scenario .flow-toast {
+    position: relative;
+    bottom: auto;
+    right: auto;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    cursor: default;
+  }
+
+  .demo-page-bg {
+    position: fixed;
+    inset: 0;
+    background: var(--surface);
+    z-index: -1;
+  }
+
+  /* 毛玻璃高光 */
+  .toast--vitality .flow-toast-header::before,
+  .toast--calm .flow-toast-header::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent);
+  }
+
+  .flow-toast-header { position: relative; }
+</style>
+</head>
+<body>
+<div class="demo-page-bg"></div>
+
+<div class="preview-header">
+  <h1>流程后台执行 - 浮动提示条设计预览</h1>
+  <p>右下角浮动提示条 | 点击展开日志 | 流程完成后通知</p>
+</div>
+
+<div class="mode-toggle">
+  <button class="active" onclick="setTheme('vitality')">活力主题</button>
+  <button onclick="setTheme('calm')">沉稳主题</button>
+  <button id="darkToggle" onclick="toggleDark()">暗色模式</button>
+</div>
+
+<div class="scenario-grid">
+  <!-- 场景1：运行中 - 紧凑态 -->
+  <div class="scenario">
+    <div class="scenario-label">场景 1</div>
+    <h3>运行中 - 紧凑态</h3>
+    <p>流程正在执行，显示当前步骤和进度</p>
+    <div class="flow-toast toast--vitality running" data-theme="vitality">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">&#9881;</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">资管新规1 - 流程链执行中</div>
+          <div class="flow-toast-sub">正在执行：流程A</div>
+        </div>
+        <div class="flow-toast-step">2/10</div>
+        <button class="flow-toast-action" onclick="toggleExpand(this)">展开</button>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:20%"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:32:01</span>
+            <span class="flow-toast-log-msg">准备执行流程：流程A</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:32:03</span>
+            <span class="flow-toast-log-msg">提交流程：流程A</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:32:05</span>
+            <span class="flow-toast-log-msg">流程已启动：流程A / sp_task.id=101</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:10</span>
+            <span class="flow-toast-log-msg">流程执行结束：流程A</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:12</span>
+            <span class="flow-toast-log-msg">准备执行流程：流程B</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景2：运行中 - 展开态 -->
+  <div class="scenario">
+    <div class="scenario-label">场景 2</div>
+    <h3>运行中 - 展开态</h3>
+    <p>点击展开后，可见执行日志</p>
+    <div class="flow-toast toast--vitality running expanded" data-theme="vitality">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">&#9881;</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">资管新规1 - 流程链执行中</div>
+          <div class="flow-toast-sub">正在执行：流程B</div>
+        </div>
+        <div class="flow-toast-step">3/10</div>
+        <button class="flow-toast-action" onclick="toggleExpand(this)">收起</button>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:30%"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:32:01</span>
+            <span class="flow-toast-log-msg">准备执行流程：流程A</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:32:05</span>
+            <span class="flow-toast-log-msg">流程已启动：流程A / sp_task.id=101</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:10</span>
+            <span class="flow-toast-log-msg">流程执行结束：流程A</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:12</span>
+            <span class="flow-toast-log-msg">准备执行流程：流程B</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:15</span>
+            <span class="flow-toast-log-msg">提交流程：流程B</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:18</span>
+            <span class="flow-toast-log-msg">流程已启动：流程B / sp_task.id=102</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景3：已完成 -->
+  <div class="scenario">
+    <div class="scenario-label">场景 3</div>
+    <h3>已完成</h3>
+    <p>全部流程执行结束，绿色状态</p>
+    <div class="flow-toast toast--vitality completed" data-theme="vitality">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">&#10003;</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">资管新规1 - 执行完成</div>
+          <div class="flow-toast-sub">全部完成 · 用时 12 分钟</div>
+        </div>
+        <div class="flow-toast-step">10/10</div>
+        <button class="flow-toast-close" title="关闭">&times;</button>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:100%"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:32:01</span>
+            <span class="flow-toast-log-msg">流程链执行完成</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景4：执行失败 -->
+  <div class="scenario">
+    <div class="scenario-label">场景 4</div>
+    <h3>执行失败</h3>
+    <p>某个流程超时或异常，红色提示</p>
+    <div class="flow-toast toast--vitality failed" data-theme="vitality">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">&#10007;</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">资管新规1 - 执行失败</div>
+          <div class="flow-toast-sub">流程B 超时：等待流程执行结束超时</div>
+        </div>
+        <div class="flow-toast-step">3/10</div>
+        <button class="flow-toast-close" title="关闭">&times;</button>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:30%"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">19:35:18</span>
+            <span class="flow-toast-log-msg" style="color:#ff8a80">等待流程执行结束超时：flow-b / sp_task.id=102</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景5：多步骤示例（沉稳主题） -->
+  <div class="scenario">
+    <div class="scenario-label">场景 5</div>
+    <h3>多步骤流程 - 沉稳主题</h3>
+    <p>20 个步骤的流程链，步骤编号清晰显示</p>
+    <div class="flow-toast toast--calm running" data-theme="calm">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">&#9881;</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">资管新规2 - 流程链执行中</div>
+          <div class="flow-toast-sub">正在执行：流程K</div>
+        </div>
+        <div class="flow-toast-step">12/20</div>
+        <button class="flow-toast-action" onclick="toggleExpand(this)">展开</button>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:60%"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">20:10:05</span>
+            <span class="flow-toast-log-msg">准备执行流程：流程K</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">20:10:08</span>
+            <span class="flow-toast-log-msg">提交流程：流程K</span>
+          </li>
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">20:10:12</span>
+            <span class="flow-toast-log-msg">流程已启动：流程K / sp_task.id=312</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景6：已完成多步骤（沉稳主题） -->
+  <div class="scenario">
+    <div class="scenario-label">场景 6</div>
+    <h3>多步骤完成 - 沉稳主题</h3>
+    <p>20 个步骤全部完成，绿色状态</p>
+    <div class="flow-toast toast--calm completed" data-theme="calm">
+      <div class="flow-toast-header">
+        <div class="flow-toast-icon">&#10003;</div>
+        <div class="flow-toast-info">
+          <div class="flow-toast-title">资管新规2 - 执行完成</div>
+          <div class="flow-toast-sub">全部完成 · 用时 45 分钟</div>
+        </div>
+        <div class="flow-toast-step">20/20</div>
+        <button class="flow-toast-close" title="关闭">&times;</button>
+      </div>
+      <div class="flow-toast-progress-track">
+        <div class="flow-toast-progress-fill" style="width:100%"></div>
+      </div>
+      <div class="flow-toast-logs">
+        <ul class="flow-toast-log-list">
+          <li class="flow-toast-log-item">
+            <span class="flow-toast-log-time">20:55:30</span>
+            <span class="flow-toast-log-msg">流程链执行完成</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 固定右下角示例 - 沉稳主题运行中 -->
+<div class="flow-toast toast--calm running" data-theme="calm" id="fixedToast" style="display:none">
+  <div class="flow-toast-header">
+    <div class="flow-toast-icon">&#9881;</div>
+    <div class="flow-toast-info">
+      <div class="flow-toast-title">资管新规3 - 流程链执行中</div>
+      <div class="flow-toast-sub">正在执行：流程C</div>
+    </div>
+    <div class="flow-toast-step">1/5</div>
+    <button class="flow-toast-action" onclick="toggleExpand(this)">展开</button>
+  </div>
+  <div class="flow-toast-progress-track">
+    <div class="flow-toast-progress-fill" style="width:20%"></div>
+  </div>
+  <div class="flow-toast-logs">
+    <ul class="flow-toast-log-list">
+      <li class="flow-toast-log-item">
+        <span class="flow-toast-log-time">20:10:05</span>
+        <span class="flow-toast-log-msg">准备执行流程：流程C</span>
+      </li>
+      <li class="flow-toast-log-item">
+        <span class="flow-toast-log-time">20:10:08</span>
+        <span class="flow-toast-log-msg">提交流程：流程C</span>
+      </li>
+      <li class="flow-toast-log-item">
+        <span class="flow-toast-log-time">20:10:12</span>
+        <span class="flow-toast-log-msg">流程已启动：流程C / sp_task.id=201</span>
+      </li>
+    </ul>
+  </div>
+</div>
+
+<script>
+function setTheme(theme) {
+  document.querySelectorAll('.flow-toast[data-theme]').forEach(el => {
+    el.className = el.className.replace(/toast--\w+/, 'toast--' + (theme === 'calm' ? 'calm' : 'vitality'));
+    el.setAttribute('data-theme', theme);
+  });
+  document.querySelectorAll('.mode-toggle button').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+
+  // 固定toast也跟随主题
+  const fixed = document.getElementById('fixedToast');
+  if (fixed) {
+    fixed.className = fixed.className.replace(/toast--\w+/, 'toast--' + (theme === 'calm' ? 'calm' : 'vitality'));
+  }
+}
+
+function toggleDark() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-color-mode') === 'dark';
+  html.setAttribute('data-color-mode', isDark ? 'light' : 'dark');
+  document.getElementById('darkToggle').classList.toggle('active', !isDark);
+}
+
+function toggleExpand(btn) {
+  const toast = btn.closest('.flow-toast');
+  toast.classList.toggle('expanded');
+  btn.textContent = toast.classList.contains('expanded') ? '收起' : '展开';
+}
+
+// 沉稳主题固定toast
+setTimeout(() => {
+  const fixed = document.getElementById('fixedToast');
+  if (fixed) {
+    fixed.style.display = '';
+  }
+}, 500);
+</script>
+</body>
+</html>

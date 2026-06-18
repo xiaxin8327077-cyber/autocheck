@@ -4465,6 +4465,19 @@ input:focus, select:focus {
 }
 
 .modal-status { flex: 1; font-size: 12px; color: var(--on-surface-variant); }
+.modal-status[data-type="other-executor"] {
+  background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 30%, var(--outline-variant));
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+.modal-status[data-type="other-executor"] strong {
+  color: var(--primary);
+  font-weight: 700;
+}
 
 /* ===== Tools Page - Crystal Grid Style ===== */
 
@@ -5541,6 +5554,311 @@ input:focus, select:focus {
 [data-color-mode="dark"] .flow-chain-config,
 [data-color-mode="dark"] .flow-step-item {
   background: rgba(30, 31, 47, 0.82);
+}
+
+/* 流程后台执行浮动提示条 */
+.flow-toast-container {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 10050;
+  pointer-events: none;
+}
+.flow-toast {
+  position: relative;
+  width: min(420px, calc(100vw - 48px));
+  pointer-events: auto;
+  border-radius: 12px;
+  overflow: hidden;
+  color: #e8fcff;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.flow-toast-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  position: relative;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+.flow-toast-header::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+}
+.flow-toast-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 16px;
+}
+.flow-toast-info {
+  flex: 1;
+  min-width: 0;
+}
+.flow-toast-title {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: inherit;
+}
+.flow-toast-sub {
+  font-size: 11px;
+  opacity: 0.78;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-toast-step {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.92;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+}
+.flow-toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.flow-toast-action,
+.flow-toast-close {
+  flex-shrink: 0;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+.flow-toast-action {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.flow-toast-action:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+.flow-toast-close {
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border-radius: 4px;
+}
+.flow-toast-close:hover {
+  opacity: 1;
+}
+.flow-toast-progress-track {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.flow-toast-progress-fill {
+  height: 100%;
+  border-radius: 0 3px 3px 0;
+  transition: width 0.6s ease;
+}
+.flow-toast-logs {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.flow-toast.expanded .flow-toast-logs {
+  max-height: 260px;
+}
+.flow-toast-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 16px 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.flow-toast-log-item {
+  padding: 4px 0;
+  font-size: 11px;
+  opacity: 0.86;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.flow-toast-log-item:last-child {
+  border-bottom: none;
+}
+.flow-toast-log-time {
+  flex-shrink: 0;
+  opacity: 0.55;
+  font-size: 10px;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  padding-top: 1px;
+}
+.flow-toast-log-msg {
+  flex: 1;
+}
+
+/* 活力主题 */
+.flow-toast.flow-toast--vitality.running .flow-toast-header {
+  background: linear-gradient(135deg, rgba(20, 60, 100, 0.95), rgba(10, 30, 60, 0.92));
+}
+.flow-toast.flow-toast--vitality .flow-toast-icon {
+  background: rgba(100, 180, 255, 0.2);
+  color: #64b4ff;
+}
+.flow-toast.flow-toast--vitality .flow-toast-step {
+  color: #80c8ff;
+}
+.flow-toast.flow-toast--vitality .flow-toast-progress-track {
+  background: rgba(100, 180, 255, 0.15);
+}
+.flow-toast.flow-toast--vitality .flow-toast-progress-fill {
+  background: linear-gradient(90deg, #4da6ff, #80c8ff);
+}
+.flow-toast.flow-toast--vitality .flow-toast-logs {
+  background: rgba(10, 25, 50, 0.9);
+  color: #a0c8e8;
+}
+.flow-toast.flow-toast--vitality .flow-toast-log-item {
+  border-bottom-color: rgba(100, 180, 255, 0.08);
+}
+.flow-toast.flow-toast--vitality.running .flow-toast-icon {
+  animation: flow-pulse-blue 2s infinite;
+}
+.flow-toast.flow-toast--vitality.completed .flow-toast-header {
+  background: linear-gradient(135deg, rgba(10, 80, 50, 0.95), rgba(5, 50, 30, 0.92));
+  color: #a0f0c0;
+}
+.flow-toast.flow-toast--vitality.completed .flow-toast-icon {
+  background: rgba(100, 220, 150, 0.2);
+  color: #6ddb9c;
+}
+.flow-toast.flow-toast--vitality.completed .flow-toast-step {
+  color: #a0f0c0;
+}
+.flow-toast.flow-toast--vitality.completed .flow-toast-progress-fill {
+  background: linear-gradient(90deg, #4caf50, #81c784);
+}
+.flow-toast.flow-toast--vitality.completed .flow-toast-logs {
+  background: rgba(5, 40, 25, 0.9);
+  color: #a0d8b0;
+}
+.flow-toast.flow-toast--vitality.failed .flow-toast-header {
+  background: linear-gradient(135deg, rgba(100, 20, 20, 0.95), rgba(60, 10, 10, 0.92));
+  color: #ffcccc;
+}
+.flow-toast.flow-toast--vitality.failed .flow-toast-icon {
+  background: rgba(255, 100, 100, 0.2);
+  color: #ff8a80;
+}
+.flow-toast.flow-toast--vitality.failed .flow-toast-step {
+  color: #ff8a80;
+}
+.flow-toast.flow-toast--vitality.failed .flow-toast-progress-fill {
+  background: #e53935;
+}
+.flow-toast.flow-toast--vitality.failed .flow-toast-logs {
+  background: rgba(50, 12, 12, 0.92);
+  color: #f0b0b0;
+}
+.flow-toast.flow-toast--vitality.failed .flow-toast-log-item {
+  border-bottom-color: rgba(255, 100, 100, 0.1);
+}
+@keyframes flow-pulse-blue {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(77, 166, 255, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(77, 166, 255, 0); }
+}
+
+/* 沉稳主题 */
+.flow-toast.flow-toast--calm.running .flow-toast-header {
+  background: linear-gradient(135deg, rgba(37, 103, 110, 0.95), rgba(25, 70, 78, 0.92));
+}
+.flow-toast.flow-toast--calm .flow-toast-icon {
+  background: rgba(171, 234, 242, 0.2);
+  color: #abeaf2;
+}
+.flow-toast.flow-toast--calm .flow-toast-step {
+  color: #abeaf2;
+}
+.flow-toast.flow-toast--calm .flow-toast-progress-track {
+  background: rgba(171, 234, 242, 0.15);
+}
+.flow-toast.flow-toast--calm .flow-toast-progress-fill {
+  background: linear-gradient(90deg, #3a9da5, #abeaf2);
+}
+.flow-toast.flow-toast--calm .flow-toast-logs {
+  background: rgba(20, 60, 66, 0.92);
+  color: #a0d8e0;
+}
+.flow-toast.flow-toast--calm .flow-toast-log-item {
+  border-bottom-color: rgba(171, 234, 242, 0.08);
+}
+.flow-toast.flow-toast--calm.running .flow-toast-icon {
+  animation: flow-pulse-teal 2s infinite;
+}
+.flow-toast.flow-toast--calm.completed .flow-toast-header {
+  background: linear-gradient(135deg, rgba(20, 80, 55, 0.95), rgba(10, 55, 35, 0.92));
+  color: #a0f0c0;
+}
+.flow-toast.flow-toast--calm.completed .flow-toast-icon {
+  background: rgba(100, 220, 150, 0.2);
+  color: #6ddb9c;
+}
+.flow-toast.flow-toast--calm.completed .flow-toast-step {
+  color: #a0f0c0;
+}
+.flow-toast.flow-toast--calm.completed .flow-toast-progress-fill {
+  background: linear-gradient(90deg, #4caf50, #81c784);
+}
+.flow-toast.flow-toast--calm.completed .flow-toast-logs {
+  background: rgba(8, 45, 30, 0.92);
+  color: #a0d8b0;
+}
+.flow-toast.flow-toast--calm.completed .flow-toast-log-item {
+  border-bottom-color: rgba(100, 220, 150, 0.08);
+}
+.flow-toast.flow-toast--calm.failed .flow-toast-header {
+  background: linear-gradient(135deg, rgba(100, 30, 30, 0.95), rgba(65, 15, 15, 0.92));
+  color: #ffcccc;
+}
+.flow-toast.flow-toast--calm.failed .flow-toast-icon {
+  background: rgba(255, 100, 100, 0.2);
+  color: #ff8a80;
+}
+.flow-toast.flow-toast--calm.failed .flow-toast-step {
+  color: #ff8a80;
+}
+.flow-toast.flow-toast--calm.failed .flow-toast-progress-fill {
+  background: #e53935;
+}
+.flow-toast.flow-toast--calm.failed .flow-toast-logs {
+  background: rgba(50, 12, 12, 0.92);
+  color: #f0b0b0;
+}
+.flow-toast.flow-toast--calm.failed .flow-toast-log-item {
+  border-bottom-color: rgba(255, 100, 100, 0.1);
+}
+@keyframes flow-pulse-teal {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(58, 157, 165, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(58, 157, 165, 0); }
+}
+[data-color-mode="dark"] .flow-toast {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+[data-color-mode="dark"] .flow-toast-progress-track {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Steps indicator */
@@ -8904,29 +9222,6 @@ input.custom-input-native:disabled {
   box-shadow: none;
 }
 
-.custom-input-particle {
-  position: absolute;
-  z-index: 3;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #3b82f6;
-  pointer-events: none;
-  animation: float-particle 3s ease-in-out infinite;
-}
-
-.custom-input-particle:nth-of-type(1) { top: 18%; left: 8%; animation-delay: 0.1s; }
-.custom-input-particle:nth-of-type(2) { top: 64%; left: 88%; animation-delay: 0.6s; }
-.custom-input-particle:nth-of-type(3) { top: 34%; left: 54%; animation-delay: 1.1s; }
-.custom-input-particle:nth-of-type(4) { top: 82%; left: 18%; animation-delay: 1.6s; }
-.custom-input-particle:nth-of-type(5) { top: 26%; left: 78%; animation-delay: 2.1s; }
-
-.custom-date-shell .custom-input-particle:nth-of-type(1) { top: 18%; left: 8%; }
-.custom-date-shell .custom-input-particle:nth-of-type(2) { top: 68%; left: 88%; }
-.custom-date-shell .custom-input-particle:nth-of-type(3) { top: 18%; left: 94%; }
-.custom-date-shell .custom-input-particle:nth-of-type(4) { top: 82%; left: 12%; }
-.custom-date-shell .custom-input-particle:nth-of-type(5) { top: 30%; left: 82%; }
-
 .custom-date-dropdown {
   position: fixed;
   z-index: 10001;
@@ -9118,23 +9413,6 @@ input.custom-input-native:disabled {
   box-shadow: none;
 }
 
-.custom-select-particle {
-  position: absolute;
-  z-index: 3;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #3b82f6;
-  pointer-events: none;
-  animation: float-particle 3s ease-in-out infinite;
-}
-
-.custom-select-particle:nth-of-type(1) { top: 20%; left: 10%; animation-delay: 0s; }
-.custom-select-particle:nth-of-type(2) { top: 60%; left: 85%; animation-delay: 0.5s; }
-.custom-select-particle:nth-of-type(3) { top: 40%; left: 50%; animation-delay: 1s; }
-.custom-select-particle:nth-of-type(4) { top: 80%; left: 20%; animation-delay: 1.5s; }
-.custom-select-particle:nth-of-type(5) { top: 30%; left: 75%; animation-delay: 2s; }
-
 .custom-select-dropdown {
   position: fixed;
   z-index: 10000;
@@ -9242,10 +9520,6 @@ input.custom-input-native:disabled {
   box-shadow: 0 0 20px rgba(129, 140, 248, 0.30);
 }
 
-[data-color-mode="dark"] .custom-select-particle {
-  background: #818cf8;
-}
-
 [data-color-mode="dark"] input.custom-input-native {
   color: #e2e8f0;
   border-color: rgba(129, 140, 248, 0.26);
@@ -9324,10 +9598,6 @@ input.custom-input-native:disabled {
   background: rgba(34, 211, 238, 0.12);
 }
 
-[data-color-mode="dark"] .custom-input-particle {
-  background: #818cf8;
-}
-
 [data-color-mode="dark"] .custom-select-dropdown {
   border-color: rgba(129, 140, 248, 0.30);
   background: rgba(30, 31, 47, 0.95);
@@ -9385,11 +9655,6 @@ input.custom-input-native:disabled {
   filter: drop-shadow(0 0 3px color-mix(in srgb, var(--secondary) 82%, transparent));
 }
 
-:root:not([data-theme="space-tech"]) .custom-input-particle,
-:root:not([data-theme="space-tech"]) .custom-select-particle {
-  background: var(--secondary);
-}
-
 :root:not([data-theme="space-tech"]) .custom-date-shell::after {
   border-color: var(--secondary);
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--secondary) 58%, transparent));
@@ -9415,13 +9680,6 @@ input.custom-input-native:disabled {
 
 :root:not([data-theme="space-tech"]) .custom-select-option.active {
   border-left-color: var(--secondary);
-}
-
-@keyframes float-particle {
-  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
-  25% { transform: translate(5px, -5px) scale(1.2); opacity: 1; }
-  50% { transform: translate(0, -10px) scale(1); opacity: 0.8; }
-  75% { transform: translate(-5px, -5px) scale(1.2); opacity: 1; }
 }
 
 @keyframes dropdown-slide {

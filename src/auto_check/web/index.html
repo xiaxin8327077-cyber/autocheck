@@ -843,6 +843,7 @@
             <span class="modal-status" id="flowStatus"></span>
             <div class="pbc-modal-footer-actions">
               <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" disabled>停止</button>
+              <button type="button" class="pbc-btn pbc-btn--ghost" id="flowBgRunBtn" hidden>后台运行</button>
               <button type="button" class="pbc-btn pbc-btn--primary" id="flowStartBtn">开始执行</button>
             </div>
           </div>
@@ -869,7 +870,7 @@
                 <tr>
                   <th>执行时间</th>
                   <th>流程链</th>
-                  <th>触发方式</th>
+                  <th>执行人</th>
                   <th>状态</th>
                   <th>流程数</th>
                   <th>结束时间</th>
@@ -1568,6 +1569,7 @@
 
     <!-- Toast container -->
     <div class="toast-container" id="toastContainer"></div>
+    <div class="flow-toast-container" id="flowToastContainer"></div>
 
     <script src="/crypto_fallback.js"></script>
     <script src="/export_detail.js"></script>

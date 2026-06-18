@@ -126,6 +126,18 @@ class FakeFlowChainExecutor:
         )
 
 
+class FakeFailingFlowChainExecutor:
+    def __init__(self, error_message="流程B超时：等待流程执行结束超时"):
+        self.calls = []
+        self.error_message = error_message
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        kwargs["log"]("流程A执行结束", 50, "流程A")
+        kwargs["log"](f"流程B执行失败: {self.error_message}", 50, "流程B")
+        raise RuntimeError(self.error_message)
+
+
 class FakeDbValidationExecutor:
     def __init__(self):
         self.calls = []
@@ -545,6 +557,113 @@ def test_flow_tool_manual_start_saves_history_with_trigger_type(tmp_path):
     assert history_payload["history"][0]["chain_name"] == "资管新规1"
     assert history_payload["history"][0]["trigger_type"] == "manual"
     assert history_payload["history"][0]["steps"][0]["end_time"] == "2026-06-11 16:36:10"
+
+
+def test_flow_chain_status_returns_active_job_payload(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-report",
+                    name="申报平台库",
+                    config=DataSourceConfig("mysql", "192.168.107.81", 3306, "reg-report-analysis", "", "u", "p"),
+                    is_default=True,
+                )
+            ],
+            flow_tool=FlowToolSettings(
+                source_id="source-report",
+                execute_url="http://192.168.107.81/assmag/spiderFlow/spider/testRun",
+                chains=[
+                    FlowChainConfig(
+                        id="chain-zgxg-1",
+                        name="资管新规1",
+                        steps=[FlowChainStep(flow_id="flow-a", name="流程A")],
+                    )
+                ],
+            ),
+        ),
+        config_path,
+    )
+    executor = FakeFlowChainExecutor()
+    router = ApiRouter(config_path=config_path, flow_chain_executor=executor)
+
+    status, payload = router.handle("POST", "/api/tools/flow/start", {"chain_id": "chain-zgxg-1"})
+    assert status == 200
+    job_id = payload["job_id"]
+
+    for _ in range(20):
+        status, status_payload = router.handle("GET", "/api/flow-chain/status", None)
+        if status == 200:
+            assert status_payload["job"]["id"] == job_id
+            assert status_payload["job"]["chain_name"] == "资管新规1"
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("active flow chain job not found")
+
+    for _ in range(40):
+        status, _ = router.handle("GET", "/api/flow-chain/status", None)
+        if status == 404:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("flow chain job did not finish")
+
+
+def test_flow_chain_failure_saves_history_with_error_and_logs(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-report",
+                    name="申报平台库",
+                    config=DataSourceConfig("mysql", "192.168.107.81", 3306, "reg-report-analysis", "", "u", "p"),
+                    is_default=True,
+                )
+            ],
+            flow_tool=FlowToolSettings(
+                source_id="source-report",
+                execute_url="http://192.168.107.81/assmag/spiderFlow/spider/testRun",
+                chains=[
+                    FlowChainConfig(
+                        id="chain-zgxg-1",
+                        name="资管新规1",
+                        steps=[FlowChainStep(flow_id="flow-a", name="流程A"), FlowChainStep(flow_id="flow-b", name="流程B")],
+                    )
+                ],
+            ),
+        ),
+        config_path,
+    )
+    executor = FakeFailingFlowChainExecutor(error_message="流程B超时：等待流程执行结束超时")
+    router = ApiRouter(config_path=config_path, flow_chain_executor=executor)
+
+    status, payload = router.handle("POST", "/api/tools/flow/start", {"chain_id": "chain-zgxg-1"})
+    assert status == 200
+    job_id = payload["job_id"]
+
+    for _ in range(40):
+        status, status_payload = router.handle("GET", f"/api/tools/flow/status/{job_id}", None)
+        if status == 200 and status_payload["job"]["status"] == "failed":
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("flow chain job did not fail")
+
+    assert status_payload["job"]["error"] == "流程B超时：等待流程执行结束超时"
+    assert len(status_payload["job"]["logs"]) > 0
+
+    status, history_payload = router.handle("GET", "/api/tools/flow/history", None)
+    assert status == 200
+    assert len(history_payload["history"]) == 1
+    entry = history_payload["history"][0]
+    assert entry["chain_name"] == "资管新规1"
+    assert entry["status"] == "failed"
+    assert entry["error"] == "流程B超时：等待流程执行结束超时"
+    assert len(entry["logs"]) > 0
+    assert any("流程B执行失败" in log.get("message", "") for log in entry["logs"])
 
 
 def test_configs_api_returns_single_data_sources(tmp_path):
