@@ -9693,6 +9693,8 @@ input.custom-input-native:disabled {
   100% { transform: translateY(-50%) scale(1); opacity: 1; }
 }
 
+/* 流程执行历史 */
+
 [data-visual-effects="off"] *,
 [data-visual-effects="off"] *::before,
 [data-visual-effects="off"] *::after {

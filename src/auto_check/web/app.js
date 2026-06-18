@@ -6895,8 +6895,14 @@ async function pollFlowChainJob(jobId, allChains = null) {
           // 继续执行下一个流程链
           if (allChains && allChains.length > 1) {
             currentExecutingChainIndex++;
-            setTimeout(() => executeNextFlowChain(allChains), 500);
-            return;
+            
+            // 如果所有流程链都执行完成，保存合并记录
+            if (currentExecutingChainIndex >= allChains.length) {
+              await saveMergedFlowChainHistory(allChains, job);
+            } else {
+              setTimeout(() => executeNextFlowChain(allChains), 3000);
+              return;
+            }
           }
         } else if (job.status === "failed") {
           appendFlowLog(`❌ 流程链执行失败：${job.error || ""}`, "error");
@@ -6911,11 +6917,6 @@ async function pollFlowChainJob(jobId, allChains = null) {
         if (flowBgRunBtn) flowBgRunBtn.hidden = true;
         setFlowProgress(job.status === "completed" ? "执行完成" : "执行结束", job.error || job.chain_name || "", overallProgress, false);
         handleFlowJobEnd({ ...job, progress: overallProgress });
-        
-        // 如果是多流程链且全部执行完成，保存合并记录
-        if (allChains && allChains.length > 1 && currentExecutingChainIndex >= allChains.length) {
-          await saveMergedFlowChainHistory(allChains, job);
-        }
         
         if (job.status === "completed" && (!allChains || allChains.length <= 1)) {
           showToast("流程执行完成", "success");
@@ -7029,7 +7030,7 @@ function renderFlowHistory(history = []) {
   flowHistoryBody.innerHTML = history.map((run) => `
     <tr>
       <td>${escapeHtml((run.run_at || "").replace("T", " ") || "-")}</td>
-      <td title="${escapeHtml(run.is_multi_chain ? (run.chain_names || []).join(",") : run.chain_name || "")}">${escapeHtml(formatFlowChainName(run))}</td>
+      <td title="${escapeHtml(run.is_multi_chain ? (run.chain_names || []).join(" → ") : run.chain_name || "")}">${escapeHtml(formatFlowChainName(run))}</td>
       <td>${escapeHtml(run.executor_name || flowTriggerText(run.trigger_type || ""))}</td>
       <td>${escapeHtml(flowJobStatusText(run.status || ""))}</td>
       <td class="money-cell">${formatMoney(run.step_count || (run.steps || []).length || 0)}</td>
@@ -8245,7 +8246,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>新增系统设置动画效果开关，支持统一关闭复杂渐变、毛玻璃、悬浮阴影和动态渲染。</li>
         <li>新增流程后台执行悬浮提示，支持单流程链与多流程链进度区分显示。</li>
         <li>执行历史新增执行时长列，支持单流程链和多流程链时长记录。</li>
-        <li>多流程链执行历史合并为一条记录，流程链列显示"多流程链(X条)"，展开可查看详情。</li>
+        <li>多流程链执行历史合并为一条记录，流程链列显示"多流程链(X条)"，悬浮显示全部流程链名称。</li>
         <li>系统优化及BUG修复。</li>
        </ul>
     </div>
