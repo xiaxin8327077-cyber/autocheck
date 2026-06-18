@@ -532,7 +532,7 @@ def test_home_auto_refresh_setting_controls_chart_reload():
 
     assert "function shouldAutoRefreshHome()" in app_js
     assert "function syncDefaultSettingsControls()" in app_js
-    assert '"autoRefreshHome"].forEach((id)' in app_js
+    assert '["visualEffects", "autoRefreshHome"].forEach((id)' in app_js
     assert 'name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)' in app_js
     assert "homeChartsNeedThemeRefresh = false;" in app_js
     assert "renderHomeStats(); renderChart(); renderTrendChart();" in app_js
@@ -905,6 +905,24 @@ def test_combination_limit_is_configurable_in_default_settings():
     assert 'api("/api/settings/defaults"' in app_js
     assert 'localStorage.removeItem("autoCheckSettings")' in app_js
     assert "max_combination_rows: getCombinationLimit()" in app_js
+
+
+def test_visual_effects_setting_replaces_page_size_control():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert 'id="pageSize"' not in html
+    assert "每页显示条数" not in html
+    assert 'id="visualEffects"' in html
+    assert "动画效果" in html
+    assert "visualEffects" in app_js
+    assert "visual_effects" in app_js
+    assert "function visualEffectsEnabled()" in app_js
+    assert "function applyVisualEffectsSetting()" in app_js
+    assert 'dataVisualEffects' not in app_js
+    assert 'dataset.visualEffects' in app_js
+    assert '[data-visual-effects="off"]' in css
 
 
 def test_latest_history_results_load_by_default_and_last_run_time_is_retained():

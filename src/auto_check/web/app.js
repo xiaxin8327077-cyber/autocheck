@@ -234,6 +234,7 @@ let renderTrendAnimId = null;
 let homeChartsNeedThemeRefresh = false;
 let homeChartsResizeTimer = null;
 const HOME_CHARTS_RESIZE_DEBOUNCE_MS = 160;
+const HOME_CHARTS_LOW_EFFECTS_RESIZE_DEBOUNCE_MS = 320;
 let resultListLoadingTimer = null;
 let trendQuickFilter = "6m";
 let trendDateStart = "";
@@ -334,6 +335,7 @@ const DEFAULT_SETTINGS = {
   pageSize: "10",
   combinationLimit: "50",
   autoRefreshHome: "false",
+  visualEffects: "true",
   theme: "space-tech",
   darkMode: "false",
 };
@@ -363,7 +365,7 @@ function consumeMainEntryAnimationFlag() {
 
 function revealAuthenticatedApp() {
   const shouldAnimate = consumeMainEntryAnimationFlag();
-  if (shouldAnimate && !window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+  if (shouldAnimate && visualEffectsEnabled() && !window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
     document.documentElement.classList.add("main-entry-animate");
     window.setTimeout(() => {
       document.documentElement.classList.remove("main-entry-animate");
@@ -532,6 +534,7 @@ function normalizeClientSettings(settings = {}) {
     pageSize: String(pageSize),
     combinationLimit: String(combinationLimit),
     autoRefreshHome: String(settings.autoRefreshHome) === "true" ? "true" : "false",
+    visualEffects: String(settings.visualEffects) === "false" ? "false" : "true",
     theme: normalizeTheme(settings.theme || DEFAULT_SETTINGS.theme),
     darkMode: normalizeDarkMode(settings.darkMode),
   };
@@ -543,6 +546,7 @@ function serverSettingsToClient(settings = {}) {
     pageSize: settings.page_size,
     combinationLimit: settings.combination_limit,
     autoRefreshHome: settings.auto_refresh_home,
+    visualEffects: settings.visual_effects === false ? "false" : "true",
     theme: settings.theme,
     darkMode: settings.dark_mode,
   });
@@ -555,6 +559,7 @@ function clientSettingsToServer(settings) {
     page_size: parseInt(normalized.pageSize, 10),
     combination_limit: parseInt(normalized.combinationLimit, 10),
     auto_refresh_home: normalized.autoRefreshHome === "true",
+    visual_effects: normalized.visualEffects !== "false",
     theme: normalized.theme,
     dark_mode: normalized.darkMode === "true",
   };
@@ -581,11 +586,20 @@ async function loadDefaultSettings() {
     localStorage.removeItem("autoCheckSettings");
   }
   syncThemeBootCache();
+  applyVisualEffectsSetting();
   return data;
 }
 
 function shouldAutoRefreshHome() {
   return defaultSettings.autoRefreshHome === "true";
+}
+
+function visualEffectsEnabled() {
+  return defaultSettings.visualEffects !== "false";
+}
+
+function applyVisualEffectsSetting() {
+  document.documentElement.dataset.visualEffects = visualEffectsEnabled() ? "on" : "off";
 }
 
 /* ===== Navigation ===== */
@@ -3575,7 +3589,7 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
   }));
 
   if (animRef && animRef.cancel) animRef.cancel = true;
-  let progress = 0;
+  let progress = visualEffectsEnabled() ? 0 : 1;
   let animId;
   let stopped = false;
 
@@ -3777,7 +3791,7 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
   };
 
   if (animRef && animRef.cancel) animRef.cancel = true;
-  let progress = 0;
+  let progress = visualEffectsEnabled() ? 0 : 1;
   let animId;
   let stopped = false;
 
@@ -4418,7 +4432,7 @@ function scheduleHomeChartsResize() {
     if (document.documentElement.getAttribute("data-page") !== "home") return;
     renderChart();
     renderTrendChart();
-  }, HOME_CHARTS_RESIZE_DEBOUNCE_MS);
+  }, visualEffectsEnabled() ? HOME_CHARTS_RESIZE_DEBOUNCE_MS : HOME_CHARTS_LOW_EFFECTS_RESIZE_DEBOUNCE_MS);
 }
 
 function setHomeEmptyState() {
@@ -5652,7 +5666,7 @@ refreshInfoBtn?.addEventListener("click", () => runSystemInfoAction(refreshInfoB
 
 // Default Settings
 function syncDefaultSettingsControls() {
-  ["pageSize", "autoRefreshHome"].forEach((id) => {
+  ["visualEffects", "autoRefreshHome"].forEach((id) => {
     const select = document.getElementById(id);
     if (select) syncCustomSelect(select);
   });
@@ -5661,19 +5675,21 @@ function syncDefaultSettingsControls() {
 function loadSettings() {
   const settings = normalizeClientSettings(defaultSettings);
   document.getElementById("sessionExpireHours").value = settings.sessionExpireHours || "8";
-  document.getElementById("pageSize").value = settings.pageSize || "10";
   document.getElementById("combinationLimit").value = settings.combinationLimit || "50";
   document.getElementById("autoRefreshHome").value = settings.autoRefreshHome || "false";
+  document.getElementById("visualEffects").value = settings.visualEffects || "true";
   PAGE_SIZE = parseInt(settings.pageSize) || 10;
+  applyVisualEffectsSetting();
   syncDefaultSettingsControls();
 }
 
 async function saveSettings() {
   const settings = {
     sessionExpireHours: document.getElementById("sessionExpireHours").value,
-    pageSize: document.getElementById("pageSize").value,
+    pageSize: defaultSettings.pageSize || DEFAULT_SETTINGS.pageSize,
     combinationLimit: document.getElementById("combinationLimit").value,
     autoRefreshHome: document.getElementById("autoRefreshHome").value,
+    visualEffects: document.getElementById("visualEffects").value,
     theme: serverDefaultSettings.theme,
     darkMode: serverDefaultSettings.darkMode,
   };
@@ -6629,7 +6645,7 @@ function setFlowProgress(title, subtitle, progress = 0, spinning = true) {
   if (flowProgressTitle) flowProgressTitle.textContent = title;
   if (flowProgressSubtitle) flowProgressSubtitle.textContent = subtitle;
   if (flowProgressFill) flowProgressFill.style.width = `${safeProgress}%`;
-  if (flowProgressPercent) flowProgressPercent.textContent = `${safeProgress}%`;
+  if (flowProgressPercent) flowProgressPercent.textContent = formatFlowPercent(safeProgress);
   flowProgressIcon?.classList.toggle("pbc-progress-icon--spinning", Boolean(spinning));
 }
 
@@ -6787,6 +6803,11 @@ async function executeNextFlowChain(allChains) {
   
   const chain = allChains[currentExecutingChainIndex];
   flowCurrentChainInfo = chain;
+  flowToastRunContext = {
+    totalChains: allChains.length,
+    currentChainIndex: currentExecutingChainIndex,
+    currentChainName: chain.name || chain.id || "",
+  };
   const totalSteps = allChains.reduce((sum, c) => sum + (c.steps || []).length, 0);
   const progressBase = (currentExecutingChainIndex / allChains.length) * 100;
   
@@ -6824,12 +6845,6 @@ async function pollFlowChainJob(jobId, allChains = null) {
       const payload = await api(`/api/tools/flow/status/${encodeURIComponent(jobId)}`);
       const job = payload.job || {};
       
-      // 同步更新浮动提示条
-      if (flowToastStarted && flowToastJob) {
-        flowToastJob = { ...flowToastJob, ...job };
-        renderFlowToast();
-      }
-
       // 计算整体进度
       let overallProgress = job.progress || 0;
       if (allChains && allChains.length > 1) {
@@ -6837,6 +6852,12 @@ async function pollFlowChainJob(jobId, allChains = null) {
         overallProgress = currentExecutingChainIndex * singleChainWeight + (job.progress || 0) * singleChainWeight / 100;
       }
       
+      // 同步更新浮动提示条
+      if (flowToastStarted && flowToastJob) {
+        flowToastJob = { ...flowToastJob, ...job, progress: overallProgress };
+        renderFlowToast();
+      }
+
       const title = allChains && allChains.length > 1
         ? `执行中 (${currentExecutingChainIndex + 1}/${allChains.length}): ${job.step || "正在执行"}`
         : (job.step || "正在执行");
@@ -6874,8 +6895,8 @@ async function pollFlowChainJob(jobId, allChains = null) {
         if (flowStartBtn) flowStartBtn.disabled = false;
         if (flowCancelBtn) flowCancelBtn.disabled = true;
         if (flowBgRunBtn) flowBgRunBtn.hidden = true;
-        setFlowProgress(job.status === "completed" ? "执行完成" : "执行结束", job.error || job.chain_name || "", 100, false);
-        handleFlowJobEnd(job);
+        setFlowProgress(job.status === "completed" ? "执行完成" : "执行结束", job.error || job.chain_name || "", overallProgress, false);
+        handleFlowJobEnd({ ...job, progress: overallProgress });
         if (job.status === "completed" && (!allChains || allChains.length <= 1)) {
           showToast("流程执行完成", "success");
         }
@@ -7074,6 +7095,11 @@ flowCancelBtn?.addEventListener("click", cancelFlowChain);
 flowBgRunBtn?.addEventListener("click", () => {
   if (flowCurrentJobId && flowCurrentChainInfo) {
     flowToastStarted = true;
+    flowToastRunContext = {
+      totalChains: Math.max(1, selectedFlowChainIds.length || 1),
+      currentChainIndex: currentExecutingChainIndex,
+      currentChainName: flowCurrentChainInfo.name || flowCurrentChainInfo.id || "",
+    };
     flowToastJob = {
       id: flowCurrentJobId,
       chain_id: flowCurrentChainInfo.id,
@@ -7149,6 +7175,7 @@ let flowToastDismissed = false;
 let flowToastPollTimer = null;
 let flowToastAutoCloseTimer = null;
 let flowToastStarted = false;
+let flowToastRunContext = { totalChains: 1, currentChainIndex: 0, currentChainName: "" };
 
 function flowToastThemeClass() {
   return document.documentElement.getAttribute("data-theme") === "space-tech" ? "flow-toast--vitality" : "flow-toast--calm";
@@ -7157,7 +7184,7 @@ function flowToastThemeClass() {
 function flowToastStatusText(status = "") {
   return {
     pending: "等待执行",
-    running: "流程链执行中",
+    running: "执行中",
     completed: "执行完成",
     failed: "执行失败",
     cancelled: "已取消",
@@ -7168,17 +7195,44 @@ function flowToastIcon(status = "") {
   return {completed: "✓", failed: "✗", cancelled: "⏹"}[status] || "⚙";
 }
 
+function formatFlowPercent(value) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0));
+  return `${percent.toFixed(2)}%`;
+}
+
+function flowToastIsMultiChain() {
+  return Number(flowToastRunContext.totalChains || 1) > 1;
+}
+
+function flowToastChainPosition() {
+  const total = Math.max(1, Number(flowToastRunContext.totalChains || 1));
+  const current = Math.min(Math.max(1, Number(flowToastRunContext.currentChainIndex || 0) + 1), total);
+  return `${current}/${total}`;
+}
+
+function flowToastTitle(job = {}) {
+  const statusText = flowToastStatusText(job.status);
+  if (flowToastIsMultiChain()) return `多流程链${statusText}：${flowToastChainPosition()}`;
+  return `${job.chain_name || flowToastRunContext.currentChainName || "流程链"} - ${statusText}`;
+}
+
 function flowToastSub(job = {}) {
   if (!job || !job.status) return "";
-  if (job.status === "running") return job.step || "正在执行";
+  const currentStep = job.step || "正在执行";
+  if (flowToastIsMultiChain()) {
+    const chainName = job.chain_name || flowToastRunContext.currentChainName || "-";
+    if (job.status === "failed") return `失败链：${chainName} ｜ 原因：${job.error || currentStep} · 1分钟后自动关闭`;
+    if (job.status === "completed") return `当前链：${chainName} ｜ 全部完成 · 1分钟后自动关闭`;
+    return `当前链：${chainName} ｜ 当前流程：${currentStep}`;
+  }
+  if (job.status === "running") return `当前流程：${currentStep}`;
   if (job.status === "completed") return "执行完成 · 1分钟后自动关闭";
   if (job.status === "failed") return (job.error || "执行失败") + " · 1分钟后自动关闭";
   return job.error || job.step || "";
 }
 
 function flowToastProgressPercent(job = {}) {
-  const percent = Math.max(0, Math.min(100, Number(job.progress) || 0));
-  return `${percent}%`;
+  return formatFlowPercent(job.progress);
 }
 
 function flowToastCurrentStep(job = {}) {
@@ -7254,7 +7308,7 @@ function renderFlowToast() {
       <div class="flow-toast-header">
         <div class="flow-toast-icon">${flowToastIcon(job.status)}</div>
         <div class="flow-toast-info">
-          <div class="flow-toast-title">${escapeHtml(job.chain_name || "")} - ${escapeHtml(flowToastStatusText(job.status))}</div>
+          <div class="flow-toast-title">${escapeHtml(flowToastTitle(job))}</div>
           <div class="flow-toast-sub">${escapeHtml(flowToastSub(job))}</div>
         </div>
         <div class="flow-toast-step">${escapeHtml(flowToastCurrentStep(job))}</div>
@@ -7931,6 +7985,7 @@ function runThemeShellTransition(targetTheme) {
   const normalizedTarget = normalizeTheme(targetTheme);
   const currentTheme = normalizeTheme(root.getAttribute("data-theme") || defaultSettings.theme);
   if (currentTheme === normalizedTarget) return;
+  if (!visualEffectsEnabled()) return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
 
   clearThemeShellTransition();

@@ -54,6 +54,7 @@ class DefaultSettings:
     page_size: int = 10
     combination_limit: int = 50
     auto_refresh_home: bool = False
+    visual_effects: bool = True
     theme: str = "space-tech"
     dark_mode: bool = False
 
@@ -445,6 +446,7 @@ def default_settings_from_dict(payload: dict[str, Any]) -> DefaultSettings:
         page_size=_coerce_int(payload.get("page_size"), default=10, minimum=1, maximum=500),
         combination_limit=_coerce_int(payload.get("combination_limit"), default=50, minimum=1, maximum=500),
         auto_refresh_home=_coerce_bool(payload.get("auto_refresh_home"), default=False),
+        visual_effects=_coerce_bool(payload.get("visual_effects"), default=True),
         theme=_coerce_theme(payload.get("theme")),
         dark_mode=_coerce_bool(payload.get("dark_mode"), default=str(payload.get("theme", "")).strip() == "dark"),
     )

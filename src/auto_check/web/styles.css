@@ -9692,3 +9692,68 @@ input.custom-input-native:disabled {
   50% { transform: translateY(-50%) scale(1.2); }
   100% { transform: translateY(-50%) scale(1); opacity: 1; }
 }
+
+[data-visual-effects="off"] *,
+[data-visual-effects="off"] *::before,
+[data-visual-effects="off"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+[data-visual-effects="off"] .custom-input-shell input.custom-input-native,
+[data-visual-effects="off"] .custom-select-trigger,
+[data-visual-effects="off"] input,
+[data-visual-effects="off"] select,
+[data-visual-effects="off"] textarea {
+  background-image: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+[data-visual-effects="off"] input:hover,
+[data-visual-effects="off"] select:hover,
+[data-visual-effects="off"] textarea:hover,
+[data-visual-effects="off"] input:focus,
+[data-visual-effects="off"] select:focus,
+[data-visual-effects="off"] textarea:focus,
+[data-visual-effects="off"] .custom-input-shell:focus-within input.custom-input-native,
+[data-visual-effects="off"] .custom-select-trigger:hover,
+[data-visual-effects="off"] .custom-select-trigger:focus,
+[data-visual-effects="off"] .custom-select-open .custom-select-trigger {
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+[data-visual-effects="off"] .top-nav,
+[data-visual-effects="off"] .pbc-modal,
+[data-visual-effects="off"] .pbc-modal-overlay,
+[data-visual-effects="off"] .custom-select-dropdown,
+[data-visual-effects="off"] .custom-date-dropdown,
+[data-visual-effects="off"] .toast,
+[data-visual-effects="off"] .flow-toast-header,
+[data-visual-effects="off"] .flow-toast-logs,
+[data-visual-effects="off"] .card,
+[data-visual-effects="off"] .glass-card,
+[data-visual-effects="off"] .glass-stat-card {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-visual-effects="off"] .card:hover,
+[data-visual-effects="off"] .tool-card:hover,
+[data-visual-effects="off"] .settings-dashboard-card:hover,
+[data-visual-effects="off"] .data-manage-item:hover,
+[data-visual-effects="off"] .btn-primary:hover,
+[data-visual-effects="off"] .btn-outline:hover,
+[data-visual-effects="off"] .pbc-btn:hover,
+[data-visual-effects="off"] .top-nav-item:hover,
+[data-visual-effects="off"] .nav-item:hover,
+[data-visual-effects="off"] .result-table tbody tr:hover,
+[data-visual-effects="off"] .history-table tbody tr:hover,
+[data-visual-effects="off"] .user-table tbody tr:hover {
+  box-shadow: none !important;
+  filter: none !important;
+  transform: none !important;
+}

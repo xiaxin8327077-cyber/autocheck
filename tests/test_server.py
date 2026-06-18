@@ -299,6 +299,7 @@ def test_default_settings_api_persists_across_router_instances(tmp_path):
             "page_size": 20,
             "combination_limit": 50,
             "auto_refresh_home": True,
+            "visual_effects": False,
             "theme": "space-tech",
             "dark_mode": True,
         },
@@ -320,6 +321,7 @@ def test_default_settings_api_persists_across_router_instances(tmp_path):
         "page_size": 20,
         "combination_limit": 50,
         "auto_refresh_home": True,
+        "visual_effects": False,
         "theme": "space-tech",
         "dark_mode": True,
     }
