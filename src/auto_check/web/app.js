@@ -267,6 +267,7 @@ let flowChainEditorSelectedSteps = [];
 let selectedFlowChainIds = [];
 let isFlowExecuting = false;
 let currentExecutingChainIndex = 0;
+let flowChainExecutionResults = []; // 收集多流程链执行结果
 const BEIJING_TIME_ZONE = "Asia/Shanghai";
 const BEIJING_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
   timeZone: BEIJING_TIME_ZONE,
@@ -6780,6 +6781,7 @@ async function startFlowChain() {
   
   isFlowExecuting = true;
   currentExecutingChainIndex = 0;
+  flowChainExecutionResults = []; // 初始化执行结果收集数组
   if (flowStartBtn) flowStartBtn.disabled = true;
   if (flowCancelBtn) flowCancelBtn.disabled = false;
   if (flowBgRunBtn) flowBgRunBtn.hidden = false;
@@ -6875,6 +6877,15 @@ async function pollFlowChainJob(jobId, allChains = null) {
         clearInterval(flowPollTimer);
         flowPollTimer = null;
         
+        // 收集当前流程链执行结果
+        flowChainExecutionResults.push({
+          chain_name: job.chain_name || "",
+          status: job.status,
+          step_count: (job.steps || []).length,
+          duration_seconds: calculateDurationSeconds(job.started_at, job.finished_at),
+          error: job.error || "",
+        });
+        
         if (job.status === "completed") {
           appendFlowLog(`✅ 流程链执行完成：${job.chain_name || ""}`, "success");
           
@@ -6897,6 +6908,12 @@ async function pollFlowChainJob(jobId, allChains = null) {
         if (flowBgRunBtn) flowBgRunBtn.hidden = true;
         setFlowProgress(job.status === "completed" ? "执行完成" : "执行结束", job.error || job.chain_name || "", overallProgress, false);
         handleFlowJobEnd({ ...job, progress: overallProgress });
+        
+        // 如果是多流程链且全部执行完成，保存合并记录
+        if (allChains && allChains.length > 1 && currentExecutingChainIndex >= allChains.length) {
+          await saveMergedFlowChainHistory(allChains, job);
+        }
+        
         if (job.status === "completed" && (!allChains || allChains.length <= 1)) {
           showToast("流程执行完成", "success");
         }
@@ -6914,6 +6931,41 @@ async function pollFlowChainJob(jobId, allChains = null) {
   };
   flowPollTimer = setInterval(poll, 1000);
   await poll();
+}
+
+function calculateDurationSeconds(startStr, endStr) {
+  if (!startStr || !endStr) return 0;
+  try {
+    const start = new Date(startStr.replace(" ", "T"));
+    const end = new Date(endStr.replace(" ", "T"));
+    const diff = Math.floor((end - start) / 1000);
+    return Math.max(0, diff);
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function saveMergedFlowChainHistory(allChains, lastJob) {
+  try {
+    const startedAt = flowChainExecutionResults[0]?.started_at || lastJob.started_at || "";
+    const finishedAt = lastJob.finished_at || "";
+    
+    await api("/api/tools/flow/save-merged-history", {
+      method: "POST",
+      body: JSON.stringify({
+        id: lastJob.id,
+        started_at: startedAt,
+        finished_at: finishedAt,
+        chain_details: flowChainExecutionResults,
+      }),
+    });
+    
+    appendFlowLog("✅ 多流程链合并记录已保存", "success");
+  } catch (e) {
+    appendFlowLog("保存合并记录失败: " + e.message, "error");
+  } finally {
+    flowChainExecutionResults = [];
+  }
 }
 
 async function cancelFlowChain() {
@@ -6940,28 +6992,45 @@ function closeFlowHistory() {
 
 async function loadFlowHistory() {
   if (!flowHistoryBody) return;
-  flowHistoryBody.innerHTML = '<tr><td colspan="6" class="empty">正在加载...</td></tr>';
+  flowHistoryBody.innerHTML = '<tr><td colspan="7" class="empty">正在加载...</td></tr>';
   try {
     const payload = await api("/api/tools/flow/history");
     renderFlowHistory(payload.history || []);
   } catch (e) {
-    flowHistoryBody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    flowHistoryBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`;
   }
+}
+
+function formatFlowDuration(seconds) {
+  if (!seconds || seconds <= 0) return "-";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins === 0) return `${secs}秒`;
+  return `${mins}分${secs}秒`;
+}
+
+function formatFlowChainName(run) {
+  if (run.is_multi_chain) {
+    const count = run.chain_names?.length || 0;
+    return `多流程链(${count}条)`;
+  }
+  return run.chain_name || "-";
 }
 
 function renderFlowHistory(history = []) {
   if (!flowHistoryBody) return;
   if (!history.length) {
-    flowHistoryBody.innerHTML = '<tr><td colspan="6" class="empty">暂无执行记录</td></tr>';
+    flowHistoryBody.innerHTML = '<tr><td colspan="7" class="empty">暂无执行记录</td></tr>';
     return;
   }
   flowHistoryBody.innerHTML = history.map((run) => `
     <tr>
       <td>${escapeHtml((run.run_at || "").replace("T", " ") || "-")}</td>
-      <td>${escapeHtml(run.chain_name || "-")}</td>
+      <td title="${escapeHtml(run.is_multi_chain ? (run.chain_names || []).join(",") : run.chain_name || "")}">${escapeHtml(formatFlowChainName(run))}</td>
       <td>${escapeHtml(run.executor_name || flowTriggerText(run.trigger_type || ""))}</td>
       <td>${escapeHtml(flowJobStatusText(run.status || ""))}</td>
       <td class="money-cell">${formatMoney(run.step_count || (run.steps || []).length || 0)}</td>
+      <td>${escapeHtml(formatFlowDuration(run.duration_seconds))}</td>
       <td>${escapeHtml((run.finished_at || "").replace("T", " ") || "-")}</td>
     </tr>
   `).join("");
@@ -8172,6 +8241,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>流程链配置补充执行接口规则说明。</li>
         <li>新增系统设置动画效果开关，支持统一关闭复杂渐变、毛玻璃、悬浮阴影和动态渲染。</li>
         <li>新增流程后台执行悬浮提示，支持单流程链与多流程链进度区分显示。</li>
+        <li>执行历史新增执行时长列，支持单流程链和多流程链时长记录。</li>
+        <li>多流程链执行历史合并为一条记录，流程链列显示"多流程链(X条)"，展开可查看详情。</li>
         <li>系统优化及BUG修复。</li>
        </ul>
     </div>

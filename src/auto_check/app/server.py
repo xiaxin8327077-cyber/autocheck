@@ -413,12 +413,15 @@ class ApiRouter:
                     return 404, {"error": "job not found"}
                 return 200, {"job": job.to_payload()}
             if method == "POST" and path == "/api/tools/flow/cancel":
-                job_id = str((body or {}).get("job_id", "") or "").strip()
+                job_id = str((body or {}).get("chain_id", "") or "").strip()
                 job = self._get_flow_chain_job(job_id)
                 if job is None:
                     return 404, {"error": "job not found"}
                 job.cancel()
                 return 200, {"ok": True, "job": job.to_payload()}
+            if method == "POST" and path == "/api/tools/flow/save-merged-history":
+                merged_entry = self._save_merged_flow_chain_history(body or {}, current_user)
+                return 200, {"ok": True, "entry": merged_entry}
 
             # ---- Read-only connection status ----
             if method == "GET" and path == "/api/connection-status":
@@ -971,6 +974,56 @@ class ApiRouter:
                 import traceback
                 print(f"[auto-check][flow] FAILED to save failed history:", flush=True)
                 traceback.print_exc()
+
+    def _save_merged_flow_chain_history(self, data: dict[str, Any], current_user: dict[str, Any] | None = None) -> dict[str, Any]:
+        """保存多流程链合并记录"""
+        chain_details = data.get("chain_details", [])
+        if not chain_details:
+            raise ValueError("chain_details is required")
+        
+        # 计算总时长
+        total_duration = sum(d.get("duration_seconds", 0) for d in chain_details)
+        
+        # 获取所有链名称
+        chain_names = [d.get("chain_name", "") for d in chain_details]
+        chain_name_display = ",".join(chain_names)
+        
+        # 获取最终状态（最后一条链的状态）
+        final_status = chain_details[-1].get("status", "completed") if chain_details else "completed"
+        
+        # 获取开始和结束时间
+        started_at = data.get("started_at", "")
+        finished_at = data.get("finished_at", "")
+        
+        # 创建合并记录
+        merged_entry = {
+            "id": data.get("id", uuid.uuid4().hex),
+            "run_at": _display_datetime(started_at),
+            "finished_at": _display_datetime(finished_at),
+            "run_date": _display_datetime(started_at)[:10],
+            "chain_id": "",
+            "chain_name": chain_name_display,
+            "chain_names": chain_names,
+            "is_multi_chain": True,
+            "trigger_type": "manual",
+            "executor_name": str((current_user or {}).get("display_name") or (current_user or {}).get("username") or ""),
+            "status": final_status,
+            "step_count": sum(d.get("step_count", 0) for d in chain_details),
+            "duration_seconds": total_duration,
+            "steps": [],
+            "chain_details": chain_details,
+        }
+        
+        try:
+            self.flow_chain_history_store.save_run(merged_entry)
+            print(f"[auto-check][flow] merged history saved: id={merged_entry['id']}, chains={len(chain_details)}, duration={total_duration}s", flush=True)
+        except Exception:
+            import traceback
+            print(f"[auto-check][flow] FAILED to save merged history:", flush=True)
+            traceback.print_exc()
+            raise
+        
+        return merged_entry
 
     def _create_runner(
         self,
@@ -1951,6 +2004,7 @@ def _db_validation_history_entry(job: DbValidationJob, result: DbValidationRunRe
 
 def _flow_chain_history_entry(job: FlowChainJob, result: FlowChainRunResult) -> dict[str, Any]:
     payload = flow_chain_result_to_dict(result)
+    duration = _calculate_duration_seconds(job.started_at, job.finished_at)
     return {
         "id": job.id,
         "run_at": _display_datetime(job.started_at),
@@ -1958,15 +2012,26 @@ def _flow_chain_history_entry(job: FlowChainJob, result: FlowChainRunResult) -> 
         "run_date": _display_datetime(job.started_at)[:10],
         "chain_id": job.chain.id,
         "chain_name": job.chain.name,
+        "chain_names": [job.chain.name],
+        "is_multi_chain": False,
         "trigger_type": result.trigger_type,
         "executor_name": job.context.executor_name,
         "status": job.status,
         "step_count": len(result.steps),
+        "duration_seconds": duration,
         "steps": payload["steps"],
+        "chain_details": [{
+            "chain_name": job.chain.name,
+            "status": job.status,
+            "step_count": len(result.steps),
+            "duration_seconds": duration,
+            "error": "",
+        }],
     }
 
 
 def _flow_chain_history_entry_from_job(job: FlowChainJob) -> dict[str, Any]:
+    duration = _calculate_duration_seconds(job.started_at, job.finished_at)
     return {
         "id": job.id,
         "run_at": _display_datetime(job.started_at),
@@ -1974,13 +2039,23 @@ def _flow_chain_history_entry_from_job(job: FlowChainJob) -> dict[str, Any]:
         "run_date": _display_datetime(job.started_at)[:10],
         "chain_id": job.chain.id,
         "chain_name": job.chain.name,
+        "chain_names": [job.chain.name],
+        "is_multi_chain": False,
         "trigger_type": job.context.trigger_type,
         "executor_name": job.context.executor_name,
         "status": job.status,
         "error": job.error,
         "step_count": len(job.steps),
+        "duration_seconds": duration,
         "steps": list(job.steps),
         "logs": list(job.logs),
+        "chain_details": [{
+            "chain_name": job.chain.name,
+            "status": job.status,
+            "step_count": len(job.steps),
+            "duration_seconds": duration,
+            "error": job.error,
+        }],
     }
 
 
@@ -2009,6 +2084,20 @@ def _db_validation_history_execution_sort_text(run: dict[str, Any]) -> str:
 
 def _display_datetime(value: str) -> str:
     return str(value or "").replace("T", " ")
+
+
+def _calculate_duration_seconds(start_str: str, end_str: str) -> int:
+    """计算两个时间字符串之间的秒数差"""
+    if not start_str or not end_str:
+        return 0
+    try:
+        from datetime import datetime
+        start = datetime.fromisoformat(start_str.replace(" ", "T"))
+        end = datetime.fromisoformat(end_str.replace(" ", "T"))
+        delta = end - start
+        return max(0, int(delta.total_seconds()))
+    except (ValueError, TypeError):
+        return 0
 
 
 def _active_config_and_name(config_path: str | Path) -> tuple[AppConfig, str, str]:
