@@ -404,7 +404,8 @@ class ApiRouter:
                 return 200, {"job": active_job}
             if method == "POST" and path == "/api/tools/flow/start":
                 chain_id = str((body or {}).get("chain_id", "") or "").strip()
-                job = self._start_flow_chain_job(chain_id, trigger_type="manual", current_user=current_user)
+                is_multi_chain = bool((body or {}).get("is_multi_chain", False))
+                job = self._start_flow_chain_job(chain_id, trigger_type="manual", current_user=current_user, save_history=not is_multi_chain)
                 return 200, {"job_id": job.id}
             if method == "GET" and path.startswith("/api/tools/flow/status/"):
                 job_id = path.rsplit("/", 1)[-1]
@@ -893,7 +894,7 @@ class ApiRouter:
                 f"流程表读取失败：数据源 {data_source_entry.name}，流程表 {settings.flow_table or 'sp_flow'}，原因：{reason}"
             ) from exc
 
-    def _start_flow_chain_job(self, chain_id: str, *, trigger_type: str, current_user: dict[str, Any] | None = None) -> "FlowChainJob":
+    def _start_flow_chain_job(self, chain_id: str, *, trigger_type: str, current_user: dict[str, Any] | None = None, save_history: bool = True) -> "FlowChainJob":
         store = load_store(self.config_path)
         settings = store.flow_tool
         chain = _find_flow_chain(settings.chains, chain_id)
@@ -914,7 +915,7 @@ class ApiRouter:
             executor_name=str((current_user or {}).get("display_name") or (current_user or {}).get("username") or ""),
         )
         gateway = DatabaseFlowGateway(data_source, flow_table=settings.flow_table, task_table=settings.task_table)
-        job = FlowChainJob(chain=chain, context=context)
+        job = FlowChainJob(chain=chain, context=context, save_history=save_history)
         with self._flow_chain_jobs_lock:
             active_job = self._active_flow_chain_job_payload_locked()
             if active_job is not None:
@@ -958,22 +959,24 @@ class ApiRouter:
                 log=job.log,
             )
             job.complete(result)
-            try:
-                self.flow_chain_history_store.save_run(_flow_chain_history_entry(job, result))
-                print(f"[auto-check][flow] history saved: id={job.id}, status=completed", flush=True)
-            except Exception:
-                import traceback
-                print(f"[auto-check][flow] FAILED to save completed history:", flush=True)
-                traceback.print_exc()
+            if job.save_history:
+                try:
+                    self.flow_chain_history_store.save_run(_flow_chain_history_entry(job, result))
+                    print(f"[auto-check][flow] history saved: id={job.id}, status=completed", flush=True)
+                except Exception:
+                    import traceback
+                    print(f"[auto-check][flow] FAILED to save completed history:", flush=True)
+                    traceback.print_exc()
         except Exception as exc:
             job.fail(_runtime_error_message(str(exc)))
-            try:
-                self.flow_chain_history_store.save_run(_flow_chain_history_entry_from_job(job))
-                print(f"[auto-check][flow] history saved: id={job.id}, status=failed, error={job.error}", flush=True)
-            except Exception:
-                import traceback
-                print(f"[auto-check][flow] FAILED to save failed history:", flush=True)
-                traceback.print_exc()
+            if job.save_history:
+                try:
+                    self.flow_chain_history_store.save_run(_flow_chain_history_entry_from_job(job))
+                    print(f"[auto-check][flow] history saved: id={job.id}, status=failed, error={job.error}", flush=True)
+                except Exception:
+                    import traceback
+                    print(f"[auto-check][flow] FAILED to save failed history:", flush=True)
+                    traceback.print_exc()
 
     def _save_merged_flow_chain_history(self, data: dict[str, Any], current_user: dict[str, Any] | None = None) -> dict[str, Any]:
         """保存多流程链合并记录"""
@@ -1255,10 +1258,11 @@ class RunJob:
 
 
 class FlowChainJob:
-    def __init__(self, *, chain: FlowChainConfig, context: FlowChainRunContext):
+    def __init__(self, *, chain: FlowChainConfig, context: FlowChainRunContext, save_history: bool = True):
         self.id = uuid.uuid4().hex
         self.chain = chain
         self.context = context
+        self.save_history = save_history
         self.status = "pending"
         self.progress = 0
         self.step = "等待执行"

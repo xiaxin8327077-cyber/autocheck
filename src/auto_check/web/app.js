@@ -6824,7 +6824,10 @@ async function executeNextFlowChain(allChains) {
   try {
     const payload = await api("/api/tools/flow/start", {
       method: "POST",
-      body: JSON.stringify({ chain_id: chain.id }),
+      body: JSON.stringify({ 
+        chain_id: chain.id,
+        is_multi_chain: allChains && allChains.length > 1,
+      }),
     });
     flowCurrentJobId = payload.job_id || "";
     appendFlowLog(`流程任务已启动：${flowCurrentJobId}`, "info");
