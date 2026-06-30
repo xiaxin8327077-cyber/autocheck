@@ -64,6 +64,10 @@ $pyinstallerArgs = @(
   "--add-data", "$resourcesPath;auto_check/resources",
   "--hidden-import", "py7zr",
   "--hidden-import", "rarfile",
+  "--hidden-import", "psycopg",
+  "--hidden-import", "psycopg_binary",
+  "--hidden-import", "psycopg.pq",
+  "--hidden-import", "pymysql",
   "--distpath", $distPath,
   "--workpath", $buildPath,
   "--specpath", $buildPath

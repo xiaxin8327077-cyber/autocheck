@@ -19,6 +19,10 @@ a = Analysis(
     hiddenimports=[
         'py7zr',
         'rarfile',
+        'psycopg',
+        'psycopg_binary',
+        'psycopg.pq',
+        'pymysql',
         'auto_check.resources',
         'auto_check.resources.data',
     ],
