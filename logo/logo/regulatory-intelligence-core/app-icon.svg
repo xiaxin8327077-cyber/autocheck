@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="title desc">
+  <title id="title">监管智核应用图标</title>
+  <desc id="desc">深色圆角底上的监管智核双环对勾应用图标。</desc>
+  <defs>
+    <linearGradient id="ric-app-bg" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="52%" stop-color="#173b7a"/>
+      <stop offset="100%" stop-color="#07111f"/>
+    </linearGradient>
+    <linearGradient id="ric-app-blue" x1="96" y1="118" x2="238" y2="322" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4f7cff"/>
+      <stop offset="100%" stop-color="#85c4ff"/>
+    </linearGradient>
+    <linearGradient id="ric-app-gold" x1="252" y1="118" x2="394" y2="322" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f0a12b"/>
+      <stop offset="100%" stop-color="#ffd166"/>
+    </linearGradient>
+    <filter id="ric-app-shadow" x="70" y="110" width="372" height="230" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.26"/>
+    </filter>
+  </defs>
+  <rect x="36" y="36" width="440" height="440" rx="96" fill="url(#ric-app-bg)"/>
+  <path d="M96 115H416M96 397H416" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-opacity="0.10"/>
+  <path d="M115 96V416M397 96V416" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-opacity="0.08"/>
+  <g filter="url(#ric-app-shadow)">
+    <circle cx="174" cy="218" r="82" fill="url(#ric-app-blue)" opacity="0.98"/>
+    <circle cx="338" cy="218" r="82" fill="url(#ric-app-gold)" opacity="0.98"/>
+    <ellipse cx="256" cy="218" rx="43" ry="82" fill="#ffffff" opacity="0.32"/>
+    <path d="M137 220L161 244L208 184" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M301 220L325 244L372 184" fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <path d="M256 308V366" fill="none" stroke="#a8b3c7" stroke-width="6" stroke-linecap="round" stroke-dasharray="13 13"/>
+  <circle cx="256" cy="386" r="14" fill="#6aa4ff"/>
+  <circle cx="256" cy="386" r="5" fill="#ffffff" opacity="0.75"/>
+</svg>

@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>监管智核 - 品牌资源效果预览</title>
+  <link rel="stylesheet" href="./tokens.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ric-ink);
+      background: var(--ric-paper);
+      font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", Arial, sans-serif;
+    }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      min-height: 430px;
+      padding: 54px 24px 48px;
+      color: var(--ric-white);
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(255,255,255,0.05) 1px, transparent 1px),
+        linear-gradient(135deg, #07111f 0%, #102f63 52%, #07111f 100%);
+      background-size: 42px 42px, 42px 42px, auto;
+    }
+    .hero-inner {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 44px;
+      width: min(1120px, 100%);
+      margin: 0 auto;
+      align-items: center;
+    }
+    .hero-logo {
+      width: min(520px, 100%);
+      height: auto;
+      display: block;
+    }
+    .hero h1 {
+      margin: 22px 0 12px;
+      font-size: 34px;
+      line-height: 1.25;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .hero p {
+      margin: 0;
+      max-width: 620px;
+      color: #cbd5e1;
+      font-size: 15px;
+      line-height: 1.8;
+    }
+    .brand-card {
+      width: 100%;
+      min-height: 330px;
+      padding: 28px 24px 26px;
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.95);
+      box-shadow: 0 28px 70px rgba(0,0,0,0.26);
+      color: var(--ric-ink);
+      text-align: center;
+    }
+    .brand-card img {
+      width: 138px;
+      height: 138px;
+      object-fit: contain;
+      margin-top: 10px;
+    }
+    .brand-card h2 {
+      margin: 20px 0 6px;
+      font-size: 25px;
+      line-height: 1.25;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .brand-card p {
+      margin: 0 0 18px;
+      color: var(--ric-slate);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.6;
+    }
+    .tags {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      padding: 5px 11px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .tag-blue {
+      color: var(--ric-blue-700);
+      border: 1px solid #d6e5ff;
+      background: #eff6ff;
+    }
+    .tag-gold {
+      color: var(--ric-gold-700);
+      border: 1px solid #fde9b8;
+      background: #fff7df;
+    }
+    .section {
+      width: min(1120px, calc(100% - 48px));
+      margin: 42px auto;
+    }
+    .section h2 {
+      margin: 0 0 16px;
+      font-size: 22px;
+      line-height: 1.3;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .asset-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .asset-card,
+    .mock-panel {
+      border: 1px solid var(--ric-line);
+      border-radius: 8px;
+      background: var(--ric-white);
+      box-shadow: var(--ric-shadow);
+    }
+    .asset-card {
+      min-height: 190px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    .asset-card.dark {
+      background: #07111f;
+      border-color: #173b7a;
+    }
+    .asset-card img {
+      max-width: 100%;
+      max-height: 96px;
+      object-fit: contain;
+      align-self: flex-start;
+    }
+    .asset-card.center img {
+      align-self: center;
+    }
+    .asset-name {
+      color: var(--ric-slate);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .asset-card.dark .asset-name { color: #a8b3c7; }
+    .palette {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .swatch {
+      min-height: 92px;
+      padding: 12px;
+      border-radius: 8px;
+      box-shadow: 0 12px 30px rgba(15,23,42,0.10);
+      color: #fff;
+      display: flex;
+      align-items: flex-end;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+    .mock-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .mock-panel {
+      overflow: hidden;
+      min-height: 310px;
+      background: #fff;
+    }
+    .mock-topbar {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 22px;
+      border-bottom: 1px solid var(--ric-line);
+      background: #fff;
+    }
+    .mock-topbar img {
+      width: 44px;
+      height: 44px;
+    }
+    .mock-title strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+    .mock-title span {
+      display: block;
+      margin-top: 4px;
+      color: var(--ric-slate);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .mock-body {
+      display: grid;
+      grid-template-columns: 138px 1fr;
+      min-height: 238px;
+    }
+    .mock-sidebar {
+      padding: 20px 16px;
+      background: linear-gradient(180deg, #07111f, #102f63);
+    }
+    .mock-sidebar img {
+      width: 118px;
+      display: block;
+      margin-bottom: 22px;
+    }
+    .mock-nav {
+      height: 10px;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.18);
+      margin-bottom: 14px;
+    }
+    .mock-content {
+      padding: 22px;
+      background: #f8fafc;
+    }
+    .mock-stat {
+      height: 72px;
+      border: 1px solid var(--ric-line);
+      border-left: 4px solid var(--ric-blue-700);
+      border-radius: 8px;
+      background: #fff;
+      margin-bottom: 14px;
+    }
+    .mock-stat.gold {
+      border-left-color: var(--ric-gold-700);
+    }
+    .login-shot {
+      min-height: 310px;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      background:
+        linear-gradient(90deg, rgba(52,102,217,0.08) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(217,135,17,0.08) 1px, transparent 1px),
+        #eef4fb;
+      background-size: 36px 36px;
+    }
+    .login-shot .brand-card {
+      width: min(300px, 100%);
+      min-height: 250px;
+      box-shadow: 0 18px 46px rgba(15,23,42,0.14);
+      border-color: var(--ric-line);
+      padding: 22px 20px;
+    }
+    .login-shot .brand-card img {
+      width: 116px;
+      height: 116px;
+      margin-top: 0;
+    }
+    .login-shot .brand-card h2 {
+      font-size: 22px;
+      margin-top: 14px;
+    }
+    @media (max-width: 900px) {
+      .hero-inner,
+      .mock-grid {
+        grid-template-columns: 1fr;
+      }
+      .hero {
+        padding-top: 34px;
+      }
+      .asset-grid,
+      .palette {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .mock-body {
+        grid-template-columns: 112px 1fr;
+      }
+    }
+    @media (max-width: 560px) {
+      .section {
+        width: min(100% - 28px, 1120px);
+        margin: 30px auto;
+      }
+      .asset-grid,
+      .palette {
+        grid-template-columns: 1fr;
+      }
+      .hero h1 {
+        font-size: 28px;
+      }
+      .mock-body {
+        grid-template-columns: 1fr;
+      }
+      .mock-sidebar {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div>
+        <img class="hero-logo" src="./logo-horizontal-dark.svg" alt="监管智核横向标志" />
+        <h1>双环核验，落点清晰。</h1>
+        <p>延续原方案的蓝金交叠圆与双对勾结构，将主品牌文字调整为“监管智核”，整体语义聚焦监管数据核验与智能判定。</p>
+      </div>
+      <div class="brand-card">
+        <img src="./mark.svg" alt="监管智核标志图形" />
+        <h2>监管智核</h2>
+        <p>REGULATORY INTELLIGENCE CORE</p>
+        <div class="tags">
+          <span class="tag tag-blue">全流程</span>
+          <span class="tag tag-gold">智能核验</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="section">
+    <h2>资源预览</h2>
+    <div class="asset-grid">
+      <div class="asset-card center">
+        <img src="./mark.svg" alt="mark.svg" />
+        <div class="asset-name">mark.svg</div>
+      </div>
+      <div class="asset-card">
+        <img src="./logo-horizontal.svg" alt="logo-horizontal.svg" />
+        <div class="asset-name">logo-horizontal.svg</div>
+      </div>
+      <div class="asset-card dark">
+        <img src="./logo-horizontal-dark.svg" alt="logo-horizontal-dark.svg" />
+        <div class="asset-name">logo-horizontal-dark.svg</div>
+      </div>
+      <div class="asset-card center">
+        <img src="./logo-stacked.svg" alt="logo-stacked.svg" />
+        <div class="asset-name">logo-stacked.svg</div>
+      </div>
+      <div class="asset-card center">
+        <img src="./favicon-64x64.svg" alt="favicon-64x64.svg" />
+        <div class="asset-name">favicon-64x64.svg</div>
+      </div>
+      <div class="asset-card center">
+        <img src="./app-icon.svg" alt="app-icon.svg" />
+        <div class="asset-name">app-icon.svg</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>品牌色</h2>
+    <div class="palette">
+      <div class="swatch" style="background:#0f172a">深蓝<br />#0F172A</div>
+      <div class="swatch" style="background:#3466d9">品牌蓝<br />#3466D9</div>
+      <div class="swatch" style="background:#6aa4ff">亮蓝<br />#6AA4FF</div>
+      <div class="swatch" style="background:#2aa7c8">科技青<br />#2AA7C8</div>
+      <div class="swatch" style="background:#d98711">监管金<br />#D98711</div>
+      <div class="swatch" style="background:#ffbd38;color:#0f172a">亮金<br />#FFBD38</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>应用效果</h2>
+    <div class="mock-grid">
+      <div class="mock-panel">
+        <div class="mock-topbar">
+          <img src="./favicon-64x64.svg" alt="监管智核紧凑图标" />
+          <div class="mock-title">
+            <strong>监管智核</strong>
+            <span>监管报送核验平台</span>
+          </div>
+        </div>
+        <div class="mock-body">
+          <aside class="mock-sidebar">
+            <img src="./logo-horizontal-dark.svg" alt="深色侧栏标志" />
+            <div class="mock-nav"></div>
+            <div class="mock-nav"></div>
+            <div class="mock-nav"></div>
+          </aside>
+          <main class="mock-content">
+            <div class="mock-stat"></div>
+            <div class="mock-stat gold"></div>
+            <div class="mock-stat"></div>
+          </main>
+        </div>
+      </div>
+      <div class="mock-panel login-shot">
+        <div class="brand-card">
+          <img src="./mark.svg" alt="监管智核登录卡片标志" />
+          <h2>监管智核</h2>
+          <p>REGULATORY INTELLIGENCE CORE</p>
+          <div class="tags">
+            <span class="tag tag-blue">全流程</span>
+            <span class="tag tag-gold">自动核验</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>准星 - 粒子悬浮下拉框</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+    padding: 40px;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+
+  /* ===== 暗色模式 ===== */
+  .dark-section {
+    background: linear-gradient(135deg, #0a0a0d 0%, #1a1b2f 100%);
+    padding: 32px;
+    border-radius: 16px;
+    color: #e2e8f0;
+  }
+
+  .dark-section h1 {
+    background: linear-gradient(135deg, #38bdf8, #818cf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .dark-section .subtitle {
+    color: #94a3b8;
+  }
+
+  .dark-select-wrapper {
+    position: relative;
+    max-width: 400px;
+  }
+
+  .dark-select-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #94a3b8;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .dark-select-box {
+    position: relative;
+    width: 100%;
+    padding: 12px 40px 12px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #e2e8f0;
+    background: rgba(30, 31, 47, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(129, 140, 248, 0.3);
+    border-radius: 8px;
+    appearance: none;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.3s;
+  }
+
+  .dark-select-box:hover,
+  .dark-select-box:focus {
+    border-color: #818cf8;
+    box-shadow: 0 0 20px rgba(129, 140, 248, 0.3);
+  }
+
+  /* 粒子 */
+  .dark-particle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    background: #818cf8;
+    border-radius: 50%;
+    animation: float-particle 3s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .dark-particle:nth-child(1) { top: 20%; left: 10%; animation-delay: 0s; }
+  .dark-particle:nth-child(2) { top: 60%; left: 85%; animation-delay: 0.5s; }
+  .dark-particle:nth-child(3) { top: 40%; left: 50%; animation-delay: 1s; }
+  .dark-particle:nth-child(4) { top: 80%; left: 20%; animation-delay: 1.5s; }
+  .dark-particle:nth-child(5) { top: 30%; left: 75%; animation-delay: 2s; }
+
+  @keyframes float-particle {
+    0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.6; }
+    25% { transform: translate(5px, -5px) scale(1.2); opacity: 1; }
+    50% { transform: translate(0, -10px) scale(1); opacity: 0.8; }
+    75% { transform: translate(-5px, -5px) scale(1.2); opacity: 1; }
+  }
+
+  /* 下拉箭头 */
+  .dark-select-wrapper::after {
+    content: '';
+    position: absolute;
+    right: 14px;
+    top: 38px;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #818cf8;
+    pointer-events: none;
+    z-index: 2;
+    filter: drop-shadow(0 0 4px #818cf8);
+  }
+
+  /* 下拉内容 */
+  .dark-dropdown {
+    margin-top: 8px;
+    background: rgba(30, 31, 47, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(129, 140, 248, 0.3);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 20px rgba(129, 140, 248, 0.1);
+    overflow: hidden;
+    animation: dropdown-slide 0.3s ease-out;
+  }
+
+  @keyframes dropdown-slide {
+    0% { opacity: 0; transform: translateY(-10px) scale(0.95); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .dark-dropdown-item {
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #e2e8f0;
+    border-bottom: 1px solid rgba(129, 140, 248, 0.1);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .dark-dropdown-item:last-child { border-bottom: none; }
+
+  .dark-dropdown-item::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(129, 140, 248, 0.1), transparent);
+    transition: left 0.3s;
+  }
+
+  .dark-dropdown-item:hover::before {
+    left: 100%;
+  }
+
+  .dark-dropdown-item:hover {
+    background: rgba(129, 140, 248, 0.15);
+    color: #a78bfa;
+    padding-left: 24px;
+  }
+
+  .dark-dropdown-item.active {
+    background: linear-gradient(90deg, rgba(129, 140, 248, 0.2), transparent);
+    color: #a78bfa;
+    font-weight: 600;
+    border-left: 3px solid #818cf8;
+  }
+
+  .dark-dropdown-item.active::after {
+    content: '✓';
+    position: absolute;
+    right: 16px;
+    color: #818cf8;
+    animation: check-bounce 0.5s ease-out;
+  }
+
+  @keyframes check-bounce {
+    0% { transform: scale(0); opacity: 0; }
+    50% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ===== 浅色模式 ===== */
+  .light-section {
+    background: linear-gradient(135deg, #f7fafc 0%, #e2e8f0 100%);
+    padding: 32px;
+    border-radius: 16px;
+    color: #181c1e;
+  }
+
+  .light-section h1 {
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .light-section .subtitle {
+    color: #64748b;
+  }
+
+  .light-select-wrapper {
+    position: relative;
+    max-width: 400px;
+  }
+
+  .light-select-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #475569;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .light-select-box {
+    position: relative;
+    width: 100%;
+    padding: 12px 40px 12px 16px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #1e293b;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    appearance: none;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.3s;
+  }
+
+  .light-select-box:hover,
+  .light-select-box:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.2);
+  }
+
+  /* 粒子 */
+  .light-particle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    background: #3b82f6;
+    border-radius: 50%;
+    animation: float-particle 3s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .light-particle:nth-child(1) { top: 20%; left: 10%; animation-delay: 0s; }
+  .light-particle:nth-child(2) { top: 60%; left: 85%; animation-delay: 0.5s; }
+  .light-particle:nth-child(3) { top: 40%; left: 50%; animation-delay: 1s; }
+  .light-particle:nth-child(4) { top: 80%; left: 20%; animation-delay: 1.5s; }
+  .light-particle:nth-child(5) { top: 30%; left: 75%; animation-delay: 2s; }
+
+  /* 下拉箭头 */
+  .light-select-wrapper::after {
+    content: '';
+    position: absolute;
+    right: 14px;
+    top: 38px;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid #3b82f6;
+    pointer-events: none;
+    z-index: 2;
+    filter: drop-shadow(0 0 3px #3b82f6);
+  }
+
+  /* 下拉内容 */
+  .light-dropdown {
+    margin-top: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 0 16px rgba(59, 130, 246, 0.05);
+    overflow: hidden;
+    animation: dropdown-slide 0.3s ease-out;
+  }
+
+  .light-dropdown-item {
+    padding: 12px 16px;
+    font-size: 14px;
+    color: #1e293b;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .light-dropdown-item:last-child { border-bottom: none; }
+
+  .light-dropdown-item::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.05), transparent);
+    transition: left 0.3s;
+  }
+
+  .light-dropdown-item:hover::before {
+    left: 100%;
+  }
+
+  .light-dropdown-item:hover {
+    background: rgba(59, 130, 246, 0.1);
+    color: #2563eb;
+    padding-left: 24px;
+  }
+
+  .light-dropdown-item.active {
+    background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent);
+    color: #2563eb;
+    font-weight: 600;
+    border-left: 3px solid #3b82f6;
+  }
+
+  .light-dropdown-item.active::after {
+    content: '✓';
+    position: absolute;
+    right: 16px;
+    color: #3b82f6;
+    animation: check-bounce 0.5s ease-out;
+  }
+</style>
+</head>
+<body>
+  <!-- 暗色模式 -->
+  <div class="dark-section">
+    <h1>方案 5 - 粒子悬浮（暗色模式）</h1>
+    <p class="subtitle">悬浮粒子 + 毛玻璃质感，蓝紫色调</p>
+    
+    <div class="dark-select-wrapper">
+      <label class="dark-select-label">选择数据源</label>
+      <div class="dark-particle"></div>
+      <div class="dark-particle"></div>
+      <div class="dark-particle"></div>
+      <div class="dark-particle"></div>
+      <div class="dark-particle"></div>
+      <select class="dark-select-box">
+        <option>本地 - DWS</option>
+        <option selected>本地 - 报表库</option>
+        <option>生产 - DWS</option>
+      </select>
+      <div class="dark-dropdown">
+        <div class="dark-dropdown-item">本地 - DWS</div>
+        <div class="dark-dropdown-item active">本地 - 报表库</div>
+        <div class="dark-dropdown-item">生产 - DWS</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 浅色模式 -->
+  <div class="light-section">
+    <h1>方案 5 - 粒子悬浮（浅色模式）</h1>
+    <p class="subtitle">悬浮粒子 + 毛玻璃质感，蓝色调</p>
+    
+    <div class="light-select-wrapper">
+      <label class="light-select-label">选择数据源</label>
+      <div class="light-particle"></div>
+      <div class="light-particle"></div>
+      <div class="light-particle"></div>
+      <div class="light-particle"></div>
+      <div class="light-particle"></div>
+      <select class="light-select-box">
+        <option>本地 - DWS</option>
+        <option selected>本地 - 报表库</option>
+        <option>生产 - DWS</option>
+      </select>
+      <div class="light-dropdown">
+        <div class="light-dropdown-item">本地 - DWS</div>
+        <div class="light-dropdown-item active">本地 - 报表库</div>
+        <div class="light-dropdown-item">生产 - DWS</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
