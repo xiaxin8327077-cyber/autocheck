@@ -1,4 +1,4 @@
--- 2026-05-31 自动对数真实化回归场景数据。
+﻿-- 2026-05-31 自动对数真实化回归场景数据。
 -- 目的：重建本地 auto_check_test 库中的对数核心表，清理旧测试数据，并生成更贴近业务命名的核对结果。
 -- 使用方式：powershell -ExecutionPolicy Bypass -File scripts\load-local-pg-20260531-ta-scenarios.ps1
 
@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS dws;
 CREATE SCHEMA IF NOT EXISTS dm;
 CREATE SCHEMA IF NOT EXISTS zgxg_zhbs;
 CREATE SCHEMA IF NOT EXISTS currency_report_24;
-CREATE SCHEMA IF NOT EXISTS assman_reg;
+CREATE SCHEMA IF NOT EXISTS ass_man_reg;
 
 BEGIN;
 
@@ -28,7 +28,7 @@ DROP TABLE IF EXISTS currency_report_24.currency_detail_project_2_1_5;
 DROP TABLE IF EXISTS currency_report_24.currency_detail_project_2_1_5_2;
 DROP TABLE IF EXISTS currency_report_24.currency_detail_project_2_1_6;
 DROP TABLE IF EXISTS currency_report_24.currency_detail_project_2_1_9;
-DROP TABLE IF EXISTS assman_reg.ex_pledge_back;
+DROP TABLE IF EXISTS ass_man_reg.ex_pledge_back;
 
 CREATE TABLE dws.zf_detail_2024 (
   caldate date NOT NULL,
@@ -143,7 +143,7 @@ CREATE TABLE currency_report_24.currency_detail_project_2_1_5_2 (caldate date);
 CREATE TABLE currency_report_24.currency_detail_project_2_1_6 (caldate date);
 CREATE TABLE currency_report_24.currency_detail_project_2_1_9 (caldate date);
 
-CREATE TABLE assman_reg.ex_pledge_back (
+CREATE TABLE ass_man_reg.ex_pledge_back (
   project_code varchar,
   subcode varchar,
   buyback_money numeric,

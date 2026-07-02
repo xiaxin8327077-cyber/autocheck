@@ -1,4 +1,4 @@
--- 2026-06-03 自动对数专项回归场景数据。
+﻿-- 2026-06-03 自动对数专项回归场景数据。
 -- 重点覆盖：全末级组合超限后的科目前四段分组组合、债券 DM 证券余额双边核对、
 -- 多个债券主原因汇总展示、逆/正回购存续回购业务表金额核对。
 -- 使用方式：powershell -ExecutionPolicy Bypass -File scripts\load-local-pg-20260603-bond-group-scenarios.ps1
@@ -7,7 +7,7 @@ CREATE SCHEMA IF NOT EXISTS dws;
 CREATE SCHEMA IF NOT EXISTS dm;
 CREATE SCHEMA IF NOT EXISTS zgxg_zhbs;
 CREATE SCHEMA IF NOT EXISTS currency_report_24;
-CREATE SCHEMA IF NOT EXISTS assman_reg;
+CREATE SCHEMA IF NOT EXISTS ass_man_reg;
 
 CREATE TABLE IF NOT EXISTS dws.zf_detail_2024 (
   caldate date NOT NULL,
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_6 (cal
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_8 (caldate date);
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_9 (caldate date);
 
-CREATE TABLE IF NOT EXISTS assman_reg.ex_pledge_back (
+CREATE TABLE IF NOT EXISTS ass_man_reg.ex_pledge_back (
   project_code varchar,
   subcode varchar,
   buyback_money numeric,
@@ -161,7 +161,7 @@ DELETE FROM dm.am_projinvest_spv_zgxg_dm
 WHERE svd_cldate = DATE '2026-06-03' AND svd_projcode LIKE '2026%0603%';
 DELETE FROM zgxg_zhbs.ccqxx
 WHERE pjdw_projcode LIKE '2026%0603%';
-DELETE FROM assman_reg.ex_pledge_back
+DELETE FROM ass_man_reg.ex_pledge_back
 WHERE project_code LIKE '2026%0603%';
 DELETE FROM currency_report_24.currency_detail_project_2_1_2 WHERE caldate = DATE '2026-06-03';
 DELETE FROM currency_report_24.currency_detail_project_2_1_4 WHERE caldate = DATE '2026-06-03';
@@ -322,7 +322,7 @@ INSERT INTO dws.fa_valuationreport_dws VALUES
 ('2026NHHG060305', 'JS060305', DATE '2026-06-03', '1111.12.01.01.RGC26060301', '银行间质押式逆回购-隔夜', 15000000.00),
 ('2026NHHG060305', 'JS060305', DATE '2026-06-03', '1111.12.07.01.RGC26060302', '银行间质押式逆回购-7天', 12750000.00),
 ('2026NHHG060305', 'JS060305', DATE '2026-06-03', '1111.12.14.01.RGC26060303', '交易所质押式逆回购-14天', 10500000.00);
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('2026NHHG060305', '700101', 15200000.00, 25000.00),
 ('2026NHHG060305', '700102', 12750000.00, 41800.00),
 ('2026NHHG060305', '700103', 10250000.00, 50000.00);
@@ -370,7 +370,7 @@ SELECT
   NULL,
   NULL
 FROM generate_series(1, 55) AS gs;
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('2026ZHCE060306', '800603', 2480000.00, 30000.00);
 
 INSERT INTO dws.currency_report_duration

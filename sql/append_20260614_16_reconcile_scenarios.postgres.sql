@@ -1,11 +1,11 @@
--- 2026-06-14 ~ 2026-06-16 auto-check local PostgreSQL reconcile scenarios.
+﻿-- 2026-06-14 ~ 2026-06-16 auto-check local PostgreSQL reconcile scenarios.
 -- The script is idempotent: it deletes and reloads only project codes starting with AC20260614/15/16.
 
 CREATE SCHEMA IF NOT EXISTS dws;
 CREATE SCHEMA IF NOT EXISTS dm;
 CREATE SCHEMA IF NOT EXISTS zgxg_zhbs;
 CREATE SCHEMA IF NOT EXISTS currency_report_24;
-CREATE SCHEMA IF NOT EXISTS assman_reg;
+CREATE SCHEMA IF NOT EXISTS ass_man_reg;
 
 CREATE TABLE IF NOT EXISTS dws.zf_detail_2024 (
   caldate date NOT NULL,
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_6 (cal
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_8 (caldate date);
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_9 (caldate date);
 
-CREATE TABLE IF NOT EXISTS assman_reg.ex_pledge_back (
+CREATE TABLE IF NOT EXISTS ass_man_reg.ex_pledge_back (
   project_code varchar,
   subcode varchar,
   buyback_money numeric,
@@ -170,7 +170,7 @@ WHERE svd_cldate IN (DATE '2026-06-14', DATE '2026-06-15', DATE '2026-06-16')
   AND (svd_projcode LIKE 'AC20260614%' OR svd_projcode LIKE 'AC20260615%' OR svd_projcode LIKE 'AC20260616%');
 DELETE FROM zgxg_zhbs.ccqxx
 WHERE pjdw_projcode LIKE 'AC20260614%' OR pjdw_projcode LIKE 'AC20260615%' OR pjdw_projcode LIKE 'AC20260616%';
-DELETE FROM assman_reg.ex_pledge_back
+DELETE FROM ass_man_reg.ex_pledge_back
 WHERE project_code LIKE 'AC20260614%' OR project_code LIKE 'AC20260615%' OR project_code LIKE 'AC20260616%';
 DELETE FROM currency_report_24.currency_detail_project_2_1_2 WHERE caldate IN (DATE '2026-06-14', DATE '2026-06-15', DATE '2026-06-16');
 DELETE FROM currency_report_24.currency_detail_project_2_1_4 WHERE caldate IN (DATE '2026-06-14', DATE '2026-06-15', DATE '2026-06-16');
@@ -241,7 +241,7 @@ INSERT INTO dws.fa_valuationreport_dws VALUES
 ('AC20260615LEDUP01', 'ACASSET1505', DATE '2026-06-15', '2001.02', 'scenario duplicated payable', 100000.00),
 ('AC20260615LEDIFF01', 'ACASSET1506', DATE '2026-06-15', '0004', 'asset total', 1000000.00),
 ('AC20260615LEDIFF01', 'ACASSET1506', DATE '2026-06-15', '2111.01.01.01.RP2026061501', 'scenario positive repo', 150000.00);
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('AC20260615LEDIFF01', '8001501', 60000.00, 10000.00);
 
 -- 2026-06-16: mixed, 3001 common account, ambiguous, and bond DM scenarios.

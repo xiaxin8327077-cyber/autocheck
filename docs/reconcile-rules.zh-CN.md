@@ -1,4 +1,4 @@
-# 自动对数规则说明
+﻿# 自动对数规则说明
 
 本文档说明当前程序已经实现的自动对数判断规则，便于后续核对代码和继续追加规则。
 
@@ -69,7 +69,7 @@ AM 合同投融资表：`am_projinvest_dws`
 - `dm.am_projinvest_zgxg_dm`：贷款、股权投资缺失细分，以及资产差异中的贷款合同逐一核对；按项目、日期、合同代码查。
 - `dm.am_projinvest_spv_zgxg_dm`：特定目的载体和信托计划收益权缺失细分；按项目、日期、合同代码查。
 - `zgxg_zhbs.ccqxx`：资产收益权缺失细分；按项目、合同代码查，不加日期条件。
-- `assman_reg.ex_pledge_back`：逆回购缺失细分和逆/正回购金额差异细分；按 `project_code` 过滤项目，逆回购使用 `subcode LIKE '7%'`，正回购使用 `subcode LIKE '8%'`，不加日期条件。
+- `ass_man_reg.ex_pledge_back`：逆回购缺失细分和逆/正回购金额差异细分；按 `project_code` 过滤项目，逆回购使用 `subcode LIKE '7%'`，正回购使用 `subcode LIKE '8%'`，不加日期条件。
 - `currency_report_24.currency_detail_project_2_1_2`：除回购和拆借外贷款明细表。
 - `currency_report_24.currency_detail_project_2_1_4`：债务证券明细表。
 - `currency_report_24.currency_detail_project_2_1_5`：股票股权明细表。
@@ -141,7 +141,7 @@ AM 合同投融资表：`am_projinvest_dws`
 - 特定目的载体保留 AM 标的缺失、FA/AM 标的不一致、合同投融资余额为 0 判断；合同投融资余额非 0 后继续查 `dm.am_projinvest_spv_zgxg_dm` 和对应报表明细表；`1101.05.06*` 仍单独作为私募基金。
 - 信托计划收益权查 `dm.am_projinvest_spv_zgxg_dm` 和 `currency_report_24.currency_detail_project_2_1_6`。
 - 资产收益权查 `zgxg_zhbs.ccqxx` 和 `currency_report_24.currency_detail_project_2_1_9`，`zgxg_zhbs.ccqxx` 不加日期条件。
-- 逆回购查业务报表数据源 `assman_reg.ex_pledge_back`，按 `project_code` 过滤项目，`subcode` 以 `7` 开头，不按日期过滤，只检查 `buyback_money` 或 `expenses` 为空。
+- 逆回购查业务报表数据源 `ass_man_reg.ex_pledge_back`，按 `project_code` 过滤项目，`subcode` 以 `7` 开头，不按日期过滤，只检查 `buyback_money` 或 `expenses` 为空。
 
 详情展示：
 
@@ -194,7 +194,7 @@ AM 合同投融资表：`am_projinvest_dws`
 - 债券双边补零：DM 缺少某债券时 DM 金额按 0；FA 缺少某债券时 FA 科目金额按 0；逐项计算 `DM证券余额 - FA债券本金科目余额`。
 - 贷款合同：估值表实际末级科目以 `1303.01.01` 或 `1501.04.05.01` 开头，且最后一个点后的尾段以 `DK` 或 `ZQ` 开头；尾段作为合同代码，查 `dm.am_projinvest_zgxg_dm.pin_acbalance`。
 - 财产权合同：估值表实际末级科目以 `1541` 开头；尾段作为合同代码，查 `am_projinvest_dws.f_acbalance`。
-- 逆回购：汇总估值表实际末级科目中满足 `1111.xx.xx.01*` 的 FA 科目余额；再查业务报表数据源 `assman_reg.ex_pledge_back`，按 `project_code = 项目编号`、`subcode LIKE '7%'` 汇总 `buyback_money + expenses`。
+- 逆回购：汇总估值表实际末级科目中满足 `1111.xx.xx.01*` 的 FA 科目余额；再查业务报表数据源 `ass_man_reg.ex_pledge_back`，按 `project_code = 项目编号`、`subcode LIKE '7%'` 汇总 `buyback_money + expenses`。
 - 债券逐项计算 `DM证券余额 - FA债券本金科目余额`；贷款和财产权逐项计算 `AM投融资余额 - FA科目余额`；逆回购计算 `存续回购业务表逆回购金额 - FA逆回购科目余额`；再汇总为资产差异合计。
 
 命中后：
@@ -317,7 +317,7 @@ AM 标的匹配逻辑：
 - 如果不能命中具体非 `1` 开头科目，差异类型展示为“负债及权益科目差异”。
 - 命中普通非 `1` 科目时，具体原因按 `①负债及权益科目缺失：科目名称` 或 `①负债及权益科目重复：科目名称` 展示，多条命中按 `①②③` 换行拼接。
 - 命中科目前四段满足 `2111.xx.xx.01` 时，具体原因按 `①正回购缺失：科目名称；原因：正回购差异` 或 `①正回购重复：科目名称；原因：正回购差异` 展示，后续可带尾段。
-- 未命中具体非 `1` 科目时，继续做正回购金额比对：汇总估值表满足 `2111.xx.xx.01*` 的 FA 科目余额；查 `assman_reg.ex_pledge_back`，按 `project_code = 项目编号`、`subcode LIKE '8%'` 汇总 `buyback_money - expenses`；计算 `FA正回购科目余额 - 业务表正回购金额`。
+- 未命中具体非 `1` 科目时，继续做正回购金额比对：汇总估值表满足 `2111.xx.xx.01*` 的 FA 科目余额；查 `ass_man_reg.ex_pledge_back`，按 `project_code = 项目编号`、`subcode LIKE '8%'` 汇总 `buyback_money - expenses`；计算 `FA正回购科目余额 - 业务表正回购金额`。
 - 如果正回购金额差异等于当前匹配目标，差异类型仍展示为“负债及权益科目差异”，匹配状态为“已解释”，具体原因展示为 `①正回购：FA科目余额与存续回购业务表正回购金额有差异，差异值XXX`；混合场景中从 `②` 开始展示。
 - 如果正回购金额差异不为 0 但不能解释当前匹配目标，匹配状态为“未解释”，具体原因展示为 `暂不明确具体负债及权益科目差异，但正回购，FA科目余额与存续回购业务表正回购金额有差异，差异值XXX`；混合场景中作为第二行展示。
 - 如果未命中具体非 `1` 科目且正回购金额也无差异，具体原因展示为 `暂不明确具体负债及权益科目差异`；混合场景中作为第二行展示。

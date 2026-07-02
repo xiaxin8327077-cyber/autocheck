@@ -33,6 +33,17 @@ def test_stock_mismatch_processing_script_uses_fa_am_and_contract_codes():
         "buildProcessingScript",
         {
             "difference_reason": "资产缺失",
+            "details": [
+                {
+                    "kind": "fa_am",
+                    "data": {
+                        "fa_tail_code": "244733",
+                        "am_stock_code": "244978",
+                        "pact_id": "PACT001",
+                        "data_source": "am",
+                    },
+                }
+            ],
             "display_details": [
                 {
                     "title": "标的代码核对",
@@ -58,9 +69,41 @@ def test_stock_mismatch_processing_script_uses_fa_am_and_contract_codes():
         "\tlogsql,\n"
         "\tupdatesql,\n"
         "\tstatus)\n"
-        "values('c_pactid', 'dwd_am_am_pactasset_dwd', 'c_stockcode', '244978', '244733', 'PACT001',\n"
+        "values('c_pactid', 'dwd.am_am_pactasset_dwd', 'c_stockcode', '244978', '244733', 'PACT001',\n"
         "'', 'update dwd.am_am_pactasset_dwd set c_stockcode = ''244733'' where c_pactid = ''PACT001'' and c_stockcode = ''244978''', '1');"
     )
+
+
+def test_stock_mismatch_processing_script_uses_hengtai_message_for_non_am_source():
+    text = run_export_function(
+        "buildProcessingScript",
+        {
+            "difference_reason": "资产缺失",
+            "details": [
+                {
+                    "kind": "fa_am",
+                    "data": {
+                        "fa_tail_code": "244733",
+                        "am_stock_code": "244978",
+                        "pact_id": "PACT001",
+                        "data_source": "ht",
+                    },
+                }
+            ],
+            "display_details": [
+                {
+                    "title": "标的代码核对",
+                    "rows": [
+                        {"label": "FA 科目尾段代码", "value": "244733"},
+                        {"label": "AM 标的代码", "value": "244978"},
+                        {"label": "AM 合同代码", "value": "PACT001"},
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert text == "衡泰标的不一致请联系衡泰系统处理。"
 
 
 def test_processing_script_generates_multiple_fa_am_scripts_from_asset_missing_refinement():
@@ -68,6 +111,31 @@ def test_processing_script_generates_multiple_fa_am_scripts_from_asset_missing_r
         "buildProcessingScript",
         {
             "difference_reason": "资产缺失",
+            "details": [
+                {
+                    "kind": "asset_missing_refinement",
+                    "data": {
+                        "rows": [
+                            {
+                                "check_result": "FA和AM标的不一致",
+                                "reason": "FA和AM标的不一致",
+                                "account_tail": "0001",
+                                "am_stock_code": "9999",
+                                "pact_id": "PACT_A",
+                                "data_source": "am",
+                            },
+                            {
+                                "check_result": "FA和AM标的不一致",
+                                "reason": "FA和AM标的不一致",
+                                "account_tail": "0002",
+                                "am_stock_code": "8888",
+                                "pact_id": "PACT_B",
+                                "data_source": "ht",
+                            },
+                        ]
+                    },
+                }
+            ],
             "display_details": [
                 {
                     "title": "资产缺失细分",
@@ -122,11 +190,12 @@ def test_processing_script_generates_multiple_fa_am_scripts_from_asset_missing_r
         },
     )
 
-    assert text.count("insert\n\tinto\n\tdata_mangement.data_mangement_dwd") == 2
+    assert text.startswith("① insert\n\tinto\n\tdata_mangement.data_mangement_dwd")
+    assert text.count("insert\n\tinto\n\tdata_mangement.data_mangement_dwd") == 1
     assert "'9999', '0001', 'PACT_A'" in text
     assert "c_pactid = ''PACT_A'' and c_stockcode = ''9999''" in text
-    assert "'8888', '0002', 'PACT_B'" in text
-    assert "c_pactid = ''PACT_B'' and c_stockcode = ''8888''" in text
+    assert "② 衡泰标的不一致请联系衡泰系统处理。" in text
+    assert "'8888', '0002', 'PACT_B'" not in text
 
 
 def test_processing_script_is_blank_without_stock_mismatch_detail():
@@ -818,7 +887,7 @@ def test_combined_asset_and_liability_export_detail_includes_both_parts():
                     "title": "资产差异细分",
                     "table": {
                         "rows": [
-                            ["①", "逆回购", "逆回购", "1111.12.34.01", "", "300", "400", "100", "assman_reg.ex_pledge_back", "逆回购：FA科目余额与存续回购业务表逆回购金额有差异，差异值100"],
+                            ["①", "逆回购", "逆回购", "1111.12.34.01", "", "300", "400", "100", "ass_man_reg.ex_pledge_back", "逆回购：FA科目余额与存续回购业务表逆回购金额有差异，差异值100"],
                         ]
                     },
                 },

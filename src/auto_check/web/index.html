@@ -916,7 +916,12 @@
                   <strong>可选流程</strong>
                   <button type="button" class="btn-outline btn-sm" id="flowDefinitionRefreshBtn">刷新</button>
                 </div>
-                <input id="flowDefinitionSearch" class="setting-input" placeholder="搜索流程名称" />
+                <input id="flowDefinitionSearch" class="setting-input" placeholder="搜索流程名称或 flow_id" />
+                <div class="flow-manual-add">
+                  <input id="flowManualFlowId" class="setting-input" placeholder="输入 flow_id 直接添加" />
+                  <button type="button" class="btn-outline btn-sm" id="addManualFlowBtn">添加</button>
+                </div>
+                <p class="flow-definition-limit-hint" id="flowDefinitionLimitHint" hidden></p>
                 <div class="flow-definition-table" id="flowDefinitionTable">
                   <p class="placeholder-text">打开弹框后加载流程表</p>
                 </div>
@@ -1573,6 +1578,6 @@
 
     <script src="/crypto_fallback.js"></script>
     <script src="/export_detail.js"></script>
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20260701"></script>
   </body>
 </html>

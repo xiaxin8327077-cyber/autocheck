@@ -14,6 +14,7 @@
   }
 
   const circledNumbers = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+  const HENGTAI_STOCK_MISMATCH_MESSAGE = "衡泰标的不一致请联系衡泰系统处理。";
 
   function circledIndex(index) {
     if (index >= 1 && index <= circledNumbers.length) return circledNumbers[index - 1];
@@ -174,9 +175,35 @@
       "\tlogsql,",
       "\tupdatesql,",
       "\tstatus)",
-      `values('c_pactid', 'dwd_am_am_pactasset_dwd', 'c_stockcode', '${before}', '${after}', '${pact}',`,
+      `values('c_pactid', 'dwd.am_am_pactasset_dwd', 'c_stockcode', '${before}', '${after}', '${pact}',`,
       `'', 'update dwd.am_am_pactasset_dwd set c_stockcode = ''${updateAfter}'' where c_pactid = ''${updatePact}'' and c_stockcode = ''${updateBefore}''', '1');`,
     ].join("\n");
+  }
+
+  function isAmDataSource(dataSource) {
+    return String(dataSource || "").trim().toLowerCase() === "am";
+  }
+
+  function stockMismatchProcessingText(infoStockCode, valuationStockCode, pactId, dataSource) {
+    if (!infoStockCode || !valuationStockCode || !pactId) return "";
+    if (!isAmDataSource(dataSource)) return HENGTAI_STOCK_MISMATCH_MESSAGE;
+    return stockMismatchScript(infoStockCode, valuationStockCode, pactId);
+  }
+
+  function numberedProcessingScripts(scripts) {
+    const values = (scripts || []).filter(Boolean);
+    if (values.length <= 1) return values[0] || "";
+    return values.map((script, index) => `${circledIndex(index + 1)} ${script}`).join("\n\n");
+  }
+
+  function detailDataByKind(item, kind) {
+    return (item.details || [])
+      .filter((detail) => detail?.kind === kind)
+      .map((detail) => detail.data || {});
+  }
+
+  function isStockMismatchReason(value) {
+    return ["FA和AM标的不一致", "FA与AM标的不一致"].includes(String(value || ""));
   }
 
   function tableCell(row, headers, header, fallbackIndex) {
@@ -185,6 +212,22 @@
   }
 
   function assetMissingRefinementProcessingScripts(item) {
+    const rawRows = detailDataByKind(item, "asset_missing_refinement")
+      .flatMap((data) => Array.isArray(data.rows) ? data.rows : []);
+    if (rawRows.length) {
+      return rawRows
+        .map((row) => {
+          if (!isStockMismatchReason(row.check_result) && !isStockMismatchReason(row.reason)) return "";
+          return stockMismatchProcessingText(
+            row.am_stock_code,
+            row.account_tail,
+            row.pact_id,
+            row.data_source ?? row.c_datasource
+          );
+        })
+        .filter(Boolean);
+    }
+
     const detail = section(item, "资产缺失细分");
     const headers = detail.table?.headers || [];
     const rows = detail.table?.rows || [];
@@ -192,27 +235,35 @@
       .map((row) => {
         const checkResult = tableCell(row, headers, "核查结果", 7);
         const reason = tableCell(row, headers, "原因", 11);
-        if (checkResult !== "FA和AM标的不一致" && reason !== "FA和AM标的不一致") return "";
+        if (!isStockMismatchReason(checkResult) && !isStockMismatchReason(reason)) return "";
         const valuationStockCode = tableCell(row, headers, "科目尾段", 4);
         const infoStockCode = tableCell(row, headers, "AM标的代码", 9);
         const pactId = tableCell(row, headers, "AM合同代码", 10);
-        if (!infoStockCode || !valuationStockCode || !pactId) return "";
-        return stockMismatchScript(infoStockCode, valuationStockCode, pactId);
+        return stockMismatchProcessingText(infoStockCode, valuationStockCode, pactId, "");
       })
       .filter(Boolean);
   }
 
   function buildProcessingScript(item) {
     const refinementScripts = assetMissingRefinementProcessingScripts(item);
-    if (refinementScripts.length) return refinementScripts.join("\n\n");
+    if (refinementScripts.length) return numberedProcessingScripts(refinementScripts);
+
+    const rawScripts = detailDataByKind(item, "fa_am")
+      .map((data) => stockMismatchProcessingText(
+        data.am_stock_code,
+        data.fa_tail_code,
+        data.pact_id,
+        data.data_source ?? data.c_datasource
+      ))
+      .filter(Boolean);
+    if (rawScripts.length) return numberedProcessingScripts(rawScripts);
 
     const detail = section(item, "标的代码核对");
     const rows = detail.rows || [];
     const infoStockCode = rowValue(rows, "AM 标的代码");
     const valuationStockCode = rowValue(rows, "FA 科目尾段代码");
     const pactId = rowValue(rows, "AM 合同代码");
-    if (!infoStockCode || !valuationStockCode || !pactId) return "";
-    return stockMismatchScript(infoStockCode, valuationStockCode, pactId);
+    return numberedProcessingScripts([stockMismatchProcessingText(infoStockCode, valuationStockCode, pactId, "")]);
   }
 
   function propertyRightInvestLines(item, rows) {
@@ -288,7 +339,7 @@
     if (assetType === "债券" || checkTable === "dm.fa_security_balance_zgxg_dm") {
       return "DM证券余额";
     }
-    if (assetType === "逆回购" || checkTable === "assman_reg.ex_pledge_back") {
+    if (assetType === "逆回购" || checkTable === "ass_man_reg.ex_pledge_back") {
       return "存续回购业务表金额";
     }
     return "AM投融资余额";

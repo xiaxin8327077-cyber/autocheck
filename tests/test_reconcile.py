@@ -25,6 +25,7 @@ class FakeRepo:
         self.reverse_repo_blank_projects = set()
         self.reverse_repo_business_amounts = {}
         self.positive_repo_business_amounts = {}
+        self.report_project_name_match_count = 0
         self.valuation_calls = []
         self.valuation_row_calls = []
 
@@ -109,6 +110,9 @@ class FakeRepo:
 
     def get_positive_repo_business_amount(self, project_code):
         return self.positive_repo_business_amounts.get(project_code, Decimal("0"))
+
+    def count_report_project_name_matches_without_chinese_parentheses(self, date, normalized_name):
+        return self.report_project_name_match_count
 
 
 def test_no_source_report_data_raises_clear_state():
@@ -806,7 +810,7 @@ def test_asset_difference_refinement_uses_reverse_repo_amount_when_total_matches
             "market_value": "300",
             "project_invest_balance": "200",
             "difference": "-100",
-            "check_table": "assman_reg.ex_pledge_back",
+            "check_table": "ass_man_reg.ex_pledge_back",
             "reason": "逆回购：FA科目余额与存续回购业务表逆回购金额有差异，差异值-100",
         }
     ]
@@ -1764,7 +1768,7 @@ def test_asset_missing_sets_fa_am_mismatch_for_target_level_when_stockcode_diffe
     repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
     repo.asset_total["P1"] = Decimal("100")
     repo.valuation["P1"] = [ValuationRow("1101.05.03.01.0002", "Asset A_估值后缀", Decimal("10"))]
-    repo.pact_assets[("P1", "Asset A")] = [PactAssetRow("P1", "Asset A", "9999", "PACT1")]
+    repo.pact_assets[("P1", "Asset A")] = [PactAssetRow("P1", "Asset A", "9999", "PACT1", data_source="am")]
 
     results = ReconcileEngine(repo).run("2026-04-30")
 
@@ -1774,6 +1778,7 @@ def test_asset_missing_sets_fa_am_mismatch_for_target_level_when_stockcode_diffe
     assert results[0].details[1].data["fa_account_name"] == "Asset A_估值后缀"
     assert results[0].details[1].data["am_asset_name"] == "Asset A"
     assert results[0].details[1].data["am_stock_code"] == "9999"
+    assert results[0].details[1].data["data_source"] == "am"
     assert results[0].details[-1].data["specific_reason"] == "①特定目的载体缺失：Asset A_估值后缀；原因：FA和AM标的不一致"
 
 
@@ -1785,8 +1790,8 @@ def test_asset_missing_refinement_keeps_multiple_spv_stock_mismatch_script_field
         ValuationRow("1101.05.04.01.0001", "银行理财A_估值后缀", Decimal("10")),
         ValuationRow("1101.05.05.01.0002", "保险理财B_估值后缀", Decimal("10")),
     ]
-    repo.pact_assets[("P1", "银行理财A")] = [PactAssetRow("P1", "银行理财A", "9999", "PACT_A")]
-    repo.pact_assets[("P1", "保险理财B")] = [PactAssetRow("P1", "保险理财B", "8888", "PACT_B")]
+    repo.pact_assets[("P1", "银行理财A")] = [PactAssetRow("P1", "银行理财A", "9999", "PACT_A", data_source="am")]
+    repo.pact_assets[("P1", "保险理财B")] = [PactAssetRow("P1", "保险理财B", "8888", "PACT_B", data_source="ht")]
 
     results = ReconcileEngine(repo).run("2026-04-30")
 
@@ -1799,8 +1804,10 @@ def test_asset_missing_refinement_keeps_multiple_spv_stock_mismatch_script_field
     )
     assert results[0].details[-1].data["rows"][0]["am_stock_code"] == "9999"
     assert results[0].details[-1].data["rows"][0]["pact_id"] == "PACT_A"
+    assert results[0].details[-1].data["rows"][0]["data_source"] == "am"
     assert results[0].details[-1].data["rows"][1]["am_stock_code"] == "8888"
     assert results[0].details[-1].data["rows"][1]["pact_id"] == "PACT_B"
+    assert results[0].details[-1].data["rows"][1]["data_source"] == "ht"
 
 
 def test_asset_name_match_keeps_parentheses_and_ignores_only_suffix():
@@ -1869,7 +1876,82 @@ def test_asset_missing_sets_am_target_missing_for_target_level_without_name_matc
     assert results[0].details[-1].data["specific_reason"] == "①特定目的载体缺失：Asset A；原因：AM标的缺失"
 
 
-def test_asset_missing_sets_am_target_missing_for_150103_spv_account():
+def test_asset_missing_falls_back_to_stock_code_when_name_does_not_match():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.0002", "完全不同的FA名称", Decimal("10"))]
+    repo.pact_assets[("P1", "完全不同的AM名称")] = [
+        PactAssetRow("P1", "完全不同的AM名称", "0002", "PACT_OLD", contract_start_date="2024-01-01"),
+        PactAssetRow("P1", "完全不同的AM名称", "0002", "PACT_NEW", contract_start_date="2025-01-01"),
+    ]
+    repo.project_invest_balances[("P1", "PACT_NEW")] = Decimal("20")
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "project_invest_balance"
+    assert results[0].details[1].data["pact_id"] == "PACT_NEW"
+    assert results[0].details[1].data["am_stock_code"] == "0002"
+
+
+def test_asset_missing_jiangsu_trust_matches_single_am_candidate_by_removing_one_side_chinese_parentheses():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.report_project_name_match_count = 1
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.9999", "江苏信托稳盈集合资金信托计划", Decimal("10"))]
+    repo.pact_assets[("P1", "江苏信托稳盈集合资金信托计划（A类）")] = [
+        PactAssetRow("P1", "江苏信托稳盈集合资金信托计划（A类）", "0002", "PACT1")
+    ]
+    repo.project_invest_balances[("P1", "PACT1")] = Decimal("20")
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "fa_am"
+    assert results[0].details[1].data["am_asset_name"] == "江苏信托稳盈集合资金信托计划（A类）"
+    assert results[0].details[1].data["pact_id"] == "PACT1"
+
+
+def test_asset_missing_jiangsu_trust_does_not_match_multiple_bracketed_am_candidates():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.report_project_name_match_count = 1
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.9999", "江苏信托稳盈集合资金信托计划", Decimal("10"))]
+    repo.pact_assets[("P1", "江苏信托稳盈集合资金信托计划（A类）")] = [
+        PactAssetRow("P1", "江苏信托稳盈集合资金信托计划（A类）", "0002", "PACT_A")
+    ]
+    repo.pact_assets[("P1", "江苏信托稳盈集合资金信托计划（B类）")] = [
+        PactAssetRow("P1", "江苏信托稳盈集合资金信托计划（B类）", "0002", "PACT_B")
+    ]
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "am_missing"
+    assert results[0].details[1].data["specific_reason"] == "AM标的缺失"
+
+
+def test_asset_missing_jiangsu_trust_requires_unique_report_project_name_match():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.report_project_name_match_count = 2
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.9999", "江苏信托稳盈集合资金信托计划", Decimal("10"))]
+    repo.pact_assets[("P1", "江苏信托稳盈集合资金信托计划（A类）")] = [
+        PactAssetRow("P1", "江苏信托稳盈集合资金信托计划（A类）", "0002", "PACT1")
+    ]
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "am_missing"
+    assert results[0].details[1].data["specific_reason"] == "AM标的缺失"
+
+
+def test_asset_missing_150103_spv_account_falls_back_to_stock_code():
     repo = FakeRepo()
     repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
     repo.asset_total["P1"] = Decimal("100")
@@ -1879,11 +1961,11 @@ def test_asset_missing_sets_am_target_missing_for_150103_spv_account():
     results = ReconcileEngine(repo).run("2026-04-30")
 
     assert results[0].difference_reason == "资产缺失"
-    assert [detail.kind for detail in results[0].details] == ["asset_gap", "am_missing", "asset_missing_refinement"]
-    assert results[0].details[1].data["specific_reason"] == "AM标的缺失"
+    assert [detail.kind for detail in results[0].details] == ["asset_gap", "project_invest_balance", "asset_missing_refinement"]
+    assert results[0].details[1].data["specific_reason"] == "合同投融资余额为0但FA科目余额不为0"
     assert results[0].details[1].data["fa_account_code"] == "1501.03.12.01.SPV001"
-    assert results[0].details[1].data["expected_account_level"] == "1501.03.12.01"
-    assert results[0].details[-1].data["specific_reason"] == "①特定目的载体缺失：SPV Asset；原因：AM标的缺失"
+    assert results[0].details[1].data["am_stock_code"] == "SPV001"
+    assert results[0].details[-1].data["specific_reason"] == "①特定目的载体缺失：SPV Asset；原因：合同投融资余额为0但FA科目余额不为0"
 
 
 def test_asset_missing_am_target_missing_shows_actual_spv_account_level():
@@ -1935,3 +2017,98 @@ def test_asset_missing_prompts_sql_check_when_am_and_contract_balance_are_normal
     assert results[0].details[-1].data["specific_reason"] == (
         "①特定目的载体缺失：Asset A；原因：该特定目的载体在dm.am_projinvest_spv_zgxg_dm不存在或余额为0"
     )
+
+
+def test_asset_missing_picks_latest_contract_start_date_when_multiple_am_candidates():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.0002", "信托计划", Decimal("10"))]
+    repo.pact_assets[("P1", "信托计划")] = [
+        PactAssetRow("P1", "信托计划", "0001", "PACT_OLD", contract_start_date="2024-01-01"),
+        PactAssetRow("P1", "信托计划", "0002", "PACT_NEW", contract_start_date="2025-06-15"),
+    ]
+    repo.project_invest_balances[("P1", "PACT_NEW")] = Decimal("20")
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "project_invest_balance"
+    assert results[0].details[1].data["pact_id"] == "PACT_NEW"
+    assert results[0].details[1].data["am_stock_code"] == "0002"
+
+
+def test_asset_missing_picks_latest_contract_when_old_contract_code_matches_fa_tail():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.0001", "信托计划", Decimal("10"))]
+    repo.pact_assets[("P1", "信托计划")] = [
+        PactAssetRow("P1", "信托计划", "0001", "PACT_OLD", contract_start_date="2024-01-01"),
+        PactAssetRow("P1", "信托计划", "0002", "PACT_NEW", contract_start_date="2025-06-15"),
+    ]
+    repo.project_invest_balances[("P1", "PACT_NEW")] = Decimal("20")
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "fa_am"
+    assert results[0].details[1].data["pact_id"] == "PACT_NEW"
+    assert results[0].details[1].data["am_stock_code"] == "0002"
+    assert results[0].details[1].data["specific_reason"] == "FA与AM标的不一致"
+
+
+def test_asset_missing_am_check_prefers_later_abnormal_name_match_over_earlier_normal_fallback():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    repo.valuation["P1"] = [
+        ValuationRow("1101.05.03.01.0008", "未匹配FA名称", Decimal("5")),
+        ValuationRow("1101.05.03.01.0001", "信托计划", Decimal("5")),
+    ]
+    repo.pact_assets[("P1", "兜底AM标的")] = [
+        PactAssetRow("P1", "兜底AM标的", "0008", "PACT_FALLBACK", contract_start_date="2025-01-01")
+    ]
+    repo.pact_assets[("P1", "信托计划")] = [
+        PactAssetRow("P1", "信托计划", "0001", "PACT_OLD", contract_start_date="2024-01-01"),
+        PactAssetRow("P1", "信托计划", "0002", "PACT_NEW", contract_start_date="2025-06-15"),
+    ]
+    repo.project_invest_balances[("P1", "PACT_FALLBACK")] = Decimal("20")
+    repo.project_invest_balances[("P1", "PACT_NEW")] = Decimal("20")
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    assert results[0].details[1].kind == "fa_am"
+    assert results[0].details[1].data["pact_id"] == "PACT_NEW"
+    assert results[0].details[1].data["am_stock_code"] == "0002"
+
+
+def test_refinement_picks_latest_contract_when_old_contract_code_matches_but_balance_is_zero():
+    """细化详情：旧合同stock_code匹配但投融资余额为0，新合同stock_code不匹配，应取新合同返回标的不一致"""
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("90"), Decimal("100"))]
+    repo.asset_total["P1"] = Decimal("100")
+    # FA尾码0001匹配旧合同的stock_code
+    repo.valuation["P1"] = [ValuationRow("1101.05.03.01.0001", "信托计划", Decimal("10"))]
+    repo.pact_assets[("P1", "信托计划")] = [
+        # 旧合同：stock_code匹配FA尾码，但投融资余额为0
+        PactAssetRow("P1", "信托计划", "0001", "PACT_OLD", contract_start_date="2025-05-29"),
+        # 新合同：stock_code不匹配FA尾码
+        PactAssetRow("P1", "信托计划", "0002", "PACT_NEW", contract_start_date="2025-06-12"),
+    ]
+    # 旧合同投融资余额为0，新合同投融资余额不为0
+    repo.project_invest_balances[("P1", "PACT_OLD")] = Decimal("0")
+    repo.project_invest_balances[("P1", "PACT_NEW")] = Decimal("20")
+    repo.spv_project_invest_refinements[("P1", "PACT_NEW")] = {"svd_assettype": "01"}
+
+    results = ReconcileEngine(repo).run("2026-04-30")
+
+    assert results[0].difference_reason == "资产缺失"
+    # 细化详情应该取最新合同（新合同），因为stock_code不匹配，返回"FA和AM标的不一致"
+    refinement_detail = results[0].details[-1]
+    assert refinement_detail.kind == "asset_missing_refinement"
+    spv_row = refinement_detail.data["rows"][0]
+    assert spv_row["check_result"] == "FA和AM标的不一致"
+    assert spv_row["am_stock_code"] == "0002"
+    assert spv_row["pact_id"] == "PACT_NEW"

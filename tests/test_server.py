@@ -1,6 +1,7 @@
-from decimal import Decimal
+﻿from decimal import Decimal
 from io import BytesIO
 from datetime import date
+import threading
 import time
 import zipfile
 
@@ -21,7 +22,7 @@ from auto_check.app.config import (
     save_store,
 )
 from auto_check.app.local_store import db_path_for_config
-from auto_check.app.flow_tool import FlowChainRunResult, FlowChainStepResult
+from auto_check.app.flow_tool import FlowChainRunResult, FlowChainStepResult, FlowDefinition
 from auto_check.app.pbc_import import TableColumn
 from auto_check.app.server import ApiRouter, RunJob, _connection_error_message, _runtime_error_message, build_display_details, previous_month_end
 from auto_check.db_validation.metadata import TableFieldCatalog
@@ -90,10 +91,13 @@ class FakePbcImporter:
 class SlowPbcImporter:
     def __init__(self):
         self.calls = []
+        self.started = threading.Event()
+        self.release = threading.Event()
 
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
-        time.sleep(0.3)
+        self.started.set()
+        self.release.wait(timeout=5)
         return 1
 
 
@@ -136,6 +140,21 @@ class FakeFailingFlowChainExecutor:
         kwargs["log"]("流程A执行结束", 50, "流程A")
         kwargs["log"](f"流程B执行失败: {self.error_message}", 50, "流程B")
         raise RuntimeError(self.error_message)
+
+
+class BlockingFlowChainExecutor:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        kwargs["log"]("流程A等待结束", 10, "流程A")
+        cancel_event = kwargs["cancel_event"]
+        for _ in range(100):
+            if cancel_event.is_set():
+                raise RuntimeError("流程执行已取消")
+            time.sleep(0.01)
+        raise RuntimeError("测试流程未收到取消请求")
 
 
 class FakeDbValidationExecutor:
@@ -509,6 +528,45 @@ def test_flow_definitions_error_mentions_source_and_flow_table(monkeypatch, tmp_
     assert "数据表不存在" in payload["error"]
 
 
+def test_flow_definitions_response_marks_truncated_and_passes_keyword(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-report",
+                    name="申报平台库",
+                    config=DataSourceConfig("postgresql", "127.0.0.1", 5432, "auto_check_test", "reg-report-analysis", "u", "p"),
+                    is_default=True,
+                )
+            ],
+            flow_tool=FlowToolSettings(source_id="source-report", flow_table="sp_flow", task_table="sp_task"),
+        ),
+        config_path,
+    )
+    seen_keywords = []
+
+    class ManyFlowGateway:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def list_flows(self, keyword):
+            seen_keywords.append(keyword)
+            return [FlowDefinition(id=f"flow-{index}", name=f"流程{index}", enabled="1") for index in range(500)]
+
+    monkeypatch.setattr("auto_check.app.server.DatabaseFlowGateway", ManyFlowGateway)
+    router = ApiRouter(config_path=config_path)
+    router._query_string = "keyword=flow-999"
+
+    status, payload = router.handle("GET", "/api/tools/flow/definitions", None)
+
+    assert status == 200
+    assert seen_keywords == ["flow-999"]
+    assert payload["limit"] == 500
+    assert payload["truncated"] is True
+    assert len(payload["flows"]) == 500
+
+
 def test_flow_tool_manual_start_saves_history_with_trigger_type(tmp_path):
     config_path = tmp_path / "config.json"
     save_store(
@@ -611,6 +669,62 @@ def test_flow_chain_status_returns_active_job_payload(tmp_path):
         time.sleep(0.05)
     else:
         raise AssertionError("flow chain job did not finish")
+
+
+def test_flow_chain_cancel_accepts_job_id_and_keeps_cancelled_status(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-report",
+                    name="申报平台库",
+                    config=DataSourceConfig("mysql", "192.168.107.81", 3306, "reg-report-analysis", "", "u", "p"),
+                    is_default=True,
+                )
+            ],
+            flow_tool=FlowToolSettings(
+                source_id="source-report",
+                execute_url="http://192.168.107.81/assmag/spiderFlow/spider/testRun",
+                chains=[
+                    FlowChainConfig(
+                        id="chain-zgxg-1",
+                        name="资管新规1",
+                        steps=[FlowChainStep(flow_id="flow-a", name="流程A")],
+                    )
+                ],
+            ),
+        ),
+        config_path,
+    )
+    executor = BlockingFlowChainExecutor()
+    router = ApiRouter(config_path=config_path, flow_chain_executor=executor)
+
+    status, payload = router.handle("POST", "/api/tools/flow/start", {"chain_id": "chain-zgxg-1"})
+    assert status == 200
+    job_id = payload["job_id"]
+    for _ in range(20):
+        if executor.calls:
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("flow chain executor did not start")
+
+    status, cancel_payload = router.handle("POST", "/api/tools/flow/cancel", {"job_id": job_id})
+
+    assert status == 200
+    assert cancel_payload["ok"] is True
+    assert cancel_payload["job"]["status"] == "cancelled"
+    assert cancel_payload["job"]["step"] == "已取消"
+
+    for _ in range(40):
+        status, status_payload = router.handle("GET", f"/api/tools/flow/status/{job_id}", None)
+        assert status == 200
+        if status_payload["job"]["finished_at"]:
+            break
+        time.sleep(0.02)
+    assert status_payload["job"]["status"] == "cancelled"
+    assert status_payload["job"]["error"] == "流程执行已取消"
 
 
 def test_flow_chain_failure_saves_history_with_error_and_logs(tmp_path):
@@ -939,6 +1053,7 @@ def test_pbc_import_start_rejects_same_table_while_job_is_running(tmp_path):
     status, payload = router.handle("POST", "/api/tools/pbc-import/start", {**request, "upload_id": first_upload["upload_id"]})
     assert status == 200
     first_job_id = payload["job_id"]
+    assert importer.started.wait(timeout=2)
 
     status, payload = router.handle(
         "POST",
@@ -952,6 +1067,7 @@ def test_pbc_import_start_rejects_same_table_while_job_is_running(tmp_path):
     assert "正在导入" in payload["error"]
     assert "等待上一个任务完成" in payload["error"]
 
+    importer.release.set()
     for _ in range(20):
         status, status_payload = router.handle("GET", f"/api/tools/pbc-import/status/{first_job_id}", None)
         assert status == 200
@@ -2669,10 +2785,10 @@ def test_connection_error_message_replaces_mojibake_from_database_driver():
 
 
 def test_database_error_messages_explain_common_failure_reasons():
-    unknown_db = _runtime_error_message('(1049, "Unknown database \'assman_reg\'")')
-    assert "数据库不存在：assman_reg" in unknown_db
-    assert "assman_reg.ex_pledge_back" in unknown_db
-    assert "连接到的 MySQL 实例包含 assman_reg 库" in unknown_db
+    unknown_db = _runtime_error_message('(1049, "Unknown database \'ass_man_reg\'")')
+    assert "数据库不存在：ass_man_reg" in unknown_db
+    assert "ass_man_reg.ex_pledge_back" in unknown_db
+    assert "连接到的 MySQL 实例包含 ass_man_reg 库" in unknown_db
     assert "原始错误" in unknown_db
 
     missing_table = _runtime_error_message('(1146, "Table \'reg-report-analysis.zf_detail_2024\' doesn\'t exist")')

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 import subprocess
@@ -616,7 +616,8 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert "if (metric.integerValues) return String(Math.round(Number(value || 0)));" in app_js
     assert "const firstRunValues = filtered.map((item) => Math.round(item.firstRunDiff));" in app_js
     assert "integerValues: true" in app_js
-    assert 'const labels = dateRuns.map((r) => `${formatChartMonthDay(targetDate)} ${(r.run_at || "").slice(11, 16)}`);' in app_js
+    assert "function formatChartRunAtLabel(runAt = \"\", fallbackDate = \"\")" in app_js
+    assert "const labels = dateRuns.map((r) => formatChartRunAtLabel(r.run_at, targetDate));" in app_js
     assert "bezierCurveTo" in app_js
     assert "chart-bar" not in html
 
@@ -633,6 +634,9 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert 'text.includes("fa/am标的不一致")' in app_js
     assert 'text.includes("fa与am标的不一致")' in app_js
     assert 'text.includes("fa和am标的不一致")' in app_js
+    assert "function homeTargetCodeMismatchCount(item = {})" in app_js
+    assert 'detail?.kind === "fa_am"' in app_js
+    assert "summary.targetCode += homeTargetCodeMismatchCount(item);" in app_js
     assert "function homeReasonCategoryFromItem(item = {})" in app_js
     assert "function homeResultCountsAsUnresolved(item = {})" in app_js
     assert '["未解释", "候选不唯一"].includes(String(item.match_status || ""))' in app_js
@@ -1513,7 +1517,7 @@ def test_business_settings_displays_current_table_field_mapping():
         "dm.am_projinvest_zgxg_dm",
         "dm.am_projinvest_spv_zgxg_dm",
         "zgxg_zhbs.ccqxx",
-        "assman_reg.ex_pledge_back",
+        "ass_man_reg.ex_pledge_back",
         "currency_report_24.currency_detail_project_2_1_*",
         "currency_report_duration",
         "projinnercode",
@@ -3804,9 +3808,16 @@ def test_flow_chain_editor_shows_only_flow_name_in_available_table():
     app_js = _read(APP_JS)
 
     assert 'id="flowDefinitionTable"' in html
+    assert 'id="flowManualFlowId"' in html
+    assert 'id="addManualFlowBtn"' in html
+    assert "搜索流程名称或 flow_id" in html
     assert "renderFlowDefinitionTable" in app_js
+    assert "_renderFlowDefinitionTable" in app_js
+    assert "renderFlowDefinitionLimitHint" in app_js
+    assert "payload.truncated" in app_js
+    assert "仅展示前 500 条" in app_js
     table_function = re.search(
-        r"function renderFlowDefinitionTable\(\) \{(?P<body>.*?)\n\}",
+        r"function _renderFlowDefinitionTable\(flows\) \{(?P<body>.*?)\n\}",
         app_js,
         re.S,
     )
@@ -3815,6 +3826,37 @@ def test_flow_chain_editor_shows_only_flow_name_in_available_table():
     assert "<th>流程名称</th>" in table_body
     assert "<th>flow_id</th>" not in table_body
     assert "flow.name" in table_body
+    assert "data-flow-id" in table_body
+    assert "data-flow-name" in table_body
+
+
+def test_flow_chain_editor_add_flow_uses_button_payload_fallback():
+    app_js = _read(APP_JS)
+
+    click_handler = re.search(
+        r"flowDefinitionTable\?\.addEventListener\(\"click\", \(e\) => \{(?P<body>.*?)\n\}\);",
+        app_js,
+        re.S,
+    )
+    assert click_handler is not None
+    click_body = click_handler.group("body")
+    assert "addFlowDefinitionToSelected({" in click_body
+    assert "flow_id: button.dataset.flowId" in click_body
+    assert "name: button.dataset.flowName" in click_body
+    assert "addFlowDefinitionToSelected(button.dataset.flowId" not in click_body
+
+    add_function = re.search(
+        r"function addFlowDefinitionToSelected\(flowInput = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert add_function is not None
+    add_body = add_function.group("body")
+    assert "const requestedFlow = normalizeFlowStep(flowInput);" in add_body
+    assert "|| requestedFlow" in add_body
+    assert "未找到该流程，请刷新流程列表后重试" in add_body
+    assert "addManualFlowBtn?.addEventListener" in app_js
+    assert "flowManualFlowId.value" in app_js
 
 
 def test_flow_chain_editor_modal_fields_are_not_squeezed_by_global_modal_field_layout():
@@ -3938,3 +3980,15 @@ def test_flow_modal_supports_background_progress_mode():
     assert "已提交，流程在后台运行中" in app_js
     assert "flowBgRunBtn" in app_js
     assert "后台运行" in app_js
+
+
+def test_flow_cancel_uses_job_id_and_disables_button_while_stopping():
+    app_js = _read(APP_JS)
+
+    cancel_flow = re.search(r"async function cancelFlowChain\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert cancel_flow is not None
+    body = cancel_flow.group("body")
+    assert 'body: JSON.stringify({ job_id: flowCurrentJobId })' in body
+    assert "if (flowCancelBtn?.disabled) return;" in body
+    assert "flowCancelBtn.disabled = true" in body
+    assert "停止中" in body

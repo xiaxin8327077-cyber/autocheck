@@ -1,4 +1,4 @@
--- 2026-06-01 自动对数全量回归场景数据。
+﻿-- 2026-06-01 自动对数全量回归场景数据。
 -- 覆盖资产端、实收本金、负债权益、混合差异、暂无法确定，包含单条和多条命中。
 -- 使用方式：powershell -ExecutionPolicy Bypass -File scripts\load-local-pg-20260601-formatted-reason-scenarios.ps1
 
@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS dws;
 CREATE SCHEMA IF NOT EXISTS dm;
 CREATE SCHEMA IF NOT EXISTS zgxg_zhbs;
 CREATE SCHEMA IF NOT EXISTS currency_report_24;
-CREATE SCHEMA IF NOT EXISTS assman_reg;
+CREATE SCHEMA IF NOT EXISTS ass_man_reg;
 
 CREATE TABLE IF NOT EXISTS dws.zf_detail_2024 (
   caldate date NOT NULL,
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_6 (cal
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_8 (caldate date);
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_9 (caldate date);
 
-CREATE TABLE IF NOT EXISTS assman_reg.ex_pledge_back (
+CREATE TABLE IF NOT EXISTS ass_man_reg.ex_pledge_back (
   project_code varchar,
   subcode varchar,
   buyback_money numeric,
@@ -148,7 +148,7 @@ DELETE FROM dm.fa_security_balance_zgxg_dm WHERE sbm_cacldate = DATE '2026-06-01
 DELETE FROM dm.am_projinvest_zgxg_dm WHERE pin_cldate = DATE '2026-06-01' AND pin_projcode LIKE '2026%';
 DELETE FROM dm.am_projinvest_spv_zgxg_dm WHERE svd_cldate = DATE '2026-06-01' AND svd_projcode LIKE '2026%';
 DELETE FROM zgxg_zhbs.ccqxx WHERE pjdw_projcode LIKE '2026%';
-DELETE FROM assman_reg.ex_pledge_back WHERE project_code LIKE '2026%';
+DELETE FROM ass_man_reg.ex_pledge_back WHERE project_code LIKE '2026%';
 DELETE FROM currency_report_24.currency_detail_project_2_1_2 WHERE caldate = DATE '2026-06-01';
 DELETE FROM currency_report_24.currency_detail_project_2_1_4 WHERE caldate = DATE '2026-06-01';
 DELETE FROM currency_report_24.currency_detail_project_2_1_5 WHERE caldate = DATE '2026-06-01';
@@ -285,7 +285,7 @@ INSERT INTO dm.am_projinvest_spv_zgxg_dm VALUES
 ('2026ZCQS0210', DATE '2026-06-01', 'XT2026060110', 1000000.00, 0.00, 0.00, '31');
 INSERT INTO zgxg_zhbs.ccqxx VALUES
 ('2026ZCQS0211', 'CQ2026060111', 1000000.00);
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('2026ZCQS0206', '7001', NULL, 125.00);
 
 -- D. 资产重复：普通资产、私募产品细分、多条组合。
@@ -352,7 +352,7 @@ INSERT INTO dm.am_projinvest_zgxg_dm VALUES
 ('2026ZCCY0402', DATE '2026-06-01', 'ZQ2026060402', 1200000.00, NULL);
 INSERT INTO dws.am_projinvest_dws VALUES
 ('2026ZCCY0401', DATE '2026-06-01', 'CQ2026060401', 1300000.00);
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('2026ZCCY0404', '7004', 1080000.00, 20000.00),
 ('2026ZCCY0405', '7005', 1080000.00, 20000.00),
 ('2026ZCCY0406', '7006', 1080000.00, 20000.00),
@@ -429,7 +429,7 @@ INSERT INTO dws.fa_valuationreport_dws VALUES
 ('2026FZQY0605', 'AM-2026FZQY0605', DATE '2026-06-01', '2001.01', '应付管理人报酬', 200000.00),
 ('2026FZQY0606', 'AM-2026FZQY0606', DATE '2026-06-01', '0004', '资产合计', 100000000.00),
 ('2026FZQY0606', 'AM-2026FZQY0606', DATE '2026-06-01', '2111.12.34.01.RP20260606', '卖出回购金融资产款', 500000.00);
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('2026FZQY0606', '8006', 450000.00, 50000.00);
 
 -- H. 混合场景：实收差异 + 剩余负债权益，含可解释和不可解释。
@@ -452,7 +452,7 @@ INSERT INTO dws.fa_valuationreport_dws VALUES
 ('2026HHCE0703', 'AM-2026HHCE0703', DATE '2026-06-01', '4002', '其他收益', 700000.00),
 ('2026HHCE0704', 'AM-2026HHCE0704', DATE '2026-06-01', '0004', '资产合计', 100000000.00),
 ('2026HHCE0704', 'AM-2026HHCE0704', DATE '2026-06-01', '2111.12.34.01.RP20260604', '卖出回购金融资产款', 1000000.00);
-INSERT INTO assman_reg.ex_pledge_back VALUES
+INSERT INTO ass_man_reg.ex_pledge_back VALUES
 ('2026HHCE0704', '8004', 2600000.00, 100000.00);
 
 INSERT INTO dws.currency_report_duration

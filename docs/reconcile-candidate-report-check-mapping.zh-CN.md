@@ -1,4 +1,4 @@
-# 自动对数组合候选报表反查映射表
+﻿# 自动对数组合候选报表反查映射表
 
 本文档用于补充“金额命中后再反查报表实际值”的规则。  
 填写目标：把每类可能命中的科目类型，对应到具体报表表名、过滤字段、匹配字段和金额口径，后续用于判断组合命中是否为误报。
@@ -28,7 +28,7 @@
 | A09 | 股票 | `1101.01*` | `dm.fa_security_balance_zgxg_dm` 基础信息字段 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |
 | A10 | 公募基金 | `1101.04*` | `dm.fa_security_balance_zgxg_dm` 基础信息字段 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |
 | A11 | 私募基金 | `1101.05.06*` | AM 标的表私募类型校验 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |
-| A12 | 逆回购 | `1111.XX.XX.01*` | `assman_reg.ex_pledge_back`，`subcode LIKE '7%'` | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 | 当前业务表金额为 `buyback_money + expenses` |
+| A12 | 逆回购 | `1111.XX.XX.01*` | `ass_man_reg.ex_pledge_back`，`subcode LIKE '7%'` | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 | 当前业务表金额为 `buyback_money + expenses` |
 | A13 | 贷款 | `1303.01.01*`、`1501.04.05.01*`，尾段 `DK/ZQ` 开头 | `dm.am_projinvest_zgxg_dm` | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 | 当前 AM 金额为 `SUM(pin_acbalance)` |
 | A14 | 股权投资 | `1511.01.01*` | 暂无专门源头细分 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |
 | A15 | 信托计划收益权 | `1541.01*` 且名称匹配信托产品/资金信托计划 | `dm.am_projinvest_spv_zgxg_dm` 或 AM/CCQXX 链路 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |
@@ -41,7 +41,7 @@
 
 | 序号 | 科目类型 | 命中科目规则 | 当前源头核对 | 需填写报表表名 | 项目过滤字段 | 日期过滤字段 | 对象匹配字段 | 报表金额字段或公式 | FA 金额字段 | 报表正确判定 | 报表正常时处理 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| L01 | 正回购 | `2111.XX.XX.01*` | `assman_reg.ex_pledge_back`，`subcode LIKE '8%'` | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 | 当前业务表金额为 `buyback_money - expenses` |
+| L01 | 正回购 | `2111.XX.XX.01*` | `ass_man_reg.ex_pledge_back`，`subcode LIKE '8%'` | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 | 当前业务表金额为 `buyback_money - expenses` |
 | L02 | 正回购利息 | `2111.XX.XX.02*` | 暂无专门源头细分 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 | 当前不参与多科目组合，但单行/同科目汇总仍可能命中 |
 | L03 | 应付管理人报酬/管理费 | 非 `1` 开头，名称或科目口径待确认 | 暂无专门源头细分 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |
 | L04 | 应付托管费 | 非 `1` 开头，名称或科目口径待确认 | 暂无专门源头细分 | 待填 | 待填 | 待填 | 待填 | 待填 | `f_marketvalue` | 待填 | 待填 |  |

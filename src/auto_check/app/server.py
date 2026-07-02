@@ -396,7 +396,11 @@ class ApiRouter:
                 store = load_store(self.config_path)
                 return 200, {"settings": flow_tool_settings_to_dict(store.flow_tool)}
             if method == "GET" and path == "/api/tools/flow/definitions":
-                return 200, {"flows": self._load_flow_definitions("")}
+                query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
+                keyword = (query.get("keyword", "") or "").strip()
+                flows = self._load_flow_definitions(keyword)
+                flow_limit = 500
+                return 200, {"flows": flows, "limit": flow_limit, "truncated": len(flows) >= flow_limit}
             if method == "GET" and path == "/api/flow-chain/status":
                 active_job = self.get_active_flow_chain_job_payload()
                 if active_job is None:
@@ -412,9 +416,18 @@ class ApiRouter:
                 job = self._get_flow_chain_job(job_id)
                 if job is None:
                     return 404, {"error": "job not found"}
-                return 200, {"job": job.to_payload()}
+                payload = job.to_payload()
+                if (
+                    payload.get("status") in {"completed", "failed", "cancelled"}
+                    and job.save_history
+                    and job.thread is not None
+                    and job.thread.is_alive()
+                ):
+                    job.thread.join(timeout=2.0)
+                    payload = job.to_payload()
+                return 200, {"job": payload}
             if method == "POST" and path == "/api/tools/flow/cancel":
-                job_id = str((body or {}).get("chain_id", "") or "").strip()
+                job_id = str((body or {}).get("job_id") or (body or {}).get("chain_id") or "").strip()
                 job = self._get_flow_chain_job(job_id)
                 if job is None:
                     return 404, {"error": "job not found"}
@@ -2269,8 +2282,8 @@ def _database_error_message(message: str) -> str:
     if unknown_db:
         database = unknown_db.group(1)
         hint = f"数据库不存在：{database}。"
-        if database == "assman_reg":
-            hint += "当前自动对数规则需要访问 assman_reg.ex_pledge_back；请确认报表数据源连接到的 MySQL 实例包含 assman_reg 库，或检查地址/端口是否连到了正确实例。"
+        if database == "ass_man_reg":
+            hint += "当前自动对数规则需要访问 ass_man_reg.ex_pledge_back；请确认报表数据源连接到的 MySQL 实例包含 ass_man_reg 库，或检查地址/端口是否连到了正确实例。"
         else:
             hint += "请确认数据源配置中的库名是否正确，且当前数据库实例已创建该库。"
         return _with_raw_database_error(hint, text)
@@ -2442,6 +2455,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
             body = json.loads(raw_body or "{}")
         self.router.transport_password_decryptor = self.auth_manager.decrypt_transport_password
+        self.router._query_string = self.path.split("?", 1)[1] if "?" in self.path else ""
         status, payload = self.router.handle(method, path, body, current_user=_session_user(session))
         self._send_json(status, payload)
 

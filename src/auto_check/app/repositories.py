@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from decimal import Decimal
+import re
+import unicodedata
 
 from auto_check.app.config import AppConfig
 from auto_check.app.db import DatabaseClient, qualified_name
@@ -386,8 +388,29 @@ class AutoCheckRepository:
         )
         return row is not None
 
+    def count_report_project_name_matches_without_chinese_parentheses(self, date: str, normalized_name: str) -> int:
+        target_name = _normalize_report_project_name_without_chinese_parentheses(normalized_name)
+        if not target_name:
+            return 0
+
+        table = qualified_name(self.config.business, "zf_detail_2024")
+        rows = self.business_client.fetch_all(
+            f"""
+            SELECT projname
+            FROM {table}
+            WHERE caldate = %s
+            """,
+            (date,),
+        )
+        count = 0
+        for row in rows:
+            candidate_name = _normalize_report_project_name_without_chinese_parentheses(str(row.get("projname") or ""))
+            if candidate_name and (target_name in candidate_name or candidate_name in target_name):
+                count += 1
+        return count
+
     def has_reverse_repo_blank_rows(self, project_code: str) -> bool:
-        table = TableRef(parts=("assman_reg", "ex_pledge_back")).quoted(self.config.business.db_type)
+        table = TableRef(parts=("ass_man_reg", "ex_pledge_back")).quoted(self.config.business.db_type)
         row = self.business_client.fetch_one(
             f"""
             SELECT 1 AS exists_flag
@@ -416,7 +439,7 @@ class AutoCheckRepository:
         )
 
     def _get_repo_business_amount(self, project_code: str, *, subcode_prefix: str, amount_expression: str) -> Decimal:
-        table = TableRef(parts=("assman_reg", "ex_pledge_back")).quoted(self.config.business.db_type)
+        table = TableRef(parts=("ass_man_reg", "ex_pledge_back")).quoted(self.config.business.db_type)
         row = self.business_client.fetch_one(
             f"""
             SELECT COALESCE(SUM({amount_expression}), 0) AS amount
@@ -453,14 +476,56 @@ class AutoCheckRepository:
             return self._pact_asset_cache[date]
 
         table = qualified_name(self.config.dws, "am_pactasset_dws")
-        rows = self.dws_client.fetch_all(
-            f"""
-            SELECT c_projcode, c_udlyasset, c_stockcode, c_pactid, c_spv_type, c_assettype
-            FROM {table}
-            WHERE d_cldate = %s
-            """,
-            (date,),
-        )
+        invest_table = qualified_name(self.config.dws, "am_projinvest_dws")
+        rows = None
+        last_missing_column_error: Exception | None = None
+        for include_contract_start, include_data_source in ((True, True), (False, True), (True, False), (False, False)):
+            select_columns = [
+                "pact.c_projcode",
+                "pact.c_udlyasset",
+                "pact.c_stockcode",
+                "pact.c_pactid",
+                "pact.c_spv_type",
+                "pact.c_assettype",
+                "pact.c_datasource" if include_data_source else "'' AS c_datasource",
+                "invest.d_bdate" if include_contract_start else "NULL AS d_bdate",
+            ]
+            if include_contract_start:
+                sql = f"""
+                SELECT {", ".join(select_columns)}
+                FROM {table} pact
+                LEFT JOIN (
+                    SELECT c_projcode, d_cldate, c_pactid, MAX(d_bdate) AS d_bdate
+                    FROM {invest_table}
+                    WHERE d_cldate = %s
+                    GROUP BY c_projcode, d_cldate, c_pactid
+                ) invest
+                    ON pact.c_projcode = invest.c_projcode
+                   AND pact.d_cldate = invest.d_cldate
+                   AND pact.c_pactid = invest.c_pactid
+                WHERE pact.d_cldate = %s
+                """
+                params = (date, date)
+            else:
+                sql = f"""
+                SELECT {", ".join(select_columns)}
+                FROM {table} pact
+                WHERE pact.d_cldate = %s
+                """
+                params = (date,)
+            try:
+                rows = self.dws_client.fetch_all(sql, params)
+                break
+            except Exception as exc:
+                message = str(exc).lower()
+                missing_contract_start = include_contract_start and "d_bdate" in message
+                missing_data_source = include_data_source and "c_datasource" in message
+                if not missing_contract_start and not missing_data_source:
+                    raise
+                last_missing_column_error = exc
+        if rows is None:
+            assert last_missing_column_error is not None
+            raise last_missing_column_error
         grouped_assets: dict[tuple[str, str], list[PactAssetRow]] = defaultdict(list)
         for row in rows:
             pact_asset = PactAssetRow(
@@ -470,7 +535,17 @@ class AutoCheckRepository:
                 pact_id=str(row.get("c_pactid") or ""),
                 spv_type=str(row.get("c_spv_type") or ""),
                 asset_type=str(row.get("c_assettype") or ""),
+                contract_start_date=str(row["d_bdate"]) if row.get("d_bdate") is not None else None,
+                data_source=str(row.get("c_datasource") or ""),
             )
             grouped_assets[(pact_asset.project_code, pact_asset.asset_name)].append(pact_asset)
         self._pact_asset_cache[date] = dict(grouped_assets)
         return self._pact_asset_cache[date]
+
+
+def _normalize_report_project_name_without_chinese_parentheses(value: str) -> str:
+    name = re.sub(r"\uff08[^\uff08\uff09]*\uff09", "", value or "")
+    name = unicodedata.normalize("NFKC", name).strip().lower()
+    name = re.sub(r"\s+", "", name)
+    name = re.sub(r"[_＿][^_＿]+$", "", name)
+    return name

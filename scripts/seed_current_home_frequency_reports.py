@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sqlite3
@@ -255,10 +255,10 @@ def _seed_business(client: DatabaseClient, database: str) -> None:
                 )
                 """
             )
-            cursor.execute("CREATE DATABASE IF NOT EXISTS `assman_reg`")
+            cursor.execute("CREATE DATABASE IF NOT EXISTS `ass_man_reg`")
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS `assman_reg`.`ex_pledge_back` (
+                CREATE TABLE IF NOT EXISTS `ass_man_reg`.`ex_pledge_back` (
                   project_code varchar(100),
                   subcode varchar(100),
                   buyback_money decimal(24, 2),
@@ -269,7 +269,7 @@ def _seed_business(client: DatabaseClient, database: str) -> None:
             _ensure_report_period_tables(cursor)
             cursor.execute(_delete_sql(f"{q_database}.`zf_detail_2024`", "caldate", "projinnercode"), (*REPORT_DATES, f"{PROJECT_PREFIX}%"))
             cursor.execute(_delete_sql(f"{q_database}.`currency_report_duration`", "caldate", "c_projectcode"), (*REPORT_DATES, f"{PROJECT_PREFIX}%"))
-            cursor.execute("DELETE FROM `assman_reg`.`ex_pledge_back` WHERE project_code LIKE %s", (f"{PROJECT_PREFIX}%",))
+            cursor.execute("DELETE FROM `ass_man_reg`.`ex_pledge_back` WHERE project_code LIKE %s", (f"{PROJECT_PREFIX}%",))
             cursor.executemany(
                 f"INSERT INTO {q_database}.`zf_detail_2024` (caldate, projinnercode, projname, a0001, d0000, c1000) VALUES (%s, %s, %s, %s, %s, %s)",
                 projects,
@@ -279,7 +279,7 @@ def _seed_business(client: DatabaseClient, database: str) -> None:
                 currency_rows,
             )
             cursor.executemany(
-                "INSERT INTO `assman_reg`.`ex_pledge_back` (project_code, subcode, buyback_money, expenses) VALUES (%s, %s, %s, %s)",
+                "INSERT INTO `ass_man_reg`.`ex_pledge_back` (project_code, subcode, buyback_money, expenses) VALUES (%s, %s, %s, %s)",
                 pledge_rows,
             )
         connection.commit()

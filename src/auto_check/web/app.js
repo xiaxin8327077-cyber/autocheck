@@ -1,4 +1,4 @@
-/* ===== Dom refs ===== */
+﻿/* ===== Dom refs ===== */
 const navItems = document.querySelectorAll(".nav-item");
 const topNav = document.querySelector(".top-nav");
 const topNavItems = document.querySelectorAll(".top-nav-item");
@@ -203,6 +203,9 @@ const flowChainEditorTitle = document.getElementById("flowChainEditorTitle");
 const flowChainEditorName = document.getElementById("flowChainEditorName");
 const flowChainEditorEnabled = document.getElementById("flowChainEditorEnabled");
 const flowDefinitionSearch = document.getElementById("flowDefinitionSearch");
+const flowManualFlowId = document.getElementById("flowManualFlowId");
+const addManualFlowBtn = document.getElementById("addManualFlowBtn");
+const flowDefinitionLimitHint = document.getElementById("flowDefinitionLimitHint");
 const flowDefinitionRefreshBtn = document.getElementById("flowDefinitionRefreshBtn");
 const flowDefinitionTable = document.getElementById("flowDefinitionTable");
 const flowSelectedStepList = document.getElementById("flowSelectedStepList");
@@ -262,6 +265,8 @@ let flowEditingChainIndex = -1;
 let flowCurrentChainInfo = null;
 let flowDefinitions = [];
 let flowDefinitionsLoaded = false;
+let flowSearchTimer = null;
+let flowDefinitionSearchItems = [];
 let flowChainEditorSelectedSteps = [];
 // 多流程链批量执行状态
 let selectedFlowChainIds = [];
@@ -3513,6 +3518,14 @@ function formatChartMonthDay(dateText = "") {
   return `${Number(parts[1])}/${Number(parts[2])}`;
 }
 
+function formatChartRunAtLabel(runAt = "", fallbackDate = "") {
+  const display = formatDisplayTime(runAt || "");
+  const [datePart = fallbackDate, timePart = ""] = display.split(" ");
+  const dateLabel = formatChartMonthDay(datePart || fallbackDate);
+  const timeLabel = String(timePart || "").slice(0, 5);
+  return [dateLabel, timeLabel].filter(Boolean).join(" ");
+}
+
 function formatChartNumber(value) {
   const n = Number(value || 0);
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
@@ -4180,6 +4193,51 @@ function homeSpecificReasonMatchesTargetCode(item = {}) {
   );
 }
 
+function homeTargetCodeMismatchTextMatches(value = "") {
+  const text = normalizeHomeReasonText(value);
+  return (
+    text.includes("fa/am标的不一致") ||
+    text.includes("fa与am标的不一致") ||
+    text.includes("fa和am标的不一致")
+  );
+}
+
+function homeTargetCodeMismatchCount(item = {}) {
+  let count = 0;
+  const details = Array.isArray(item.details) ? item.details : [];
+  details.forEach((detail) => {
+    if (detail?.kind === "fa_am") {
+      count += 1;
+      return;
+    }
+    const data = detail?.data || {};
+    ["rows", "refinement_rows"].forEach((field) => {
+      (Array.isArray(data[field]) ? data[field] : []).forEach((row) => {
+        const rowText = [
+          row?.specific_reason,
+          row?.reason,
+          row?.reason_text,
+          row?.check_result,
+          row?.type,
+        ].filter(Boolean).join(" ");
+        if (homeTargetCodeMismatchTextMatches(rowText)) count += 1;
+      });
+    });
+  });
+  if (count > 0) return count;
+
+  const displayDetails = Array.isArray(item.display_details) ? item.display_details : [];
+  displayDetails.forEach((section) => {
+    (Array.isArray(section?.table?.rows) ? section.table.rows : []).forEach((row) => {
+      const rowText = (Array.isArray(row) ? row : []).filter(Boolean).join(" ");
+      if (homeTargetCodeMismatchTextMatches(rowText)) count += 1;
+    });
+  });
+  if (count > 0) return count;
+
+  return homeSpecificReasonMatchesTargetCode(item) ? 1 : 0;
+}
+
 function homeReasonCategoryFromItem(item = {}) {
   const text = homeReasonText(item);
   return HOME_REASON_DEFS.find((def) => def.match(text, item)) || {
@@ -4313,6 +4371,10 @@ function buildHomeReasonSummary(run = {}) {
 
   if (results.length) {
     results.forEach((item) => {
+      if (homeTargetCodeMismatchCount(item) > 0) {
+        summary.targetCode += homeTargetCodeMismatchCount(item);
+        return;
+      }
       const category = homeReasonCategoryFromItem(item);
       summary[category.key] = (summary[category.key] || 0) + 1;
     });
@@ -5134,7 +5196,7 @@ async function renderChart() {
 
     if (!canvas) return;
     const values = dateRuns.map((r) => r.total_count);
-    const labels = dateRuns.map((r) => `${formatChartMonthDay(targetDate)} ${(r.run_at || "").slice(11, 16)}`);
+    const labels = dateRuns.map((r) => formatChartRunAtLabel(r.run_at, targetDate));
     const tooltipItems = dateRuns.map((r) => {
       const runAtText = formatDisplayTime(r.run_at || "").slice(0, 16) || `${targetDate} ${(r.run_at || "").slice(11, 16)}`;
       return {
@@ -5377,7 +5439,7 @@ const BUSINESS_FIELD_GROUPS = [
     ],
   },
   {
-    table: "assman_reg.ex_pledge_back",
+    table: "ass_man_reg.ex_pledge_back",
     source: "报表数据源",
     rows: [
       ["project_code", "项目编号", "逆回购缺失细分关联项目"],
@@ -6389,6 +6451,8 @@ async function loadFlowSettings() {
   if (flowStepTimeout) flowStepTimeout.value = flowSettings.step_timeout_minutes || 60;
   flowDefinitions = [];
   flowDefinitionsLoaded = false;
+  flowDefinitionSearchItems = [];
+  renderFlowDefinitionLimitHint();
   renderFlowChainSettings(flowSettings.chains || []);
   renderFlowChainPicker();
   await loadFlowToastStatus();
@@ -6455,25 +6519,34 @@ async function loadFlowDefinitionsForEditor({ force = false } = {}) {
     const payload = await api("/api/tools/flow/definitions");
     flowDefinitions = (payload.flows || []).map(normalizeFlowStep).filter(Boolean);
     flowDefinitionsLoaded = true;
+    renderFlowDefinitionLimitHint(payload);
     renderFlowDefinitionTable();
   } catch (e) {
+    flowDefinitionsLoaded = false;
+    flowDefinitions = [];
+    renderFlowDefinitionLimitHint();
     flowDefinitionTable.innerHTML = `<p class="placeholder-text">${escapeHtml(e.message || "流程表加载失败")}</p>`;
   }
 }
 
-function renderFlowDefinitionTable() {
-  if (!flowDefinitionTable) return;
-  const keyword = (flowDefinitionSearch?.value || "").trim().toLowerCase();
-  const selectedIds = new Set(flowChainEditorSelectedSteps.map((step) => step.flow_id));
-  const filtered = flowDefinitions.filter((flow) => {
-    if (!keyword) return true;
-    return (flow.name || "").toLowerCase().includes(keyword);
-  });
-  if (!flowDefinitionsLoaded) {
-    flowDefinitionTable.innerHTML = '<p class="placeholder-text">打开弹框后加载流程表</p>';
-    return;
+function renderFlowDefinitionLimitHint(payload = {}) {
+  if (!flowDefinitionLimitHint) return;
+  if (payload.truncated) {
+    const limit = Number(payload.limit || 500);
+    flowDefinitionLimitHint.hidden = false;
+    flowDefinitionLimitHint.textContent = limit === 500
+      ? "仅展示前 500 条，请搜索流程名称或 flow_id 添加更多流程。"
+      : `仅展示前 ${limit} 条，请搜索流程名称或 flow_id 添加更多流程。`;
+  } else {
+    flowDefinitionLimitHint.hidden = true;
+    flowDefinitionLimitHint.textContent = "";
   }
-  if (!filtered.length) {
+}
+
+function _renderFlowDefinitionTable(flows) {
+  if (!flowDefinitionTable) return;
+  const selectedIds = new Set(flowChainEditorSelectedSteps.map((step) => step.flow_id));
+  if (!flows.length) {
     flowDefinitionTable.innerHTML = '<p class="placeholder-text">未找到匹配流程</p>';
     return;
   }
@@ -6483,13 +6556,13 @@ function renderFlowDefinitionTable() {
       <th>操作</th>
     </div>
     <div class="flow-def-list">
-      ${filtered.map((flow) => {
+      ${flows.map((flow) => {
         const selected = selectedIds.has(flow.flow_id);
         return `
           <div class="flow-def-row">
             <span class="flow-def-name">${escapeHtml(flow.name || "-")}</span>
             <div class="flow-def-action">
-              <button type="button" class="btn-outline btn-sm" data-action="add-flow-definition" data-flow-id="${escapeHtml(flow.flow_id)}" ${selected ? "disabled" : ""}>${selected ? "已加入" : "加入"}</button>
+              <button type="button" class="btn-outline btn-sm" data-action="add-flow-definition" data-flow-id="${escapeHtml(flow.flow_id)}" data-flow-name="${escapeHtml(flow.name || "")}" ${selected ? "disabled" : ""}>${selected ? "已加入" : "加入"}</button>
             </div>
           </div>
         `;
@@ -6498,9 +6571,51 @@ function renderFlowDefinitionTable() {
   `;
 }
 
-function addFlowDefinitionToSelected(flowId = "") {
-  const flow = flowDefinitions.find((item) => item.flow_id === flowId);
-  if (!flow || flowChainEditorSelectedSteps.some((step) => step.flow_id === flow.flow_id)) return;
+function renderFlowDefinitionTable() {
+  if (!flowDefinitionTable) return;
+  const keyword = (flowDefinitionSearch?.value || "").trim();
+
+  if (!flowDefinitionsLoaded) {
+    flowDefinitionTable.innerHTML = '<p class="placeholder-text">打开弹框后加载流程表</p>';
+    return;
+  }
+
+  // 输入框为空：直接用缓存渲染
+  if (!keyword) {
+    _renderFlowDefinitionTable(flowDefinitions);
+    return;
+  }
+
+  // 有搜索词：后端查询（防抖 300ms）
+  clearTimeout(flowSearchTimer);
+  flowDefinitionTable.innerHTML = '<p class="placeholder-text">搜索中...</p>';
+  flowSearchTimer = setTimeout(async () => {
+    try {
+      const payload = await api(`/api/tools/flow/definitions?keyword=${encodeURIComponent(keyword)}`);
+      const items = (payload.flows || []).map(normalizeFlowStep).filter(Boolean);
+      renderFlowDefinitionLimitHint(payload);
+      // 搜索结果并入 flowDefinitions，避免后续“加入”时找不到
+      for (const item of items) {
+        if (!flowDefinitions.some((f) => f.flow_id === item.flow_id)) {
+          flowDefinitions.push(item);
+        }
+      }
+      _renderFlowDefinitionTable(items);
+    } catch (e) {
+      renderFlowDefinitionLimitHint();
+      flowDefinitionTable.innerHTML = `<p class="placeholder-text">${escapeHtml(e.message || "搜索失败")}</p>`;
+    }
+  }, 300);
+}
+
+function addFlowDefinitionToSelected(flowInput = {}) {
+  const requestedFlow = normalizeFlowStep(flowInput);
+  const flow = flowDefinitions.find((item) => item.flow_id === requestedFlow?.flow_id) || requestedFlow;
+  if (!flow) {
+    if (flowChainEditorStatus) flowChainEditorStatus.textContent = "未找到该流程，请刷新流程列表后重试";
+    return;
+  }
+  if (flowChainEditorSelectedSteps.some((step) => step.flow_id === flow.flow_id)) return;
   setFlowChainEditorSelectedSteps([...flowChainEditorSelectedSteps, flow]);
 }
 
@@ -6533,6 +6648,7 @@ async function saveFlowSettings() {
     flowSettings = payload.settings || settings;
     flowDefinitions = [];
     flowDefinitionsLoaded = false;
+    flowDefinitionSearchItems = [];
     renderFlowChainSettings(flowSettings.chains || []);
     renderFlowChainPicker();
     if (flowSettingsStatus) flowSettingsStatus.textContent = "已保存";
@@ -6974,6 +7090,10 @@ async function saveMergedFlowChainHistory(allChains, lastJob) {
 
 async function cancelFlowChain() {
   if (!flowCurrentJobId) return;
+  if (flowCancelBtn?.disabled) return;
+  if (flowCancelBtn) flowCancelBtn.disabled = true;
+  const currentProgress = parseFloat(flowProgressFill?.style.width || "0") || 0;
+  setFlowProgress("停止中", flowCurrentChainInfo?.name || "", currentProgress, true);
   try {
     await api("/api/tools/flow/cancel", {
       method: "POST",
@@ -6981,6 +7101,7 @@ async function cancelFlowChain() {
     });
     appendFlowLog("已发送停止请求", "info");
   } catch (e) {
+    if (isFlowExecuting && flowCancelBtn) flowCancelBtn.disabled = false;
     showToast("停止失败: " + e.message, "error");
   }
 }
@@ -7221,10 +7342,27 @@ flowChainEditorCancel?.addEventListener("click", closeFlowChainEditor);
 flowChainEditorSave?.addEventListener("click", saveFlowChainFromEditor);
 flowDefinitionRefreshBtn?.addEventListener("click", () => loadFlowDefinitionsForEditor({ force: true }));
 flowDefinitionSearch?.addEventListener("input", renderFlowDefinitionTable);
+addManualFlowBtn?.addEventListener("click", () => {
+  const flowId = String(flowManualFlowId?.value || "").trim();
+  if (!flowId) {
+    if (flowChainEditorStatus) flowChainEditorStatus.textContent = "请输入 flow_id";
+    return;
+  }
+  addFlowDefinitionToSelected({ flow_id: flowId });
+  if (flowManualFlowId) flowManualFlowId.value = "";
+});
+flowManualFlowId?.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  addManualFlowBtn?.click();
+});
 flowDefinitionTable?.addEventListener("click", (e) => {
   const button = e.target.closest("[data-action='add-flow-definition']");
   if (!button) return;
-  addFlowDefinitionToSelected(button.dataset.flowId || "");
+  addFlowDefinitionToSelected({
+    flow_id: button.dataset.flowId || "",
+    name: button.dataset.flowName || "",
+  });
 });
 flowSelectedStepList?.addEventListener("click", (e) => {
   const button = e.target.closest("[data-action]");
@@ -8242,7 +8380,11 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>新增点击 Logo 切换主题能力。</li>
         <li>新增登录进入主界面动效。</li>
         <li>首页组合图表指标改为每期差异个数。</li>
+        <li>自动对数 AM 标的复核新增尾码和江苏信托名称兜底。</li>
         <li>流程链配置补充执行接口规则说明。</li>
+        <li>流程链配置支持按 flow_id 搜索和手工添加流程。</li>
+        <li>自动对数处理脚本按 AM 合同来源生成，衡泰来源提示联系衡泰系统处理。</li>
+        <li>修复流程链点击停止时任务编号未正确传递的问题。</li>
         <li>新增系统设置动画效果开关，支持统一关闭复杂渐变、毛玻璃、悬浮阴影和动态渲染。</li>
         <li>新增流程后台执行悬浮提示，支持单流程链与多流程链进度区分显示。</li>
         <li>执行历史新增执行时长列，支持单流程链和多流程链时长记录。</li>

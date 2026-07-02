@@ -1,4 +1,4 @@
-# 资产缺失细分链路确认稿
+﻿# 资产缺失细分链路确认稿
 
 ## 状态
 
@@ -227,7 +227,7 @@
 
 核查链路：
 
-1. 到业务报表数据源固定查询 `assman_reg.ex_pledge_back`。
+1. 到业务报表数据源固定查询 `ass_man_reg.ex_pledge_back`。
 2. 按 `project_code = 项目编号` 过滤。
 3. 只过滤 `subcode` 以 `7` 开头的数据。
 4. 只查询空值问题：`buyback_money` 为空或 `expenses` 为空。
@@ -400,7 +400,7 @@ AND c_accountname NOT LIKE '江苏信托%资金信托计划%'
 | `currency_report_24.currency_detail_project_2_1_5_2` | 业务报表数据源 |
 | `currency_report_24.currency_detail_project_2_1_6` | 业务报表数据源 |
 | `currency_report_24.currency_detail_project_2_1_9` | 业务报表数据源 |
-| `assman_reg.ex_pledge_back` | 业务报表数据源 |
+| `ass_man_reg.ex_pledge_back` | 业务报表数据源 |
 
 ## 待确认点
 

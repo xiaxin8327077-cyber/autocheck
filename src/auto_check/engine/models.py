@@ -57,6 +57,8 @@ class PactAssetRow:
     pact_id: str = ""
     spv_type: str = ""
     asset_type: str = ""
+    contract_start_date: str | None = None
+    data_source: str = ""
 
 
 @dataclass(frozen=True)

@@ -32,6 +32,8 @@ from auto_check.engine.money import amounts_equal, to_decimal
 
 DISPLAY_CANDIDATE_GROUP_LIMIT = 5
 ASSET_AM_CONFIRM_CANDIDATE_GROUP_LIMIT = 200
+JIANGSU_TRUST_TEXT = "\u6c5f\u82cf\u4fe1\u6258"
+CHINESE_PAREN_RE = re.compile(r"\uff08[^\uff08\uff09]*\uff09")
 COMMON_RECEIVABLE_ASSET_TYPE = "应收账款_共同类"
 COMMON_PAYABLE_ACCOUNT_TYPE = "应付账款_共同类"
 
@@ -95,6 +97,8 @@ class ReconcileRepository(Protocol):
     def get_property_right_refinement(self, project_code: str, pact_id: str) -> dict[str, Any] | None: ...
 
     def has_report_rows(self, table_parts: tuple[str, ...], date: str) -> bool: ...
+
+    def count_report_project_name_matches_without_chinese_parentheses(self, date: str, normalized_name: str) -> int: ...
 
     def has_reverse_repo_blank_rows(self, project_code: str) -> bool: ...
 
@@ -480,7 +484,7 @@ class ReconcileEngine:
                     "market_value": str(reverse_repo_market_total),
                     "project_invest_balance": str(reverse_repo_business_amount),
                     "difference": str(reverse_repo_difference),
-                    "check_table": "assman_reg.ex_pledge_back",
+                    "check_table": "ass_man_reg.ex_pledge_back",
                     "reason": f"逆回购：FA科目余额与存续回购业务表逆回购金额有差异，差异值{reverse_repo_difference}",
                 }
             )
@@ -1185,6 +1189,7 @@ class ReconcileEngine:
         project_pact_assets = self.repository.list_project_pact_assets(project.project_code, date)
         self._check_cancelled()
         self._project_log(project, f"项目AM资产信息 {len(project_pact_assets)} 条", "AM标的复核")
+        first_normal_result: tuple[str, DifferenceDetail] | None = None
         for valuation_row in valuation_rows:
             check_result = self._asset_missing_am_check_for_row(
                 project,
@@ -1193,8 +1198,12 @@ class ReconcileEngine:
                 project_pact_assets,
             )
             if check_result is not None:
-                return check_result[0], check_result[1]
-        return None
+                reason, detail, is_abnormal = check_result
+                if is_abnormal:
+                    return reason, detail
+                if first_normal_result is None:
+                    first_normal_result = reason, detail
+        return first_normal_result
 
     def _confirm_ambiguous_asset_missing_by_am(
         self,
@@ -1250,7 +1259,7 @@ class ReconcileEngine:
             return None
 
         self._project_log(project, f"按科目名称匹配AM资产：{valuation_row.account_name}", "AM标的复核")
-        matched_assets = _matching_pact_assets(valuation_row.account_name, project_pact_assets)
+        matched_assets = self._select_pact_assets_for_am_check(project, date, valuation_row, project_pact_assets)
         if not matched_assets:
             self._project_log(project, "未匹配到AM资产名称", "AM标的复核")
             return "AM标的缺失", DifferenceDetail(
@@ -1265,15 +1274,23 @@ class ReconcileEngine:
                 },
             ), True
 
-        stock_matched_asset = next(
-            (pact_asset for pact_asset in matched_assets if pact_asset.stock_code == valuation_row.account_tail_code),
-            None,
-        )
-        if stock_matched_asset is None:
-            pact_asset = matched_assets[0]
+        if len(matched_assets) > 1:
+            matched_assets = sorted(
+                matched_assets,
+                key=lambda p: p.contract_start_date or "",
+                reverse=True,
+            )
             self._project_log(
                 project,
-                f"AM资产名称匹配但标的不一致，FA尾码={valuation_row.account_tail_code}，AM标的={pact_asset.stock_code}",
+                f"多个AM候选标的，按合同开始日取最新：{matched_assets[0].asset_name}（{matched_assets[0].contract_start_date}）",
+                "AM标的复核",
+            )
+
+        latest_asset = matched_assets[0]
+        if latest_asset.stock_code != valuation_row.account_tail_code:
+            self._project_log(
+                project,
+                f"最新AM标的数量不一致，FA尾码={valuation_row.account_tail_code}，最新AM标的={latest_asset.stock_code}",
                 "AM标的复核",
             )
             return "FA与AM标的不一致", DifferenceDetail(
@@ -1283,12 +1300,15 @@ class ReconcileEngine:
                     "fa_account_name": valuation_row.account_name,
                     "fa_tail_code": valuation_row.account_tail_code,
                     "fa_market_value": str(valuation_row.market_value),
-                    "am_asset_name": pact_asset.asset_name,
-                    "am_stock_code": pact_asset.stock_code,
-                    "pact_id": pact_asset.pact_id,
+                    "am_asset_name": latest_asset.asset_name,
+                    "am_stock_code": latest_asset.stock_code,
+                    "pact_id": latest_asset.pact_id,
+                    "data_source": latest_asset.data_source,
                     "specific_reason": "FA与AM标的不一致",
                 },
             ), True
+
+        stock_matched_asset = latest_asset
 
         self._project_log(project, f"读取AM合同投融资余额，合同{stock_matched_asset.pact_id}", "合同投融资余额核对")
         project_invest_balance = self.repository.get_project_invest_balance(
@@ -1320,6 +1340,95 @@ class ReconcileEngine:
         if is_zero_balance:
             return "合同投融资余额为0但FA科目余额不为0", detail, True
         return "", detail, False
+
+    def _select_pact_assets_for_am_check(
+        self,
+        project: ProjectBalance,
+        date: str,
+        valuation_row: ValuationRow,
+        project_pact_assets: list[PactAssetRow],
+    ) -> list[PactAssetRow]:
+        matched_assets = _matching_pact_assets(valuation_row.account_name, project_pact_assets)
+        if matched_assets:
+            return matched_assets
+
+        stock_code_assets = [
+            pact_asset
+            for pact_asset in project_pact_assets
+            if pact_asset.stock_code == valuation_row.account_tail_code
+        ]
+        if stock_code_assets:
+            self._project_log(
+                project,
+                f"AM fallback by FA tail code: {valuation_row.account_tail_code}",
+                "AM标的复核",
+            )
+            return stock_code_assets
+
+        return self._jiangsu_trust_parentheses_fallback_assets(project, date, valuation_row, project_pact_assets)
+
+    def _jiangsu_trust_parentheses_fallback_assets(
+        self,
+        project: ProjectBalance,
+        date: str,
+        valuation_row: ValuationRow,
+        project_pact_assets: list[PactAssetRow],
+    ) -> list[PactAssetRow]:
+        account_name = valuation_row.account_name or ""
+        if JIANGSU_TRUST_TEXT not in account_name:
+            return []
+
+        fa_has_parentheses = _has_chinese_parenthetical_part(account_name)
+        fa_base_name = _normalize_asset_name(_strip_chinese_parenthetical_parts(account_name))
+        if not fa_base_name:
+            return []
+
+        candidates: list[PactAssetRow] = []
+        for pact_asset in project_pact_assets:
+            am_name = pact_asset.asset_name or ""
+            am_has_parentheses = _has_chinese_parenthetical_part(am_name)
+            if fa_has_parentheses == am_has_parentheses:
+                continue
+            if fa_has_parentheses:
+                left_name = fa_base_name
+                right_name = _normalize_asset_name(am_name)
+            else:
+                left_name = _normalize_asset_name(account_name)
+                right_name = _normalize_asset_name(_strip_chinese_parenthetical_parts(am_name))
+            if left_name and left_name == right_name:
+                candidates.append(pact_asset)
+
+        if not candidates:
+            return []
+
+        if not fa_has_parentheses:
+            candidate_asset_keys = _distinct_am_asset_keys(candidates)
+            if len(candidate_asset_keys) != 1:
+                self._project_log(
+                    project,
+                    f"Jiangsu Trust parentheses fallback found {len(candidate_asset_keys)} AM candidates",
+                    "AM标的复核",
+                )
+                return []
+
+        report_match_count = self.repository.count_report_project_name_matches_without_chinese_parentheses(
+            date,
+            fa_base_name,
+        )
+        if report_match_count != 1:
+            self._project_log(
+                project,
+                f"Jiangsu Trust report project match count is {report_match_count}",
+                "AM标的复核",
+            )
+            return []
+
+        self._project_log(
+            project,
+            "Jiangsu Trust one-sided parentheses fallback matched AM asset",
+            "AM标的复核",
+        )
+        return candidates
 
     def _asset_missing_refinement_detail(
         self,
@@ -1442,7 +1551,7 @@ class ReconcileEngine:
         elif asset_type in {"债券", "股票", "公募基金", "私募基金"}:
             reason, check_table, key_field = self._security_asset_missing_reason(project, date, valuation_row, asset_type)
         elif asset_type == "逆回购":
-            check_table = "assman_reg.ex_pledge_back"
+            check_table = "ass_man_reg.ex_pledge_back"
             if self.repository.has_reverse_repo_blank_rows(project.project_code):
                 reason = "存续回购业务表回购金额或佣金存在空数据"
                 key_field = "buyback_money/expenses"
@@ -1578,21 +1687,29 @@ class ReconcileEngine:
         valuation_row: ValuationRow,
     ) -> tuple[str, str, str, dict[str, str]]:
         project_pact_assets = self.repository.list_project_pact_assets(project.project_code, date)
-        matched_assets = _matching_pact_assets(valuation_row.account_name, project_pact_assets)
+        matched_assets = self._select_pact_assets_for_am_check(project, date, valuation_row, project_pact_assets)
         if not matched_assets:
             return "AM标的缺失", "am_pactasset_dws", "", {}
 
-        stock_matched_asset = next(
-            (pact_asset for pact_asset in matched_assets if pact_asset.stock_code == valuation_row.account_tail_code),
-            None,
-        )
-        if stock_matched_asset is None:
-            pact_asset = matched_assets[0]
-            return "FA和AM标的不一致", "am_pactasset_dws", "c_stockcode", {
-                "am_asset_name": pact_asset.asset_name,
-                "am_stock_code": pact_asset.stock_code,
-                "pact_id": pact_asset.pact_id,
-            }
+        # 多候选时按合同开始日倒序排序，取最新合同
+        if len(matched_assets) > 1:
+            matched_assets = sorted(
+                matched_assets,
+                key=lambda p: p.contract_start_date or "",
+                reverse=True,
+            )
+            self._project_log(
+                project,
+                f"细化详情多候选，按合同开始日取最新：{matched_assets[0].asset_name}（{matched_assets[0].contract_start_date}）",
+                "AM标的消歧",
+            )
+
+        # 先取最新合同，再判断stock_code是否匹配
+        latest_asset = matched_assets[0]
+        if latest_asset.stock_code != valuation_row.account_tail_code:
+            return "FA和AM标的不一致", "am_pactasset_dws", "c_stockcode", _pact_asset_detail_fields(latest_asset)
+
+        stock_matched_asset = latest_asset
 
         project_invest_balance = self.repository.get_project_invest_balance(
             project.project_code,
@@ -1600,54 +1717,26 @@ class ReconcileEngine:
             stock_matched_asset.pact_id,
         )
         if amounts_equal(project_invest_balance or Decimal("0"), Decimal("0")):
-            return "合同投融资余额为0但FA科目余额不为0", "am_projinvest_dws", "f_acbalance", {
-                "am_asset_name": stock_matched_asset.asset_name,
-                "am_stock_code": stock_matched_asset.stock_code,
-                "pact_id": stock_matched_asset.pact_id,
-            }
+            return "合同投融资余额为0但FA科目余额不为0", "am_projinvest_dws", "f_acbalance", _pact_asset_detail_fields(stock_matched_asset)
 
         spv_row = self.repository.get_spv_project_invest_refinement(project.project_code, date, stock_matched_asset.pact_id)
         if spv_row is None:
-            return "该特定目的载体在dm.am_projinvest_spv_zgxg_dm不存在或余额为0", "dm.am_projinvest_spv_zgxg_dm", "", {
-                "am_asset_name": stock_matched_asset.asset_name,
-                "am_stock_code": stock_matched_asset.stock_code,
-                "pact_id": stock_matched_asset.pact_id,
-            }
+            return "该特定目的载体在dm.am_projinvest_spv_zgxg_dm不存在或余额为0", "dm.am_projinvest_spv_zgxg_dm", "", _pact_asset_detail_fields(stock_matched_asset)
 
         if "收益凭证" in stock_matched_asset.asset_name:
             report_table = ("currency_report_24", "currency_detail_project_2_1_9")
             if not self.repository.has_report_rows(report_table, date):
-                return "该收益凭证在资负数据子系统-其他债权明细表无数据", ".".join(report_table), "", {
-                    "am_asset_name": stock_matched_asset.asset_name,
-                    "am_stock_code": stock_matched_asset.stock_code,
-                    "pact_id": stock_matched_asset.pact_id,
-                }
-            return "", ".".join(report_table), "", {
-                "am_asset_name": stock_matched_asset.asset_name,
-                "am_stock_code": stock_matched_asset.stock_code,
-                "pact_id": stock_matched_asset.pact_id,
-            }
+                return "该收益凭证在资负数据子系统-其他债权明细表无数据", ".".join(report_table), "", _pact_asset_detail_fields(stock_matched_asset)
+            return "", ".".join(report_table), "", _pact_asset_detail_fields(stock_matched_asset)
 
         asset_type = str(spv_row.get("svd_assettype") or "").strip()
         if asset_type not in SPECIAL_PURPOSE_VEHICLE_ASSET_TYPES:
-            return "该特定目的载体资产类型为空或资产类型有误", "dm.am_projinvest_spv_zgxg_dm", "svd_assettype", {
-                "am_asset_name": stock_matched_asset.asset_name,
-                "am_stock_code": stock_matched_asset.stock_code,
-                "pact_id": stock_matched_asset.pact_id,
-            }
+            return "该特定目的载体资产类型为空或资产类型有误", "dm.am_projinvest_spv_zgxg_dm", "svd_assettype", _pact_asset_detail_fields(stock_matched_asset)
 
         report_table = ("currency_report_24", "currency_detail_project_2_1_6")
         if not self.repository.has_report_rows(report_table, date):
-            return "资负数据子系统-特定目的载体明细表无数据", ".".join(report_table), "", {
-                "am_asset_name": stock_matched_asset.asset_name,
-                "am_stock_code": stock_matched_asset.stock_code,
-                "pact_id": stock_matched_asset.pact_id,
-            }
-        return "", ".".join(report_table), "", {
-            "am_asset_name": stock_matched_asset.asset_name,
-            "am_stock_code": stock_matched_asset.stock_code,
-            "pact_id": stock_matched_asset.pact_id,
-        }
+            return "资负数据子系统-特定目的载体明细表无数据", ".".join(report_table), "", _pact_asset_detail_fields(stock_matched_asset)
+        return "", ".".join(report_table), "", _pact_asset_detail_fields(stock_matched_asset)
 
     def _status_for_match(self, valuation_match: ValuationMatch) -> str:
         if valuation_match.match_type in {"single", "grouped", "combination"}:
@@ -2251,6 +2340,15 @@ def _detail_valuation_asset_total(details: list[DifferenceDetail]) -> Decimal | 
     return None
 
 
+def _pact_asset_detail_fields(pact_asset: PactAssetRow) -> dict[str, str]:
+    return {
+        "am_asset_name": pact_asset.asset_name,
+        "am_stock_code": pact_asset.stock_code,
+        "pact_id": pact_asset.pact_id,
+        "data_source": pact_asset.data_source,
+    }
+
+
 def _ta_blank_client_type_detail(row: dict[str, Any]) -> dict[str, str]:
     return {
         "pact_id": str(row.get("pact_id") or ""),
@@ -2291,6 +2389,18 @@ def _normalize_asset_name(value: str) -> str:
     name = re.sub(r"\s+", "", name)
     name = re.sub(r"[_＿][^_＿]+$", "", name)
     return name
+
+
+def _has_chinese_parenthetical_part(value: str) -> bool:
+    return bool(CHINESE_PAREN_RE.search(value or ""))
+
+
+def _strip_chinese_parenthetical_parts(value: str) -> str:
+    return CHINESE_PAREN_RE.sub("", value or "")
+
+
+def _distinct_am_asset_keys(pact_assets: list[PactAssetRow]) -> set[tuple[str, str]]:
+    return {(pact_asset.asset_name, pact_asset.stock_code) for pact_asset in pact_assets}
 
 
 def _parenthetical_parts(value: str) -> list[str]:

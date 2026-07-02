@@ -5248,7 +5248,21 @@ input:focus, select:focus {
 }
 
 .flow-step-builder-panel:first-child {
-  grid-template-rows: auto auto minmax(200px, 1fr);
+  grid-template-rows: auto auto auto auto minmax(200px, 1fr);
+}
+
+.flow-manual-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.flow-definition-limit-hint {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .flow-step-builder-panel:has(.flow-selected-step-list) {

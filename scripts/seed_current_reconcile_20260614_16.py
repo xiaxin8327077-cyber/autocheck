@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Any
 
@@ -278,10 +278,10 @@ def _seed_mysql(client: DatabaseClient, business_db: str) -> None:
                     f"INSERT INTO `currency_report_24`.`{table}` (caldate) VALUES (%s)",
                     [(day,) for day in DATES],
                 )
-            cursor.execute("CREATE DATABASE IF NOT EXISTS `assman_reg`")
+            cursor.execute("CREATE DATABASE IF NOT EXISTS `ass_man_reg`")
             cursor.execute(
                 """
-                CREATE TABLE IF NOT EXISTS `assman_reg`.`ex_pledge_back` (
+                CREATE TABLE IF NOT EXISTS `ass_man_reg`.`ex_pledge_back` (
                   project_code varchar(100),
                   subcode varchar(100),
                   buyback_money decimal(24, 2),
@@ -292,7 +292,7 @@ def _seed_mysql(client: DatabaseClient, business_db: str) -> None:
             cursor.execute(_delete_sql(f"{q_business}.`zf_detail_2024`", "caldate", "projinnercode"), (*DATES, *[f"{prefix}%" for prefix in PREFIXES]))
             cursor.execute(_delete_sql(f"{q_business}.`currency_report_duration`", "caldate", "c_projectcode"), (*DATES, *[f"{prefix}%" for prefix in PREFIXES]))
             cursor.execute(
-                "DELETE FROM `assman_reg`.`ex_pledge_back` WHERE project_code LIKE %s OR project_code LIKE %s OR project_code LIKE %s",
+                "DELETE FROM `ass_man_reg`.`ex_pledge_back` WHERE project_code LIKE %s OR project_code LIKE %s OR project_code LIKE %s",
                 tuple(f"{prefix}%" for prefix in PREFIXES),
             )
             cursor.executemany(
@@ -308,7 +308,7 @@ def _seed_mysql(client: DatabaseClient, business_db: str) -> None:
                 currency_rows,
             )
             cursor.executemany(
-                "INSERT INTO `assman_reg`.`ex_pledge_back` (project_code, subcode, buyback_money, expenses) VALUES (%s, %s, %s, %s)",
+                "INSERT INTO `ass_man_reg`.`ex_pledge_back` (project_code, subcode, buyback_money, expenses) VALUES (%s, %s, %s, %s)",
                 PLEDGE_ROWS,
             )
         connection.commit()

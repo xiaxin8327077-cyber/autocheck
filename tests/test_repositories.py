@@ -7,6 +7,7 @@ from auto_check.app.repositories import AutoCheckRepository
 class FakeClient:
     def __init__(self):
         self.fetch_all_calls = []
+        self.raise_missing_d_bdate = False
         self.asset_totals = {
             "P1": Decimal("100"),
             "P2": Decimal("200"),
@@ -22,8 +23,8 @@ class FakeClient:
             {"c_projcode": "P2", "c_accountcode": "2203.01", "c_accountname": "费用2", "f_marketvalue": Decimal("8")},
         ]
         self.pact_assets = [
-            {"c_projcode": "P1", "c_udlyasset": "资产1", "c_stockcode": "0001", "c_pactid": "PACT1", "c_spv_type": "10", "c_assettype": "31"},
-            {"c_projcode": "P2", "c_udlyasset": "资产2", "c_stockcode": "0002", "c_pactid": "PACT2", "c_spv_type": "11", "c_assettype": "32"},
+            {"c_projcode": "P1", "c_udlyasset": "资产1", "c_stockcode": "0001", "c_pactid": "PACT1", "c_spv_type": "10", "c_assettype": "31", "c_datasource": "am"},
+            {"c_projcode": "P2", "c_udlyasset": "资产2", "c_stockcode": "0002", "c_pactid": "PACT2", "c_spv_type": "11", "c_assettype": "32", "c_datasource": "ht"},
         ]
         self.project_invest_balances = [
             {"c_projcode": "P1", "c_pactid": "PACT1", "acbalance": Decimal("123")},
@@ -44,12 +45,18 @@ class FakeClient:
             }
         ]
         self.repo_amount_rows = [{"amount": Decimal("123")}]
+        self.project_name_rows = [
+            {"projname": "江苏信托稳盈集合资金信托计划（A类）"},
+            {"projname": "其他项目"},
+        ]
         self.security_balance_amount_rows = [
             {"stock_code": "ZQ001", "security_name": "23苏城投MTN001", "amount": Decimal("120")}
         ]
 
     def fetch_all(self, sql, params=()):
         self.fetch_all_calls.append((sql, tuple(params)))
+        if self.raise_missing_d_bdate and "invest.d_bdate" in sql:
+            raise RuntimeError("column invest.d_bdate does not exist")
         if "fa_accountbalance_dws" in sql:
             return self._fa4001_rows(sql, tuple(params))
         if "fa_valuationreport_dws" in sql and "c_accountcode = '0004'" in sql:
@@ -70,6 +77,8 @@ class FakeClient:
             return self.security_balance_amount_rows
         if "ex_pledge_back" in sql and "SUM" in sql:
             return self.repo_amount_rows
+        if "zf_detail_2024" in sql:
+            return self.project_name_rows
         return []
 
     def fetch_one(self, sql, params=()):
@@ -150,6 +159,7 @@ def test_repository_reuses_date_level_dws_queries():
     assert repository.list_pact_assets("P1", "2026-04-30", "资产1")[0].pact_id == "PACT1"
     assert repository.list_pact_assets("P1", "2026-04-30", "资产1")[0].spv_type == "10"
     assert repository.list_pact_assets("P1", "2026-04-30", "资产1")[0].asset_type == "31"
+    assert repository.list_pact_assets("P1", "2026-04-30", "资产1")[0].data_source == "am"
     assert repository.list_pact_assets("P2", "2026-04-30", "资产2")[0].stock_code == "0002"
     assert [asset.stock_code for asset in repository.list_project_pact_assets("P1", "2026-04-30")] == ["0001"]
     assert repository.get_project_invest_balance("P1", "2026-04-30", "PACT1") == Decimal("123")
@@ -158,7 +168,22 @@ def test_repository_reuses_date_level_dws_queries():
     assert dws_client.count_calls("fa_accountbalance_dws") == 1
     assert dws_client.count_calls("fa_valuationreport_dws") == 2
     assert dws_client.count_calls("am_pactasset_dws") == 1
-    assert dws_client.count_calls("am_projinvest_dws") == 1
+    assert dws_client.count_calls("am_projinvest_dws") == 2
+
+
+def test_repository_pact_assets_falls_back_when_contract_start_date_column_missing():
+    dws_client = FakeClient()
+    dws_client.raise_missing_d_bdate = True
+    repository = AutoCheckRepository(config(), dws_client=dws_client, business_client=FakeClient())
+
+    assets = repository.list_project_pact_assets("P1", "2026-04-30")
+
+    assert [asset.stock_code for asset in assets] == ["0001"]
+    assert assets[0].contract_start_date is None
+    pact_queries = [sql for sql, _ in dws_client.fetch_all_calls if "am_pactasset_dws" in sql]
+    assert len(pact_queries) == 2
+    assert "invest.d_bdate" in pact_queries[0]
+    assert "invest.d_bdate" not in pact_queries[1]
 
 
 def test_repository_loads_ta_balance_totals_from_dm_and_dws_tables():
@@ -265,9 +290,19 @@ def test_repository_asset_missing_refinement_queries_use_confirmed_filters():
     assert "caldate = %s" in report_sql
     assert report_params == ("2026-04-30",)
 
+    assert repository.count_report_project_name_matches_without_chinese_parentheses(
+        "2026-04-30",
+        "江苏信托稳盈集合资金信托计划",
+    ) == 1
+    project_name_sql, project_name_params = business_client.fetch_all_calls[-1]
+    assert "zf_detail_2024" in project_name_sql
+    assert "projname" in project_name_sql
+    assert "caldate = %s" in project_name_sql
+    assert project_name_params == ("2026-04-30",)
+
     repository.has_reverse_repo_blank_rows("P1")
     repo_sql, repo_params = business_client.fetch_all_calls[-1]
-    assert '"assman_reg"."ex_pledge_back"' in repo_sql
+    assert '"ass_man_reg"."ex_pledge_back"' in repo_sql
     assert "project_code = %s" in repo_sql
     assert "subcode LIKE %s" in repo_sql
     assert "buyback_money IS NULL" in repo_sql
@@ -281,7 +316,7 @@ def test_repository_loads_reverse_and_positive_repo_business_amounts_with_confir
 
     assert repository.get_reverse_repo_business_amount("P1") == Decimal("123")
     reverse_sql, reverse_params = business_client.fetch_all_calls[-1]
-    assert '"assman_reg"."ex_pledge_back"' in reverse_sql
+    assert '"ass_man_reg"."ex_pledge_back"' in reverse_sql
     assert "project_code = %s" in reverse_sql
     assert "subcode LIKE %s" in reverse_sql
     assert "COALESCE(buyback_money, 0) + COALESCE(expenses, 0)" in reverse_sql
@@ -289,7 +324,7 @@ def test_repository_loads_reverse_and_positive_repo_business_amounts_with_confir
 
     assert repository.get_positive_repo_business_amount("P1") == Decimal("123")
     positive_sql, positive_params = business_client.fetch_all_calls[-1]
-    assert '"assman_reg"."ex_pledge_back"' in positive_sql
+    assert '"ass_man_reg"."ex_pledge_back"' in positive_sql
     assert "project_code = %s" in positive_sql
     assert "subcode LIKE %s" in positive_sql
     assert "COALESCE(buyback_money, 0) - COALESCE(expenses, 0)" in positive_sql

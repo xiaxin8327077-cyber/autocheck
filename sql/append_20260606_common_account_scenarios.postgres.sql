@@ -1,4 +1,4 @@
--- 2026-06-06 自动对数专项回归场景数据。
+﻿-- 2026-06-06 自动对数专项回归场景数据。
 -- 覆盖 3001.XX 共同类资产/负债、实收本金多次重复、单条命中、多条命中、候选不唯一。
 -- 使用方式：powershell -ExecutionPolicy Bypass -File scripts\load-local-pg-20260606-common-account-scenarios.ps1
 
@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS dws;
 CREATE SCHEMA IF NOT EXISTS dm;
 CREATE SCHEMA IF NOT EXISTS zgxg_zhbs;
 CREATE SCHEMA IF NOT EXISTS currency_report_24;
-CREATE SCHEMA IF NOT EXISTS assman_reg;
+CREATE SCHEMA IF NOT EXISTS ass_man_reg;
 
 CREATE TABLE IF NOT EXISTS dws.zf_detail_2024 (
   caldate date NOT NULL,
@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_6 (cal
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_8 (caldate date);
 CREATE TABLE IF NOT EXISTS currency_report_24.currency_detail_project_2_1_9 (caldate date);
 
-CREATE TABLE IF NOT EXISTS assman_reg.ex_pledge_back (
+CREATE TABLE IF NOT EXISTS ass_man_reg.ex_pledge_back (
   project_code varchar,
   subcode varchar,
   buyback_money numeric,
@@ -160,7 +160,7 @@ DELETE FROM dm.am_projinvest_spv_zgxg_dm
 WHERE svd_cldate = DATE '2026-06-06' AND svd_projcode LIKE '2026GX0606%';
 DELETE FROM zgxg_zhbs.ccqxx
 WHERE pjdw_projcode LIKE '2026GX0606%';
-DELETE FROM assman_reg.ex_pledge_back
+DELETE FROM ass_man_reg.ex_pledge_back
 WHERE project_code LIKE '2026GX0606%';
 
 -- A. 资产缺失：3001.XX 正数应收账款_共同类单条命中。
