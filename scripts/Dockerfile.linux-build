@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+# glibc 2.28 (Rocky Linux 8) + Python 3.12 built from source with --enable-shared
+FROM rockylinux:8
+
+# 系统编译依赖
+RUN dnf install -y epel-release && \
+    dnf groupinstall -y "Development Tools" && \
+    dnf install -y \
+      openssl-devel bzip2-devel libffi-devel \
+      readline-devel sqlite-devel zlib-devel \
+      xz-devel ncurses-devel gdbm-devel \
+      && dnf clean all
+
+# 源码编译 Python 3.12（--enable-shared）
+RUN curl -sSL https://www.python.org/ftp/python/3.12.9/Python-3.12.9.tgz -o /tmp/Python.tgz && \
+    cd /tmp && tar xzf Python.tgz && \
+    cd Python-3.12.9 && \
+    ./configure \
+      --prefix=/opt/python312 \
+      --enable-shared \
+      --with-ensurepip=install \
+      LDFLAGS='-Wl,-rpath,/opt/python312/lib' && \
+    make -j$(nproc) && \
+    make install && \
+    cd / && rm -rf /tmp/Python.tgz /tmp/Python-3.12.9
+
+ENV PATH=/opt/python312/bin:$PATH
+ENV LD_LIBRARY_PATH=/opt/python312/lib:$LD_LIBRARY_PATH
+
+# 先复制全部源码，再装依赖（避免 pip install -e . 找不到包）
+WORKDIR /build
+COPY . .
+
+RUN python3.12 -m pip install --upgrade pip && \
+    python3.12 -m pip install -e .[dev]
+
+RUN pyinstaller --noconfirm --onefile \
+      --name auto-check \
+      --paths src \
+      --add-data "src/auto_check/web:auto_check/web" \
+      --add-data "src/auto_check/resources:auto_check/resources" \
+      --hidden-import py7zr \
+      --hidden-import rarfile \
+      --hidden-import psycopg \
+      --hidden-import psycopg_binary \
+      --hidden-import psycopg.pq \
+      --hidden-import pymysql \
+      --hidden-import auto_check.resources \
+      --hidden-import auto_check.resources.data \
+      --distpath /output \
+      --workpath /build/work \
+      --specpath /build \
+      src/auto_check/__main__.py

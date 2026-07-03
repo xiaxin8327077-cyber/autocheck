@@ -7,6 +7,7 @@ import zipfile
 
 from openpyxl import load_workbook
 
+import auto_check.app.server as server_module
 from auto_check.app.config import (
     ConfigStore,
     DataSourceEntry,
@@ -19,12 +20,14 @@ from auto_check.app.config import (
     NamedConfig,
     PbcImportToolSettings,
     ReconcileDataSourceSettings,
+    load_store,
     save_store,
 )
 from auto_check.app.local_store import db_path_for_config
 from auto_check.app.flow_tool import FlowChainRunResult, FlowChainStepResult, FlowDefinition
 from auto_check.app.pbc_import import TableColumn
 from auto_check.app.server import ApiRouter, RunJob, _connection_error_message, _runtime_error_message, build_display_details, previous_month_end
+from auto_check.app.reconcile_schema import ReconcileSchemaSettings, ReconcileSourceRef, ReconcileTableSchema
 from auto_check.db_validation.metadata import TableFieldCatalog
 from auto_check.db_validation.models import DbValidationRunResult, ValidationResultRow
 from auto_check.engine.models import DifferenceDetail, ReconcileResult, ValuationMatch, ValuationRow
@@ -76,6 +79,14 @@ class SlowRunner:
 class NoSourceRunner:
     def run(self, date):
         raise NoSourceReportData(date)
+
+
+class FailingRunner:
+    def __init__(self, message: str = "unsafe table identifier: zf_detail_2024ǮǮǮ"):
+        self.message = message
+
+    def run(self, date):
+        raise ValueError(self.message)
 
 
 class FakePbcImporter:
@@ -344,6 +355,273 @@ def test_default_settings_api_persists_across_router_instances(tmp_path):
         "theme": "space-tech",
         "dark_mode": True,
     }
+
+
+def test_reconcile_schema_settings_api_saves_and_initializes_from_yaml_template(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-dws",
+                    name="DWS",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "u", "p"),
+                    is_default=True,
+                ),
+                DataSourceEntry(
+                    id="yaml-dws",
+                    name="yaml",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "yaml", "u", "p"),
+                ),
+            ],
+        ),
+        config_path,
+    )
+    def schema_columns(data_source, table):
+        return [
+            TableColumn("sys_proj", "项目代码"),
+            TableColumn("sys_date", "估值日期"),
+            TableColumn("sys_account", "科目代码"),
+            TableColumn("sys_name", "科目名称"),
+            TableColumn("sys_amt", "市值"),
+            TableColumn("yaml_proj", "项目代码"),
+            TableColumn("yaml_date", "估值日期"),
+            TableColumn("yaml_account", "科目代码"),
+            TableColumn("yaml_name", "科目名称"),
+            TableColumn("yaml_amt", "市值"),
+            TableColumn("changed_amt", "市值"),
+        ]
+    router = ApiRouter(config_path=config_path, pbc_table_column_loader=schema_columns)
+    schema_payload = {
+        "version": 1,
+        "strict": True,
+        "tables": {
+            "fa_valuation": {
+                "source_ref": {"id": "source-dws", "name": "DWS", "match_by": "id_then_name"},
+                "table": "system.fa_valuation",
+                "display_name": "FA valuation",
+                "fields": {
+                    "project_code": "sys_proj",
+                    "valuation_date": "sys_date",
+                    "account_code": "sys_account",
+                    "account_name": "sys_name",
+                    "market_value": "sys_amt",
+                },
+            }
+        },
+    }
+
+    status, payload = router.handle("POST", "/api/settings/reconcile-schema", schema_payload)
+
+    assert status == 200
+    assert payload["schema"]["strict"] is True
+    assert payload["schema"]["tables"]["fa_valuation"]["table"] == "system.fa_valuation"
+    loaded = load_store(config_path)
+    assert loaded.reconcile_schema.tables["fa_valuation"].fields["market_value"] == "sys_amt"
+
+    status, payload = router.handle("GET", "/api/settings/reconcile-schema", None)
+
+    assert status == 200
+    assert payload["schema"]["tables"]["fa_valuation"]["fields"]["market_value"] == "sys_amt"
+
+    config_path.with_name("reconcile-schema.yaml").write_text(
+        """
+reconcile_schema:
+  version: 1
+  tables:
+    fa_valuation:
+      source_ref:
+        id: "yaml-dws"
+        name: "yaml"
+      table: yaml.fa_valuation
+      fields:
+        project_code: yaml_proj
+        valuation_date: yaml_date
+        account_code: yaml_account
+        account_name: yaml_name
+        market_value: yaml_amt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    status, payload = router.handle("POST", "/api/settings/reconcile-schema/init-from-file", {})
+
+    assert status == 200
+    assert payload["schema"]["strict"] is True
+    assert payload["schema"]["tables"]["fa_valuation"]["table"] == "yaml.fa_valuation"
+    assert payload["schema"]["tables"]["fa_valuation"]["fields"]["market_value"] == "yaml_amt"
+    loaded = load_store(config_path)
+    assert loaded.reconcile_schema.tables["fa_valuation"].table == "yaml.fa_valuation"
+
+    config_path.with_name("reconcile-schema.yaml").write_text(
+        """
+reconcile_schema:
+  version: 1
+  tables:
+    fa_valuation:
+      table: changed.fa_valuation
+      fields:
+        market_value: changed_amt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    status, payload = router.handle("GET", "/api/settings/reconcile-schema", None)
+
+    assert status == 200
+    assert payload["schema"]["tables"]["fa_valuation"]["table"] == "yaml.fa_valuation"
+    assert payload["schema"]["tables"]["fa_valuation"]["fields"]["market_value"] == "yaml_amt"
+
+
+def test_reconcile_schema_save_validates_table_and_field_existence(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-dws",
+                    name="DWS",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "u", "p"),
+                    is_default=True,
+                ),
+            ],
+        ),
+        config_path,
+    )
+
+    def schema_columns(data_source, table):
+        assert table.parts == ("system", "fa_valuation")
+        return [
+            TableColumn("sys_proj", "项目代码"),
+            TableColumn("sys_date", "估值日期"),
+            TableColumn("sys_account", "科目代码"),
+            TableColumn("sys_name", "科目名称"),
+        ]
+
+    router = ApiRouter(config_path=config_path, pbc_table_column_loader=schema_columns)
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/reconcile-schema",
+        {
+            "version": 1,
+            "strict": True,
+            "tables": {
+                "fa_valuation": {
+                    "source_ref": {"id": "source-dws", "name": "DWS", "match_by": "id_then_name"},
+                    "table": "system.fa_valuation",
+                    "display_name": "FA 估值表",
+                    "fields": {
+                        "project_code": "sys_proj",
+                        "valuation_date": "sys_date",
+                        "account_code": "sys_account",
+                        "account_name": "sys_name",
+                        "market_value": "sys_amt_missing",
+                    },
+                }
+            },
+        },
+    )
+
+    assert status == 400
+    assert "表字段配置校验失败" in payload["error"]
+    assert "FA 估值表" in payload["error"]
+    assert "sys_amt_missing" in payload["error"]
+
+
+def test_reconcile_schema_save_rejects_missing_required_business_fields(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-dws",
+                    name="DWS",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "u", "p"),
+                    is_default=True,
+                ),
+            ],
+        ),
+        config_path,
+    )
+
+    def schema_columns(data_source, table):
+        return [
+            TableColumn("c_projcode", "项目代码"),
+            TableColumn("d_cldate", "截止日期"),
+            TableColumn("c_pactid", "合同编号"),
+            TableColumn("f_acbalance", "投资余额"),
+            TableColumn("d_bdate", "合同开始日"),
+        ]
+
+    router = ApiRouter(config_path=config_path, pbc_table_column_loader=schema_columns)
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/reconcile-schema",
+        {
+            "version": 1,
+            "strict": True,
+            "tables": {
+                "am_project_invest": {
+                    "source_ref": {"id": "source-dws", "name": "DWS", "match_by": "id_then_name"},
+                    "table": "am_projinvest_dws",
+                    "display_name": "AM 项目投资",
+                    "fields": {
+                        "project_code": "c_projcode",
+                        "close_date": "d_cldate",
+                        "pact_id": "c_pactid",
+                        "invest_balance": "f_acbalance",
+                    },
+                }
+            },
+        },
+    )
+
+    assert status == 400
+    assert "表字段配置校验失败" in payload["error"]
+    assert "AM 项目投资" in payload["error"]
+    assert "contract_start_date" in payload["error"]
+
+
+def test_reconcile_schema_columns_api_returns_table_columns_for_selected_source(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-dws",
+                    name="local - DWS",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "u", "p"),
+                    is_default=True,
+                ),
+            ],
+        ),
+        config_path,
+    )
+    router = ApiRouter(config_path=config_path, pbc_table_column_loader=fake_table_columns)
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/reconcile-schema/columns",
+        {"source_id": "source-dws", "table": "dws.public_information_th"},
+    )
+
+    assert status == 200
+    assert payload["columns"] == [
+        {"name": "info_type_name", "comment": "Info Type Name"},
+        {"name": "product_code", "comment": "Product Code"},
+        {"name": "issuer_name", "comment": "Issuer Name"},
+    ]
+
+    missing_status, missing_payload = router.handle(
+        "POST",
+        "/api/settings/reconcile-schema/columns",
+        {"source_id": "missing-source", "table": "dws.public_information_th"},
+    )
+
+    assert missing_status == 400
+    assert "数据源" in missing_payload["error"]
 
 
 def test_api_router_uses_sqlite_history_store_by_default(tmp_path):
@@ -1674,6 +1952,54 @@ def test_run_history_uses_reconcile_business_data_source_name(tmp_path):
     assert history_payload["history"][0]["dws_source_name"] == "对账 DWS"
 
 
+def test_run_once_passes_reconcile_schema_and_source_lookup_to_repository(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    dws_source = DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "u", "p")
+    report_source = DataSourceConfig("mysql", "localhost", 3306, "reportdb", "", "u2", "p2")
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(id="source-dws", name="DWS", config=dws_source, is_default=True),
+                DataSourceEntry(id="source-report", name="report-db", config=report_source),
+            ],
+            reconcile_data_sources=ReconcileDataSourceSettings(
+                dws_source_id="source-dws",
+                business_source_id="source-report",
+            ),
+            reconcile_schema=ReconcileSchemaSettings(
+                tables={
+                    "fa_valuation": ReconcileTableSchema(
+                        source_ref=ReconcileSourceRef(id="source-dws", name="DWS"),
+                        table="custom.fa_valuation",
+                        fields={"market_value": "market_amt"},
+                    )
+                }
+            ),
+        ),
+        config_path,
+    )
+    captured = {}
+
+    class FakeEngine:
+        def __init__(self, repository, **kwargs):
+            captured["schema"] = repository.schema
+            captured["source_configs"] = repository._source_configs
+
+        def run(self, date):
+            return []
+
+    monkeypatch.setattr(server_module, "ReconcileEngine", FakeEngine)
+    router = ApiRouter(config_path=config_path, history_path=tmp_path / "history.json")
+
+    router._run_once("2026-04-30", max_combination_rows=50)
+
+    assert captured["schema"].tables["fa_valuation"].table == "custom.fa_valuation"
+    assert captured["schema"].tables["fa_valuation"].fields["market_value"] == "market_amt"
+    assert captured["source_configs"]["source-dws"] == dws_source
+    assert captured["source_configs"]["source-report"] == report_source
+    assert captured["source_configs"]["report-db"] == report_source
+
+
 def test_run_start_status_returns_background_job_result(tmp_path):
     router = ApiRouter(
         config_path=tmp_path / "config.json",
@@ -1731,6 +2057,30 @@ def test_run_start_status_returns_no_source_notice_without_history(tmp_path):
     assert sum("报表对应日期无数据" in log["message"] for log in job["logs"]) == 1
     _, history_payload = router.handle("GET", "/api/history", None)
     assert history_payload["history"] == []
+
+
+def test_run_start_status_exposes_reconcile_runtime_error_summary(tmp_path):
+    router = ApiRouter(
+        config_path=tmp_path / "config.json",
+        history_path=tmp_path / "history.json",
+        runner_factory=lambda config: FailingRunner(),
+        connection_tester=FakeConnectionTester(),
+    )
+
+    status, payload = router.handle("POST", "/api/run/start", {"date": "2026-04-30"})
+
+    assert status == 200
+    job_id = payload["job_id"]
+    for _ in range(20):
+        status, status_payload = router.handle("GET", f"/api/run/status/{job_id}", None)
+        assert status == 200
+        if status_payload["job"]["status"] == "failed":
+            break
+        time.sleep(0.05)
+    job = status_payload["job"]
+    assert job["status"] == "failed"
+    assert "unsafe table identifier: zf_detail_2024ǮǮǮ" in job["error"]
+    assert any("unsafe table identifier: zf_detail_2024ǮǮǮ" in log["message"] for log in job["logs"])
 
 
 def test_run_start_rejects_when_any_run_job_is_active(tmp_path):
@@ -2806,6 +3156,14 @@ def test_database_error_messages_explain_common_failure_reasons():
     refused = _runtime_error_message("Can't connect to MySQL server on '127.0.0.1' ([WinError 10061])")
     assert "数据库连接失败" in refused
     assert "地址或端口" in refused
+
+
+def test_runtime_error_message_keeps_postgres_missing_table_details_with_sql_context():
+    message = _runtime_error_message('关系 "test.zf_detail_2024" 不存在\nLINE 8: FROM "test"."zf_detail_2024"')
+
+    assert "数据表不存在：test.zf_detail_2024" in message
+    assert "表字段配置" in message
+    assert "操作失败" not in message
 
 
 def test_get_connection_status_returns_source_status(tmp_path):

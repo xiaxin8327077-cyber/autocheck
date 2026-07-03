@@ -13,7 +13,7 @@ const topDarkModeToggle = document.getElementById("topDarkModeToggle");
 const sidebarDarkModeToggle = document.getElementById("sidebarDarkModeToggle");
 const logoutButtons = document.querySelectorAll("[data-logout-btn]");
 
-const DEFAULT_VERSION = "v2.0.8";
+const DEFAULT_VERSION = "v2.1";
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
 const USER_AVATAR_GRADIENTS = [
   ["#6366f1", "#4338ca"],
@@ -653,7 +653,7 @@ async function switchPage(name, options = {}) {
   if (location.hash !== nextHash) location.hash = name;
   if (name === "history") loadHistoryList(true);
   if (name === "tools") { await loadPbcImportSettings(); await loadDbValidationSettings(); await loadFlowSettings(); }
-  if (name === "settings") { await loadConfigList(); await loadDbValidationSettings(); await loadFlowSettings(); applySettingsRoleAccess(); }
+  if (name === "settings") { await loadConfigList(); await loadDbValidationSettings(); await loadFlowSettings(); await loadReconcileSchemaSettings(); applySettingsRoleAccess(); }
   if (name === "users") await loadUsers();
   if (name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)) {
     homeChartsNeedThemeRefresh = false;
@@ -3219,15 +3219,201 @@ const modalClose = document.getElementById("modalClose");
 const modalStatus = document.getElementById("modalStatus");
 const modalSaveBtn = document.getElementById("modalSaveBtn");
 const modalTestBtn = document.getElementById("modalTestBtn");
-const reconcileDwsSource = document.getElementById("reconcileDwsSource");
-const reconcileBusinessSource = document.getElementById("reconcileBusinessSource");
-const saveReconcileSourcesBtn = document.getElementById("saveReconcileSourcesBtn");
-const reconcileSourcesStatus = document.getElementById("reconcileSourcesStatus");
+const reconcileSchemaForm = document.getElementById("reconcileSchemaForm");
+const saveReconcileSchemaBtn = document.getElementById("saveReconcileSchemaBtn");
+const initReconcileSchemaFromFileBtn = document.getElementById("initReconcileSchemaFromFileBtn");
+const reconcileSchemaStatus = document.getElementById("reconcileSchemaStatus");
 
 let editingId = null;
 let allConfigs = [];
 let activeReconcileBusinessSourceName = "";
 let modalTestRequestToken = 0;
+let reconcileSchemaState = { version: 1, strict: true, tables: {} };
+let reconcileSchemaDataSources = [];
+let reconcileSchemaColumnCache = {};
+
+const RECONCILE_SCHEMA_TABLES = [
+  {
+    key: "zf_detail",
+    name: "资负明细",
+    fields: [
+      ["check_date", "核对日期", "caldate"],
+      ["project_code", "项目内码", "projinnercode"],
+      ["project_name", "项目名称", "projname"],
+      ["asset_total", "资产总计", "a0001"],
+      ["liability_equity_total", "负债和权益总计", "d0000"],
+      ["received_trust_balance", "实收信托余额", "c1000"],
+    ],
+  },
+  {
+    key: "fa_account_balance",
+    name: "FA 科目余额",
+    fields: [
+      ["project_code", "项目代码", "c_projcode"],
+      ["balance_date", "余额日期", "d_balancedate"],
+      ["account_code", "科目代码", "c_accountcode"],
+      ["account_name", "科目名称", "c_accountname"],
+      ["balance", "余额", "f_balance"],
+    ],
+  },
+  {
+    key: "fa_valuation",
+    name: "FA 估值表",
+    fields: [
+      ["project_code", "项目代码", "c_projcode"],
+      ["valuation_date", "估值日期", "d_valuationdate"],
+      ["account_code", "科目代码", "c_accountcode"],
+      ["account_name", "科目名称", "c_accountname"],
+      ["market_value", "市值/余额", "f_marketvalue"],
+    ],
+  },
+  {
+    key: "am_pact_asset",
+    name: "AM 合同标的",
+    fields: [
+      ["project_code", "项目代码", "c_projcode"],
+      ["close_date", "截止日期", "d_cldate"],
+      ["asset_name", "标的名称", "c_udlyasset"],
+      ["stock_code", "标的代码", "c_stockcode"],
+      ["pact_id", "合同编号", "c_pactid"],
+      ["spv_type", "SPV 类型", "c_spv_type"],
+      ["asset_type", "标的类型", "c_assettype"],
+      ["data_source", "合同来源", "c_datasource"],
+    ],
+  },
+  {
+    key: "am_project_invest",
+    name: "AM 项目投资",
+    fields: [
+      ["project_code", "项目代码", "c_projcode"],
+      ["close_date", "截止日期", "d_cldate"],
+      ["pact_id", "合同编号", "c_pactid"],
+      ["invest_balance", "投资余额", "f_acbalance"],
+      ["contract_start_date", "合同开始日", "d_bdate"],
+    ],
+  },
+  {
+    key: "ta_pact_detail",
+    name: "TA 合同明细",
+    fields: [
+      ["project_code", "项目代码", "c_projcode"],
+      ["close_date", "截止日期", "d_cldate"],
+      ["share_amount", "份额", "f_shareamt"],
+      ["all_income", "累计收益", "f_alltincom"],
+    ],
+  },
+  {
+    key: "ta_survamt_dm",
+    name: "TA 合同存量日表",
+    fields: [
+      ["check_date", "核对日期", "tpm_date"],
+      ["project_code", "项目代码", "tpm_tcmpcode"],
+      ["pact_id", "合同编号", "tpm_pactid"],
+      ["client_name", "客户名称", "tpm_clientname"],
+      ["client_kind", "客户类型", "tpm_clientkind_tusp"],
+      ["client_kind_index", "客户类型序号", "tpm_clientkindex"],
+      ["spv_type", "SPV 类型", "tpm_spvtype"],
+      ["ht_income", "衡泰收益", "tpm_htincome"],
+      ["share_amount", "份额", "tpm_shareamt"],
+    ],
+  },
+  {
+    key: "fa_security_balance_dm",
+    name: "FA 证券余额日表",
+    fields: [
+      ["project_code", "项目代码", "sbm_projcode"],
+      ["check_date", "核对日期", "sbm_cacldate"],
+      ["stock_code", "证券代码", "sbm_stockcode"],
+      ["security_name", "证券名称", "sbm_sename"],
+      ["bond_category", "债券分类", "sbm_seclas_h2024"],
+      ["stock_equity_category", "股票/股权分类", "sbm_gpgqtype_h"],
+      ["fund_type", "基金类型", "sbm_fundtype"],
+      ["balance_cost", "成本余额", "sbm_balamoney_cost"],
+      ["balance_fair", "公允价值余额", "sbm_balamoney_fair"],
+      ["balance_interest", "利息余额", "sbm_balamoney_inte"],
+    ],
+  },
+  {
+    key: "dm_project_invest",
+    name: "AM 项目投资日表",
+    fields: [
+      ["project_code", "项目代码", "pin_projcode"],
+      ["close_date", "截止日期", "pin_cldate"],
+      ["pact_id", "合同编号", "pin_mpactid"],
+      ["invest_balance", "投资余额", "pin_acbalance"],
+      ["equity_invest_type", "股权投资类型", "pin_gqtype_h"],
+    ],
+  },
+  {
+    key: "dm_spv_project_invest",
+    name: "AM SPV 项目投资日表",
+    fields: [
+      ["project_code", "项目代码", "svd_projcode"],
+      ["close_date", "截止日期", "svd_cldate"],
+      ["pact_id", "合同编号", "svd_mpactid"],
+      ["asset_type", "资产类型", "svd_assettype"],
+      ["balance_cost", "成本余额", "svd_balamoney_cost"],
+      ["balance_interest", "利息余额", "svd_balamoney_inte"],
+      ["balance_fair", "公允价值余额", "svd_balamoney_fair"],
+    ],
+  },
+  {
+    key: "property_right_contract",
+    name: "财产权合同信息",
+    fields: [
+      ["project_code", "项目代码", "pjdw_projcode"],
+      ["pact_id", "合同编号", "pin_mpactid"],
+      ["invest_balance", "投资余额", "pin_acbalance"],
+    ],
+  },
+  {
+    key: "pledge_back",
+    name: "回购质押表",
+    fields: [
+      ["project_code", "项目代码", "project_code"],
+      ["subject_code", "科目/标的代码", "subcode"],
+      ["buyback_money", "回购金额", "buyback_money"],
+      ["expenses", "费用", "expenses"],
+    ],
+  },
+  {
+    key: "ta_asset_share_duration",
+    name: "资产份额期间表",
+    fields: [
+      ["check_date", "核对日期", "caldate"],
+      ["project_code", "项目代码", "c_projectcode"],
+      ["asset_share", "资产份额", "f_assetshare"],
+    ],
+  },
+  ...["2_1_2", "2_1_4", "2_1_5", "2_1_5_2", "2_1_6", "2_1_8", "2_1_9"].map((suffix) => ({
+    key: `report_detail_${suffix}`,
+    name: `报表 ${suffix.split("_").join(".")} 明细`,
+    fields: [["check_date", "核对日期", "caldate"]],
+  })),
+];
+
+const RECONCILE_SCHEMA_DEFAULT_TABLES = {
+  zf_detail: "zf_detail_2024",
+  fa_account_balance: "fa_accountbalance_dws",
+  fa_valuation: "fa_valuationreport_dws",
+  am_pact_asset: "am_pactasset_dws",
+  am_project_invest: "am_projinvest_dws",
+  ta_pact_detail: "ta_pact_detail_dws",
+  ta_survamt_dm: "dm.ta_pact_survamt_day_zgxg_dm",
+  fa_security_balance_dm: "dm.fa_security_balance_zgxg_dm",
+  dm_project_invest: "dm.am_projinvest_zgxg_dm",
+  dm_spv_project_invest: "dm.am_projinvest_spv_zgxg_dm",
+  property_right_contract: "zgxg_zhbs.ccqxx",
+  pledge_back: "ass_man_reg.ex_pledge_back",
+  ta_asset_share_duration: "currency_report_duration",
+  report_detail_2_1_2: "currency_report_24.currency_detail_project_2_1_2",
+  report_detail_2_1_4: "currency_report_24.currency_detail_project_2_1_4",
+  report_detail_2_1_5: "currency_report_24.currency_detail_project_2_1_5",
+  report_detail_2_1_5_2: "currency_report_24.currency_detail_project_2_1_5_2",
+  report_detail_2_1_6: "currency_report_24.currency_detail_project_2_1_6",
+  report_detail_2_1_8: "currency_report_24.currency_detail_project_2_1_8",
+  report_detail_2_1_9: "currency_report_24.currency_detail_project_2_1_9",
+};
 
 configToggle.addEventListener("click", () => {
   if (!configToggle.classList.contains("collapsible")) return;
@@ -3360,7 +3546,6 @@ async function loadConfigList() {
     const data = await api("/api/configs");
     allConfigs = sortConfigsForDisplay(data.data_sources || data.configs || []);
     renderConfigList();
-    await loadReconcileDataSourceSettings();
     if (!runDate.value) {
       try { const d = await api("/api/config"); if (d.default_run_date && !runDate.value) runDate.value = d.default_run_date; } catch (_) {}
     }
@@ -3369,14 +3554,6 @@ async function loadConfigList() {
 
 function sortConfigsForDisplay(configs) {
   return [...configs].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-CN"));
-}
-
-function refreshReconcileDependentViews() {
-  renderHomeStats();
-  renderChart();
-  renderTrendChart();
-  const configCount = document.getElementById("configCount");
-  if (configCount) configCount.textContent = String(allConfigs.length);
 }
 
 function renderConfigList() {
@@ -3408,55 +3585,766 @@ function renderConfigList() {
   }));
 }
 
-function renderDataSourceOptions(select, dataSources = [], preferredId = "") {
-  if (!select) return;
-  select.innerHTML = dataSources.map((item) => `<option value="${escapeHtml(item.id || "")}">${escapeHtml(item.name || item.id || "")}</option>`).join("");
-  if (preferredId && [...select.options].some((option) => option.value === preferredId)) {
-    select.value = preferredId;
+function normalizeReconcileSchemaForForm(schema = {}) {
+  return {
+    version: schema.version || 1,
+    strict: schema.strict !== false,
+    tables: schema.tables && typeof schema.tables === "object" ? schema.tables : {},
+  };
+}
+
+function reconcileSchemaSourceOptions(sourceRef = {}) {
+  const sourceId = String(sourceRef.id || "").trim();
+  const sourceName = String(sourceRef.name || "").trim();
+  const matched = reconcileSchemaDataSources.find((item) => item.id === sourceId)
+    || reconcileSchemaDataSources.find((item) => item.name === sourceName);
+  const selectedId = matched?.id || sourceId;
+  const options = ['<option value="">请选择数据源</option>'];
+  if (selectedId && !reconcileSchemaDataSources.some((item) => item.id === selectedId)) {
+    options.push(`<option value="${escapeHtml(selectedId)}" selected>${escapeHtml(sourceName || selectedId)}</option>`);
+  }
+  reconcileSchemaDataSources.forEach((item) => {
+    const selected = item.id === selectedId ? " selected" : "";
+    options.push(`<option value="${escapeHtml(item.id || "")}"${selected}>${escapeHtml(item.name || item.id || "")}</option>`);
+  });
+  return options.join("");
+}
+
+function reconcileSchemaFieldValue(tableConfig, fieldKey, defaultValue, optional = false) {
+  const primary = optional ? tableConfig.optional_fields : tableConfig.fields;
+  const fallback = optional ? tableConfig.fields : tableConfig.optional_fields;
+  const value = primary && Object.prototype.hasOwnProperty.call(primary, fieldKey)
+    ? primary[fieldKey]
+    : fallback && Object.prototype.hasOwnProperty.call(fallback, fieldKey)
+      ? fallback[fieldKey]
+      : defaultValue;
+  return String(value || "");
+}
+
+function reconcileSchemaDisplayNameValue(meta, tableConfig = {}) {
+  return String(tableConfig.display_name || meta?.name || "");
+}
+
+function reconcileSchemaFieldRows(meta, tableConfig) {
+  const requiredRows = meta.fields.map(([fieldKey, label, defaultValue]) => ({
+    fieldKey,
+    label,
+    defaultValue,
+    optional: false,
+  }));
+  const optionalRows = (meta.optionalFields || []).map(([fieldKey, label, defaultValue]) => ({
+    fieldKey,
+    label,
+    defaultValue,
+    optional: true,
+  }));
+  return [...requiredRows, ...optionalRows].map((field) => {
+    const value = reconcileSchemaFieldValue(tableConfig, field.fieldKey, field.defaultValue, field.optional);
+    return `
+      <div class="reconcile-schema-field-row">
+        <span class="reconcile-schema-field-name">
+          <strong>${escapeHtml(field.label)}</strong>
+          <small>${escapeHtml(field.fieldKey)}${field.optional ? " · 可选" : ""}</small>
+        </span>
+        <span
+          class="reconcile-schema-field-combobox"
+          data-field-key="${escapeHtml(field.fieldKey)}"
+          data-field-optional="${field.optional ? "1" : "0"}"
+        >
+          <input
+            class="setting-input reconcile-schema-field-search"
+            value="${escapeHtml(value)}"
+            placeholder="${escapeHtml(field.defaultValue || "")}"
+            autocomplete="off"
+            ${field.optional ? "" : "required"}
+          />
+          <span class="reconcile-schema-field-options" hidden></span>
+        </span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderReconcileSchemaForm(schema = {}, dataSources = reconcileSchemaDataSources) {
+  if (!reconcileSchemaForm) return;
+  reconcileSchemaState = normalizeReconcileSchemaForForm(schema);
+  reconcileSchemaDataSources = sortConfigsForDisplay(Array.isArray(dataSources) ? dataSources : []);
+  reconcileSchemaForm.innerHTML = RECONCILE_SCHEMA_TABLES.map((meta) => {
+    const tableConfig = reconcileSchemaState.tables[meta.key] || {};
+    const sourceRef = tableConfig.source_ref || {};
+    const tableName = String(tableConfig.table || RECONCILE_SCHEMA_DEFAULT_TABLES[meta.key] || "");
+    const displayName = reconcileSchemaDisplayNameValue(meta, tableConfig);
+    return `
+      <section class="reconcile-schema-table" data-reconcile-table-key="${escapeHtml(meta.key)}">
+        <div class="reconcile-schema-table-head">
+          <div class="reconcile-schema-table-title">
+            <strong>${escapeHtml(displayName)}</strong>
+            <span>${escapeHtml(meta.key)}</span>
+          </div>
+          <button type="button" class="btn-outline btn-xs reconcile-schema-toggle" data-key="${escapeHtml(meta.key)}">展开字段</button>
+        </div>
+        <div class="reconcile-schema-table-grid">
+          <label class="setting-item">
+            <span class="setting-label">数据源</span>
+            <select class="setting-input reconcile-schema-source" data-key="${escapeHtml(meta.key)}" required>${reconcileSchemaSourceOptions(sourceRef)}</select>
+          </label>
+          <label class="setting-item">
+            <span class="setting-label">标准中文名</span>
+            <input class="setting-input reconcile-schema-display-name" data-key="${escapeHtml(meta.key)}" value="${escapeHtml(displayName)}" placeholder="${escapeHtml(meta.name)}" required />
+          </label>
+          <label class="setting-item">
+            <span class="setting-label">物理表名</span>
+            <input class="setting-input reconcile-schema-table-name" data-key="${escapeHtml(meta.key)}" value="${escapeHtml(tableName)}" placeholder="schema.table" required />
+          </label>
+          <div class="reconcile-schema-table-state" data-key="${escapeHtml(meta.key)}"></div>
+        </div>
+        <div class="reconcile-schema-fields" data-key="${escapeHtml(meta.key)}" hidden>
+          <div class="reconcile-schema-field-toolbar">
+            <span class="reconcile-schema-field-status" data-key="${escapeHtml(meta.key)}">聚焦字段后自动读取数据库字段并可下拉选择</span>
+          </div>
+          <div class="reconcile-schema-field-list">${reconcileSchemaFieldRows(meta, tableConfig)}</div>
+        </div>
+      </section>
+    `;
+  }).join("");
+  RECONCILE_SCHEMA_TABLES.forEach((meta) => refreshReconcileSchemaTableStatus(meta.key));
+  renderBusinessSettings();
+}
+
+function reconcileSchemaTableElement(key) {
+  return reconcileSchemaForm?.querySelector(`.reconcile-schema-table[data-reconcile-table-key="${key}"]`) || null;
+}
+
+function refreshReconcileSchemaTableStatus(key) {
+  const meta = RECONCILE_SCHEMA_TABLES.find((item) => item.key === key);
+  const tableEl = reconcileSchemaTableElement(key);
+  if (!meta || !tableEl) return;
+  const sourceValue = tableEl.querySelector("select.reconcile-schema-source")?.value || "";
+  const displayNameValue = readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-display-name"));
+  const tableValue = readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-table-name"));
+  const requiredInputs = [...tableEl.querySelectorAll('.reconcile-schema-field-combobox[data-field-optional="0"] input.reconcile-schema-field-search')];
+  const filledRequired = requiredInputs.filter((input) => readTrimmedControlValue(input)).length;
+  const status = tableEl.querySelector(".reconcile-schema-table-state");
+  const incomplete = !sourceValue || !displayNameValue || !tableValue || filledRequired < requiredInputs.length;
+  tableEl.classList.toggle("is-incomplete", incomplete);
+  if (status) {
+    status.textContent = incomplete
+      ? `待完善：必填字段 ${filledRequired}/${requiredInputs.length}`
+      : `已配置：必填字段 ${filledRequired}/${requiredInputs.length}`;
+  }
+}
+
+function readTrimmedControlValue(control) {
+  return String(control?.value ?? "").trim();
+}
+
+function reconcileSchemaFieldInput(tableEl, fieldKey) {
+  return tableEl?.querySelector(`.reconcile-schema-field-combobox[data-field-key="${fieldKey}"] input.reconcile-schema-field-search`) || null;
+}
+
+function reconcileSchemaVisibleControl(control) {
+  if (!control) return null;
+  if (control.tagName === "SELECT") return customSelectStates.get(control)?.shell || control;
+  return control.closest(".custom-input-shell") || control.closest(".custom-select-shell") || control;
+}
+
+function reconcileSchemaErrorHolder(control) {
+  return control?.closest(".setting-item") || control?.closest(".reconcile-schema-field-combobox") || control?.parentElement || null;
+}
+
+function reconcileSchemaDirectErrorMessage(holder) {
+  return [...(holder?.children || [])].find((child) => child.classList?.contains("reconcile-schema-error-message")) || null;
+}
+
+function clearReconcileSchemaRequiredError(control) {
+  if (!control) return;
+  control.classList.remove("reconcile-schema-required-error");
+  control.removeAttribute("aria-invalid");
+  if (control.dataset.requiredError) {
+    delete control.dataset.requiredError;
+    if (!control.classList.contains("is-invalid")) control.title = "";
+  }
+  const visibleControl = reconcileSchemaVisibleControl(control);
+  if (visibleControl && visibleControl !== control) {
+    visibleControl.classList.remove("reconcile-schema-required-error");
+    visibleControl.removeAttribute("aria-invalid");
+  }
+  const holder = reconcileSchemaErrorHolder(control);
+  reconcileSchemaDirectErrorMessage(holder)?.remove();
+}
+
+function clearReconcileSchemaRequiredErrors(scope = reconcileSchemaForm) {
+  (scope?.querySelectorAll(".reconcile-schema-required-error") || []).forEach((control) => {
+    clearReconcileSchemaRequiredError(control);
+  });
+  (scope?.querySelectorAll(".reconcile-schema-error-message") || []).forEach((message) => {
+    message.remove();
+  });
+}
+
+function markReconcileSchemaRequiredError(control, message) {
+  if (!control) return;
+  control.classList.add("reconcile-schema-required-error");
+  control.setAttribute("aria-invalid", "true");
+  control.dataset.requiredError = "1";
+  control.title = message;
+  const visibleControl = reconcileSchemaVisibleControl(control);
+  if (visibleControl && visibleControl !== control) {
+    visibleControl.classList.add("reconcile-schema-required-error");
+    visibleControl.setAttribute("aria-invalid", "true");
+  }
+  const holder = reconcileSchemaErrorHolder(control);
+  if (!holder) return;
+  let messageEl = reconcileSchemaDirectErrorMessage(holder);
+  if (!messageEl) {
+    messageEl = document.createElement("span");
+    messageEl.className = "reconcile-schema-error-message";
+    holder.appendChild(messageEl);
+  }
+  messageEl.textContent = message;
+}
+
+function expandReconcileSchemaTable(key) {
+  const fields = reconcileSchemaForm?.querySelector(`.reconcile-schema-fields[data-key="${key}"]`);
+  const toggle = reconcileSchemaForm?.querySelector(`.reconcile-schema-toggle[data-key="${key}"]`);
+  if (fields) fields.hidden = false;
+  if (toggle) toggle.textContent = "收起字段";
+}
+
+function validateReconcileSchemaRequiredFields() {
+  const missing = [];
+  let firstControl = null;
+  let firstKey = "";
+  clearReconcileSchemaRequiredErrors(reconcileSchemaForm);
+
+  const addMissing = (key, tableName, label, control) => {
+    const message = `请填写${label}`;
+    missing.push(`${tableName}：${label}`);
+    markReconcileSchemaRequiredError(control, message);
+    if (!firstControl) {
+      firstControl = control;
+      firstKey = key;
+    }
+  };
+
+  RECONCILE_SCHEMA_TABLES.forEach((meta) => {
+    const tableEl = reconcileSchemaTableElement(meta.key);
+    if (!tableEl) return;
+    const sourceSelect = tableEl.querySelector("select.reconcile-schema-source");
+    const displayNameInput = tableEl.querySelector("input.reconcile-schema-display-name");
+    const tableInput = tableEl.querySelector("input.reconcile-schema-table-name");
+    if (!readTrimmedControlValue(sourceSelect)) addMissing(meta.key, meta.name, "数据源", sourceSelect);
+    if (!readTrimmedControlValue(displayNameInput)) addMissing(meta.key, meta.name, "标准中文名", displayNameInput);
+    if (!readTrimmedControlValue(tableInput)) addMissing(meta.key, meta.name, "物理表名", tableInput);
+    (meta.fields || []).forEach(([fieldKey, label]) => {
+      const input = reconcileSchemaFieldInput(tableEl, fieldKey);
+      if (!readTrimmedControlValue(input)) addMissing(meta.key, meta.name, label, input);
+    });
+  });
+
+  if (firstControl && firstKey) {
+    expandReconcileSchemaTable(firstKey);
+    window.setTimeout(() => {
+      firstControl.scrollIntoView({ block: "center", behavior: "smooth" });
+      firstControl.focus({ preventScroll: true });
+    }, 0);
+  }
+
+  return { missing, firstControl, firstKey };
+}
+
+function filterReconcileColumnOptions(columns = [], query = "") {
+  const keyword = String(query || "").trim().toLowerCase();
+  const normalized = (columns || []).map((column) => ({
+    name: String(column.name || "").trim(),
+    comment: String(column.comment || "").trim(),
+  })).filter((column) => column.name);
+  if (!keyword) return normalized.slice(0, 80);
+  return normalized.filter((column) => {
+    return column.name.toLowerCase().includes(keyword) || column.comment.toLowerCase().includes(keyword);
+  }).slice(0, 80);
+}
+
+function renderReconcileFieldOptions(combo, columns = [], query = "") {
+  const list = combo?.querySelector(".reconcile-schema-field-options");
+  if (!list) return;
+  const matches = filterReconcileColumnOptions(columns, query);
+  if (!columns.length) {
+    list.hidden = true;
+    list.innerHTML = "";
     return;
   }
-  const defaultOption = [...select.options].find((option) => {
-    const source = dataSources.find((item) => item.id === option.value);
-    return source?.is_default;
+  if (!matches.length) {
+    list.hidden = false;
+    list.innerHTML = '<span class="reconcile-schema-field-option is-empty">未匹配到字段，可继续手工输入</span>';
+    return;
+  }
+  list.hidden = false;
+  list.innerHTML = matches.map((column) => `
+    <button type="button" class="reconcile-schema-field-option" data-value="${escapeHtml(column.name)}">
+      <span class="reconcile-schema-field-option-name">${escapeHtml(column.name)}</span>
+      <span class="reconcile-schema-field-option-comment">${escapeHtml(column.comment || "无备注")}</span>
+    </button>
+  `).join("");
+}
+
+function closeReconcileFieldOptions(scope = reconcileSchemaForm) {
+  (scope?.querySelectorAll(".reconcile-schema-field-options") || []).forEach((list) => {
+    list.hidden = true;
   });
-  if (defaultOption) select.value = defaultOption.value;
 }
 
-function renderReconcileDataSourceSettings(settings = {}, dataSources = allConfigs) {
-  renderDataSourceOptions(reconcileDwsSource, dataSources, settings.dws_source_id || "");
-  renderDataSourceOptions(reconcileBusinessSource, dataSources, settings.business_source_id || "");
-  activeReconcileBusinessSourceName = reconcileBusinessSource?.selectedOptions?.[0]?.textContent?.trim() || "";
+function reconcileSchemaFieldOptionsOpen(combo) {
+  const list = combo?.querySelector(".reconcile-schema-field-options");
+  return Boolean(list && !list.hidden);
 }
 
-async function loadReconcileDataSourceSettings() {
-  if (!reconcileDwsSource || !reconcileBusinessSource) return;
+function openReconcileFieldOptionsForInput(input) {
+  const combo = input?.closest(".reconcile-schema-field-combobox");
+  const tableEl = input?.closest(".reconcile-schema-table");
+  if (!combo || !tableEl) return false;
+  const key = tableEl.dataset.reconcileTableKey || "";
+  closeReconcileFieldOptions(reconcileSchemaForm);
+  if (!tableEl._reconcileColumns?.length && !tableEl._reconcileColumnsLoading) {
+    loadReconcileTableColumns(key, { openCombo: combo, query: input.value || "" });
+    return true;
+  }
+  renderReconcileFieldOptions(combo, tableEl._reconcileColumns || [], input.value || "");
+  return true;
+}
+
+function splitFrontendReconcileSchemaMissingItems(rawItem = "") {
+  const item = String(rawItem || "").trim();
+  const match = item.match(/^请完善表字段配置[:：]\s*(.+)$/);
+  if (!match) return item ? [item] : [];
+  const body = String(match[1] || "").trim();
+  if (!body) return [item];
+  const parts = body.split("、").map((part) => part.trim()).filter(Boolean);
+  if (parts.length <= 1) return [item];
+  return parts.map((part) => `请完善表字段配置：${part}`);
+}
+
+function parseReconcileSchemaErrorItem(rawItem = "") {
+  const item = String(rawItem || "").trim();
+  const fallback = {
+    logicalTable: "-",
+    physicalTable: "-",
+    field: "-",
+    issue: item || "配置错误",
+    detail: item || "保存失败，请检查表字段配置。",
+  };
+  if (!item) return fallback;
+
+  let match = item.match(/^请完善表字段配置[:：]\s*(.+?)[:：](.+)$/);
+  if (match) {
+    return {
+      logicalTable: String(match[1] || "").trim() || "-",
+      physicalTable: "-",
+      field: String(match[2] || "").trim() || "-",
+      issue: "字段未填写",
+      detail: item,
+    };
+  }
+
+  match = item.match(/^请完善表字段配置[:：]\s*(.+)$/);
+  if (match) {
+    return {
+      logicalTable: "-",
+      physicalTable: "-",
+      field: String(match[1] || "").trim() || "-",
+      issue: "字段未填写",
+      detail: item,
+    };
+  }
+
+  match = item.match(/^(.+?)\s+缺少物理表名$/);
+  if (match) {
+    return {
+      logicalTable: match[1],
+      physicalTable: "-",
+      field: "-",
+      issue: "物理表名未配置",
+      detail: item,
+    };
+  }
+
+  match = item.match(/^(.+?)\s+缺少字段配置[:：](.+)$/);
+  if (match) {
+    return {
+      logicalTable: match[1],
+      physicalTable: "-",
+      field: String(match[2] || "").trim() || "-",
+      issue: "字段未配置",
+      detail: item,
+    };
+  }
+
+  match = item.match(/^(.+?)\s+字段\s+([^=：:]+)=([^：:]+)[:：](.+)$/);
+  if (match) {
+    return {
+      logicalTable: match[1],
+      physicalTable: "-",
+      field: `${String(match[3] || "").trim()}（${String(match[2] || "").trim()}）`,
+      issue: "字段名不合法",
+      detail: String(match[4] || item).trim(),
+    };
+  }
+
+  match = item.match(/^(.+?)\s+(\S+)\s+缺少字段\s+(.+?)(?:[（(]([^）)]*)[）)])?$/);
+  if (match) {
+    const fieldName = String(match[3] || "").trim();
+    const fieldKey = String(match[4] || "").trim();
+    return {
+      logicalTable: match[1],
+      physicalTable: match[2],
+      field: fieldKey ? `${fieldName}（${fieldKey}）` : fieldName,
+      issue: "字段不存在",
+      detail: item,
+    };
+  }
+
+  match = item.match(/^(.+?)\s+(\S+)[:：](.+)$/);
+  if (match) {
+    return {
+      logicalTable: match[1],
+      physicalTable: match[2],
+      field: "-",
+      issue: "表或数据源错误",
+      detail: String(match[3] || item).trim(),
+    };
+  }
+
+  return fallback;
+}
+
+function formatReconcileSchemaSaveErrors(message = "") {
+  const raw = String(message || "保存失败，请检查表字段配置。").trim() || "保存失败，请检查表字段配置。";
+  const body = raw.replace(/^表字段配置校验失败[:：]\s*/, "");
+  const items = body.split(/[；;]/)
+    .flatMap(splitFrontendReconcileSchemaMissingItems)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length ? items.map(parseReconcileSchemaErrorItem) : [parseReconcileSchemaErrorItem(raw)];
+}
+
+function showReconcileSchemaSaveError(message = "", title = "表字段配置保存失败") {
+  const text = String(message || "保存失败，请检查表字段配置。").trim() || "保存失败，请检查表字段配置。";
+  const rows = formatReconcileSchemaSaveErrors(text);
+  const tableRows = rows.map((row, index) => `
+    <tr>
+      <td class="num">${escapeHtml(index + 1)}</td>
+      <td title="${escapeHtml(row.logicalTable)}">${escapeHtml(row.logicalTable)}</td>
+      <td title="${escapeHtml(row.physicalTable)}"><code>${escapeHtml(row.physicalTable)}</code></td>
+      <td title="${escapeHtml(row.field)}"><code>${escapeHtml(row.field)}</code></td>
+      <td title="${escapeHtml(row.issue)}">${escapeHtml(row.issue)}</td>
+      <td title="${escapeHtml(row.detail)}">${escapeHtml(row.detail)}</td>
+    </tr>
+  `).join("");
+  showInfo(title, `
+    <div class="reconcile-schema-save-error">
+      <p>保存时发现表或字段配置无法通过数据库校验，请按下表逐项处理。</p>
+      <div class="reconcile-schema-save-error-table-wrap">
+        <table class="reconcile-schema-save-error-table">
+          <thead>
+            <tr>
+              <th class="num">#</th>
+              <th>逻辑表</th>
+              <th>物理表</th>
+              <th>字段</th>
+              <th>问题</th>
+              <th>详情</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+      <details>
+        <summary>原始错误信息</summary>
+        <pre>${escapeHtml(text)}</pre>
+      </details>
+    </div>
+  `, {
+    modalClass: "modal-info--reconcile-schema-error",
+    closeOnBackdrop: false,
+  });
+}
+
+function renderReconcileColumnOptions(tableEl, key, columns = [], options = {}) {
+  if (!tableEl) return;
+  tableEl._reconcileColumns = columns;
+  const combos = [...tableEl.querySelectorAll(".reconcile-schema-field-combobox")];
+  combos.forEach((combo, index) => {
+    const input = combo.querySelector("input.reconcile-schema-field-search");
+    const shouldOpen = combo === options.openCombo || Boolean(options.openFirst && index === 0);
+    const query = shouldOpen && Object.prototype.hasOwnProperty.call(options, "query") ? options.query : input?.value || "";
+    renderReconcileFieldOptions(combo, columns, query);
+    const list = combo.querySelector(".reconcile-schema-field-options");
+    if (list) list.hidden = !shouldOpen;
+    if (shouldOpen && input && document.activeElement !== input) {
+      input.focus();
+    }
+  });
+}
+
+function validateLoadedReconcileFields(tableEl, columns = []) {
+  const names = new Set(columns.map((column) => String(column.name || "").toLowerCase()));
+  const inputs = [...(tableEl?.querySelectorAll("input.reconcile-schema-field-search") || [])];
+  let missingCount = 0;
+  inputs.forEach((input) => {
+    const value = readTrimmedControlValue(input);
+    const missing = Boolean(value && names.size && !names.has(value.toLowerCase()));
+    input.classList.toggle("is-invalid", missing);
+    input.title = missing ? "当前读取的字段列表中没有这个字段，可确认后手动保留" : "";
+    if (missing) missingCount += 1;
+  });
+  return missingCount;
+}
+
+async function loadReconcileTableColumns(key, options = {}) {
+  const tableEl = reconcileSchemaTableElement(key);
+  if (!tableEl) return;
+  const status = tableEl.querySelector(".reconcile-schema-field-status");
+  const sourceId = tableEl.querySelector("select.reconcile-schema-source")?.value || "";
+  const tableName = readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-table-name"));
+  if (!sourceId || !tableName) {
+    if (status) status.textContent = "请先选择数据源并填写物理表名";
+    return;
+  }
+  if (tableEl._reconcileColumnsLoading) {
+    if (status) status.textContent = "字段读取中...";
+    return;
+  }
+  const cacheKey = `${sourceId}::${tableName}`;
+  if (reconcileSchemaColumnCache[cacheKey]) {
+    renderReconcileColumnOptions(tableEl, key, reconcileSchemaColumnCache[cacheKey], options);
+    const missing = validateLoadedReconcileFields(tableEl, reconcileSchemaColumnCache[cacheKey]);
+    if (status) status.textContent = missing ? `已读取字段，${missing} 个字段需确认` : "已读取字段，可输入字段名或备注筛选";
+    return;
+  }
+  if (status) status.textContent = "读取中...";
+  tableEl._reconcileColumnsLoading = true;
   try {
-    const payload = await api("/api/settings/reconcile-data-sources");
-    if (Array.isArray(payload.data_sources)) allConfigs = sortConfigsForDisplay(payload.data_sources);
-    renderReconcileDataSourceSettings(payload.settings || {}, allConfigs);
+    const payload = await api("/api/settings/reconcile-schema/columns", {
+      method: "POST",
+      body: JSON.stringify({ source_id: sourceId, table: tableName }),
+    });
+    const columns = payload.columns || [];
+    reconcileSchemaColumnCache[cacheKey] = columns;
+    renderReconcileColumnOptions(tableEl, key, columns, options);
+    const missing = validateLoadedReconcileFields(tableEl, columns);
+    if (status) status.textContent = missing ? `已读取 ${columns.length} 个字段，${missing} 个字段需确认` : `已读取 ${columns.length} 个字段，可输入字段名或备注筛选`;
   } catch (e) {
-    if (reconcileSourcesStatus) reconcileSourcesStatus.textContent = e.message;
+    if (status) status.textContent = e.message;
+  } finally {
+    tableEl._reconcileColumnsLoading = false;
   }
 }
 
-saveReconcileSourcesBtn?.addEventListener("click", async () => {
-  if (reconcileSourcesStatus) reconcileSourcesStatus.textContent = "保存中...";
-  if (saveReconcileSourcesBtn) saveReconcileSourcesBtn.disabled = true;
+async function loadReconcileSchemaSettings() {
+  if (!reconcileSchemaForm) return;
   try {
-    const payload = await api("/api/settings/reconcile-data-sources", {
-      method: "POST",
-      body: JSON.stringify({
-        dws_source_id: reconcileDwsSource?.value || "",
-        business_source_id: reconcileBusinessSource?.value || "",
-      }),
-    });
-    renderReconcileDataSourceSettings(payload.settings || {}, allConfigs);
-    refreshReconcileDependentViews();
-    if (reconcileSourcesStatus) reconcileSourcesStatus.textContent = "已保存";
+    const payload = await api("/api/settings/reconcile-schema");
+    renderReconcileSchemaForm(payload.schema || {}, payload.data_sources || []);
+    if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "";
   } catch (e) {
-    if (reconcileSourcesStatus) reconcileSourcesStatus.textContent = e.message;
+    if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = e.message;
+  }
+}
+
+function readReconcileSchemaForm() {
+  const tables = { ...(reconcileSchemaState.tables || {}) };
+  const requiredValidation = validateReconcileSchemaRequiredFields();
+  if (requiredValidation.missing.length) {
+    throw new Error(`请完善表字段配置：${requiredValidation.missing.join("、")}`);
+  }
+  RECONCILE_SCHEMA_TABLES.forEach((meta) => {
+    const tableEl = reconcileSchemaTableElement(meta.key);
+    if (!tableEl) return;
+    const sourceSelect = tableEl.querySelector("select.reconcile-schema-source");
+    const sourceId = sourceSelect?.value || "";
+    const sourceName = sourceSelect?.selectedOptions?.[0]?.textContent?.trim() || sourceId;
+    const displayName = readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-display-name")) || meta.name;
+    const tableName = readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-table-name"));
+    const existing = tables[meta.key] || {};
+    const fields = { ...(existing.fields || {}) };
+    const optionalFields = { ...(existing.optional_fields || {}) };
+    (meta.fields || []).forEach(([fieldKey, label]) => {
+      const input = reconcileSchemaFieldInput(tableEl, fieldKey);
+      const value = readTrimmedControlValue(input);
+      fields[fieldKey] = value;
+      delete optionalFields[fieldKey];
+    });
+    (meta.optionalFields || []).forEach(([fieldKey]) => {
+      const input = reconcileSchemaFieldInput(tableEl, fieldKey);
+      const value = readTrimmedControlValue(input);
+      if (value) optionalFields[fieldKey] = value;
+      else delete optionalFields[fieldKey];
+    });
+    tables[meta.key] = {
+      ...existing,
+      source_ref: { id: sourceId, name: sourceName, match_by: "id_then_name" },
+      table: tableName,
+      display_name: displayName,
+      fields,
+      optional_fields: optionalFields,
+    };
+    refreshReconcileSchemaTableStatus(meta.key);
+  });
+  return {
+    version: reconcileSchemaState.version || 1,
+    strict: true,
+    tables,
+  };
+}
+
+function selectReconcileSchemaFieldOption(option) {
+  const combo = option?.closest(".reconcile-schema-field-combobox");
+  const tableEl = option?.closest(".reconcile-schema-table");
+  const input = combo?.querySelector("input.reconcile-schema-field-search");
+  if (!combo || !input) return false;
+  input.value = option.dataset.value || "";
+  clearReconcileSchemaRequiredError(input);
+  closeReconcileFieldOptions(combo);
+  const key = tableEl?.dataset.reconcileTableKey || "";
+  if (tableEl) validateLoadedReconcileFields(tableEl, tableEl._reconcileColumns || []);
+  if (key) refreshReconcileSchemaTableStatus(key);
+  renderBusinessSettings();
+  return true;
+}
+
+reconcileSchemaForm?.addEventListener("mousedown", (event) => {
+  const option = event.target.closest(".reconcile-schema-field-option[data-value]");
+  if (option) {
+    event.preventDefault();
+    selectReconcileSchemaFieldOption(option);
+    return;
+  }
+  const fieldInput = event.target.closest("input.reconcile-schema-field-search");
+  const combo = fieldInput?.closest(".reconcile-schema-field-combobox");
+  if (fieldInput && document.activeElement === fieldInput && reconcileSchemaFieldOptionsOpen(combo)) {
+    event.preventDefault();
+    combo._reconcileSuppressNextInputClick = true;
+    closeReconcileFieldOptions(combo);
+  }
+});
+
+reconcileSchemaForm?.addEventListener("click", (event) => {
+  const option = event.target.closest(".reconcile-schema-field-option[data-value]");
+  if (option) {
+    event.preventDefault();
+    selectReconcileSchemaFieldOption(option);
+    return;
+  }
+  const fieldInput = event.target.closest("input.reconcile-schema-field-search");
+  const combo = fieldInput?.closest(".reconcile-schema-field-combobox");
+  if (fieldInput && combo) {
+    if (combo._reconcileSuppressNextInputClick) {
+      combo._reconcileSuppressNextInputClick = false;
+      return;
+    }
+    if (!reconcileSchemaFieldOptionsOpen(combo)) openReconcileFieldOptionsForInput(fieldInput);
+    return;
+  }
+  const toggle = event.target.closest(".reconcile-schema-toggle");
+  if (toggle) {
+    const key = toggle.dataset.key || "";
+    const fields = reconcileSchemaForm.querySelector(`.reconcile-schema-fields[data-key="${key}"]`);
+    if (fields) {
+      fields.hidden = !fields.hidden;
+      toggle.textContent = fields.hidden ? "展开字段" : "收起字段";
+    }
+    return;
+  }
+  if (!event.target.closest(".reconcile-schema-field-combobox")) {
+    closeReconcileFieldOptions(reconcileSchemaForm);
+  }
+});
+
+reconcileSchemaForm?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeReconcileFieldOptions(reconcileSchemaForm);
+});
+
+reconcileSchemaForm?.addEventListener("input", (event) => {
+  const tableEl = event.target.closest(".reconcile-schema-table");
+  const key = tableEl?.dataset.reconcileTableKey || "";
+  const combo = event.target.closest(".reconcile-schema-field-combobox");
+  if (event.target.matches?.("input.reconcile-schema-display-name, input.reconcile-schema-table-name, input.reconcile-schema-field-search") && readTrimmedControlValue(event.target)) {
+    clearReconcileSchemaRequiredError(event.target);
+  }
+  if (event.target.matches?.("input.reconcile-schema-display-name") && tableEl) {
+    const meta = reconcileMetaByKey(key);
+    const title = tableEl.querySelector(".reconcile-schema-table-title strong");
+    if (title) title.textContent = readTrimmedControlValue(event.target) || meta?.name || "";
+  }
+  if (combo && tableEl) {
+    if (!tableEl._reconcileColumns?.length && !tableEl._reconcileColumnsLoading) {
+      loadReconcileTableColumns(key, { openCombo: combo, query: event.target.value || "" });
+    }
+    renderReconcileFieldOptions(combo, tableEl._reconcileColumns || [], event.target.value || "");
+    validateLoadedReconcileFields(tableEl, tableEl._reconcileColumns || []);
+  }
+  if (key) {
+    refreshReconcileSchemaTableStatus(key);
+    renderBusinessSettings();
+  }
+});
+
+reconcileSchemaForm?.addEventListener("change", (event) => {
+  const tableEl = event.target.closest(".reconcile-schema-table");
+  const key = tableEl?.dataset.reconcileTableKey || "";
+  if (event.target.matches?.("select.reconcile-schema-source") && readTrimmedControlValue(event.target)) {
+    clearReconcileSchemaRequiredError(event.target);
+  }
+  if (key) {
+    refreshReconcileSchemaTableStatus(key);
+    renderBusinessSettings();
+  }
+});
+
+reconcileSchemaForm?.addEventListener("focusin", (event) => {
+  if (event.target.closest(".reconcile-schema-field-option")) return;
+  if (!event.target.matches?.("input.reconcile-schema-field-search")) return;
+  openReconcileFieldOptionsForInput(event.target);
+});
+
+document.addEventListener("click", (event) => {
+  if (!reconcileSchemaForm || reconcileSchemaForm.contains(event.target)) return;
+  closeReconcileFieldOptions(reconcileSchemaForm);
+});
+
+saveReconcileSchemaBtn?.addEventListener("click", async () => {
+  if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "保存中...";
+  if (saveReconcileSchemaBtn) saveReconcileSchemaBtn.disabled = true;
+  try {
+    const schema = readReconcileSchemaForm();
+    const payload = await api("/api/settings/reconcile-schema", {
+      method: "POST",
+      body: JSON.stringify(schema),
+    });
+    renderReconcileSchemaForm(payload.schema || schema, reconcileSchemaDataSources);
+    if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "已保存";
+  } catch (e) {
+    if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "保存失败，已打开错误详情";
+    showReconcileSchemaSaveError(e.message);
   } finally {
-    if (saveReconcileSourcesBtn) saveReconcileSourcesBtn.disabled = false;
+    if (saveReconcileSchemaBtn) saveReconcileSchemaBtn.disabled = false;
+  }
+});
+
+initReconcileSchemaFromFileBtn?.addEventListener("click", async () => {
+  const confirmed = await showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？");
+  if (!confirmed) return;
+  if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "初始化中...";
+  if (initReconcileSchemaFromFileBtn) initReconcileSchemaFromFileBtn.disabled = true;
+  try {
+    const payload = await api("/api/settings/reconcile-schema/init-from-file", { method: "POST", body: "{}" });
+    renderReconcileSchemaForm(payload.schema || {}, reconcileSchemaDataSources);
+    if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "已根据配置文件初始化";
+  } catch (e) {
+    if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "初始化失败，已打开错误详情";
+    showReconcileSchemaSaveError(e.message, "表字段配置初始化失败");
+  } finally {
+    if (initReconcileSchemaFromFileBtn) initReconcileSchemaFromFileBtn.disabled = false;
   }
 });
 
@@ -5466,6 +6354,123 @@ const BUSINESS_FIELD_GROUPS = [
   },
 ];
 
+const BUSINESS_GROUP_LOGICAL_KEYS = {
+  zf_detail_2024: ["zf_detail"],
+  fa_valuationreport_dws: ["fa_valuation"],
+  fa_accountbalance_dws: ["fa_account_balance"],
+  "dm.ta_pact_survamt_day_zgxg_dm": ["ta_survamt_dm"],
+  ta_pact_detail_dws: ["ta_pact_detail"],
+  am_pactasset_dws: ["am_pact_asset"],
+  am_projinvest_dws: ["am_project_invest"],
+  "dm.fa_security_balance_zgxg_dm": ["fa_security_balance_dm"],
+  "dm.am_projinvest_zgxg_dm": ["dm_project_invest"],
+  "dm.am_projinvest_spv_zgxg_dm": ["dm_spv_project_invest"],
+  "zgxg_zhbs.ccqxx": ["property_right_contract"],
+  "ass_man_reg.ex_pledge_back": ["pledge_back"],
+  "currency_report_24.currency_detail_project_2_1_*": [
+    "report_detail_2_1_2",
+    "report_detail_2_1_4",
+    "report_detail_2_1_5",
+    "report_detail_2_1_5_2",
+    "report_detail_2_1_6",
+    "report_detail_2_1_8",
+    "report_detail_2_1_9",
+  ],
+  currency_report_duration: ["ta_asset_share_duration"],
+};
+
+function reconcileMetaByKey(logicalKey) {
+  return RECONCILE_SCHEMA_TABLES.find((item) => item.key === logicalKey) || null;
+}
+
+function currentReconcileTableConfig(logicalKey) {
+  const meta = reconcileMetaByKey(logicalKey);
+  const existing = reconcileSchemaState.tables?.[logicalKey] || {};
+  const tableEl = reconcileSchemaTableElement(logicalKey);
+  if (!meta || !tableEl) {
+    return {
+      table: existing.table || RECONCILE_SCHEMA_DEFAULT_TABLES[logicalKey] || "",
+      displayName: existing.display_name || meta?.name || logicalKey,
+      sourceName: existing.source_ref?.name || existing.source_ref?.id || "",
+      fields: existing.fields || {},
+      optionalFields: existing.optional_fields || {},
+    };
+  }
+  const sourceSelect = tableEl.querySelector("select.reconcile-schema-source");
+  const fields = {};
+  const optionalFields = {};
+  (meta.fields || []).forEach(([fieldKey]) => {
+    fields[fieldKey] = readTrimmedControlValue(reconcileSchemaFieldInput(tableEl, fieldKey));
+  });
+  (meta.optionalFields || []).forEach(([fieldKey]) => {
+    optionalFields[fieldKey] = readTrimmedControlValue(reconcileSchemaFieldInput(tableEl, fieldKey));
+  });
+  return {
+    table: readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-table-name")) || existing.table || RECONCILE_SCHEMA_DEFAULT_TABLES[logicalKey] || "",
+    displayName: readTrimmedControlValue(tableEl.querySelector("input.reconcile-schema-display-name")) || existing.display_name || meta.name,
+    sourceName: sourceSelect?.selectedOptions?.[0]?.textContent?.trim() || existing.source_ref?.name || existing.source_ref?.id || "",
+    fields,
+    optionalFields,
+  };
+}
+
+function currentReconcileTableDisplayName(logicalKey, fallback = "") {
+  return currentReconcileTableConfig(logicalKey).displayName || fallback || logicalKey;
+}
+
+function fieldKeyForDefaultColumn(logicalKey, defaultColumn) {
+  const meta = reconcileMetaByKey(logicalKey);
+  if (!meta) return "";
+  const rows = [...(meta.fields || []), ...(meta.optionalFields || [])];
+  const match = rows.find(([, , defaultValue]) => defaultValue === defaultColumn);
+  return match?.[0] || "";
+}
+
+function currentBusinessFieldValue(logicalKey, originalFieldText) {
+  const parts = String(originalFieldText || "").split("/").map((item) => item.trim()).filter(Boolean);
+  if (!parts.length) return originalFieldText;
+  const config = currentReconcileTableConfig(logicalKey);
+  const values = parts.map((part) => {
+    const fieldKey = fieldKeyForDefaultColumn(logicalKey, part);
+    if (!fieldKey) return part;
+    return config.fields[fieldKey] || config.optionalFields[fieldKey] || part;
+  });
+  return values.join("/");
+}
+
+function compactBusinessTableNames(logicalKeys = [], fallback = "") {
+  const names = [...new Set(logicalKeys.map((key) => currentReconcileTableConfig(key).table).filter(Boolean))];
+  if (!names.length) return fallback;
+  if (names.length <= 2) return names.join("、");
+  return `${names[0]} 等 ${names.length} 张表`;
+}
+
+function compactBusinessSourceNames(logicalKeys = [], fallback = "") {
+  const names = [...new Set(logicalKeys.map((key) => currentReconcileTableConfig(key).sourceName).filter(Boolean))];
+  if (!names.length) return fallback;
+  if (names.length <= 2) return names.join("、");
+  return `${names[0]} 等 ${names.length} 个数据源`;
+}
+
+function currentBusinessFieldGroups() {
+  return BUSINESS_FIELD_GROUPS.map((group) => {
+    const logicalKeys = BUSINESS_GROUP_LOGICAL_KEYS[group.table] || [];
+    if (!logicalKeys.length) return group;
+    const primaryKey = logicalKeys[0];
+    return {
+      ...group,
+      displayName: currentReconcileTableDisplayName(primaryKey, group.table),
+      table: compactBusinessTableNames(logicalKeys, group.table),
+      source: compactBusinessSourceNames(logicalKeys, group.source),
+      rows: group.rows.map((row) => [
+        currentBusinessFieldValue(primaryKey, row[0]),
+        row[1],
+        row[2],
+      ]),
+    };
+  });
+}
+
 function renderBusinessSettings() {
   const container = document.getElementById("businessSettingsContent");
   if (!container) return;
@@ -5473,10 +6478,10 @@ function renderBusinessSettings() {
   const note = document.getElementById("businessSettingsNote");
   if (note) note.textContent = BUSINESS_SETTINGS_MAINTENANCE_NOTE;
 
-  container.innerHTML = BUSINESS_FIELD_GROUPS.map((group) => `
+  container.innerHTML = currentBusinessFieldGroups().map((group) => `
     <div class="business-field-group">
       <div class="business-field-header">
-        <strong>${escapeHtml(group.table)}</strong>
+        <strong>${escapeHtml(group.displayName || group.table)}</strong>
         <span>${escapeHtml(group.source)}</span>
       </div>
       <table class="detail-table business-field-table">
@@ -8372,6 +9377,28 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   showInfo("更新日志", `
     <div class="changelog-item">
       <div>
+        <span class="changelog-version">v2.1</span>
+        <span class="changelog-date">2026-07-02</span>
+      </div>
+       <ul>
+        <li>自动对数 AM 复核在名称无法匹配时新增兜底：先用 FA 科目尾码匹配 AM 标的代码并按合同开始日取最新合同；尾码未命中时，江苏信托项目支持单边中文括号名称兜底，并要求报表库 <code>zf_detail_2024.projname</code> 去括号后按核对日期唯一命中，否则仍判定 AM 标的缺失。</li>
+        <li>首页最新趋势横轴改为展示每次自动对数的执行日期和时间；“标的代码不一致”统计改为按结构化详情逐条累计，一个项目出现多条 FA/AM 标的不一致时计为多条，项目明细弹框仍按项目记录展示。</li>
+        <li>流程链配置可选流程列表保留 500 条初始展示上限，并支持按流程名称或 <code>flow_id</code> 搜索；超过初始列表的流程可通过搜索或手工输入 <code>flow_id</code> 加入链路。</li>
+        <li>流程链停止按钮改为按后台任务 <code>job_id</code> 取消，点击后立即进入停止中状态，后端停止本地流程链继续等待或提交后续流程。</li>
+        <li>自动对数导出处理脚本按 AM 合同来源判断：<code>c_datasource=am</code> 生成修正 SQL，非 <code>am</code> 来源输出“衡泰标的不一致请联系衡泰系统处理。”，多条标的不一致在脚本列按 <code>①②③</code> 编号。</li>
+        <li>自动对数仓储查询支持在系统设置页面通过表单维护表名、字段名和表级数据源，页面可按数据源和表名读取数据库字段，并按字段英文名和中文备注模糊搜索选择或取消下拉；自动对数逻辑用到的字段均按必填校验，也可通过“根据配置文件初始化配置”按钮从 <code>/home/autocheck/data/reconcile-schema.yaml</code> 导入；运行以页面保存配置为准，未保存配置时继续使用内置默认映射。</li>
+        <li>自动对数仓储查询在 AM 标的表与 AM 合同投融资余额表不在同一数据源时，不做跨库 join，改为应用层按项目编号、核对日期和合同代码回填合同开始日，避免跨库合同开始日直接返回空值。</li>
+        <li>自动对账表字段配置新增“标准中文名”输入框，保存到表级配置并同步用于配置卡片标题、业务字段清单标题和表字段校验错误展示。</li>
+        <li>表字段配置保存失败弹框按缺失字段逐行展示，并取消错误表格内容截断；执行自动对数失败时展示真实错误摘要，便于定位表名、schema、字段或数据源问题。</li>
+        <li>对账业务设置中“根据配置文件初始化配置”和“保存表字段配置”按钮上移至卡片标题区；字段选择支持英文名和中文备注模糊搜索，点击已展开字段输入框可关闭候选下拉。</li>
+        <li>系统设置数据源配置保存时补充表字段真实存在性校验，表或字段不存在时按逻辑表、物理表、字段、问题和详情分列展示。</li>
+        <li>流程链配置的数据源下拉改为仅显示数据源名称；执行接口补充规则说明并在保存时校验，不允许固定填写 <code>id</code> 参数；流程表读取失败时提示当前数据源、流程表和可排查原因。</li>
+        <li>前端静态测试和 README 同步更新自动对账表字段配置、流程链、首页统计和版本号断言。</li>
+       </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
         <span class="changelog-version">v2.0.8</span>
         <span class="changelog-date">2026-06-12</span>
       </div>
@@ -8389,6 +9416,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>新增流程后台执行悬浮提示，支持单流程链与多流程链进度区分显示。</li>
         <li>执行历史新增执行时长列，支持单流程链和多流程链时长记录。</li>
         <li>多流程链执行历史合并为一条记录，流程链列显示"多流程链(X条)"，悬浮显示全部流程链名称。</li>
+        <li>新增自动对账表字段可视化配置、字段自动读取、字段下拉选择与取消、表字段保存校验和配置文件初始化能力。</li>
+        <li>新增自动对账表标准中文名维护能力。</li>
         <li>系统优化及BUG修复。</li>
        </ul>
     </div>

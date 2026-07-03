@@ -1,0 +1,13 @@
+**/*.bak
+**/*.bak.*
+**/*.old
+**/*.tmp
+**/*.swp
+**/*.flow
+**/.DS_Store
+**/__pycache__/
+**/.venv/
+**/.git/
+**/.gitignore
+**/*.pyc
+**/*.pyo

@@ -1,7 +1,10 @@
 from decimal import Decimal
 
+import pytest
+
 from auto_check.app.config import AppConfig, DataSourceConfig
 from auto_check.app.repositories import AutoCheckRepository
+from auto_check.app.reconcile_schema import ReconcileSchemaSettings, ReconcileSourceRef, ReconcileTableSchema
 
 
 class FakeClient:
@@ -27,8 +30,8 @@ class FakeClient:
             {"c_projcode": "P2", "c_udlyasset": "资产2", "c_stockcode": "0002", "c_pactid": "PACT2", "c_spv_type": "11", "c_assettype": "32", "c_datasource": "ht"},
         ]
         self.project_invest_balances = [
-            {"c_projcode": "P1", "c_pactid": "PACT1", "acbalance": Decimal("123")},
-            {"c_projcode": "P2", "c_pactid": "PACT2", "acbalance": Decimal("0")},
+            {"c_projcode": "P1", "d_cldate": "2026-04-30", "c_pactid": "PACT1", "acbalance": Decimal("123"), "d_bdate": "2025-01-01"},
+            {"c_projcode": "P2", "d_cldate": "2026-04-30", "c_pactid": "PACT2", "acbalance": Decimal("0"), "d_bdate": "2024-01-01"},
         ]
         self.ta_dm_total = Decimal("300")
         self.ta_dws_total = Decimal("300")
@@ -130,6 +133,18 @@ class FakeClient:
                 for row in rows
                 if row["c_projcode"] == project_code and row["c_udlyasset"] == asset_name
             ]
+        if "invest.d_bdate" in sql:
+            contract_starts = {
+                (str(row["c_projcode"]), str(row.get("c_pactid") or "")): row.get("d_bdate")
+                for row in self.project_invest_balances
+            }
+            rows = [
+                {
+                    **row,
+                    "d_bdate": contract_starts.get((str(row["c_projcode"]), str(row.get("c_pactid") or ""))),
+                }
+                for row in rows
+            ]
         return rows
 
     def _project_invest_rows(self, sql, params):
@@ -139,6 +154,118 @@ class FakeClient:
 def config():
     source = DataSourceConfig("postgresql", "localhost", 5432, "db", "dws", "u", "p")
     return AppConfig(dws=source, business=source)
+
+
+def test_repository_uses_configured_table_and_field_names_for_valuation_totals():
+    dws_client = FakeClient()
+    schema = ReconcileSchemaSettings(
+        version=1,
+        tables={
+            "fa_valuation": ReconcileTableSchema(
+                source_ref=ReconcileSourceRef(id="dws", name="DWS", match_by="id_then_name"),
+                table="custom.fa_valuation_custom",
+                display_name="自定义估值表",
+                fields={
+                    "project_code": "proj_code",
+                    "valuation_date": "val_date",
+                    "account_code": "acct_code",
+                    "account_name": "acct_name",
+                    "market_value": "market_amt",
+                },
+            )
+        },
+    )
+    repository = AutoCheckRepository(config(), schema=schema, dws_client=dws_client, business_client=FakeClient())
+
+    repository.get_valuation_asset_total("P1", "2026-04-30")
+
+    sql, params = dws_client.fetch_all_calls[-1]
+    assert '"custom"."fa_valuation_custom"' in sql
+    assert "proj_code AS c_projcode" in sql
+    assert "market_amt AS f_marketvalue" in sql
+    assert "val_date = %s" in sql
+    assert "acct_code = '0004'" in sql
+    assert params == ("2026-04-30",)
+
+
+def test_repository_strict_schema_does_not_fill_missing_required_fields():
+    schema = ReconcileSchemaSettings(
+        version=1,
+        strict=True,
+        tables={
+            "fa_valuation": ReconcileTableSchema(
+                source_ref=ReconcileSourceRef(id="dws", name="DWS", match_by="id_then_name"),
+                table="custom.fa_valuation_custom",
+                fields={
+                    "project_code": "proj_code",
+                    "valuation_date": "val_date",
+                    "market_value": "market_amt",
+                },
+            )
+        },
+    )
+    repository = AutoCheckRepository(config(), schema=schema, dws_client=FakeClient(), business_client=FakeClient())
+
+    with pytest.raises(ValueError, match=r"fa_valuation\.account_code"):
+        repository.get_valuation_asset_total("P1", "2026-04-30")
+
+
+def _am_required_schema(*, include_data_source=True, include_contract_start=True, invest_source_id="dws"):
+    pact_fields = {
+        "project_code": "c_projcode",
+        "close_date": "d_cldate",
+        "asset_name": "c_udlyasset",
+        "stock_code": "c_stockcode",
+        "pact_id": "c_pactid",
+        "spv_type": "c_spv_type",
+        "asset_type": "c_assettype",
+    }
+    if include_data_source:
+        pact_fields["data_source"] = "c_datasource"
+    invest_fields = {
+        "project_code": "c_projcode",
+        "close_date": "d_cldate",
+        "pact_id": "c_pactid",
+        "invest_balance": "f_acbalance",
+    }
+    if include_contract_start:
+        invest_fields["contract_start_date"] = "d_bdate"
+    return ReconcileSchemaSettings(
+        version=1,
+        strict=True,
+        tables={
+            "am_pact_asset": ReconcileTableSchema(
+                source_ref=ReconcileSourceRef(id="dws", name="DWS", match_by="id_then_name"),
+                table="am_pactasset_dws",
+                fields=pact_fields,
+            ),
+            "am_project_invest": ReconcileTableSchema(
+                source_ref=ReconcileSourceRef(id=invest_source_id, name=invest_source_id, match_by="id_then_name"),
+                table="am_projinvest_dws",
+                fields=invest_fields,
+            ),
+        },
+    )
+
+
+def test_repository_am_fields_that_drive_logic_are_required():
+    missing_data_source = AutoCheckRepository(
+        config(),
+        schema=_am_required_schema(include_data_source=False),
+        dws_client=FakeClient(),
+        business_client=FakeClient(),
+    )
+    with pytest.raises(ValueError, match=r"am_pact_asset\.data_source"):
+        missing_data_source.list_project_pact_assets("P1", "2026-04-30")
+
+    missing_contract_start = AutoCheckRepository(
+        config(),
+        schema=_am_required_schema(include_contract_start=False),
+        dws_client=FakeClient(),
+        business_client=FakeClient(),
+    )
+    with pytest.raises(ValueError, match=r"am_project_invest\.contract_start_date"):
+        missing_contract_start.list_project_pact_assets("P1", "2026-04-30")
 
 
 def test_repository_reuses_date_level_dws_queries():
@@ -162,6 +289,7 @@ def test_repository_reuses_date_level_dws_queries():
     assert repository.list_pact_assets("P1", "2026-04-30", "资产1")[0].data_source == "am"
     assert repository.list_pact_assets("P2", "2026-04-30", "资产2")[0].stock_code == "0002"
     assert [asset.stock_code for asset in repository.list_project_pact_assets("P1", "2026-04-30")] == ["0001"]
+    assert repository.list_project_pact_assets("P1", "2026-04-30")[0].contract_start_date == "2025-01-01"
     assert repository.get_project_invest_balance("P1", "2026-04-30", "PACT1") == Decimal("123")
     assert repository.get_project_invest_balance("P2", "2026-04-30", "PACT2") == Decimal("0")
 
@@ -171,19 +299,38 @@ def test_repository_reuses_date_level_dws_queries():
     assert dws_client.count_calls("am_projinvest_dws") == 2
 
 
-def test_repository_pact_assets_falls_back_when_contract_start_date_column_missing():
+def test_repository_pact_assets_requires_contract_start_date_column():
     dws_client = FakeClient()
     dws_client.raise_missing_d_bdate = True
     repository = AutoCheckRepository(config(), dws_client=dws_client, business_client=FakeClient())
 
+    with pytest.raises(RuntimeError, match="d_bdate"):
+        repository.list_project_pact_assets("P1", "2026-04-30")
+
+    pact_queries = [sql for sql, _ in dws_client.fetch_all_calls if "am_pactasset_dws" in sql]
+    assert len(pact_queries) == 1
+    assert "invest.d_bdate" in pact_queries[0]
+
+
+def test_repository_pact_assets_fills_contract_start_date_across_sources_without_join():
+    pact_client = FakeClient()
+    invest_client = FakeClient()
+    repository = AutoCheckRepository(
+        config(),
+        schema=_am_required_schema(invest_source_id="invest"),
+        dws_client=pact_client,
+        business_client=FakeClient(),
+        source_clients={"invest": invest_client},
+    )
+
     assets = repository.list_project_pact_assets("P1", "2026-04-30")
 
     assert [asset.stock_code for asset in assets] == ["0001"]
-    assert assets[0].contract_start_date is None
-    pact_queries = [sql for sql, _ in dws_client.fetch_all_calls if "am_pactasset_dws" in sql]
-    assert len(pact_queries) == 2
-    assert "invest.d_bdate" in pact_queries[0]
-    assert "invest.d_bdate" not in pact_queries[1]
+    assert assets[0].contract_start_date == "2025-01-01"
+    pact_queries = [sql for sql, _ in pact_client.fetch_all_calls if "am_pactasset_dws" in sql]
+    assert len(pact_queries) == 1
+    assert "LEFT JOIN" not in pact_queries[0]
+    assert invest_client.count_calls("am_projinvest_dws") == 1
 
 
 def test_repository_loads_ta_balance_totals_from_dm_and_dws_tables():

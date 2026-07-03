@@ -63,7 +63,7 @@
           <button id="sidebarDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
             <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
           </button>
-          <span class="status" id="statusText">v2.0.8</span>
+          <span class="status" id="statusText">v2.1</span>
         </div>
         <div class="user-menu user-menu--sidebar" id="sidebarUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
@@ -86,7 +86,7 @@
           <span class="brand-wordmark-main">监管智核</span>
           <span class="brand-wordmark-sub">监管报送核验平台</span>
         </span>
-        <span class="top-nav-status" id="topNavStatus" title="v2.0.8">v2.0.8</span>
+        <span class="top-nav-status" id="topNavStatus" title="v2.1">v2.1</span>
       </div>
       <nav class="top-nav-tabs">
         <button id="topDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
@@ -1344,29 +1344,21 @@
                 <div class="card-icon card-icon-green">&#128203;</div>
                 <div class="card-title">
                   <h3>对账业务设置</h3>
-                  <p>配置对账数据源，并查看对数逻辑字段</p>
+                  <p>配置自动对账表字段，并查看对数逻辑字段</p>
+                </div>
+                <div class="card-header-actions reconcile-schema-header-actions">
+                  <button id="initReconcileSchemaFromFileBtn" type="button" class="btn-outline btn-sm">根据配置文件初始化配置</button>
+                  <button id="saveReconcileSchemaBtn" type="button" class="btn-outline btn-sm">保存表字段配置</button>
+                  <span class="modal-status" id="reconcileSchemaStatus"></span>
                 </div>
               </div>
               <div id="businessSettingsBody" class="card-body settings-business-scroll">
-                <div class="reconcile-settings-panel">
+                <div class="reconcile-settings-panel reconcile-schema-panel">
                   <div class="reconcile-settings-title">
-                    <strong>对账数据源</strong>
-                    <span>首页趋势、核对历史和自动对数均按此报表库数据源归集</span>
+                    <strong>自动对账表字段配置</strong>
+                    <span>自动对数运行以此处保存的配置为准</span>
                   </div>
-                  <div class="reconcile-settings-grid">
-                    <label class="setting-item">
-                      <span class="setting-label">对账 DWS 数据源</span>
-                      <select id="reconcileDwsSource" class="setting-input"></select>
-                    </label>
-                    <label class="setting-item">
-                      <span class="setting-label">对账报表库数据源</span>
-                      <select id="reconcileBusinessSource" class="setting-input"></select>
-                    </label>
-                  </div>
-                  <div class="reconcile-settings-actions">
-                    <button id="saveReconcileSourcesBtn" type="button" class="btn-outline btn-sm">保存对账数据源</button>
-                    <span class="modal-status" id="reconcileSourcesStatus"></span>
-                  </div>
+                  <div id="reconcileSchemaForm" class="reconcile-schema-form"></div>
                 </div>
                 <div id="businessSettingsNote" class="business-settings-note">
                   以下为当前对数逻辑涉及的表、字段、业务含义和用途。每次表名或字段调整时，需要同步更新此业务设置。

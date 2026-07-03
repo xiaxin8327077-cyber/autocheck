@@ -1135,11 +1135,12 @@ def test_version_206_documents_db_validation_engine_update():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.0.8";' in app_js
-    assert 'id="statusText">v2.0.8</span>' in html
-    assert 'id="topNavStatus" title="v2.0.8">v2.0.8</span>' in html
+    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+    assert 'id="statusText">v2.1</span>' in html
+    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
 
     for text in [
+        "v2.1",
         "v2.0.8",
         "新增监管智核品牌名称和系统 Logo。",
         "首页组合图表指标改为每期差异个数。",
@@ -1320,6 +1321,34 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
         assert text in readme
 
 
+def test_version_21_documents_reconcile_schema_and_flow_updates():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    readme = _read(README_MD)
+
+    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+    assert 'id="statusText">v2.1</span>' in html
+    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
+    assert "- 应用界面版本：`v2.1`" in readme
+
+    change_items = [
+        "自动对数 AM 复核在名称无法匹配时新增兜底",
+        "首页最新趋势横轴改为展示每次自动对数的执行日期和时间",
+        "流程链配置可选流程列表保留 500 条初始展示上限",
+        "流程链停止按钮改为按后台任务",
+        "自动对数导出处理脚本按 AM 合同来源判断",
+        "自动对数仓储查询支持在系统设置页面通过表单维护表名、字段名和表级数据源",
+        "表字段配置保存失败弹框按缺失字段逐行展示",
+        "自动对账表字段配置新增“标准中文名”输入框",
+    ]
+    assert "`v2.1` (2026-07-02) 主要变化：" in readme
+    assert '<span class="changelog-version">v2.1</span>' in app_js
+    assert '<span class="changelog-date">2026-07-02</span>' in app_js
+    for text in change_items:
+        assert text in readme
+        assert text in app_js
+
+
 def test_version_205_documents_scheme_a_logo_update():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -1327,9 +1356,9 @@ def test_version_205_documents_scheme_a_logo_update():
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.0.8";' in app_js
-    assert 'id="statusText">v2.0.8</span>' in html
-    assert 'id="topNavStatus" title="v2.0.8">v2.0.8</span>' in html
+    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+    assert 'id="statusText">v2.1</span>' in html
+    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
 
     for text in [
         "v2.0.5",
@@ -1498,10 +1527,121 @@ def test_version_201_documents_confirm_button_update():
 def test_business_settings_displays_current_table_field_mapping():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    readme = _read(README_MD)
 
     assert 'id="businessSettingsBody"' in html
     assert 'id="businessSettingsContent"' in html
+    assert 'id="initReconcileSchemaFromFileBtn"' in html
+    assert 'id="reconcileSchemaForm"' in html
+    assert html.index('id="initReconcileSchemaFromFileBtn"') < html.index('id="reconcileSchemaForm"')
+    business_card = re.search(
+        r'<section class="card settings-dashboard-card card-business admin-only">(?P<body>.*?)</section>',
+        html,
+        re.S,
+    )
+    assert business_card is not None
+    business_header = re.search(
+        r'<div class="card-header">(?P<body>.*?)</div>\s*<div id="businessSettingsBody"',
+        business_card.group("body"),
+        re.S,
+    )
+    assert business_header is not None
+    assert 'id="initReconcileSchemaFromFileBtn"' in business_header.group("body")
+    assert 'id="saveReconcileSchemaBtn"' in business_header.group("body")
+    schema_panel_head = business_card.group("body")[
+        business_card.group("body").index('<div class="reconcile-settings-panel reconcile-schema-panel">'):
+        business_card.group("body").index('<div id="reconcileSchemaForm"')
+    ]
+    assert 'id="initReconcileSchemaFromFileBtn"' not in schema_panel_head
+    assert 'id="saveReconcileSchemaBtn"' not in schema_panel_head
+    assert 'id="reconcileSchemaEditor"' not in html
     assert "function renderBusinessSettings()" in app_js
+    assert "function loadReconcileSchemaSettings()" in app_js
+    assert "function renderReconcileSchemaForm(" in app_js
+    assert "function readReconcileSchemaForm()" in app_js
+    assert "function loadReconcileTableColumns(" in app_js
+    assert "function currentBusinessFieldGroups()" in app_js
+    assert "function filterReconcileColumnOptions(" in app_js
+    assert "function renderReconcileFieldOptions(" in app_js
+    assert "function splitFrontendReconcileSchemaMissingItems(" in app_js
+    assert "function parseReconcileSchemaErrorItem(" in app_js
+    assert "function formatReconcileSchemaSaveErrors(" in app_js
+    assert "function showReconcileSchemaSaveError(" in app_js
+    assert "function readTrimmedControlValue(" in app_js
+    assert "const fallback = optional ? tableConfig.fields : tableConfig.optional_fields;" in app_js
+    assert "function validateReconcileSchemaRequiredFields(" in app_js
+    assert "function markReconcileSchemaRequiredError(" in app_js
+    assert "function clearReconcileSchemaRequiredErrors(" in app_js
+    assert "function expandReconcileSchemaTable(" in app_js
+    assert "function reconcileSchemaVisibleControl(" in app_js
+    assert "function selectReconcileSchemaFieldOption(" in app_js
+    assert "function reconcileSchemaFieldOptionsOpen(" in app_js
+    assert "function openReconcileFieldOptionsForInput(" in app_js
+    assert "reconcile-schema-required-error" in app_js
+    assert "reconcile-schema-error-message" in app_js
+    assert "v2.1" in app_js
+    assert "scrollIntoView" in app_js
+    assert 'querySelector("select.reconcile-schema-source")' in app_js
+    assert 'querySelector("input.reconcile-schema-display-name")' in app_js
+    assert 'querySelector("input.reconcile-schema-table-name")' in app_js
+    assert 'input.reconcile-schema-field-search' in app_js
+    assert 'tableEl.querySelector(".reconcile-schema-source")' not in app_js
+    assert 'tableEl.querySelector(".reconcile-schema-display-name")' not in app_js
+    assert 'tableEl.querySelector(".reconcile-schema-table-name")' not in app_js
+    assert 'loadReconcileTableColumns(key, { openCombo: combo' in app_js
+    assert "reconcile-schema-load-columns" not in app_js
+    assert ">读取字段</button>" not in app_js
+    assert "loadReconcileTableColumns(key, { openCombo: combo" in app_js
+    assert "reconcile-schema-field-combobox" in app_js
+    assert "reconcile-schema-display-name" in app_js
+    assert "标准中文名" in app_js
+    assert "function currentReconcileTableDisplayName(" in app_js
+    assert "displayName: currentReconcileTableDisplayName(primaryKey, group.table)" in app_js
+    assert "<strong>${escapeHtml(group.displayName || group.table)}</strong>" in app_js
+    assert "display_name: displayName" in app_js
+    assert "reconcile-schema-field-search" in app_js
+    assert '<div class="reconcile-schema-field-row">' in app_js
+    assert '<label class="reconcile-schema-field-row">' not in app_js
+    assert "reconcile-schema-field-option-name" in app_js
+    assert "reconcile-schema-field-option-comment" in app_js
+    assert 'optionalFields: [["data_source"' not in app_js
+    assert 'optionalFields: [["contract_start_date"' not in app_js
+    assert "delete optionalFields[fieldKey];" in app_js
+    assert 'reconcileSchemaForm?.addEventListener("mousedown"' in app_js
+    assert app_js.index('reconcileSchemaForm?.addEventListener("mousedown"') < app_js.index('reconcileSchemaForm?.addEventListener("focusin"')
+    assert 'if (event.target.closest(".reconcile-schema-field-option")) return;' in app_js
+    assert 'event.target.closest("input.reconcile-schema-field-search")' in app_js
+    assert "_reconcileSuppressNextInputClick" in app_js
+    assert "openReconcileFieldOptionsForInput(fieldInput)" in app_js
+    assert 'reconcileSchemaForm?.addEventListener("keydown"' in app_js
+    assert 'if (event.key === "Escape") closeReconcileFieldOptions(reconcileSchemaForm);' in app_js
+    assert 'closeReconcileFieldOptions(reconcileSchemaForm);' in app_js[app_js.index('const toggle = event.target.closest(".reconcile-schema-toggle");'):app_js.index('reconcileSchemaForm?.addEventListener("input"')]
+    assert "event.preventDefault();" in app_js[app_js.index('const option = event.target.closest(".reconcile-schema-field-option[data-value]");'):app_js.index('const toggle = event.target.closest(".reconcile-schema-toggle");')]
+    assert "showInfo(title, `" in app_js
+    assert "modal-info--reconcile-schema-error" in app_js
+    assert "reconcile-schema-save-error" in app_js
+    assert "reconcile-schema-save-error-table" in app_js
+    assert "reconcile-schema-field-select" not in app_js
+    assert "<datalist" not in app_js
+    assert 'querySelector(`.reconcile-schema-field-combobox[data-field-key="${fieldKey}"] .reconcile-schema-field-search`)?.value.trim()' not in app_js
+    assert "grid-template-columns: repeat(2, minmax(360px, 1fr));" in css
+    assert "text-overflow: ellipsis;" in css
+    assert "#page-settings .reconcile-schema-required-error" in css
+    assert "#page-settings .reconcile-schema-error-message" in css
+    assert ".modal-info--reconcile-schema-error" in css
+    assert ".reconcile-schema-save-error pre" in css
+    assert ".reconcile-schema-save-error-table" in css
+    assert "white-space: normal;" in css
+    assert "overflow-wrap: anywhere;" in css
+    assert "#page-settings .card-header-actions" in css
+    assert "向数据库校验表和字段是否真实存在" in readme
+    assert "自动对数后台失败日志展示真实错误摘要" in readme
+    assert "表字段配置保存失败弹框按缺失字段逐行展示" in readme
+    assert "标准中文名" in readme
+    assert "/api/settings/reconcile-schema/init-from-file" in app_js
+    assert "/api/settings/reconcile-schema/columns" in app_js
+    assert "/api/settings/reconcile-schema" in app_js
     assert 'setupSettingsDashboardCollapsible("businessSettingsToggle", "businessSettingsBody")' not in app_js
 
     for text in [
@@ -1530,7 +1670,9 @@ def test_business_settings_displays_current_table_field_mapping():
         "c_stockcode",
         "c_spv_type",
         "c_assettype",
+        "c_datasource",
         "f_acbalance",
+        "d_bdate",
         "sbm_seclas_h2024",
         "sbm_gpgqtype_h",
         "sbm_fundtype",
@@ -1664,7 +1806,8 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
 
     assert "对账业务设置" in html
     assert "function getReconcileBusinessSourceName()" in app_js
-    assert "refreshReconcileDependentViews();" in app_js
+    assert "function loadReconcileSchemaSettings()" in app_js
+    assert "/api/settings/reconcile-schema/init-from-file" in app_js
     assert "filterRunsByReconcileBusinessSource" not in app_js
     assert "全部数据源" in app_js
     assert "defaultConfigSwitchAnimationName" not in app_js
@@ -1702,7 +1845,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert settings_html.count('<span class="setting-label">分类编号</span>') == 3
     assert settings_html.count("填写报送子系统编号，多个用;分隔") == 3
     assert settings_html.count("填写分类编号，多个用;分隔") == 3
-    assert "对账报表库数据源" in settings_html
+    assert "对账报表库数据源" not in settings_html
     assert "对账业务库数据源" not in settings_html
     assert '<span class="setting-label">sys_manage_id</span>' not in settings_html
     assert '<span class="setting-label">classification_id</span>' not in settings_html
@@ -1716,7 +1859,8 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert "人行逐笔校验引擎独占整行" in readme
     assert "数据管理移动至原主题设置位置" in readme
     assert "对账业务设置前移至数据源配置后" in readme
-    assert "对账数据源选择移动到“对账业务设置”" in readme
+    assert "对账业务设置隐藏旧版全局对账数据源选择" in readme
+    assert "自动对数执行以表字段配置中的表级数据源为准" in readme
     assert "系统信息改为展示历史核对次数、登录用户和首页自动刷新等运行指标" in readme
     assert "系统设置中的“对账业务设置”" in readme
     equal_height_rule = re.search(
@@ -3366,9 +3510,6 @@ def test_settings_uses_single_data_source_model():
         'id="mdSourceSchema"',
         'id="mdSourceUser"',
         'id="mdSourcePwd"',
-        'id="reconcileDwsSource"',
-        'id="reconcileBusinessSource"',
-        'id="saveReconcileSourcesBtn"',
     ]:
         assert item_id in html
 
@@ -3378,11 +3519,16 @@ def test_settings_uses_single_data_source_model():
         'id="dwsToggle"',
         'id="bizToggle"',
         'id="modalSetDefault"',
+        'id="reconcileDwsSource"',
+        'id="reconcileBusinessSource"',
+        'id="saveReconcileSourcesBtn"',
+        'id="reconcileSourcesStatus"',
     ]:
         assert removed_id not in html
 
-    assert "function loadReconcileDataSourceSettings" in app_js
-    assert "function renderReconcileDataSourceSettings" in app_js
+    assert "function loadReconcileDataSourceSettings" not in app_js
+    assert "function renderReconcileDataSourceSettings" not in app_js
+    assert '"/api/settings/reconcile-data-sources", {' not in app_js
     assert "function syncDataSourceSchemaVisibility(prefix)" in app_js
     assert "function defaultPortForDataSourceType(type)" in app_js
     assert 'return String(type || "").toLowerCase() === "mysql" ? 3306 : 5432;' in app_js

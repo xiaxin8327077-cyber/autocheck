@@ -28,6 +28,7 @@ from auto_check.app.config import (
     flow_tool_settings_to_dict,
     PbcImportToolSettings,
     ReconcileDataSourceSettings,
+    default_config,
     default_settings_from_dict,
     default_settings_to_dict,
     NamedConfig,
@@ -37,6 +38,7 @@ from auto_check.app.config import (
     legacy_source_id,
     load_config,
     load_store,
+    reconcile_schema_path_for_config,
     resolve_data_source,
     resolve_data_source_entry,
     save_config,
@@ -73,7 +75,15 @@ from auto_check.app.pbc_import import (
     parse_table_ref,
     projected_columns,
 )
-from auto_check.app.repositories import AutoCheckRepository
+from auto_check.app.repositories import AutoCheckRepository, DEFAULT_RECONCILE_TABLES
+from auto_check.app.reconcile_schema import (
+    ReconcileSchemaSettings,
+    ReconcileTableSchema,
+    load_reconcile_schema_settings_from_yaml,
+    reconcile_schema_settings_from_dict,
+    reconcile_schema_settings_to_dict,
+    safe_column_name,
+)
 from auto_check.db_validation.engine import DbValidationEngine
 from auto_check.db_validation.field_mapping_cache import FieldMappingCache
 from auto_check.db_validation.metadata import FieldMetadataLoader, TableFieldCatalog
@@ -240,6 +250,7 @@ class ApiRouter:
                     "default_settings": default_settings_to_dict(store.default_settings),
                     "pbc_import_tool": asdict(store.pbc_import_tool),
                     "db_validation": db_validation_settings_to_dict(store.db_validation),
+                    "reconcile_schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
                 }
 
             if method == "POST" and path == "/api/configs":
@@ -327,6 +338,44 @@ class ApiRouter:
                 store.reconcile_data_sources = settings
                 save_store(store, self.config_path)
                 return 200, {"settings": asdict(settings)}
+
+            if method == "GET" and path == "/api/settings/reconcile-schema":
+                store = load_store(self.config_path)
+                return 200, {
+                    "schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
+                    "schema_file_path": str(reconcile_schema_path_for_config(self.config_path)),
+                    "data_sources": [_public_data_source_entry(entry) for entry in store.data_sources],
+                }
+
+            if method == "POST" and path == "/api/settings/reconcile-schema":
+                store = load_store(self.config_path)
+                schema_payload = (body or {}).get("schema") if isinstance((body or {}).get("schema"), dict) else (body or {})
+                schema = reconcile_schema_settings_from_dict(schema_payload)
+                self._validate_reconcile_schema_settings(store, schema)
+                store.reconcile_schema = ReconcileSchemaSettings(
+                    version=schema.version,
+                    tables=schema.tables,
+                    strict=True,
+                )
+                save_store(store, self.config_path)
+                return 200, {"schema": reconcile_schema_settings_to_dict(store.reconcile_schema)}
+
+            if method == "POST" and path == "/api/settings/reconcile-schema/init-from-file":
+                schema_path = reconcile_schema_path_for_config(self.config_path)
+                if not schema_path.exists():
+                    return 404, {"error": f"reconcile schema file not found: {schema_path}"}
+                store = load_store(self.config_path)
+                schema = load_reconcile_schema_settings_from_yaml(schema_path)
+                self._validate_reconcile_schema_settings(store, schema)
+                store.reconcile_schema = schema
+                save_store(store, self.config_path)
+                return 200, {
+                    "schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
+                    "schema_file_path": str(schema_path),
+                }
+
+            if method == "POST" and path == "/api/settings/reconcile-schema/columns":
+                return 200, self._load_reconcile_schema_columns(body or {})
 
             # ---- Tools: PBC full product import ----
             if method == "GET" and path == "/api/tools/pbc-import/settings":
@@ -646,6 +695,79 @@ class ApiRouter:
             job.complete(rows_imported)
         except Exception as exc:
             job.fail(_runtime_error_message(str(exc)))
+
+    def _load_reconcile_schema_columns(self, body: dict[str, Any]) -> dict[str, Any]:
+        store = load_store(self.config_path)
+        source_id = str(body.get("source_id", "") or "").strip()
+        if not source_id:
+            raise ValueError("source_id is required")
+        table_name = str(body.get("table", "") or "").strip()
+        if not table_name:
+            raise ValueError("table is required")
+        try:
+            data_source = resolve_data_source(store, source_id)
+        except ValueError as exc:
+            raise ValueError("数据源不存在") from exc
+        table = parse_table_ref(table_name)
+        columns = self.pbc_table_column_loader(data_source, table)
+        return {"columns": [asdict(column) for column in columns]}
+
+    def _resolve_reconcile_schema_source(self, store: ConfigStore, source_ref: Any) -> DataSourceEntry:
+        source_id = str(getattr(source_ref, "id", "") or "").strip()
+        source_name = str(getattr(source_ref, "name", "") or "").strip()
+        match_by = str(getattr(source_ref, "match_by", "id_then_name") or "id_then_name").strip()
+        candidates = [source_id]
+        if match_by != "id_only":
+            candidates.append(source_name)
+        for candidate in [item for item in candidates if item]:
+            for entry in store.data_sources:
+                if entry.id == candidate or (match_by != "id_only" and entry.name == candidate):
+                    return entry
+        raise ValueError(f"数据源不存在：{source_id or source_name}")
+
+    def _validate_reconcile_schema_settings(self, store: ConfigStore, schema: ReconcileSchemaSettings) -> None:
+        errors: list[str] = []
+        for logical_key, table_schema in sorted((schema.tables or {}).items()):
+            display_name = table_schema.display_name or logical_key
+            table_name = str(table_schema.table or "").strip()
+            if not table_name:
+                errors.append(f"{display_name} 缺少物理表名")
+                continue
+            try:
+                source_entry = self._resolve_reconcile_schema_source(store, table_schema.source_ref)
+                table_ref = parse_table_ref(table_name)
+                columns = self.pbc_table_column_loader(source_entry.config, table_ref)
+            except ValueError as exc:
+                errors.append(f"{display_name} {table_name}：{str(exc)}")
+                continue
+            except Exception as exc:
+                errors.append(f"{display_name} {table_name}：{_runtime_error_message(exc)}")
+                continue
+
+            existing_columns = {str(column.name or "").strip().lower() for column in columns}
+            configured_fields = {
+                **(table_schema.fields or {}),
+                **(table_schema.optional_fields or {}),
+            }
+            required_field_keys = set(DEFAULT_RECONCILE_TABLES.get(logical_key, ReconcileTableSchema()).fields or {})
+            for field_key in sorted(required_field_keys):
+                if not str(configured_fields.get(field_key) or "").strip():
+                    errors.append(f"{display_name} 缺少字段配置：{field_key}")
+            for field_key, physical_name in sorted(configured_fields.items()):
+                field_name = str(physical_name or "").strip()
+                if not field_name:
+                    errors.append(f"{display_name} 缺少字段配置：{field_key}")
+                    continue
+                try:
+                    safe_column_name(field_name)
+                except ValueError as exc:
+                    errors.append(f"{display_name} 字段 {field_key}={field_name}：{str(exc)}")
+                    continue
+                if existing_columns and field_name.lower() not in existing_columns:
+                    errors.append(f"{display_name} {table_name} 缺少字段 {field_name}（{field_key}）")
+        if errors:
+            suffix = " 等" if len(errors) > 8 else ""
+            raise ValueError(f"表字段配置校验失败：{'；'.join(errors[:8])}{suffix}")
 
     def _load_pbc_import_columns(self, body: dict[str, Any]) -> dict[str, Any]:
         store = load_store(self.config_path)
@@ -1048,11 +1170,13 @@ class ApiRouter:
         max_combination_rows: int,
         progress_logger: Callable[[str, int | None, str | None], None] | None = None,
         cancel_event: threading.Event | None = None,
+        reconcile_schema: Any | None = None,
+        source_configs: dict[str, DataSourceConfig] | None = None,
     ) -> Any:
         if self.runner_factory is not None:
             return self.runner_factory(config)
         return ReconcileEngine(
-            AutoCheckRepository(config),
+            AutoCheckRepository(config, schema=reconcile_schema, source_configs=source_configs),
             max_combination_rows=max_combination_rows,
             progress_logger=progress_logger,
             cancel_event=cancel_event,
@@ -1067,12 +1191,15 @@ class ApiRouter:
         cancel_event: threading.Event | None = None,
         current_user: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        config, config_name, dws_source_name = _active_config_and_name(self.config_path)
+        store = load_store(self.config_path)
+        config, config_name, dws_source_name = _active_config_and_name_from_store(store, config_path=self.config_path)
         runner = self._create_runner(
             config,
             max_combination_rows=max_combination_rows,
             progress_logger=progress_logger,
             cancel_event=cancel_event,
+            reconcile_schema=store.reconcile_schema,
+            source_configs=_data_source_config_lookup(store),
         )
         try:
             results = to_jsonable(runner.run(date))
@@ -1160,7 +1287,9 @@ class ApiRouter:
         except RunCancelled as exc:
             job.mark_cancelled(str(exc))
         except Exception as exc:
-            job.fail(_runtime_error_message(str(exc)))
+            import traceback
+            traceback.print_exc()
+            job.fail(_runtime_error_message(exc))
 
 
 class RunJob:
@@ -2118,7 +2247,10 @@ def _calculate_duration_seconds(start_str: str, end_str: str) -> int:
 
 
 def _active_config_and_name(config_path: str | Path) -> tuple[AppConfig, str, str]:
-    store = load_store(config_path)
+    return _active_config_and_name_from_store(load_store(config_path), config_path=config_path)
+
+
+def _active_config_and_name_from_store(store: Any, *, config_path: str | Path | None = None) -> tuple[AppConfig, str, str]:
     if store.data_sources:
         try:
             business_entry = resolve_data_source_entry(store, store.reconcile_data_sources.business_source_id)
@@ -2139,7 +2271,20 @@ def _active_config_and_name(config_path: str | Path) -> tuple[AppConfig, str, st
     if store.configs:
         named_config = store.configs[0]
         return AppConfig(dws=named_config.dws, business=named_config.business), named_config.name, f"{named_config.name} - DWS"
-    return load_config(config_path), "默认配置", "默认配置 - DWS"
+    fallback_config = load_config(config_path) if config_path is not None else default_config()
+    return fallback_config, "默认配置", "默认配置 - DWS"
+
+
+def _data_source_config_lookup(store: Any) -> dict[str, DataSourceConfig]:
+    lookup: dict[str, DataSourceConfig] = {}
+    for entry in getattr(store, "data_sources", []) or []:
+        source_id = str(getattr(entry, "id", "") or "").strip()
+        source_name = str(getattr(entry, "name", "") or "").strip()
+        if source_id:
+            lookup[source_id] = entry.config
+        if source_name:
+            lookup.setdefault(source_name, entry.config)
+    return lookup
 
 
 def _pbc_import_data_sources(store: Any) -> list[dict[str, Any]]:
@@ -2263,13 +2408,13 @@ def _no_source_report_payload(run_date: str) -> dict[str, Any]:
     }
 
 
-def _runtime_error_message(message: str) -> str:
+def _runtime_error_message(message: Any) -> str:
     text = str(message or "").strip()
-    if "\ufffd" in text or _looks_like_mojibake(text):
-        return "执行失败：数据库返回错误信息编码异常，请检查数据源连接和数据库字符集"
     detailed = _database_error_message(text)
     if detailed:
         return detailed
+    if "\ufffd" in text or _looks_like_mojibake(text):
+        return "执行失败：数据库返回错误信息编码异常，请检查数据源连接和数据库字符集"
     return sanitize_error_message(text)
 
 
@@ -2306,6 +2451,13 @@ def _database_error_message(message: str) -> str:
     if pg_missing_relation:
         return _with_raw_database_error(
             f"数据表不存在：{pg_missing_relation.group(1)}。请确认 PostgreSQL schema 配置正确，并检查该 schema 下是否存在这张表。",
+            text,
+        )
+
+    pg_missing_from = _postgres_table_from_sql_context(text)
+    if pg_missing_from and re.search(r"does not exist|不存在|����|UndefinedTable", text, re.I):
+        return _with_raw_database_error(
+            f"数据表不存在：{pg_missing_from}。请检查表字段配置中的数据源、schema 或物理表名。",
             text,
         )
 
@@ -2379,8 +2531,34 @@ def _database_error_message(message: str) -> str:
 
 
 def _with_raw_database_error(prefix: str, raw: str) -> str:
-    sanitized = sanitize_error_message(raw)
+    sanitized = _database_error_excerpt(raw)
     return f"{prefix}原始错误：{sanitized[:180]}"
+
+
+def _postgres_table_from_sql_context(message: str) -> str:
+    text = str(message or "")
+    relation = re.search(r'relation "([^"]+)"', text, re.I)
+    if relation:
+        return relation.group(1)
+    from_match = re.search(r'\bFROM\s+((?:"[^"]+"\.){0,2}"[^"]+")', text, re.I)
+    if not from_match:
+        return ""
+    parts = re.findall(r'"([^"]+)"', from_match.group(1))
+    return ".".join(parts)
+
+
+def _database_error_excerpt(raw: str) -> str:
+    lines: list[str] = []
+    for line in str(raw or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^(LINE\s+\d+:|SELECT\b|FROM\b|WHERE\b|INSERT\b|UPDATE\b|DELETE\b|DROP\b|ALTER\b|CREATE\b|\^)", stripped, re.I):
+            continue
+        lines.append(stripped)
+    text = " ".join(lines) or str(raw or "").strip()
+    text = re.sub(r"(?i)(password|passwd|pwd)\s*=\s*[^;\s]+", r"\1=***", text)
+    return text[:300] or "数据库错误"
 
 
 def _looks_like_mojibake(text: str) -> bool:

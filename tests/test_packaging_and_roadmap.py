@@ -18,7 +18,8 @@ def test_business_schema_config_roadmap_is_saved_for_future_iterations():
     text = _read(ROADMAP)
 
     for expected in [
-        "本版本暂不调整",
+        "当前版本已完成后端查询层配置化",
+        "reconcile-schema.yaml",
         "配置文件驱动",
         "元数据校验",
         "不要完全依赖动态识别业务含义",

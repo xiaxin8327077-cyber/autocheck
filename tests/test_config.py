@@ -21,6 +21,11 @@ from auto_check.app.config import (
     save_config,
     save_store,
 )
+from auto_check.app.reconcile_schema import (
+    ReconcileSourceRef,
+    ReconcileTableSchema,
+    ReconcileSchemaSettings,
+)
 from auto_check.app.local_store import db_path_for_config, read_app_value
 
 
@@ -101,6 +106,112 @@ def test_store_persists_pbc_import_tool_settings(tmp_path):
     loaded = load_store(path)
 
     assert loaded.pbc_import_tool == store.pbc_import_tool
+
+
+def test_store_persists_reconcile_schema_settings(tmp_path):
+    path = tmp_path / "config.json"
+    store = ConfigStore(
+        reconcile_schema=ReconcileSchemaSettings(
+            version=1,
+            strict=True,
+            tables={
+                "fa_valuation": ReconcileTableSchema(
+                    source_ref=ReconcileSourceRef(id="source-dws", name="生产DWS", match_by="id_then_name"),
+                    table="dw.fa_valuation_custom",
+                    display_name="FA估值自定义表",
+                    fields={
+                        "project_code": "proj_code",
+                        "valuation_date": "val_date",
+                        "account_code": "acct_code",
+                        "account_name": "acct_name",
+                        "market_value": "market_amt",
+                    },
+                )
+            },
+        )
+    )
+
+    save_store(store, path)
+    loaded = load_store(path)
+
+    assert loaded.reconcile_schema.tables["fa_valuation"].source_ref.id == "source-dws"
+    assert loaded.reconcile_schema.tables["fa_valuation"].table == "dw.fa_valuation_custom"
+    assert loaded.reconcile_schema.tables["fa_valuation"].fields["market_value"] == "market_amt"
+    assert loaded.reconcile_schema.strict is True
+
+
+def test_load_store_ignores_reconcile_schema_yaml_until_page_initializes_it(tmp_path):
+    path = tmp_path / "config.json"
+    save_store(ConfigStore(), path)
+    path.with_name("reconcile-schema.yaml").write_text(
+        """
+reconcile_schema:
+  version: 1
+  tables:
+    fa_valuation:
+      # Inline comments are allowed in the production yaml.
+      source_ref:
+        id: "source-dws"
+        name: "DWS"
+        match_by: id_then_name
+      table: custom.fa_valuation_custom
+      display_name: FA valuation override
+      fields:
+        project_code: proj_code        # project
+        valuation_date: val_date
+        account_code: acct_code
+        account_name: acct_name
+        market_value: market_amt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_store(path)
+
+    assert loaded.reconcile_schema.tables == {}
+
+
+def test_load_store_keeps_system_reconcile_schema_when_yaml_template_exists(tmp_path):
+    path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            reconcile_schema=ReconcileSchemaSettings(
+                version=1,
+                strict=True,
+                tables={
+                    "fa_valuation": ReconcileTableSchema(
+                        source_ref=ReconcileSourceRef(id="system-dws", name="system"),
+                        table="system.fa_valuation",
+                        fields={"market_value": "system_amt"},
+                    )
+                },
+            )
+        ),
+        path,
+    )
+    path.with_name("reconcile-schema.yaml").write_text(
+        """
+reconcile_schema:
+  version: 1
+  tables:
+    fa_valuation:
+      source_ref:
+        id: "yaml-dws"
+        name: "yaml"
+      table: yaml.fa_valuation
+      fields:
+        market_value: yaml_amt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_store(path)
+
+    table = loaded.reconcile_schema.tables["fa_valuation"]
+    assert table.source_ref.id == "system-dws"
+    assert table.table == "system.fa_valuation"
+    assert table.fields["market_value"] == "system_amt"
+    assert loaded.reconcile_schema.strict is True
 
 
 def test_store_persists_flow_tool_settings(tmp_path):

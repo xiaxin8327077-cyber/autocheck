@@ -4311,6 +4311,10 @@ input:focus, select:focus {
   max-height: 80vh;
 }
 
+.modal-info.modal-info--reconcile-schema-error {
+  width: min(860px, calc(100vw - 32px));
+}
+
 .modal-info .modal-body {
   padding: 20px;
   overflow-y: auto;
@@ -4343,6 +4347,109 @@ input:focus, select:focus {
   font-size: 14px;
   color: var(--on-surface);
   line-height: 1.8;
+}
+
+.reconcile-schema-save-error {
+  display: grid;
+  gap: 12px;
+}
+
+.reconcile-schema-save-error-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+}
+
+.reconcile-schema-save-error-table {
+  width: 100%;
+  min-width: 840px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.reconcile-schema-save-error-table th,
+.reconcile-schema-save-error-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--outline-variant);
+  color: var(--on-surface);
+  font-size: 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.reconcile-schema-save-error-table th {
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-weight: 700;
+}
+
+.reconcile-schema-save-error-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.reconcile-schema-save-error-table .num {
+  width: 42px;
+  text-align: center;
+}
+
+.reconcile-schema-save-error-table th:nth-child(2),
+.reconcile-schema-save-error-table td:nth-child(2) {
+  width: 110px;
+}
+
+.reconcile-schema-save-error-table th:nth-child(3),
+.reconcile-schema-save-error-table td:nth-child(3) {
+  width: 130px;
+}
+
+.reconcile-schema-save-error-table th:nth-child(4),
+.reconcile-schema-save-error-table td:nth-child(4) {
+  width: 150px;
+}
+
+.reconcile-schema-save-error-table th:nth-child(5),
+.reconcile-schema-save-error-table td:nth-child(5) {
+  width: 110px;
+}
+
+.reconcile-schema-save-error-table td:not(.num) {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.reconcile-schema-save-error-table code {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  color: var(--on-surface);
+}
+
+.reconcile-schema-save-error details {
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--surface-container-low);
+}
+
+.reconcile-schema-save-error summary {
+  cursor: pointer;
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.reconcile-schema-save-error pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--on-surface);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .modal-info .modal-body .changelog-item {
@@ -7624,6 +7731,25 @@ input:focus, select:focus {
   color: var(--on-surface-variant);
 }
 
+#page-settings .card-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+#page-settings .card-header-actions .modal-status {
+  flex: 0 1 auto;
+  min-height: 30px;
+  max-width: 360px;
+  line-height: 1.45;
+  text-align: right;
+  white-space: normal;
+}
+
 #page-settings .card-body {
   padding: 20px 22px;
 }
@@ -7777,6 +7903,187 @@ input:focus, select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
   gap: 16px;
+}
+
+#page-settings .reconcile-schema-form {
+  display: grid;
+  gap: 10px;
+}
+
+#page-settings .reconcile-schema-table {
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-container-low) 82%, transparent);
+  padding: 12px;
+}
+
+#page-settings .reconcile-schema-table.is-incomplete {
+  border-color: color-mix(in srgb, var(--warning, #f59e0b) 48%, var(--outline-variant));
+}
+
+#page-settings .reconcile-schema-table-head,
+#page-settings .reconcile-schema-field-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#page-settings .reconcile-schema-table-title {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+#page-settings .reconcile-schema-table-title strong {
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+#page-settings .reconcile-schema-table-title span,
+#page-settings .reconcile-schema-table-state,
+#page-settings .reconcile-schema-field-status,
+#page-settings .reconcile-schema-field-name small {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#page-settings .reconcile-schema-table-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(190px, 0.95fr) minmax(260px, 1.25fr) minmax(150px, auto);
+  align-items: end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+#page-settings .reconcile-schema-fields {
+  margin-top: 12px;
+  border-top: 1px solid var(--outline-variant);
+  padding-top: 12px;
+}
+
+#page-settings .reconcile-schema-field-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  gap: 10px 12px;
+  margin-top: 10px;
+}
+
+#page-settings .reconcile-schema-field-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 150px) minmax(220px, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+#page-settings .reconcile-schema-field-name {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+#page-settings .reconcile-schema-field-name strong {
+  color: var(--on-surface);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#page-settings .reconcile-schema-field-combobox {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+#page-settings .reconcile-schema-field-search {
+  width: 100%;
+  min-width: 0;
+}
+
+#page-settings .reconcile-schema-field-search.is-invalid {
+  border-color: color-mix(in srgb, var(--error, #ef4444) 62%, var(--outline));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--error, #ef4444) 16%, transparent);
+}
+
+#page-settings .reconcile-schema-required-error {
+  border-color: color-mix(in srgb, var(--error, #ef4444) 72%, var(--outline)) !important;
+  background: color-mix(in srgb, var(--error, #ef4444) 6%, var(--surface-container-low));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--error, #ef4444) 18%, transparent);
+}
+
+#page-settings .reconcile-schema-error-message {
+  display: block;
+  margin-top: 4px;
+  color: var(--error, #ef4444);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+#page-settings .reconcile-schema-field-options {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  background: var(--surface-container-low);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.18);
+  padding: 4px;
+}
+
+#page-settings .reconcile-schema-field-option {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(120px, 1.1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 8px;
+  text-align: left;
+}
+
+#page-settings .reconcile-schema-field-option:hover,
+#page-settings .reconcile-schema-field-option:focus-visible {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  outline: none;
+}
+
+#page-settings .reconcile-schema-field-option.is-empty {
+  color: var(--on-surface-variant);
+  cursor: default;
+  display: block;
+}
+
+#page-settings .reconcile-schema-field-option-name,
+#page-settings .reconcile-schema-field-option-comment {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#page-settings .reconcile-schema-field-option-name {
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#page-settings .reconcile-schema-field-option-comment {
+  color: var(--on-surface-variant);
+  font-size: 12px;
 }
 
 #page-settings .reconcile-settings-actions {
@@ -8893,6 +9200,15 @@ input:focus, select:focus {
     height: auto;
     min-height: 220px;
   }
+
+  #page-settings .reconcile-schema-table-grid,
+  #page-settings .reconcile-schema-field-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #page-settings .reconcile-schema-field-row {
+    grid-template-columns: minmax(110px, 150px) minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 760px) {
@@ -8939,6 +9255,20 @@ input:focus, select:focus {
   #page-settings .card-body {
     padding-left: 16px;
     padding-right: 16px;
+  }
+
+  #page-settings .card-header {
+    flex-wrap: wrap;
+  }
+
+  #page-settings .card-header-actions {
+    justify-content: flex-start;
+    width: calc(100% - 54px);
+    margin-left: 54px;
+  }
+
+  #page-settings .card-header-actions .modal-status {
+    text-align: left;
   }
 
   #page-settings .config-item {

@@ -14,6 +14,11 @@ from auto_check.app.local_store import (
     save_combined_payload,
     save_json_file_payload,
 )
+from auto_check.app.reconcile_schema import (
+    ReconcileSchemaSettings,
+    reconcile_schema_settings_from_dict,
+    reconcile_schema_settings_to_dict,
+)
 from auto_check.app.security import decrypt_secret, encrypt_secret
 
 
@@ -135,6 +140,7 @@ class ConfigStore:
     pbc_import_tool: PbcImportToolSettings = field(default_factory=PbcImportToolSettings)
     db_validation: DbValidationSettings = field(default_factory=DbValidationSettings)
     flow_tool: FlowToolSettings = field(default_factory=FlowToolSettings)
+    reconcile_schema: ReconcileSchemaSettings = field(default_factory=ReconcileSchemaSettings)
 
 
 def _default_dws() -> DataSourceConfig:
@@ -154,6 +160,10 @@ def default_config_path() -> Path:
     if appdata:
         return Path(appdata) / "auto-check" / "config.json"
     return Path.cwd() / "config" / "app-config.json"
+
+
+def reconcile_schema_path_for_config(config_path: str | Path) -> Path:
+    return Path(config_path).with_name("reconcile-schema.yaml")
 
 
 def legacy_source_id(config_name: str, source: str) -> str:
@@ -198,6 +208,7 @@ def normalize_store(store: ConfigStore) -> ConfigStore:
         pbc_import_tool=store.pbc_import_tool,
         db_validation=db_validation,
         flow_tool=store.flow_tool,
+        reconcile_schema=store.reconcile_schema,
     )
 
 
@@ -341,6 +352,7 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
             pbc_import_tool=pbc_import_tool_settings_from_dict(payload.get("pbc_import_tool", {})),
             db_validation=db_validation_settings_from_dict(payload.get("db_validation", {})),
             flow_tool=flow_tool_settings_from_dict(payload.get("flow_tool", {})),
+            reconcile_schema=reconcile_schema_settings_from_dict(payload.get("reconcile_schema", {})),
         )
         store = normalize_store(store)
         if not loaded_from_sqlite:
@@ -362,6 +374,7 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
         pbc_import_tool=pbc_import_tool_settings_from_dict(payload.get("pbc_import_tool", {})),
         db_validation=db_validation_settings_from_dict(payload.get("db_validation", {})),
         flow_tool=flow_tool_settings_from_dict(payload.get("flow_tool", {})),
+        reconcile_schema=reconcile_schema_settings_from_dict(payload.get("reconcile_schema", {})),
     )
     store = normalize_store(store)
     save_store(store, config_path)
@@ -380,6 +393,7 @@ def save_store(store: ConfigStore, path: str | Path | None = None) -> None:
         "pbc_import_tool": pbc_import_tool_settings_to_dict(store.pbc_import_tool),
         "db_validation": db_validation_settings_to_dict(store.db_validation),
         "flow_tool": flow_tool_settings_to_dict(store.flow_tool),
+        "reconcile_schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
     }
     if existing_auth:
         payload[AUTH_KEY] = existing_auth

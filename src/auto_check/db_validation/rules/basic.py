@@ -3119,6 +3119,15 @@ _ZG07_CROSS_PERIOD_FIELDS: tuple[tuple[str, str], ...] = (
     ("szhxcybs202502271529431", "数字经济核心产业标识"),
 )
 
+_ZG08_COUNTERPARTY_ISSUER_CODE_FIELDS = (
+    "riverissuercode",
+    "\u4ea4\u6613\u5bf9\u624b\u673a\u6784\u7f16\u7801",
+)
+_ZG08_COUNTERPARTY_PRODUCT_CODE_FIELDS = (
+    "riverprojcode",
+    "\u4ea4\u6613\u5bf9\u624b\u4ea7\u54c1\u4ee3\u7801",
+)
+
 
 def _legacy_detail(row: dict[str, Any], label: str, fields: tuple[str, ...]) -> str:
     return f"{label}:{'_'.join(_legacy_df_text(row.get(field)) for field in fields)}"
@@ -3405,7 +3414,11 @@ def _zg08(
             )
             if _unique_result(seen, result):
                 yield result
-        if riverissuercode and riverprojcode and not riverprojcode.startswith(riverissuercode[:6]):
+        if (
+            _row_has_any(row, *_ZG08_COUNTERPARTY_ISSUER_CODE_FIELDS)
+            and _row_has_any(row, *_ZG08_COUNTERPARTY_PRODUCT_CODE_FIELDS)
+            and (not riverissuercode or not riverprojcode or not riverprojcode.startswith(riverissuercode[:6]))
+        ):
             result = make_row(
                 report_date=report_date,
                 zg_code="ZG08",

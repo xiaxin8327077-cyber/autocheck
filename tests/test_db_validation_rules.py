@@ -871,6 +871,24 @@ def test_zg08_legacy_public_and_counterparty_rules_are_triggerable_from_database
     }.issubset({_result_rule_id(row) for row in rows})
 
 
+def test_zg08_rule13_reports_blank_counterparty_fields_like_legacy_program():
+    rows = run_basic_rules(
+        "ZG08",
+        date(2026, 5, 31),
+        [
+            _zg08_row("P_BLANK", "A7200", "", issuer=""),
+            _zg08_row("P_NO_ISSUER", "A7200", "ABCDEF0001", issuer=""),
+        ],
+        [],
+    )
+
+    rule13_rows = [row for row in rows if _result_rule_id(row) == "Zg08_Rule13"]
+
+    assert len(rule13_rows) == 2
+    assert any(row.value1.endswith(":") and row.value2.endswith(":") for row in rule13_rows)
+    assert any(row.value1.endswith(":") and row.value2.endswith(":ABCDEF0001") for row in rule13_rows)
+
+
 def test_zg08_public_info_rule_reports_invested_product_already_ended():
     rows = run_basic_rules(
         "ZG08",
