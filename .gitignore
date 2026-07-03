@@ -10,6 +10,7 @@ build/
 config/
 *.log
 .superpowers/
+.worktrees/
 .trae/
 .workbuddy/
 *.egg-info/
