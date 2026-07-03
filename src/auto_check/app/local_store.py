@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from auto_check.app.storage_schema import ensure_storage_schema
+
 
 CONFIG_STORE_KEY = "config_store"
 AUTH_KEY = "auth"
@@ -17,8 +19,6 @@ def db_path_for_config(config_path: str | Path) -> Path:
 
 def read_app_value(config_path: str | Path, key: str) -> Any | None:
     db_path = db_path_for_config(config_path)
-    if not db_path.exists():
-        return None
     with _connect(db_path) as connection:
         row = connection.execute("SELECT value FROM app_kv WHERE key = ?", (str(key),)).fetchone()
     if row is None:
@@ -175,28 +175,4 @@ def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 
 def _ensure_schema(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS app_kv (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS history_runs (
-            kind TEXT NOT NULL,
-            id TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            run_date TEXT NOT NULL DEFAULT '',
-            run_at TEXT NOT NULL DEFAULT '',
-            config_fingerprint TEXT NOT NULL DEFAULT '',
-            PRIMARY KEY (kind, id)
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_history_runs_sort ON history_runs(kind, run_date DESC, run_at DESC)"
-    )
+    ensure_storage_schema(connection)

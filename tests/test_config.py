@@ -29,6 +29,34 @@ from auto_check.app.reconcile_schema import (
 from auto_check.app.local_store import db_path_for_config, read_app_value
 
 
+def test_local_store_creates_v2_storage_schema(tmp_path):
+    import sqlite3
+
+    from auto_check.app.storage_schema import CURRENT_SCHEMA_VERSION, get_schema_version
+
+    path = tmp_path / "config.json"
+    read_app_value(path, "missing")
+
+    db_path = db_path_for_config(path)
+    assert db_path.exists()
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    assert "schema_migrations" in tables
+    assert "storage_migration_runs" in tables
+    assert "data_sources" in tables
+    assert "users" in tables
+    assert "run_headers" in tables
+    assert "reconcile_results" in tables
+    assert get_schema_version(db_path) == CURRENT_SCHEMA_VERSION
+
+
 def test_default_config_has_two_sources():
     config = default_config()
 
@@ -410,6 +438,67 @@ def test_store_persists_single_data_sources(tmp_path):
     assert resolve_data_source(loaded, "source-detail").database == "detaildb"
 
 
+def test_store_persists_data_sources_to_normalized_tables(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "config.json"
+    dws = DataSourceEntry(
+        id="source-dws",
+        name="DWS",
+        config=DataSourceConfig(
+            db_type="postgresql",
+            host="127.0.0.1",
+            port=5432,
+            database="dw",
+            schema="dws",
+            username="u",
+            password="Pass123",
+        ),
+        is_default=True,
+    )
+    report = DataSourceEntry(
+        id="source-report",
+        name="Report",
+        config=DataSourceConfig(
+            db_type="mysql",
+            host="10.0.0.2",
+            port=3306,
+            database="report",
+            schema="",
+            username="r",
+            password="Report123",
+        ),
+    )
+
+    save_store(
+        ConfigStore(
+            data_sources=[dws, report],
+            default_name="DWS",
+            reconcile_data_sources=ReconcileDataSourceSettings(
+                dws_source_id="source-dws",
+                business_source_id="source-report",
+            ),
+        ),
+        path,
+    )
+
+    with sqlite3.connect(db_path_for_config(path)) as connection:
+        rows = connection.execute(
+            "SELECT id, name, db_type, host, port, database_name, schema_name, username, password_encrypted "
+            "FROM data_sources ORDER BY id"
+        ).fetchall()
+
+    assert [row[0] for row in rows] == ["source-dws", "source-report"]
+    assert rows[0][8].startswith("aesgcm$")
+    assert read_app_value(path, "config_store") is not None
+
+    path.unlink()
+    loaded = load_store(path)
+    assert [entry.id for entry in loaded.data_sources] == ["source-dws", "source-report"]
+    assert loaded.data_sources[0].config.password == "Pass123"
+    assert loaded.reconcile_data_sources.dws_source_id == "source-dws"
+
+
 def test_store_encrypts_saved_passwords_on_disk(tmp_path, monkeypatch):
     path = tmp_path / "config.json"
     monkeypatch.setenv("AUTO_CHECK_SECRET_KEY", "unit-test-secret")
@@ -525,6 +614,52 @@ def test_load_store_migrates_existing_json_config_to_sqlite(tmp_path):
     loaded_from_db = load_store(path)
     assert loaded_from_db.reconcile_data_sources.dws_source_id == "source-dws"
     assert loaded_from_db.default_settings.page_size == 25
+
+
+def test_store_migrates_from_config_json_when_sqlite_is_empty(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "data_sources": [
+                    {
+                        "id": "source-json",
+                        "name": "JSON source",
+                        "db_type": "postgresql",
+                        "host": "127.0.0.1",
+                        "port": 5432,
+                        "database": "json_db",
+                        "schema": "dws",
+                        "username": "postgres",
+                        "password": "Json123",
+                        "is_default": True,
+                    }
+                ],
+                "reconcile_data_sources": {
+                    "dws_source_id": "source-json",
+                    "business_source_id": "source-json",
+                },
+                "default_settings": {"page_size": 20},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    store = load_store(path)
+
+    assert store.data_sources[0].id == "source-json"
+    assert store.data_sources[0].config.password == "Json123"
+    with sqlite3.connect(db_path_for_config(path)) as connection:
+        source_count = connection.execute("SELECT COUNT(*) FROM data_sources").fetchone()[0]
+        migration = connection.execute(
+            "SELECT status, migrated_count FROM storage_migration_runs WHERE source_type = 'config_json'"
+        ).fetchone()
+
+    assert source_count == 1
+    assert migration == ("completed", 1)
 
 
 def test_load_store_does_not_treat_auth_only_json_as_legacy_data_source_config(tmp_path):

@@ -1288,6 +1288,14 @@ remaining != 0
   - `TA汇总核对`：展示 DM TA 份额余额加待结转收益、DWS TA 份额余额加待结转收益、DM-DWS差异。
   - `DM TA客户类型为空`：展示客户类型为空金额合计；表头为合同编号、客户名称、客户类型、客户类型明细、SPV类型、待结转收益、份额余额、合计。
 
+### 12.6 历史持久化
+
+- 自动对数执行完成后，历史记录写入本地 `auto-check.db`。
+- 运行摘要写入 `run_headers` 和 `reconcile_runs`，状态统计、差异类型统计、结果行、详情和新增/减少差异分别写入结构化历史表。
+- 完整历史 payload 同时保留在 `run_headers.payload_json`，旧 `history_runs(kind='reconcile')` 也继续写入兼容快照。
+- 列表页、统计和后续筛选优先读取结构化热字段；详情页、恢复结果页和导出仍可从兼容 payload 还原完整结果。
+- 旧 `history_runs(kind='reconcile')` 和旧 `history.json` 会在首次读取历史时自动迁移，迁移过程不删除旧数据。
+
 ## 13. 回归测试数据参考
 
 `sql/append_20260601_formatted_reason_scenarios.postgres.sql` 中保留了 2026-06-01 的代表性测试数据，用于覆盖新格式和组合链路。

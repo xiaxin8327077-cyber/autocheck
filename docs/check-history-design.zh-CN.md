@@ -1,33 +1,44 @@
 # 核对历史记录设计说明
 
-本文档说明“核对历史”功能的当前实现和后续迁移数据库时的扩展方式。
+本文档说明“核对历史”功能的当前实现、结构化本地存储和旧历史数据迁移方式。
 
 ## 一、设计目标
 
 - 每次自动对数成功后，自动保存一条历史记录。
 - 历史记录必须能展示本次结果相对上一次的变化。
-- 当前先保存到本地 JSON 文件，后续可以平滑迁移到数据库。
+- 当前保存到本地 SQLite `auto-check.db`，并保留旧 JSON/旧表兼容快照。
 - 历史记录属于工具自身数据，不写入业务数据库。
 
 ## 二、当前存储方式
 
-当前实现使用 `JsonHistoryStore`，默认文件位置与配置文件同目录：
+当前默认实现使用 `SqliteHistoryStore`，数据保存在配置文件同目录的 SQLite 数据库：
 
 ```text
-history.json
+auto-check.db
 ```
 
-如果程序使用默认配置路径，则历史文件位于：
+如果程序使用默认配置路径，则数据库文件位于：
 
 ```text
-%APPDATA%\auto-check\history.json
+%APPDATA%\auto-check\auto-check.db
 ```
 
-如果启动时传入 `--config D:\xxx\config.json`，则历史文件位于：
+如果启动时传入 `--config D:\xxx\config.json`，则数据库文件位于：
 
 ```text
-D:\xxx\history.json
+D:\xxx\auto-check.db
 ```
+
+自动对数历史使用结构化表保存常用查询字段：
+
+- `run_headers`：运行头、执行人、核对日期、执行时间和完整 payload 快照。
+- `reconcile_runs`：自动对数运行摘要、基准记录和增量数量。
+- `reconcile_run_counts`：按匹配状态和差异类型统计。
+- `reconcile_results`：项目编号、差异类型、匹配状态、差异金额等结果热字段。
+- `reconcile_result_details`：结构化详情类型和具体原因。
+- `reconcile_delta_results`：新增差异和减少差异快照。
+
+旧 `history_runs(kind='reconcile')` 和同目录 `history.json` 会在首次读取历史时自动迁移到结构化表；迁移过程幂等，不删除旧数据。
 
 ## 三、存储抽象
 
@@ -38,7 +49,7 @@ D:\xxx\history.json
 - `save_run(run)`：保存一次核对记录。
 - `delete_run(run_id)`：删除一条历史记录。
 
-业务代码只依赖 `HistoryStore`，不直接依赖 JSON 文件。后续切换数据库时，只需要新增 `DatabaseHistoryStore`，保持接口不变。
+业务代码只依赖 `HistoryStore`，不直接依赖具体表结构。`SqliteHistoryStore` 会同时维护结构化表和旧 `history_runs` 兼容快照，`JsonHistoryStore` 仅保留给测试和旧文件场景使用。
 
 ## 四、历史记录字段
 
@@ -77,8 +88,8 @@ D:\xxx\history.json
 对比基准：
 
 - 同一个核对日期 `run_date`。
-- 同一个数据源指纹 `config_fingerprint`。
-- 取最近的一条历史记录作为基准。
+- 取同一个核对日期 `run_date` 下最近的一条历史记录作为基准。
+- 当前不再按数据源指纹限制基准记录，避免数据源名称或配置调整后丢失同报告期对比能力。
 
 本次新增差异：
 
@@ -128,54 +139,14 @@ D:\xxx\history.json
 - 恢复：把这条历史的完整结果恢复到自动对数结果页。
 - 删除：删除这条本地历史记录。
 
-## 八、后续数据库落地方案
+## 八、迁移与回退
 
-未来如果需要把历史保存到数据库，建议拆成三张表。
+结构化历史迁移遵循“旧数据保留、首次读取自动导入、同一来源同一指纹只迁移一次”的原则。
 
-### check_history_run
+- `history_runs(kind='reconcile')` 优先迁移到结构化自动对数历史表。
+- 如果旧 SQLite 中没有自动对数历史，再读取同目录 `history.json`。
+- `history.json` 支持顶层数组和 `{"runs": [...]}` 两种格式。
+- 人行逐笔校验旧文件 `db-validation-history.json` 一期只导入到 `history_runs(kind='db_validation')` 兼容表，不拆明细表。
+- 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数和跳过条数。
 
-保存一次核对的汇总信息：
-
-- `id`
-- `run_at`
-- `run_date`
-- `config_name`
-- `config_fingerprint`
-- `rule_version`
-- `baseline_id`
-- `baseline_count`
-- `total_count`
-- `status_counts`
-- `reason_counts`
-- `added_count`
-- `removed_count`
-
-### check_history_result
-
-保存本次完整结果明细：
-
-- `run_id`
-- `project_code`
-- `project_name`
-- `asset_total`
-- `liability_equity_total`
-- `difference`
-- `direction`
-- `difference_reason`
-- `match_status`
-- `display_details`
-
-### check_history_delta
-
-保存本次相对上次的变化明细：
-
-- `run_id`
-- `delta_type`，取值为 `added` 或 `removed`。
-- `project_code`
-- `project_name`
-- `difference`
-- `difference_reason`
-- `match_status`
-- `payload`
-
-迁移时，页面和 `ApiRouter` 不需要关心底层变化，只需要把 `JsonHistoryStore` 替换成 `DatabaseHistoryStore`。
+详情页和导出仍可从 `run_headers.payload_json` 还原完整结果；列表、统计和后续筛选优先使用结构化热字段。回退时可以恢复迁移前备份的 `auto-check.db` 和旧 JSON 文件。

@@ -11,7 +11,7 @@ from Cryptodome.PublicKey import RSA
 
 from auto_check.app.config import ConfigStore, DataSourceConfig, DefaultSettings, NamedConfig, load_store, save_store
 from auto_check.app.local_store import db_path_for_config, read_app_value
-from auto_check.app.security import AuthManager, sanitize_error_message
+from auto_check.app.security import AuthManager, hash_password, sanitize_error_message
 from auto_check.app.server import ApiRouter, AutoCheckRequestHandler, ThreadingHTTPServer, web_root
 
 
@@ -120,6 +120,27 @@ def test_auth_manager_persists_users_to_sqlite_and_can_load_without_json_snapsho
     assert session.role == "user"
 
 
+def test_auth_manager_persists_users_to_normalized_table(tmp_path):
+    import sqlite3
+
+    config_path = tmp_path / "config.json"
+    manager = AuthManager(config_path)
+    manager.set_admin_password("Admin123")
+    manager.create_user(username="alice", password="Alice123", role="user")
+
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        rows = connection.execute(
+            "SELECT username, role, enabled FROM users ORDER BY username"
+        ).fetchall()
+
+    assert rows == [("admin", "admin", 1), ("alice", "user", 1)]
+    assert read_app_value(config_path, "auth")["users"][0]["username"] == "admin"
+
+    config_path.unlink()
+    reloaded = AuthManager(config_path)
+    assert {user["username"] for user in reloaded.list_users()} == {"admin", "alice"}
+
+
 def test_auth_session_uses_configured_idle_expire_hours_and_renews_on_activity(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     save_store(ConfigStore(default_settings=DefaultSettings(session_expire_hours=2)), config_path)
@@ -181,6 +202,47 @@ def test_auth_migrates_legacy_admin_hash_to_admin_user(tmp_path):
     assert migrated["users"][0]["username"] == "admin"
     assert migrated["users"][0]["display_name"] == "管理员"
     assert migrated["users"][0]["role"] == "admin"
+
+
+def test_auth_migrates_from_config_json_auth_when_users_table_is_empty(tmp_path):
+    import sqlite3
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "auth": {
+                    "users": [
+                        {
+                            "id": "u-admin",
+                            "username": "admin",
+                            "display_name": "admin",
+                            "role": "admin",
+                            "password_hash": hash_password("Admin123"),
+                            "enabled": True,
+                            "created_at": "2026-07-01 10:00:00",
+                            "updated_at": "2026-07-01 10:00:00",
+                            "last_login_at": "",
+                        }
+                    ]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    manager = AuthManager(config_path)
+
+    assert manager.list_users()[0]["username"] == "admin"
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        row = connection.execute("SELECT username, role FROM users").fetchone()
+        migration = connection.execute(
+            "SELECT status, migrated_count FROM storage_migration_runs WHERE source_type = 'auth_json'"
+        ).fetchone()
+
+    assert row == ("admin", "admin")
+    assert migration == ("completed", 1)
 
 
 def test_login_failure_response_does_not_enumerate_accounts(tmp_path):

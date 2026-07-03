@@ -9,7 +9,7 @@
 - 当前规则版本：`logic-2026-06-12-v1`
 - 运行方式：本地 Web 服务，默认固定端口 `8765`；Windows 可打包为单个 exe，Linux 可通过 Python 服务部署
 - 数据访问原则：报表库全程只执行查询；`sql/` 目录脚本仅用于本地测试库造数
-- 本地持久化：系统自身配置、用户和历史记录保存到配置目录下的 `auto-check.db`（SQLite）；首次启动会从同目录 `config.json` 迁移配置和用户，`config.json` 保留为兼容快照，迁移服务器时需要一并迁移 `auto-check.db`
+- 本地持久化：系统自身配置、用户和历史记录保存到配置目录下的 `auto-check.db`（SQLite）；数据源、用户、系统设置和自动对数历史热字段使用结构化表保存，并保留 `config.json`、旧 `app_kv/history_runs` 和旧历史 JSON 的兼容迁移路径，迁移服务器时需要一并迁移 `auto-check.db`
 
 ## 当前功能
 

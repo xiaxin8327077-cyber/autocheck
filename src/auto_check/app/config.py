@@ -9,6 +9,8 @@ from typing import Any
 from auto_check.app.local_store import (
     AUTH_KEY,
     CONFIG_STORE_KEY,
+    _connect,
+    db_path_for_config,
     load_json_file_payload,
     read_app_value,
     save_combined_payload,
@@ -20,6 +22,14 @@ from auto_check.app.reconcile_schema import (
     reconcile_schema_settings_to_dict,
 )
 from auto_check.app.security import decrypt_secret, encrypt_secret
+from auto_check.app.storage_config import (
+    has_normalized_config,
+    load_data_sources,
+    load_setting,
+    save_data_sources,
+    save_setting,
+)
+from auto_check.app.storage_schema import fingerprint_text, record_migration
 
 
 @dataclass(frozen=True)
@@ -310,8 +320,15 @@ def _legacy_db_validation_source_id(config_name: str, source: str) -> str:
 
 def load_store(path: str | Path | None = None) -> ConfigStore:
     config_path = Path(path) if path is not None else default_config_path()
+    normalized_store = _load_normalized_store(config_path)
+    if normalized_store is not None:
+        _save_store_snapshot(config_path, normalized_store)
+        return normalized_store
+
     sqlite_payload = read_app_value(config_path, CONFIG_STORE_KEY)
     loaded_from_sqlite = isinstance(sqlite_payload, dict)
+    source_type = "config_store" if loaded_from_sqlite else "config_json"
+    source_text = json.dumps(sqlite_payload, ensure_ascii=False, sort_keys=True) if loaded_from_sqlite else ""
     if loaded_from_sqlite:
         snapshot = dict(sqlite_payload)
         existing_auth = _existing_auth(config_path)
@@ -322,19 +339,23 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
     if not config_path.exists():
         return ConfigStore()
 
-    with config_path.open("r", encoding="utf-8") as file:
-        payload = json.load(file)
+    raw_text = config_path.read_text(encoding="utf-8")
+    if not loaded_from_sqlite:
+        source_text = raw_text
+    payload = json.loads(raw_text)
 
     # Migration: old single-config format -> store
     if "configs" not in payload and "data_sources" not in payload:
         if "dws" not in payload and "business" not in payload:
             store = ConfigStore()
             save_store(store, config_path)
+            _record_config_migration(config_path, source_type, source_text, store)
             return store
         config = config_from_dict(payload)
         default_cfg = NamedConfig(name="默认测试数据源", dws=config.dws, business=config.business, is_default=True)
         store = normalize_store(ConfigStore(configs=[default_cfg], default_name="默认测试数据源"))
         save_store(store, config_path)
+        _record_config_migration(config_path, source_type, source_text, store)
         return store
 
     if "data_sources" in payload:
@@ -357,6 +378,7 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
         store = normalize_store(store)
         if not loaded_from_sqlite:
             save_store(store, config_path)
+        _record_config_migration(config_path, source_type, source_text, store)
         return store
 
     configs = []
@@ -378,14 +400,19 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
     )
     store = normalize_store(store)
     save_store(store, config_path)
+    _record_config_migration(config_path, source_type, source_text, store)
     return store
 
 
 def save_store(store: ConfigStore, path: str | Path | None = None) -> None:
     config_path = Path(path) if path is not None else default_config_path()
-    existing_auth = _existing_auth(config_path)
     store = normalize_store(store)
-    payload = {
+    _save_normalized_store(config_path, store)
+    _save_store_snapshot(config_path, store)
+
+
+def _store_payload(store: ConfigStore) -> dict[str, Any]:
+    return {
         "data_sources": [data_source_entry_to_dict(entry) for entry in store.data_sources],
         "reconcile_data_sources": reconcile_data_source_settings_to_dict(store.reconcile_data_sources),
         "default_name": store.default_name,
@@ -395,9 +422,64 @@ def save_store(store: ConfigStore, path: str | Path | None = None) -> None:
         "flow_tool": flow_tool_settings_to_dict(store.flow_tool),
         "reconcile_schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
     }
+
+
+def _save_store_snapshot(config_path: Path, store: ConfigStore) -> None:
+    existing_auth = _existing_auth(config_path)
+    payload = _store_payload(store)
     if existing_auth:
         payload[AUTH_KEY] = existing_auth
     save_combined_payload(config_path, payload)
+
+
+def _load_normalized_store(config_path: Path) -> ConfigStore | None:
+    with _connect(db_path_for_config(config_path)) as connection:
+        if not has_normalized_config(connection):
+            return None
+        store = ConfigStore(
+            configs=[],
+            data_sources=load_data_sources(connection),
+            reconcile_data_sources=reconcile_data_source_settings_from_dict(
+                load_setting(connection, "reconcile_data_sources", {})
+            ),
+            default_name=str(load_setting(connection, "default_name", "") or ""),
+            default_settings=default_settings_from_dict(load_setting(connection, "default_settings", {})),
+            pbc_import_tool=pbc_import_tool_settings_from_dict(load_setting(connection, "pbc_import_tool", {})),
+            db_validation=db_validation_settings_from_dict(load_setting(connection, "db_validation", {})),
+            flow_tool=flow_tool_settings_from_dict(load_setting(connection, "flow_tool", {})),
+            reconcile_schema=reconcile_schema_settings_from_dict(load_setting(connection, "reconcile_schema", {})),
+        )
+    return normalize_store(store)
+
+
+def _save_normalized_store(config_path: Path, store: ConfigStore) -> None:
+    with _connect(db_path_for_config(config_path)) as connection:
+        save_data_sources(connection, store.data_sources)
+        save_setting(connection, "reconcile_data_sources", reconcile_data_source_settings_to_dict(store.reconcile_data_sources))
+        save_setting(connection, "default_name", store.default_name)
+        save_setting(connection, "default_settings", default_settings_to_dict(store.default_settings))
+        save_setting(connection, "pbc_import_tool", pbc_import_tool_settings_to_dict(store.pbc_import_tool))
+        save_setting(connection, "db_validation", db_validation_settings_to_dict(store.db_validation))
+        save_setting(connection, "flow_tool", flow_tool_settings_to_dict(store.flow_tool))
+        save_setting(connection, "reconcile_schema", reconcile_schema_settings_to_dict(store.reconcile_schema))
+
+
+def _record_config_migration(config_path: Path, source_type: str, source_text: str, store: ConfigStore) -> None:
+    if not source_text:
+        return
+    source_path = str(config_path) if source_type == "config_json" else str(db_path_for_config(config_path))
+    source_key = "" if source_type == "config_json" else CONFIG_STORE_KEY
+    with _connect(db_path_for_config(config_path)) as connection:
+        record_migration(
+            connection,
+            source_type=source_type,
+            source_path=source_path,
+            source_key=source_key,
+            source_fingerprint=fingerprint_text(source_text),
+            migrated_count=len(store.data_sources),
+            skipped_count=0,
+            status="completed",
+        )
 
 
 def get_active_config(store: ConfigStore) -> AppConfig:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -16,7 +17,16 @@ from Cryptodome.Cipher import PKCS1_OAEP
 from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 
-from auto_check.app.local_store import AUTH_KEY, load_combined_payload, save_combined_payload, write_app_value
+from auto_check.app.local_store import (
+    AUTH_KEY,
+    _connect,
+    db_path_for_config,
+    load_combined_payload,
+    read_app_value,
+    save_combined_payload,
+    write_app_value,
+)
+from auto_check.app.storage_schema import fingerprint_text, record_migration
 from auto_check.app.time_utils import beijing_timestamp
 
 
@@ -304,21 +314,32 @@ class AuthManager:
         self._save_users(users)
 
     def _save_users(self, users: list[dict[str, Any]]) -> None:
+        normalized_users = [_normalize_user(user) for user in users]
+        self._save_normalized_users(normalized_users)
         payload = self._load_payload()
         auth = dict(payload.get("auth", {}) if isinstance(payload.get("auth", {}), dict) else {})
         auth.pop("admin_password_hash", None)
-        auth["users"] = users
+        auth["users"] = normalized_users
         payload["auth"] = auth
         self._save_payload(payload)
 
     def _auth_payload(self) -> dict[str, Any]:
+        normalized_users = self._load_normalized_users()
+        if normalized_users:
+            return {"users": normalized_users}
+
+        source_type, source_text = self._auth_source_metadata()
         payload = self._load_payload()
         auth = payload.get("auth", {})
         if not isinstance(auth, dict):
             return {"users": []}
         users = auth.get("users")
         if isinstance(users, list):
-            return {"users": [_normalize_user(user) for user in users if isinstance(user, dict)]}
+            normalized_users = [_normalize_user(user) for user in users if isinstance(user, dict)]
+            if normalized_users:
+                self._save_users(normalized_users)
+                self._record_auth_migration(source_type, source_text, len(normalized_users))
+            return {"users": normalized_users}
         legacy_hash = str(auth.get("admin_password_hash", "") or "")
         if legacy_hash:
             now = _now()
@@ -337,9 +358,9 @@ class AuthManager:
                     }
                 ]
             }
-            payload["auth"] = migrated
-            self._save_payload(payload)
-            return migrated
+            self._save_users(migrated["users"])
+            self._record_auth_migration(source_type, source_text, len(migrated["users"]))
+            return {"users": [_normalize_user(user) for user in migrated["users"]]}
         env_hash = self._admin_env_hash()
         if env_hash:
             return {
@@ -358,6 +379,49 @@ class AuthManager:
                 ]
             }
         return {"users": []}
+
+    def _load_normalized_users(self) -> list[dict[str, Any]]:
+        from auto_check.app.storage_config import load_users
+
+        with _connect(db_path_for_config(self.config_path)) as connection:
+            return [_normalize_user(user) for user in load_users(connection)]
+
+    def _save_normalized_users(self, users: list[dict[str, Any]]) -> None:
+        from auto_check.app.storage_config import save_users
+
+        with _connect(db_path_for_config(self.config_path)) as connection:
+            save_users(connection, users)
+
+    def _auth_source_metadata(self) -> tuple[str, str]:
+        auth_store = read_app_value(self.config_path, AUTH_KEY)
+        if isinstance(auth_store, dict):
+            return "auth_store", json.dumps(auth_store, ensure_ascii=False, sort_keys=True)
+        if not self.config_path.exists():
+            return "", ""
+        try:
+            payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return "", ""
+        auth = payload.get(AUTH_KEY) if isinstance(payload, dict) else None
+        if isinstance(auth, dict):
+            return "auth_json", json.dumps(auth, ensure_ascii=False, sort_keys=True)
+        return "", ""
+
+    def _record_auth_migration(self, source_type: str, source_text: str, migrated_count: int) -> None:
+        if not source_type or not source_text:
+            return
+        source_path = str(self.config_path) if source_type == "auth_json" else str(db_path_for_config(self.config_path))
+        with _connect(db_path_for_config(self.config_path)) as connection:
+            record_migration(
+                connection,
+                source_type=source_type,
+                source_path=source_path,
+                source_key=AUTH_KEY,
+                source_fingerprint=fingerprint_text(source_text),
+                migrated_count=migrated_count,
+                skipped_count=0,
+                status="completed",
+            )
 
     def _admin_env_hash(self) -> str:
         env_hash = os.environ.get("AUTO_CHECK_ADMIN_PASSWORD_HASH", "").strip()
