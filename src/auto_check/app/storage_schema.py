@@ -302,6 +302,112 @@ def _migrate_v2(connection: sqlite3.Connection) -> None:
             PRIMARY KEY (run_id, delta_type, result_order),
             FOREIGN KEY (run_id) REFERENCES reconcile_runs(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS db_validation_runs (
+            id TEXT PRIMARY KEY,
+            report_date TEXT NOT NULL DEFAULT '',
+            result_count INTEGER NOT NULL DEFAULT 0,
+            warning_count INTEGER NOT NULL DEFAULT 0,
+            table_count INTEGER NOT NULL DEFAULT 0,
+            enable_public_info_check INTEGER NOT NULL DEFAULT 0,
+            enable_template_check INTEGER NOT NULL DEFAULT 0,
+            excel_filename TEXT NOT NULL DEFAULT '',
+            excel_path TEXT NOT NULL DEFAULT '',
+            download_url TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (id) REFERENCES run_headers(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS db_validation_selected_tables (
+            run_id TEXT NOT NULL,
+            table_order INTEGER NOT NULL,
+            table_code TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (run_id, table_order),
+            FOREIGN KEY (run_id) REFERENCES db_validation_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS db_validation_warnings (
+            run_id TEXT NOT NULL,
+            warning_order INTEGER NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (run_id, warning_order),
+            FOREIGN KEY (run_id) REFERENCES db_validation_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS db_validation_result_rows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            row_order INTEGER NOT NULL,
+            table_code TEXT NOT NULL DEFAULT '',
+            rule_id TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (run_id) REFERENCES db_validation_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_db_validation_runs_sort
+            ON db_validation_runs(report_date DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_db_validation_result_rows_run
+            ON db_validation_result_rows(run_id, row_order);
+
+        CREATE TABLE IF NOT EXISTS flow_chain_runs (
+            id TEXT PRIMARY KEY,
+            chain_id TEXT NOT NULL DEFAULT '',
+            chain_name TEXT NOT NULL DEFAULT '',
+            is_multi_chain INTEGER NOT NULL DEFAULT 0,
+            trigger_type TEXT NOT NULL DEFAULT '',
+            executor_name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            step_count INTEGER NOT NULL DEFAULT 0,
+            duration_seconds INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (id) REFERENCES run_headers(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS flow_chain_run_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            step_order INTEGER NOT NULL,
+            flow_id TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            sp_task_id TEXT NOT NULL DEFAULT '',
+            start_time TEXT NOT NULL DEFAULT '',
+            end_time TEXT NOT NULL DEFAULT '',
+            duration_seconds INTEGER,
+            payload_json TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (run_id) REFERENCES flow_chain_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_flow_chain_run_steps_run
+            ON flow_chain_run_steps(run_id, step_order);
+
+        CREATE TABLE IF NOT EXISTS flow_chain_run_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            log_order INTEGER NOT NULL,
+            log_time TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            progress INTEGER,
+            step TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (run_id) REFERENCES flow_chain_runs(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS flow_chain_run_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            chain_order INTEGER NOT NULL,
+            chain_name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            step_count INTEGER NOT NULL DEFAULT 0,
+            duration_seconds INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY (run_id) REFERENCES flow_chain_runs(id) ON DELETE CASCADE
+        );
         """
     )
     connection.execute(

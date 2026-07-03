@@ -129,17 +129,21 @@ HTTP 404 { "error": "no active flow chain job" }
 
 - `flow_tool.py` 核心逻辑不变。
 - 执行、轮询、超时、取消机制不变。
-- 流程链执行记录和历史记录结构不变。
+- 流程链执行记录的对外 payload 和 API 结构不变；本地历史会写入 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`，并继续维护旧 `history_runs(kind='flow_chain')` 兼容快照。
 
 ## 四、涉及文件
 
 | 文件 | 改动内容 |
 |------|----------|
 | `src/auto_check/app/server.py` | 新增 `GET /api/flow-chain/status` 接口 |
+| `src/auto_check/app/history.py` | 流程链历史读写接入结构化存储并保留兼容回退 |
+| `src/auto_check/app/storage_history.py` | 流程链历史结构化写入、旧表迁移和删除级联 |
+| `src/auto_check/app/storage_schema.py` | 流程链历史结构化表定义 |
 | `src/auto_check/web/app.js` | 浮动提示条渲染、轮询、展开收起逻辑；弹窗交互调整（提交后提示、重开查看进度） |
 | `src/auto_check/web/styles.css` | 浮动提示条样式，活力/沉稳主题及暗色模式适配 |
 | `src/auto_check/web/index.html` | 浮动提示条 DOM 容器 |
 | `tests/test_server.py` | 新增 status 接口测试 |
+| `tests/test_history.py` | 新增流程链历史分表写入和旧表迁移测试 |
 | `tests/test_web_static.py` | 新增浮动提示条相关静态检查 |
 | `docs/prototypes/flow-float-toast/` | 设计预览原型 |
 

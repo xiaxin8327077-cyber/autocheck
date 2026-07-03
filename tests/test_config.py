@@ -54,7 +54,53 @@ def test_local_store_creates_v2_storage_schema(tmp_path):
     assert "users" in tables
     assert "run_headers" in tables
     assert "reconcile_results" in tables
+    assert "db_validation_runs" in tables
+    assert "db_validation_selected_tables" in tables
+    assert "db_validation_warnings" in tables
+    assert "db_validation_result_rows" in tables
+    assert "flow_chain_runs" in tables
+    assert "flow_chain_run_steps" in tables
+    assert "flow_chain_run_logs" in tables
+    assert "flow_chain_run_details" in tables
     assert get_schema_version(db_path) == CURRENT_SCHEMA_VERSION
+
+
+def test_local_store_adds_remaining_history_tables_to_existing_v2_database(tmp_path):
+    import sqlite3
+
+    from auto_check.app.storage_schema import CURRENT_SCHEMA_VERSION
+
+    path = tmp_path / "config.json"
+    db_path = db_path_for_config(path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, '2026-07-03 10:00:00')",
+            (CURRENT_SCHEMA_VERSION,),
+        )
+
+    read_app_value(path, "missing")
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+
+    assert {
+        "db_validation_runs",
+        "db_validation_selected_tables",
+        "db_validation_warnings",
+        "db_validation_result_rows",
+        "flow_chain_runs",
+        "flow_chain_run_steps",
+        "flow_chain_run_logs",
+        "flow_chain_run_details",
+    } <= tables
 
 
 def test_default_config_has_two_sources():

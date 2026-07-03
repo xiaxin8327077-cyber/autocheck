@@ -38,7 +38,21 @@ D:\xxx\auto-check.db
 - `reconcile_result_details`：结构化详情类型和具体原因。
 - `reconcile_delta_results`：新增差异和减少差异快照。
 
-旧 `history_runs(kind='reconcile')` 和同目录 `history.json` 会在首次读取历史时自动迁移到结构化表；迁移过程幂等，不删除旧数据。
+人行逐笔校验历史使用结构化表保存运行摘要、选择表、告警和结果行：
+
+- `db_validation_runs`：报告期、结果数、告警数、表数量、校验开关和下载路径。
+- `db_validation_selected_tables`：本次勾选的人行表清单。
+- `db_validation_warnings`：本次运行产生的告警信息。
+- `db_validation_result_rows`：校验结果行的表号、规则、级别、消息和完整行快照。
+
+流程链执行历史使用结构化表保存运行摘要、步骤、日志和多链路详情：
+
+- `flow_chain_runs`：链路名称、触发方式、执行人、状态、错误、步骤数和总耗时。
+- `flow_chain_run_steps`：每个流程步骤的流程编号、名称、状态、申报平台任务号和起止时间。
+- `flow_chain_run_logs`：执行日志、进度和当前步骤。
+- `flow_chain_run_details`：单链路或多链路合并历史中的链路明细。
+
+旧 `history_runs(kind='reconcile')`、`history_runs(kind='db_validation')`、`history_runs(kind='flow_chain')`，以及同目录 `history.json`、`db-validation-history.json` 会在首次读取历史时自动迁移到结构化表；迁移过程幂等，不删除旧数据。
 
 ## 三、存储抽象
 
@@ -146,7 +160,8 @@ D:\xxx\auto-check.db
 - `history_runs(kind='reconcile')` 优先迁移到结构化自动对数历史表。
 - 如果旧 SQLite 中没有自动对数历史，再读取同目录 `history.json`。
 - `history.json` 支持顶层数组和 `{"runs": [...]}` 两种格式。
-- 人行逐笔校验旧文件 `db-validation-history.json` 一期只导入到 `history_runs(kind='db_validation')` 兼容表，不拆明细表。
+- `history_runs(kind='db_validation')` 和人行逐笔校验旧文件 `db-validation-history.json` 会迁移到 `db_validation_runs`、`db_validation_selected_tables`、`db_validation_warnings` 和 `db_validation_result_rows`。
+- `history_runs(kind='flow_chain')` 会迁移到 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`。
 - 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数和跳过条数。
 
 详情页和导出仍可从 `run_headers.payload_json` 还原完整结果；列表、统计和后续筛选优先使用结构化热字段。回退时可以恢复迁移前备份的 `auto-check.db` 和旧 JSON 文件。
