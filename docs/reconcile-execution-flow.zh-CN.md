@@ -58,7 +58,7 @@
 | `c_udlyasset` | `am_pactasset_dws` | AM 标的/底层资产名称，用于和 FA 科目名称匹配。 |
 | `c_stockcode` | `am_pactasset_dws` | AM 标的代码，用于和 FA 科目尾段代码核对。 |
 | `c_pactid` | `am_pactasset_dws` / AM 合同表 | AM 合同代码，用于继续查询投融资余额和 SPV 相关 DM 表。 |
-| `d_bdate` / `contract_start_date` | `am_projinvest_dws` | AM 合同开始日，必配字段；通过项目编号、核对日期、合同代码三要素关联 `am_pactasset_dws` 取得；多候选标的消歧时按该字段倒序取最新合同。 |
+| `d_bdate` / `contract_start_date` | `am_projinvest_dws` | AM 合同开始日，必配字段；同数据源时通过项目编号、核对日期、合同代码三要素关联 `am_pactasset_dws` 取得；跨数据源时先按核对日期查询合同表，再在应用层按项目编号和合同代码回填；多候选标的消歧时按该字段倒序取最新合同。 |
 
 ### 0.3 匹配状态
 
@@ -109,7 +109,7 @@
 
 - 每个逻辑表通过 `source_ref.id` 优先匹配系统数据源 ID；ID 不存在时，允许按 `source_ref.name` 唯一匹配数据源名称。
 - 兼容内置别名 `dws` 和 `business`，分别表示当前对账 DWS 数据源和当前对账报表/业务数据源。
-- AM 标的表与 AM 合同投融资余额表在同一数据源时，仍在 SQL 中关联合同开始日并按最新合同开始日辅助消歧；如果两表配置到不同数据源，则不生成跨数据源 join，但会分别按核对日期查询两张表，并在应用层按项目编号、核对日期、合同代码三要素回填合同开始日。
+- AM 标的表与 AM 合同投融资余额表在同一数据源时，仍在 SQL 中关联合同开始日并按最新合同开始日辅助消歧；如果两表配置到不同数据源，则不生成跨数据源 join，但会分别按核对日期查询两张表，并在应用层按项目编号、合同代码回填合同开始日，避免日期字段返回格式不同导致回填失败。
 
 ## 1. 读取估值表资产合计
 
@@ -298,7 +298,7 @@
    - `svd_mpactid = AM合同代码`
    - `svd_balamoney_cost + svd_balamoney_inte + svd_balamoney_fair <> 0`
 8. 如果查不到：
-   - 原因：`该特定目的载体在dm.am_projinvest_spv_zgxg_dm不存在或余额为0`
+   - 原因：`该特定目的载体在DM AM SPV 投融资余额表不存在或余额为0`
    - 链路结束。
 9. 如果 AM 资产名称包含 `收益凭证`：
    - 查询业务报表 `currency_report_24.currency_detail_project_2_1_9`
@@ -327,10 +327,10 @@
 
 | 资产类型 | 查不到证券余额时原因 | 字段为空时原因 | 报表检查 |
 | --- | --- | --- | --- |
-| 债券 | `该债券在dm.fa_security_balance_zgxg_dm中不存在或金额为0` | `该债券债券类别_人行字段（sbm_seclas_h2024）为空` | `currency_detail_project_2_1_4` 无数据则 `资负数据子系统-债务证券明细表无数据` |
-| 股票 | `该股票在dm.fa_security_balance_zgxg_dm中不存在或金额为0` | `该股票股票股权类别_人行字段（sbm_gpgqtype_h）为空` | `currency_detail_project_2_1_5` 无数据则 `资负数据子系统-股票股权明细表无数据` |
-| 公募基金 | `该公募基金在dm.fa_security_balance_zgxg_dm中不存在或金额为0` | `该公募基金公募私募_人行字段（sbm_fundtype）为空` | `currency_detail_project_2_1_6` 无数据则 `资负数据子系统-特定目的载体明细表无数据` |
-| 私募基金 | `该私募基金在dm.fa_security_balance_zgxg_dm中不存在或金额为0` | `该私募基金公募私募_人行字段（sbm_fundtype）为空` | `currency_detail_project_2_1_6` 无数据则 `资负数据子系统-特定目的载体明细表无数据` |
+| 债券 | `该债券在DM FA 证券余额表中不存在或金额为0` | `该债券债券类别_人行字段（sbm_seclas_h2024）为空` | `currency_detail_project_2_1_4` 无数据则 `资负数据子系统-债务证券明细表无数据` |
+| 股票 | `该股票在DM FA 证券余额表中不存在或金额为0` | `该股票股票股权类别_人行字段（sbm_gpgqtype_h）为空` | `currency_detail_project_2_1_5` 无数据则 `资负数据子系统-股票股权明细表无数据` |
+| 公募基金 | `该公募基金在DM FA 证券余额表中不存在或金额为0` | `该公募基金公募私募_人行字段（sbm_fundtype）为空` | `currency_detail_project_2_1_6` 无数据则 `资负数据子系统-特定目的载体明细表无数据` |
+| 私募基金 | `该私募基金在DM FA 证券余额表中不存在或金额为0` | `该私募基金公募私募_人行字段（sbm_fundtype）为空` | `currency_detail_project_2_1_6` 无数据则 `资负数据子系统-特定目的载体明细表无数据` |
 
 所有业务报表明细表当前都只按 `caldate` 判断是否有数据。
 
@@ -364,7 +364,7 @@
    - `pin_mpactid = 合同代码`
    - `pin_acbalance <> 0`
 3. 如果查不到：
-   - 原因：`该贷款在dm.am_projinvest_zgxg_dm不存在或投融资余额为0`
+   - 原因：`该贷款在DM AM 投融资余额表不存在或投融资余额为0`
 4. 如果查到，再查 `currency_report_24.currency_detail_project_2_1_2`。
 5. 如果报表无数据：
    - 原因：`资负数据子系统-除回购和拆借外贷款明细表无数据`
@@ -380,7 +380,7 @@
 
 1. 查询 `dm.am_projinvest_zgxg_dm`，条件同贷款，且 `pin_acbalance <> 0`。
 2. 如果查不到：
-   - 原因：`该股权投资在dm.am_projinvest_zgxg_dm不存在或投融资余额为0`
+   - 原因：`该股权投资在DM AM 投融资余额表不存在或投融资余额为0`
 3. 如果 `pin_gqtype_h` 为空：
    - 原因：`该股权投资股权投资类别字段（pin_gqtype_h）为空`
 4. 如果字段正常，再查 `currency_report_24.currency_detail_project_2_1_5_2`。
@@ -404,7 +404,7 @@
    - `svd_mpactid = FA科目尾段代码`
    - `svd_balamoney_cost + svd_balamoney_inte + svd_balamoney_fair <> 0`
 3. 如果查不到：
-   - 原因：`该信托计划收益权在dm.am_projinvest_spv_zgxg_dm不存在或余额为0`
+   - 原因：`该信托计划收益权在DM AM SPV 投融资余额表不存在或余额为0`
 4. 如果查到，再查 `currency_report_24.currency_detail_project_2_1_6`。
 5. 如果报表无数据：
    - 原因：`资负数据子系统-特定目的载体明细表无数据`
@@ -425,7 +425,7 @@
    - `pin_acbalance <> 0`
 3. 该表当前不加日期条件。
 4. 如果查不到：
-   - 原因：`该财产权在zgxg_zhbs.ccqxx不存在或投融资余额为0`
+   - 原因：`该财产权在财产权合同信息表不存在或投融资余额为0`
 5. 如果查到，再查 `currency_report_24.currency_detail_project_2_1_9`。
 6. 如果报表无数据：
    - 原因：`资负数据子系统-其他债权明细表无数据`

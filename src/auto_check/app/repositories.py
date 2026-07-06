@@ -248,7 +248,7 @@ class AutoCheckRepository:
         self._pact_asset_cache: dict[str, dict[tuple[str, str], list[PactAssetRow]]] = {}
         self._project_pact_asset_cache: dict[str, dict[str, list[PactAssetRow]]] = {}
         self._project_invest_balance_cache: dict[str, dict[tuple[str, str], Decimal]] = {}
-        self._project_invest_contract_start_cache: dict[str, dict[tuple[str, str, str], str]] = {}
+        self._project_invest_contract_start_cache: dict[str, dict[tuple[str, str], str]] = {}
         self._ta_balance_totals_cache: dict[str, dict[str, tuple[Decimal, Decimal]]] = {}
         self._blank_ta_client_type_cache: dict[str, dict[str, list[dict[str, Decimal | str]]]] = {}
 
@@ -895,7 +895,7 @@ class AutoCheckRepository:
         }
         return self._project_invest_balance_cache[date]
 
-    def _project_invest_contract_starts_by_date(self, date: str) -> dict[tuple[str, str, str], str]:
+    def _project_invest_contract_starts_by_date(self, date: str) -> dict[tuple[str, str], str]:
         if date in self._project_invest_contract_start_cache:
             return self._project_invest_contract_start_cache[date]
 
@@ -918,7 +918,7 @@ class AutoCheckRepository:
             (date,),
         )
         self._project_invest_contract_start_cache[date] = {
-            (str(row["c_projcode"]), str(row.get("d_cldate") or ""), str(row.get("c_pactid") or "")): str(row.get("d_bdate") or "")
+            (str(row["c_projcode"]), str(row.get("c_pactid") or "")): str(row.get("d_bdate") or "")
             for row in rows
             if row.get("d_bdate") is not None
         }
@@ -994,7 +994,7 @@ class AutoCheckRepository:
             pact_id_value = str(row.get("c_pactid") or "")
             contract_start_date = row.get("d_bdate")
             if contract_start_date is None and contract_starts:
-                contract_start_date = contract_starts.get((project_code_value, date, pact_id_value))
+                contract_start_date = contract_starts.get((project_code_value, pact_id_value))
             pact_asset = PactAssetRow(
                 project_code=project_code_value,
                 asset_name=str(row.get("c_udlyasset") or ""),

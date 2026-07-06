@@ -60,6 +60,15 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
+from auto_check.app.storage_admin import (
+    build_storage_health,
+    build_storage_schema_workbook,
+    build_storage_table_data_workbook,
+    generate_storage_backup,
+    get_storage_table_rows,
+    get_storage_table_schema,
+    list_storage_tables,
+)
 from auto_check.app.time_utils import beijing_now, beijing_time_text, beijing_timestamp, beijing_today
 from auto_check.app.pbc_import import (
     ColumnMapping,
@@ -105,6 +114,123 @@ PasswordDecryptor = Callable[[str], str]
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
 DEFAULT_SERVER_PORT = 8765
+
+
+_RECONCILE_FIELD_LABELS: dict[str, dict[str, str]] = {
+    "zf_detail": {
+        "check_date": "核对日期",
+        "project_code": "项目内码",
+        "project_name": "项目名称",
+        "asset_total": "资产总计",
+        "liability_equity_total": "负债和权益总计",
+        "received_trust_balance": "实收信托余额",
+    },
+    "fa_account_balance": {
+        "project_code": "项目代码",
+        "balance_date": "余额日期",
+        "account_code": "科目代码",
+        "account_name": "科目名称",
+        "balance": "余额",
+    },
+    "fa_valuation": {
+        "project_code": "项目代码",
+        "valuation_date": "估值日期",
+        "account_code": "科目代码",
+        "account_name": "科目名称",
+        "market_value": "市值/余额",
+    },
+    "am_pact_asset": {
+        "project_code": "项目代码",
+        "close_date": "截止日期",
+        "asset_name": "标的名称",
+        "stock_code": "标的代码",
+        "pact_id": "合同编号",
+        "spv_type": "SPV 类型",
+        "asset_type": "标的类型",
+        "data_source": "合同来源",
+    },
+    "am_project_invest": {
+        "project_code": "项目代码",
+        "close_date": "截止日期",
+        "pact_id": "合同编号",
+        "invest_balance": "投资余额",
+        "contract_start_date": "合同开始日",
+    },
+    "ta_pact_detail": {
+        "project_code": "项目代码",
+        "close_date": "截止日期",
+        "share_amount": "份额",
+        "all_income": "累计收益",
+    },
+    "ta_survamt_dm": {
+        "check_date": "核对日期",
+        "project_code": "项目代码",
+        "pact_id": "合同编号",
+        "client_name": "客户名称",
+        "client_kind": "客户类型",
+        "client_kind_index": "客户类型序号",
+        "spv_type": "SPV 类型",
+        "ht_income": "衡泰收益",
+        "share_amount": "份额",
+    },
+    "fa_security_balance_dm": {
+        "project_code": "项目代码",
+        "check_date": "核对日期",
+        "stock_code": "证券代码",
+        "security_name": "证券名称",
+        "bond_category": "债券分类",
+        "stock_equity_category": "股票/股权分类",
+        "fund_type": "基金类型",
+        "balance_cost": "成本余额",
+        "balance_fair": "公允价值余额",
+        "balance_interest": "利息余额",
+    },
+    "dm_project_invest": {
+        "project_code": "项目代码",
+        "close_date": "截止日期",
+        "pact_id": "合同编号",
+        "invest_balance": "投资余额",
+        "equity_invest_type": "股权投资类型",
+    },
+    "dm_spv_project_invest": {
+        "project_code": "项目代码",
+        "close_date": "截止日期",
+        "pact_id": "合同编号",
+        "asset_type": "资产类型",
+        "balance_cost": "成本余额",
+        "balance_interest": "利息余额",
+        "balance_fair": "公允价值余额",
+    },
+    "property_right_contract": {
+        "project_code": "项目代码",
+        "pact_id": "合同编号",
+        "invest_balance": "投资余额",
+    },
+    "pledge_back": {
+        "project_code": "项目代码",
+        "subject_code": "科目/标的代码",
+        "buyback_money": "回购金额",
+        "expenses": "费用",
+    },
+    "ta_asset_share_duration": {
+        "check_date": "核对日期",
+        "project_code": "项目代码",
+        "asset_share": "资产份额",
+    },
+}
+
+
+def _reconcile_table_display_name(logical_key: str, table_schema: ReconcileTableSchema | None = None) -> str:
+    if table_schema is not None and table_schema.display_name:
+        return table_schema.display_name
+    default = DEFAULT_RECONCILE_TABLES.get(logical_key)
+    if default and default.display_name:
+        return default.display_name
+    return logical_key
+
+
+def _reconcile_field_label(logical_key: str, field_key: str) -> str:
+    return _RECONCILE_FIELD_LABELS.get(logical_key, {}).get(field_key, field_key)
 
 
 class ConflictError(Exception):
@@ -176,6 +302,9 @@ class ApiRouter:
         current_user: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         try:
+            if path.startswith("/api/admin/storage"):
+                return self._handle_admin_storage(method, path, body, current_user=current_user)
+
             # ---- Check History ----
             if method == "GET" and path == "/api/history":
                 return 200, {"history": [summarize_run(run) for run in self.history_store.list_runs()]}
@@ -727,21 +856,27 @@ class ApiRouter:
 
     def _validate_reconcile_schema_settings(self, store: ConfigStore, schema: ReconcileSchemaSettings) -> None:
         errors: list[str] = []
+        submitted_tables = schema.tables or {}
+        for logical_key, default_table in sorted(DEFAULT_RECONCILE_TABLES.items()):
+            if logical_key not in submitted_tables:
+                display_name = _reconcile_table_display_name(logical_key, default_table)
+                errors.append(f"缺少逻辑表配置：{display_name}（{logical_key}）")
         for logical_key, table_schema in sorted((schema.tables or {}).items()):
-            display_name = table_schema.display_name or logical_key
+            display_name = _reconcile_table_display_name(logical_key, table_schema)
             table_name = str(table_schema.table or "").strip()
             if not table_name:
-                errors.append(f"{display_name} 缺少物理表名")
+                errors.append(f"{display_name}（逻辑表 {logical_key}）缺少物理表名")
                 continue
+            table_context = f"{display_name}（逻辑表 {logical_key}，物理表 {table_name}）"
             try:
                 source_entry = self._resolve_reconcile_schema_source(store, table_schema.source_ref)
                 table_ref = parse_table_ref(table_name)
                 columns = self.pbc_table_column_loader(source_entry.config, table_ref)
             except ValueError as exc:
-                errors.append(f"{display_name} {table_name}：{str(exc)}")
+                errors.append(f"{table_context}表或数据源错误：{str(exc)}")
                 continue
             except Exception as exc:
-                errors.append(f"{display_name} {table_name}：{_runtime_error_message(exc)}")
+                errors.append(f"{table_context}表或数据源错误：{_runtime_error_message(exc)}")
                 continue
 
             existing_columns = {str(column.name or "").strip().lower() for column in columns}
@@ -752,22 +887,23 @@ class ApiRouter:
             required_field_keys = set(DEFAULT_RECONCILE_TABLES.get(logical_key, ReconcileTableSchema()).fields or {})
             for field_key in sorted(required_field_keys):
                 if not str(configured_fields.get(field_key) or "").strip():
-                    errors.append(f"{display_name} 缺少字段配置：{field_key}")
+                    field_label = _reconcile_field_label(logical_key, field_key)
+                    errors.append(f"{table_context}缺少字段配置：{field_label}（{field_key}）")
             for field_key, physical_name in sorted(configured_fields.items()):
                 field_name = str(physical_name or "").strip()
+                field_label = _reconcile_field_label(logical_key, field_key)
                 if not field_name:
-                    errors.append(f"{display_name} 缺少字段配置：{field_key}")
+                    errors.append(f"{table_context}缺少字段配置：{field_label}（{field_key}）")
                     continue
                 try:
                     safe_column_name(field_name)
                 except ValueError as exc:
-                    errors.append(f"{display_name} 字段 {field_key}={field_name}：{str(exc)}")
+                    errors.append(f"{table_context}字段 {field_label}（{field_key}）={field_name}：{str(exc)}")
                     continue
                 if existing_columns and field_name.lower() not in existing_columns:
-                    errors.append(f"{display_name} {table_name} 缺少字段 {field_name}（{field_key}）")
+                    errors.append(f"{table_context}缺少字段 {field_name}（{field_label}，{field_key}）")
         if errors:
-            suffix = " 等" if len(errors) > 8 else ""
-            raise ValueError(f"表字段配置校验失败：{'；'.join(errors[:8])}{suffix}")
+            raise ValueError(f"表字段配置校验失败：{'；'.join(errors)}")
 
     def _load_pbc_import_columns(self, body: dict[str, Any]) -> dict[str, Any]:
         store = load_store(self.config_path)
@@ -1012,6 +1148,65 @@ class ApiRouter:
 
     def get_db_validation_rules_document(self) -> tuple[str, bytes]:
         return build_rules_document()
+
+    def get_storage_schema_export(self, *, current_user: dict[str, Any] | None = None) -> tuple[str, bytes]:
+        self._require_admin_storage_user(current_user)
+        return build_storage_schema_workbook(self.config_path)
+
+    def get_storage_table_data_export(self, table_name: str, *, current_user: dict[str, Any] | None = None) -> tuple[str, bytes]:
+        self._require_admin_storage_user(current_user)
+        return build_storage_table_data_workbook(self.config_path, table_name)
+
+    def _handle_admin_storage(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        *,
+        current_user: dict[str, Any] | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        auth_error = self._admin_storage_auth_error(current_user)
+        if auth_error is not None:
+            return auth_error
+
+        parts = [part for part in path.split("/") if part]
+        query = dict(parse_qsl(getattr(self, "_query_string", ""), keep_blank_values=True))
+        try:
+            if method == "GET" and parts == ["api", "admin", "storage", "health"]:
+                return 200, {"health": build_storage_health(self.config_path)}
+            if method == "GET" and parts == ["api", "admin", "storage", "tables"]:
+                return 200, {"tables": list_storage_tables(self.config_path)}
+            if method == "POST" and parts == ["api", "admin", "storage", "backup"]:
+                return 200, {"backup": generate_storage_backup(self.config_path)}
+            if method == "GET" and len(parts) == 6 and parts[:4] == ["api", "admin", "storage", "tables"] and parts[5] == "schema":
+                return 200, get_storage_table_schema(self.config_path, parts[4])
+            if method == "GET" and len(parts) == 6 and parts[:4] == ["api", "admin", "storage", "tables"] and parts[5] == "rows":
+                page = _positive_int(query.get("page"), default=1)
+                page_size = _positive_int(query.get("page_size"), default=20)
+                return 200, get_storage_table_rows(self.config_path, parts[4], page=page, page_size=page_size)
+        except LookupError as exc:
+            return 404, {"error": str(exc)}
+        except PermissionError as exc:
+            return 403, {"error": str(exc)}
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        return 404, {"error": "not found"}
+
+    def _require_admin_storage_user(self, current_user: dict[str, Any] | None) -> None:
+        auth_error = self._admin_storage_auth_error(current_user)
+        if auth_error is not None:
+            status, payload = auth_error
+            message = str(payload.get("error") or "admin role required")
+            if status == 401:
+                raise PermissionError("login required")
+            raise PermissionError(message)
+
+    def _admin_storage_auth_error(self, current_user: dict[str, Any] | None) -> tuple[int, dict[str, Any]] | None:
+        if current_user is None:
+            return 401, {"error": "login required"}
+        if str(current_user.get("role", "")) != "admin":
+            return 403, {"error": "admin role required"}
+        return None
 
     def _load_flow_definitions(self, keyword: str) -> list[dict[str, Any]]:
         store = load_store(self.config_path)
@@ -2140,6 +2335,8 @@ def _db_validation_history_entry(job: DbValidationJob, result: DbValidationRunRe
         "warning_count": len(result.warnings),
         "table_count": len(job.selected_tables),
         "selected_tables": list(job.selected_tables),
+        "warnings": list(result.warnings),
+        "rows": [row.to_payload() for row in result.rows],
         "enable_public_info_check": job.enable_public_info_check,
         "enable_template_check": job.enable_template_check,
         "excel_filename": result.excel_path.name,
@@ -2166,6 +2363,7 @@ def _flow_chain_history_entry(job: FlowChainJob, result: FlowChainRunResult) -> 
         "step_count": len(result.steps),
         "duration_seconds": duration,
         "steps": payload["steps"],
+        "logs": list(job.logs),
         "chain_details": [{
             "chain_name": job.chain.name,
             "status": job.status,
@@ -2561,6 +2759,14 @@ def _database_error_excerpt(raw: str) -> str:
     return text[:300] or "数据库错误"
 
 
+def _positive_int(value: Any, *, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
 def _looks_like_mojibake(text: str) -> bool:
     if not text:
         return False
@@ -2614,6 +2820,12 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/users"):
             self._handle_users(method, path, session)
+            return
+        if method == "GET" and path.startswith("/api/admin/storage/tables/") and path.endswith("/export"):
+            self._handle_storage_table_data_export(path, session)
+            return
+        if method == "GET" and path == "/api/admin/storage/schema-export":
+            self._handle_storage_schema_export(session)
             return
         if method == "POST" and path == "/api/tools/pbc-import/upload":
             self._handle_pbc_import_upload()
@@ -2819,6 +3031,43 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_db_validation_rules_document_download(self) -> None:
         filename, data = self.router.get_db_validation_rules_document()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _handle_storage_schema_export(self, session: AuthSession) -> None:
+        try:
+            filename, data = self.router.get_storage_schema_export(current_user=_session_user(session))
+        except PermissionError as exc:
+            self._send_json(403, {"error": str(exc)})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _handle_storage_table_data_export(self, path: str, session: AuthSession) -> None:
+        parts = [part for part in path.split("/") if part]
+        if len(parts) != 6 or parts[:4] != ["api", "admin", "storage", "tables"] or parts[5] != "export":
+            self._send_json(404, {"error": "not found"})
+            return
+        try:
+            filename, data = self.router.get_storage_table_data_export(parts[4], current_user=_session_user(session))
+        except LookupError as exc:
+            self._send_json(404, {"error": str(exc)})
+            return
+        except PermissionError as exc:
+            self._send_json(403, {"error": str(exc)})
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         self.send_header("Content-Length", str(len(data)))

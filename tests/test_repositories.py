@@ -333,6 +333,31 @@ def test_repository_pact_assets_fills_contract_start_date_across_sources_without
     assert invest_client.count_calls("am_projinvest_dws") == 1
 
 
+def test_repository_pact_assets_cross_source_contract_start_fill_ignores_date_string_format():
+    pact_client = FakeClient()
+    invest_client = FakeClient()
+    invest_client.project_invest_balances = [
+        {
+            "c_projcode": "P1",
+            "d_cldate": "2026-04-30 00:00:00",
+            "c_pactid": "PACT1",
+            "acbalance": Decimal("123"),
+            "d_bdate": "2025-01-01",
+        }
+    ]
+    repository = AutoCheckRepository(
+        config(),
+        schema=_am_required_schema(invest_source_id="invest"),
+        dws_client=pact_client,
+        business_client=FakeClient(),
+        source_clients={"invest": invest_client},
+    )
+
+    assets = repository.list_project_pact_assets("P1", "2026-04-30")
+
+    assert assets[0].contract_start_date == "2025-01-01"
+
+
 def test_repository_loads_ta_balance_totals_from_dm_and_dws_tables():
     dws_client = FakeClient()
     repository = AutoCheckRepository(config(), dws_client=dws_client, business_client=FakeClient())

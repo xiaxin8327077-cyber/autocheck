@@ -1,6 +1,7 @@
 ﻿from decimal import Decimal
 from io import BytesIO
 from datetime import date
+import sqlite3
 import threading
 import time
 import zipfile
@@ -26,6 +27,7 @@ from auto_check.app.config import (
 from auto_check.app.local_store import db_path_for_config
 from auto_check.app.flow_tool import FlowChainRunResult, FlowChainStepResult, FlowDefinition
 from auto_check.app.pbc_import import TableColumn
+from auto_check.app.repositories import DEFAULT_RECONCILE_TABLES
 from auto_check.app.server import ApiRouter, RunJob, _connection_error_message, _runtime_error_message, build_display_details, previous_month_end
 from auto_check.app.reconcile_schema import ReconcileSchemaSettings, ReconcileSourceRef, ReconcileTableSchema
 from auto_check.db_validation.metadata import TableFieldCatalog
@@ -68,6 +70,56 @@ class FakeConnectionTester:
             "dws": {"ok": True, "message": "连接成功"},
             "business": {"ok": True, "message": "连接成功"},
         }
+
+
+def _complete_reconcile_schema_payload():
+    return {
+        "version": 1,
+        "strict": True,
+        "tables": {
+            logical_key: {
+                "source_ref": {
+                    "id": table_schema.source_ref.id or "dws",
+                    "name": table_schema.source_ref.name or table_schema.source_ref.id or "dws",
+                    "match_by": table_schema.source_ref.match_by or "id_then_name",
+                },
+                "table": table_schema.table,
+                "display_name": table_schema.display_name,
+                "fields": dict(table_schema.fields),
+                **({"optional_fields": dict(table_schema.optional_fields)} if table_schema.optional_fields else {}),
+            }
+            for logical_key, table_schema in DEFAULT_RECONCILE_TABLES.items()
+        },
+    }
+
+
+def _all_reconcile_schema_columns(data_source, table):
+    column_names = {
+        physical_name
+        for table_schema in DEFAULT_RECONCILE_TABLES.values()
+        for physical_name in [*table_schema.fields.values(), *table_schema.optional_fields.values()]
+    }
+    return [TableColumn(column_name, "") for column_name in sorted(column_names)]
+
+
+def _reconcile_schema_payload_to_yaml(payload):
+    def scalar(value):
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    def emit_mapping(mapping, indent=0):
+        lines = []
+        prefix = " " * indent
+        for key, value in mapping.items():
+            if isinstance(value, dict):
+                lines.append(f"{prefix}{key}:")
+                lines.extend(emit_mapping(value, indent + 2))
+            else:
+                lines.append(f"{prefix}{key}: {scalar(value)}")
+        return lines
+
+    return "\n".join(emit_mapping(payload))
 
 
 class SlowRunner:
@@ -378,7 +430,7 @@ def test_reconcile_schema_settings_api_saves_and_initializes_from_yaml_template(
         config_path,
     )
     def schema_columns(data_source, table):
-        return [
+        return _all_reconcile_schema_columns(data_source, table) + [
             TableColumn("sys_proj", "项目代码"),
             TableColumn("sys_date", "估值日期"),
             TableColumn("sys_account", "科目代码"),
@@ -392,22 +444,19 @@ def test_reconcile_schema_settings_api_saves_and_initializes_from_yaml_template(
             TableColumn("changed_amt", "市值"),
         ]
     router = ApiRouter(config_path=config_path, pbc_table_column_loader=schema_columns)
-    schema_payload = {
-        "version": 1,
-        "strict": True,
-        "tables": {
-            "fa_valuation": {
-                "source_ref": {"id": "source-dws", "name": "DWS", "match_by": "id_then_name"},
-                "table": "system.fa_valuation",
-                "display_name": "FA valuation",
-                "fields": {
-                    "project_code": "sys_proj",
-                    "valuation_date": "sys_date",
-                    "account_code": "sys_account",
-                    "account_name": "sys_name",
-                    "market_value": "sys_amt",
-                },
-            }
+    schema_payload = _complete_reconcile_schema_payload()
+    for table_config in schema_payload["tables"].values():
+        table_config["source_ref"] = {"id": "source-dws", "name": "DWS", "match_by": "id_then_name"}
+    schema_payload["tables"]["fa_valuation"] = {
+        "source_ref": {"id": "source-dws", "name": "DWS", "match_by": "id_then_name"},
+        "table": "system.fa_valuation",
+        "display_name": "FA valuation",
+        "fields": {
+            "project_code": "sys_proj",
+            "valuation_date": "sys_date",
+            "account_code": "sys_account",
+            "account_name": "sys_name",
+            "market_value": "sys_amt",
         },
     }
 
@@ -424,23 +473,23 @@ def test_reconcile_schema_settings_api_saves_and_initializes_from_yaml_template(
     assert status == 200
     assert payload["schema"]["tables"]["fa_valuation"]["fields"]["market_value"] == "sys_amt"
 
+    yaml_schema_payload = _complete_reconcile_schema_payload()
+    for table_config in yaml_schema_payload["tables"].values():
+        table_config["source_ref"] = {"id": "yaml-dws", "name": "yaml", "match_by": "id_then_name"}
+    yaml_schema_payload["tables"]["fa_valuation"] = {
+        "source_ref": {"id": "yaml-dws", "name": "yaml", "match_by": "id_then_name"},
+        "table": "yaml.fa_valuation",
+        "display_name": "FA valuation YAML",
+        "fields": {
+            "project_code": "yaml_proj",
+            "valuation_date": "yaml_date",
+            "account_code": "yaml_account",
+            "account_name": "yaml_name",
+            "market_value": "yaml_amt",
+        },
+    }
     config_path.with_name("reconcile-schema.yaml").write_text(
-        """
-reconcile_schema:
-  version: 1
-  tables:
-    fa_valuation:
-      source_ref:
-        id: "yaml-dws"
-        name: "yaml"
-      table: yaml.fa_valuation
-      fields:
-        project_code: yaml_proj
-        valuation_date: yaml_date
-        account_code: yaml_account
-        account_name: yaml_name
-        market_value: yaml_amt
-""".strip(),
+        _reconcile_schema_payload_to_yaml({"reconcile_schema": yaml_schema_payload}),
         encoding="utf-8",
     )
 
@@ -582,6 +631,41 @@ def test_reconcile_schema_save_rejects_missing_required_business_fields(tmp_path
     assert "表字段配置校验失败" in payload["error"]
     assert "AM 项目投资" in payload["error"]
     assert "contract_start_date" in payload["error"]
+    assert "合同开始日" in payload["error"]
+    assert "物理表 am_projinvest_dws" in payload["error"]
+
+
+def test_reconcile_schema_save_rejects_missing_logical_tables(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="dws",
+                    name="DWS",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "u", "p"),
+                    is_default=True,
+                ),
+                DataSourceEntry(
+                    id="business",
+                    name="报表库",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "reportdb", "report", "u", "p"),
+                ),
+            ],
+        ),
+        config_path,
+    )
+    router = ApiRouter(config_path=config_path, pbc_table_column_loader=_all_reconcile_schema_columns)
+    schema_payload = _complete_reconcile_schema_payload()
+    schema_payload["tables"].pop("pledge_back")
+
+    status, payload = router.handle("POST", "/api/settings/reconcile-schema", schema_payload)
+
+    assert status == 400
+    assert "表字段配置校验失败" in payload["error"]
+    assert "缺少逻辑表配置" in payload["error"]
+    assert "回购质押明细表" in payload["error"]
+    assert "pledge_back" in payload["error"]
 
 
 def test_reconcile_schema_columns_api_returns_table_columns_for_selected_source(tmp_path):
@@ -1058,6 +1142,62 @@ def test_flow_chain_failure_saves_history_with_error_and_logs(tmp_path):
     assert entry["error"] == "流程B超时：等待流程执行结束超时"
     assert len(entry["logs"]) > 0
     assert any("流程B执行失败" in log.get("message", "") for log in entry["logs"])
+
+
+def test_flow_chain_success_persists_logs_to_local_storage(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-report",
+                    name="申报平台库",
+                    config=DataSourceConfig("mysql", "192.168.107.81", 3306, "reg-report-analysis", "", "u", "p"),
+                    is_default=True,
+                )
+            ],
+            flow_tool=FlowToolSettings(
+                source_id="source-report",
+                execute_url="http://192.168.107.81/assmag/spiderFlow/spider/testRun",
+                chains=[
+                    FlowChainConfig(
+                        id="chain-zgxg-1",
+                        name="资管新规1",
+                        steps=[FlowChainStep(flow_id="flow-a", name="流程A")],
+                    )
+                ],
+            ),
+        ),
+        config_path,
+    )
+    router = ApiRouter(config_path=config_path, flow_chain_executor=FakeFlowChainExecutor())
+
+    status, payload = router.handle("POST", "/api/tools/flow/start", {"chain_id": "chain-zgxg-1"})
+    assert status == 200
+    job_id = payload["job_id"]
+
+    for _ in range(40):
+        status, status_payload = router.handle("GET", f"/api/tools/flow/status/{job_id}", None)
+        assert status == 200
+        if status_payload["job"]["status"] == "completed":
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError("flow chain job did not complete")
+
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        logs = connection.execute(
+            """
+            SELECT message, progress, step
+            FROM flow_chain_run_logs
+            WHERE run_id = ?
+            ORDER BY log_order
+            """,
+            (job_id,),
+        ).fetchall()
+
+    assert logs
+    assert any("流程A执行结束" in message for message, _progress, _step in logs)
 
 
 def test_configs_api_returns_single_data_sources(tmp_path):
@@ -1670,6 +1810,29 @@ def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path):
     history_path, history_name = router.get_db_validation_history_download(job_id)
     assert history_path == download_path
     assert history_name == "result.xlsx"
+
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        warning_messages = connection.execute(
+            """
+            SELECT message
+            FROM db_validation_warnings
+            WHERE run_id = ?
+            ORDER BY warning_order
+            """,
+            (job_id,),
+        ).fetchall()
+        result_rows = connection.execute(
+            """
+            SELECT payload_json
+            FROM db_validation_result_rows
+            WHERE run_id = ?
+            ORDER BY row_order
+            """,
+            (job_id,),
+        ).fetchall()
+    assert [row[0] for row in warning_messages] == ["ZG02 当期表无数据"]
+    assert len(result_rows) == 1
+    assert "Zg01_Rule6" in result_rows[0][0]
 
 
 def test_db_validation_history_api_sorts_by_execution_time_desc(tmp_path):

@@ -93,6 +93,24 @@ const userRole = document.getElementById("userRole");
 const userEnabled = document.getElementById("userEnabled");
 const userEnabledSwitch = document.getElementById("userEnabledSwitch");
 const userPassword = document.getElementById("userPassword");
+const localStorageTableList = document.getElementById("localStorageTableList");
+const localStorageTableSearch = document.getElementById("localStorageTableSearch");
+const localStorageDataHead = document.getElementById("localStorageDataHead");
+const localStorageDataBody = document.getElementById("localStorageDataBody");
+const localStorageSchemaBody = document.getElementById("localStorageSchemaBody");
+const localStorageRowFilter = document.getElementById("localStorageRowFilter");
+const localStoragePageSizeGroup = document.getElementById("localStoragePageSizeGroup");
+const localStoragePrevPage = document.getElementById("localStoragePrevPage");
+const localStorageNextPage = document.getElementById("localStorageNextPage");
+const localStorageJsonDrawer = document.getElementById("localStorageJsonDrawer");
+const localStorageJsonBackdrop = document.getElementById("localStorageJsonBackdrop");
+const localStorageJsonClose = document.getElementById("localStorageJsonClose");
+const localStorageJsonContent = document.getElementById("localStorageJsonContent");
+const localStorageJsonMeta = document.getElementById("localStorageJsonMeta");
+const localStorageExportSchemaBtn = document.getElementById("localStorageExportSchemaBtn");
+const localStorageExportTableBtn = document.getElementById("localStorageExportTableBtn");
+const localStorageBackupBtn = document.getElementById("localStorageBackupBtn");
+const localStorageRefreshBtn = document.getElementById("localStorageRefreshBtn");
 const chartDateSelect = document.getElementById("chartDateSelect");
 const trendQuickBtns = document.querySelectorAll(".trend-quick-btn");
 const pbcZipFile = document.getElementById("pbcZipFile");
@@ -354,6 +372,21 @@ let usersLoaded = false;
 let usersLoading = false;
 const USER_PAGE_SIZE = 10;
 const authState = { csrfToken: "", user: null };
+const localStorageBrowserState = {
+  loaded: false,
+  loading: false,
+  tables: [],
+  health: null,
+  selectedTable: "",
+  schema: null,
+  rowsPayload: null,
+  tab: "data",
+  page: 1,
+  pageSize: 20,
+  rowFilter: "",
+};
+const localStorageJsonValues = new Map();
+const LOCAL_STORAGE_BOOLEAN_FIELDS = ["enabled", "is_default"];
 const THEME_ACTIVE_USER_KEY = "autoCheckThemeUserKey";
 const THEME_KEY_BASE = "autoCheckTheme";
 const DARK_MODE_KEY_BASE = "autoCheckDarkMode";
@@ -631,7 +664,7 @@ function applyRoleAccess() {
   });
   applySettingsRoleAccess();
   const currentPageName = document.documentElement.getAttribute("data-page") || location.hash.slice(1);
-  if (!isAdmin && currentPageName === "users") {
+  if (!isAdmin && (currentPageName === "users" || currentPageName === "local-storage")) {
     switchPage("home", { forceHomeRefresh: true });
   }
 }
@@ -647,6 +680,11 @@ async function switchPage(name, options = {}) {
     name = "home";
     options = { ...options, forceHomeRefresh: true };
   }
+  if (name === "local-storage" && authState.user?.role !== "admin") {
+    showToast("普通用户无权访问本地数据库", "error");
+    name = "home";
+    options = { ...options, forceHomeRefresh: true };
+  }
   document.documentElement.setAttribute('data-page', name);
   syncNavState(name);
   const nextHash = `#${name}`;
@@ -655,6 +693,7 @@ async function switchPage(name, options = {}) {
   if (name === "tools") { await loadPbcImportSettings(); await loadDbValidationSettings(); await loadFlowSettings(); }
   if (name === "settings") { await loadConfigList(); await loadDbValidationSettings(); await loadFlowSettings(); await loadReconcileSchemaSettings(); applySettingsRoleAccess(); }
   if (name === "users") await loadUsers();
+  if (name === "local-storage") await loadLocalStorageBrowser();
   if (name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)) {
     homeChartsNeedThemeRefresh = false;
     renderHomeStats(); renderChart(); renderTrendChart();
@@ -1234,6 +1273,400 @@ userTableBody?.addEventListener("click", (event) => {
   if (button.classList.contains("edit-user")) openUserModal(targetUser);
   if (button.classList.contains("toggle-user")) toggleUserEnabled(targetUser);
   if (button.classList.contains("delete-user")) deleteUser(targetUser);
+});
+
+/* ===== Admin local storage browser ===== */
+function localStorageSetText(id, value) {
+  const element = document.getElementById(id);
+  if (element) element.textContent = value;
+}
+
+async function loadLocalStorageBrowser(options = {}) {
+  if (authState.user?.role !== "admin" || !localStorageTableList) return;
+  if (localStorageBrowserState.loading) return;
+  if (localStorageBrowserState.loaded && !options.force) {
+    renderLocalStorageBrowser();
+    return;
+  }
+  localStorageBrowserState.loading = true;
+  localStorageTableList.innerHTML = '<p class="placeholder-text">正在加载数据表...</p>';
+  try {
+    const [healthPayload, tablesPayload] = await Promise.all([
+      api("/api/admin/storage/health"),
+      api("/api/admin/storage/tables"),
+    ]);
+    localStorageBrowserState.health = healthPayload.health || {};
+    localStorageBrowserState.tables = tablesPayload.tables || [];
+    localStorageBrowserState.loaded = true;
+    const firstTable = localStorageBrowserState.tables.find((table) => table.allow_rows && !table.internal)
+      || localStorageBrowserState.tables.find((table) => table.allow_rows)
+      || localStorageBrowserState.tables[0];
+    if (!localStorageBrowserState.selectedTable && firstTable) {
+      localStorageBrowserState.selectedTable = firstTable.name;
+    }
+    renderLocalStorageBrowser();
+    if (localStorageBrowserState.selectedTable) {
+      await selectLocalStorageTable(localStorageBrowserState.selectedTable, { keepPage: true });
+    }
+  } catch (error) {
+    localStorageTableList.innerHTML = `<p class="placeholder-text">${escapeHtml(error.message || "本地数据库加载失败")}</p>`;
+    showToast(error.message || "本地数据库加载失败", "error");
+  } finally {
+    localStorageBrowserState.loading = false;
+  }
+}
+
+function renderLocalStorageBrowser() {
+  renderLocalStorageHealth();
+  renderLocalStorageTableList();
+  renderLocalStorageTabs();
+  renderLocalStorageSummary();
+  renderLocalStorageSchema();
+  renderLocalStorageRows();
+  renderLocalStorageInfo();
+}
+
+function renderLocalStorageHealth() {
+  const health = localStorageBrowserState.health || {};
+  const historyCounts = health.history_counts || {};
+  const historyTotal = Object.values(historyCounts).reduce((sum, value) => sum + Number(value || 0), 0);
+  localStorageSetText("localStorageSchemaVersion", health.schema_version ?? "--");
+  localStorageSetText("localStorageSchemaExpected", `目标版本 ${health.expected_schema_version ?? "--"}`);
+  localStorageSetText("localStorageIntegrity", health.integrity_check || "--");
+  localStorageSetText("localStorageForeignKeys", String(health.foreign_key_issues ?? "--"));
+  localStorageSetText("localStorageBusinessTables", String(health.business_table_count ?? "--"));
+  localStorageSetText("localStorageHistoryRuns", String(historyTotal || 0));
+  localStorageSetText("localStorageLatestBackup", health.latest_backup?.created_at || "暂无备份");
+  localStorageSetText("localStorageDatabasePath", health.database?.display_path || "auto-check.db");
+}
+
+function renderLocalStorageTableList() {
+  if (!localStorageTableList) return;
+  const keyword = String(localStorageTableSearch?.value || "").trim().toLowerCase();
+  const tables = localStorageBrowserState.tables.filter((table) => {
+    const haystack = `${table.name} ${table.cn_name} ${table.category}`.toLowerCase();
+    return haystack.includes(keyword);
+  });
+  localStorageSetText("localStorageTableCount", `${tables.length} 张表`);
+  if (!tables.length) {
+    localStorageTableList.innerHTML = '<p class="placeholder-text">没有匹配的数据表</p>';
+    return;
+  }
+  const groups = new Map();
+  tables.forEach((table) => {
+    if (!groups.has(table.category)) groups.set(table.category, []);
+    groups.get(table.category).push(table);
+  });
+  localStorageTableList.innerHTML = [...groups.entries()].map(([category, items]) => `
+    <div class="local-storage-group-title">${escapeHtml(category)}</div>
+    ${items.map((table) => `
+      <button type="button" class="local-storage-table-button${table.name === localStorageBrowserState.selectedTable ? " active" : ""}" data-storage-table="${escapeHtml(table.name)}">
+        <span>
+          <span class="local-storage-table-name">${escapeHtml(table.name)}</span>
+          <span class="local-storage-table-cn">${escapeHtml(table.cn_name)}</span>
+        </span>
+        <span class="local-storage-row-count">${escapeHtml(table.record_count ?? 0)}</span>
+      </button>
+    `).join("")}
+  `).join("");
+}
+
+async function selectLocalStorageTable(tableName, options = {}) {
+  if (!tableName) return;
+  localStorageBrowserState.selectedTable = tableName;
+  if (!options.keepPage) localStorageBrowserState.page = 1;
+  if (localStorageRowFilter) localStorageRowFilter.value = "";
+  localStorageBrowserState.rowFilter = "";
+  renderLocalStorageTableList();
+  renderLocalStorageLoading();
+  try {
+    const [schemaPayload, rowsPayload] = await Promise.all([
+      api(`/api/admin/storage/tables/${encodeURIComponent(tableName)}/schema`),
+      api(localStorageRowsUrl(tableName)),
+    ]);
+    localStorageBrowserState.schema = schemaPayload;
+    localStorageBrowserState.rowsPayload = rowsPayload;
+    renderLocalStorageSummary();
+    renderLocalStorageSchema();
+    renderLocalStorageRows();
+    renderLocalStorageInfo();
+  } catch (error) {
+    showToast(error.message || "表数据加载失败", "error");
+    if (localStorageDataBody) localStorageDataBody.innerHTML = `<tr><td class="empty">${escapeHtml(error.message || "表数据加载失败")}</td></tr>`;
+  }
+}
+
+function localStorageRowsUrl(tableName = localStorageBrowserState.selectedTable) {
+  return `/api/admin/storage/tables/${encodeURIComponent(tableName)}/rows?page=${localStorageBrowserState.page}&page_size=${localStorageBrowserState.pageSize}`;
+}
+
+function renderLocalStorageLoading() {
+  if (localStorageDataHead) localStorageDataHead.innerHTML = "";
+  if (localStorageDataBody) localStorageDataBody.innerHTML = '<tr><td class="empty">正在加载表数据...</td></tr>';
+  if (localStorageSchemaBody) localStorageSchemaBody.innerHTML = '<tr><td colspan="5" class="empty">正在加载字段结构...</td></tr>';
+}
+
+function currentLocalStorageTable() {
+  return localStorageBrowserState.tables.find((table) => table.name === localStorageBrowserState.selectedTable) || null;
+}
+
+function localStorageFieldNames() {
+  const schemaFields = localStorageBrowserState.schema?.fields || [];
+  if (schemaFields.length) return schemaFields.map((field) => field.name);
+  const rows = localStorageBrowserState.rowsPayload?.rows || [];
+  return Object.keys(rows[0] || {});
+}
+
+function localStorageColumnLabel(field, meta = {}) {
+  return meta?.cn_name || field;
+}
+
+function renderLocalStorageSummary() {
+  const table = currentLocalStorageTable();
+  const payloadTable = localStorageBrowserState.rowsPayload?.table || localStorageBrowserState.schema?.table || table || {};
+  localStorageSetText("localStorageSummaryName", payloadTable.name || "--");
+  localStorageSetText("localStorageSummaryCn", payloadTable.cn_name || "--");
+  localStorageSetText("localStorageSummaryEndpoint", payloadTable.name ? `GET ${localStorageRowsUrl(payloadTable.name)}` : "GET /api/admin/storage/tables");
+  localStorageSetText("localStorageSummaryRows", String(payloadTable.record_count ?? localStorageBrowserState.rowsPayload?.total ?? 0));
+  localStorageSetText("localStorageSummaryFields", String(payloadTable.field_count ?? (localStorageBrowserState.schema?.fields || []).length));
+  localStorageSetText("localStorageSummaryPk", (payloadTable.primary_key || []).join(", ") || "-");
+}
+
+function renderLocalStorageSchema() {
+  if (!localStorageSchemaBody) return;
+  const fields = localStorageBrowserState.schema?.fields || [];
+  if (!fields.length) {
+    localStorageSchemaBody.innerHTML = '<tr><td colspan="5" class="empty">请选择数据表</td></tr>';
+    return;
+  }
+  localStorageSchemaBody.innerHTML = fields.map((field) => `
+    <tr>
+      <td><code>${escapeHtml(field.name)}</code></td>
+      <td>${escapeHtml(field.type || "-")}</td>
+      <td><span class="local-storage-badge">${escapeHtml(localStorageConstraintText(field))}</span></td>
+      <td>${escapeHtml(field.cn_name || field.name)}</td>
+      <td>${escapeHtml(field.display || "原文")}</td>
+    </tr>
+  `).join("");
+}
+
+function localStorageConstraintText(field) {
+  const parts = [];
+  if (field.primary_key) parts.push("PK");
+  if (field.not_null) parts.push("NOT NULL");
+  if (field.default !== null && field.default !== undefined && field.default !== "") parts.push(`DEFAULT ${field.default}`);
+  return parts.join(" / ") || "-";
+}
+
+function renderLocalStorageRows() {
+  if (!localStorageDataHead || !localStorageDataBody) return;
+  const fields = localStorageFieldNames();
+  if (!fields.length) {
+    localStorageDataHead.innerHTML = "";
+    localStorageDataBody.innerHTML = '<tr><td class="empty">当前表暂无字段</td></tr>';
+    return;
+  }
+  const fieldMeta = localStorageBrowserState.rowsPayload?.fields || {};
+  const rawRows = localStorageBrowserState.rowsPayload?.rows || [];
+  const keyword = String(localStorageBrowserState.rowFilter || "").trim().toLowerCase();
+  const rows = keyword
+    ? rawRows.filter((row) => JSON.stringify(row).toLowerCase().includes(keyword))
+    : rawRows;
+  localStorageJsonValues.clear();
+  localStorageDataHead.innerHTML = `<tr>${fields.map((field) => `<th title="${escapeHtml(field)}">${escapeHtml(localStorageColumnLabel(field, fieldMeta[field]))}</th>`).join("")}</tr>`;
+  localStorageDataBody.innerHTML = rows.map((row, rowIndex) => `
+    <tr>
+      ${fields.map((field) => `<td>${renderLocalStorageCell(field, row[field], fieldMeta[field], rowIndex)}</td>`).join("")}
+    </tr>
+  `).join("");
+  if (!rows.length) {
+    localStorageDataBody.innerHTML = `<tr><td colspan="${fields.length}" class="empty">当前页没有数据</td></tr>`;
+  }
+  const total = Number(localStorageBrowserState.rowsPayload?.total || 0);
+  const totalPages = Math.max(1, Math.ceil(total / localStorageBrowserState.pageSize));
+  localStorageSetText("localStoragePagerText", `第 ${localStorageBrowserState.page} 页，共 ${totalPages} 页；当前 ${rows.length} 条 / 总计 ${total} 条`);
+  if (localStoragePrevPage) localStoragePrevPage.disabled = localStorageBrowserState.page <= 1;
+  if (localStorageNextPage) localStorageNextPage.disabled = localStorageBrowserState.page >= totalPages;
+  document.querySelectorAll("[data-storage-page-size]").forEach((button) => {
+    button.classList.toggle("active", Number(button.dataset.storagePageSize) === localStorageBrowserState.pageSize);
+  });
+}
+
+function renderLocalStorageCell(field, value, meta = {}, rowIndex = 0) {
+  if (value && typeof value === "object") {
+    const key = `${field}:${rowIndex}:${localStorageJsonValues.size}`;
+    localStorageJsonValues.set(key, value);
+    return `<button type="button" class="local-storage-json-button" data-storage-json="${escapeHtml(key)}" data-storage-json-field="${escapeHtml(field)}">查看 JSON</button>`;
+  }
+  const text = formatLocalStorageValue(field, value);
+  if (/status|role|kind|type|enabled|is_default|delta_type|severity|trigger/i.test(field) || meta.display === "标签") {
+    return `<span class="local-storage-badge">${escapeHtml(text)}</span>`;
+  }
+  return `<span title="${escapeHtml(text)}">${escapeHtml(text)}</span>`;
+}
+
+function isLocalStorageBooleanField(field) {
+  return LOCAL_STORAGE_BOOLEAN_FIELDS.includes(String(field || "").toLowerCase());
+}
+
+function formatLocalStorageValue(field, value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (isLocalStorageBooleanField(field) && value === 1) return "是";
+  if (isLocalStorageBooleanField(field) && value === 0) return "否";
+  if (isLocalStorageBooleanField(field) && value === true) return "是";
+  if (isLocalStorageBooleanField(field) && value === false) return "否";
+  return formatLocalStorageDateTimeValue(value);
+}
+
+function formatLocalStorageDateTimeValue(value) {
+  const text = String(value);
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?$/);
+  if (!match) return text;
+  return `${match[1]} ${match[2]}${match[3] ? ` ${match[3]}` : ""}`;
+}
+
+function renderLocalStorageInfo() {
+  const table = currentLocalStorageTable();
+  if (!table) return;
+  localStorageSetText("localStorageInfoPurpose", table.purpose || "");
+  const endpoints = [
+    ["GET", "/api/admin/storage/health"],
+    ["GET", "/api/admin/storage/tables"],
+    ["GET", `/api/admin/storage/tables/${table.name}/schema`],
+    ["GET", localStorageRowsUrl(table.name)],
+  ];
+  const apiList = document.getElementById("localStorageApiList");
+  if (apiList) {
+    apiList.innerHTML = endpoints.map(([method, path]) => `
+      <div class="local-storage-api-line">
+        <span>${method}</span>
+        <code>${escapeHtml(path)}</code>
+      </div>
+    `).join("");
+  }
+}
+
+function renderLocalStorageTabs() {
+  document.querySelectorAll("[data-storage-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.storageTab === localStorageBrowserState.tab);
+  });
+  const tabMap = {
+    data: "localStorageTabData",
+    schema: "localStorageTabSchema",
+    info: "localStorageTabInfo",
+  };
+  Object.entries(tabMap).forEach(([tab, id]) => {
+    document.getElementById(id)?.classList.toggle("active", tab === localStorageBrowserState.tab);
+  });
+}
+
+async function reloadLocalStorageRows() {
+  if (!localStorageBrowserState.selectedTable) return;
+  try {
+    localStorageBrowserState.rowsPayload = await api(localStorageRowsUrl());
+    renderLocalStorageSummary();
+    renderLocalStorageRows();
+    renderLocalStorageInfo();
+  } catch (error) {
+    showToast(error.message || "分页数据加载失败", "error");
+  }
+}
+
+function openLocalStorageJson(field, value) {
+  if (!localStorageJsonDrawer || !localStorageJsonBackdrop || !localStorageJsonContent) return;
+  if (localStorageJsonMeta) localStorageJsonMeta.textContent = `${localStorageBrowserState.selectedTable}.${field}`;
+  localStorageJsonContent.textContent = JSON.stringify(value, null, 2);
+  localStorageJsonDrawer.hidden = false;
+  localStorageJsonBackdrop.hidden = false;
+}
+
+function closeLocalStorageJson() {
+  if (localStorageJsonDrawer) localStorageJsonDrawer.hidden = true;
+  if (localStorageJsonBackdrop) localStorageJsonBackdrop.hidden = true;
+}
+
+localStorageTableList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-storage-table]");
+  if (!button) return;
+  selectLocalStorageTable(button.dataset.storageTable);
+});
+
+localStorageTableSearch?.addEventListener("input", renderLocalStorageTableList);
+
+document.querySelectorAll("[data-storage-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    localStorageBrowserState.tab = button.dataset.storageTab || "data";
+    renderLocalStorageTabs();
+  });
+});
+
+localStoragePageSizeGroup?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-storage-page-size]");
+  if (!button) return;
+  localStorageBrowserState.pageSize = Number(button.dataset.storagePageSize);
+  localStorageBrowserState.page = 1;
+  reloadLocalStorageRows();
+});
+
+localStoragePrevPage?.addEventListener("click", () => {
+  if (localStorageBrowserState.page <= 1) return;
+  localStorageBrowserState.page -= 1;
+  reloadLocalStorageRows();
+});
+
+localStorageNextPage?.addEventListener("click", () => {
+  localStorageBrowserState.page += 1;
+  reloadLocalStorageRows();
+});
+
+localStorageRowFilter?.addEventListener("input", () => {
+  localStorageBrowserState.rowFilter = localStorageRowFilter.value;
+  renderLocalStorageRows();
+});
+
+localStorageDataBody?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-storage-json]");
+  if (!button) return;
+  openLocalStorageJson(button.dataset.storageJsonField || "", localStorageJsonValues.get(button.dataset.storageJson));
+});
+
+localStorageJsonClose?.addEventListener("click", closeLocalStorageJson);
+localStorageJsonBackdrop?.addEventListener("click", closeLocalStorageJson);
+
+localStorageExportSchemaBtn?.addEventListener("click", () => {
+  window.location.href = "/api/admin/storage/schema-export";
+});
+
+localStorageExportTableBtn?.addEventListener("click", () => {
+  if (!localStorageBrowserState.selectedTable) {
+    showToast("请先选择要导出的数据表", "error");
+    return;
+  }
+  window.location.href = `/api/admin/storage/tables/${encodeURIComponent(localStorageBrowserState.selectedTable)}/export`;
+});
+
+localStorageBackupBtn?.addEventListener("click", async () => {
+  localStorageBackupBtn.disabled = true;
+  try {
+    const payload = await api("/api/admin/storage/backup", { method: "POST", body: "{}" });
+    localStorageSetText("localStorageLatestBackup", payload.backup?.created_at || "备份已生成");
+    showToast("本地数据库备份已生成", "success");
+    await loadLocalStorageBrowser({ force: true });
+  } catch (error) {
+    showToast(error.message || "生成备份失败", "error");
+  } finally {
+    localStorageBackupBtn.disabled = false;
+  }
+});
+
+localStorageRefreshBtn?.addEventListener("click", async () => {
+  localStorageRefreshBtn.disabled = true;
+  try {
+    await loadLocalStorageBrowser({ force: true });
+    showToast("本地数据库状态已刷新", "success");
+  } finally {
+    localStorageRefreshBtn.disabled = false;
+  }
 });
 
 function setStatus(t) {
@@ -5092,10 +5525,11 @@ function homeTargetCodeMismatchTextMatches(value = "") {
 
 function homeTargetCodeMismatchCount(item = {}) {
   let count = 0;
+  let faAmFallbackCount = 0;
   const details = Array.isArray(item.details) ? item.details : [];
   details.forEach((detail) => {
     if (detail?.kind === "fa_am") {
-      count += 1;
+      faAmFallbackCount += 1;
       return;
     }
     const data = detail?.data || {};
@@ -5113,6 +5547,7 @@ function homeTargetCodeMismatchCount(item = {}) {
     });
   });
   if (count > 0) return count;
+  if (faAmFallbackCount > 0) return faAmFallbackCount;
 
   const displayDetails = Array.isArray(item.display_details) ? item.display_details : [];
   displayDetails.forEach((section) => {
@@ -9381,8 +9816,9 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-07-02</span>
       </div>
        <ul>
+        <li>新增本地数据库查看器，支持管理员查看存储体检、白名单表结构、分页数据敏感字段脱敏展示、表结构/表数据导出和本地备份。</li>
         <li>自动对数 AM 复核在名称无法匹配时新增兜底：先用 FA 科目尾码匹配 AM 标的代码并按合同开始日取最新合同；尾码未命中时，江苏信托项目支持单边中文括号名称兜底，并要求报表库 <code>zf_detail_2024.projname</code> 去括号后按核对日期唯一命中，否则仍判定 AM 标的缺失。</li>
-        <li>首页最新趋势横轴改为展示每次自动对数的执行日期和时间；“标的代码不一致”统计改为按结构化详情逐条累计，一个项目出现多条 FA/AM 标的不一致时计为多条，项目明细弹框仍按项目记录展示。</li>
+        <li>首页最新趋势横轴改为展示每次自动对数的执行日期和时间；“标的代码不一致”统计改为按结构化详情逐条累计，一个项目出现多条 FA/AM 标的不一致时计为多条，并避免 <code>fa_am</code> 兜底明细与资产缺失细分明细重复计数；项目明细弹框仍按项目记录展示。</li>
         <li>流程链配置可选流程列表保留 500 条初始展示上限，并支持按流程名称或 <code>flow_id</code> 搜索；超过初始列表的流程可通过搜索或手工输入 <code>flow_id</code> 加入链路。</li>
         <li>流程链停止按钮改为按后台任务 <code>job_id</code> 取消，点击后立即进入停止中状态，后端停止本地流程链继续等待或提交后续流程。</li>
         <li>自动对数导出处理脚本按 AM 合同来源判断：<code>c_datasource=am</code> 生成修正 SQL，非 <code>am</code> 来源输出“衡泰标的不一致请联系衡泰系统处理。”，多条标的不一致在脚本列按 <code>①②③</code> 编号。</li>

@@ -400,7 +400,7 @@ def test_asset_missing_multiple_refinements_are_numbered_in_specific_reason():
     assert results[0].details[-1].data["specific_reason"] == "\n".join(
         [
             "①债券缺失：23苏城投MTN004；原因：资负数据子系统-债务证券明细表无数据",
-            "②贷款缺失：贷款合同DK20260531001；原因：该贷款在dm.am_projinvest_zgxg_dm不存在或投融资余额为0",
+            "②贷款缺失：贷款合同DK20260531001；原因：该贷款在DM AM 投融资余额表不存在或投融资余额为0",
         ]
     )
 
@@ -471,7 +471,7 @@ def test_asset_missing_refinement_covers_additional_asset_types():
             "④逆回购缺失：质押式逆回购；原因：存续回购业务表回购金额或佣金存在空数据",
             "⑤股权投资缺失：股权投资GQ20260531001；原因：该股权投资股权投资类别字段（pin_gqtype_h）为空",
             "⑥信托计划收益权缺失：江苏信托稳赢信托产品一号；原因：资负数据子系统-特定目的载体明细表无数据",
-            "⑦资产收益权缺失：某资产收益权；原因：该财产权在zgxg_zhbs.ccqxx不存在或投融资余额为0",
+            "⑦资产收益权缺失：某资产收益权；原因：该财产权在财产权合同信息表不存在或投融资余额为0",
         ]
     )
 
@@ -2015,7 +2015,7 @@ def test_asset_missing_prompts_sql_check_when_am_and_contract_balance_are_normal
     assert results[0].details[1].data["specific_reason"] == ""
     assert results[0].details[1].data["project_invest_balance"] == "20"
     assert results[0].details[-1].data["specific_reason"] == (
-        "①特定目的载体缺失：Asset A；原因：该特定目的载体在dm.am_projinvest_spv_zgxg_dm不存在或余额为0"
+        "①特定目的载体缺失：Asset A；原因：该特定目的载体在DM AM SPV 投融资余额表不存在或余额为0"
     )
 
 

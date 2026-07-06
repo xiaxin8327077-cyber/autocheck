@@ -375,6 +375,67 @@ def test_export_to_xlsx_preserves_numeric_and_detail_formatting(tmp_path):
     assert sheet["L3"].font.sz == 11
 
 
+def test_home_target_code_mismatch_count_prefers_refinement_rows_without_double_counting(tmp_path):
+    app_js = _read(APP_JS)
+    normalize_fn = app_js[
+        app_js.index("function normalizeHomeReasonText"):
+        app_js.index("function homeSpecificReasonMatchesPaidIn")
+    ]
+    text_match_fn = app_js[
+        app_js.index("function homeTargetCodeMismatchTextMatches"):
+        app_js.index("function homeTargetCodeMismatchCount")
+    ]
+    count_fn = app_js[
+        app_js.index("function homeTargetCodeMismatchCount"):
+        app_js.index("function homeReasonCategoryFromItem")
+    ]
+    script_path = tmp_path / "home_target_code_count.js"
+    script_path.write_text(
+        normalize_fn
+        + text_match_fn
+        + count_fn
+        + textwrap.dedent(
+            """
+            const mixedDetails = {
+              details: [
+                {
+                  kind: "fa_am",
+                  data: { specific_reason: "FA与AM标的不一致" },
+                },
+                {
+                  kind: "asset_missing_refinement",
+                  data: {
+                    rows: [
+                      { check_result: "FA和AM标的不一致", pact_id: "PACT_A" },
+                      { check_result: "FA和AM标的不一致", pact_id: "PACT_B" },
+                    ],
+                  },
+                },
+              ],
+            };
+            const legacyFaAmOnly = {
+              details: [
+                {
+                  kind: "fa_am",
+                  data: { specific_reason: "FA与AM标的不一致" },
+                },
+              ],
+            };
+            const counts = [
+              homeTargetCodeMismatchCount(mixedDetails),
+              homeTargetCodeMismatchCount(legacyFaAmOnly),
+            ];
+            if (counts[0] !== 2 || counts[1] !== 1) {
+              throw new Error(`unexpected counts: ${counts.join(",")}`);
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
 def test_candidate_ambiguous_status_is_available_in_result_filters_and_badge():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -1334,6 +1395,7 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     change_items = [
         "自动对数 AM 复核在名称无法匹配时新增兜底",
         "首页最新趋势横轴改为展示每次自动对数的执行日期和时间",
+        "兜底明细与资产缺失细分明细重复计数",
         "流程链配置可选流程列表保留 500 条初始展示上限",
         "流程链停止按钮改为按后台任务",
         "自动对数导出处理脚本按 AM 合同来源判断",
@@ -2663,7 +2725,87 @@ def test_user_management_table_keeps_action_column_compact():
     assert '<th class="user-actions-heading">' in html
     assert '<td class="user-actions-cell">' in _read(APP_JS)
     assert ".user-table col.user-actions-col" in css
-    assert "width: 260px" in css
+
+
+def test_admin_local_storage_browser_page_and_api_hooks_are_present():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    readme = _read(README_MD)
+
+    assert 'class="nav-item admin-only" data-page="local-storage"' in html
+    assert 'class="top-nav-item admin-only" data-page="local-storage"' in html
+    assert 'id="page-local-storage"' in html
+    assert 'id="localStorageTableList"' in html
+    assert 'id="localStorageDataHead"' in html
+    assert 'id="localStorageSchemaBody"' in html
+    assert 'id="localStorageInfoPanel"' in html
+    assert 'id="localStorageJsonDrawer"' in html
+    assert 'id="localStorageExportSchemaBtn"' in html
+    assert 'id="localStorageExportTableBtn"' in html
+    assert 'id="localStorageBackupBtn"' in html
+    assert 'id="localStorageRefreshBtn"' in html
+    assert 'data-storage-tab="data">数据</button>' in html
+    assert 'data-storage-tab="schema">字段</button>' in html
+    assert 'data-storage-tab="info">说明</button>' in html
+    assert "分页数据按敏感字段脱敏只读展示" in html
+    assert "<textarea" not in html
+    assert "contenteditable" not in html
+    assert 'placeholder="SQL' not in html
+
+    for endpoint in [
+        "/api/admin/storage/health",
+        "/api/admin/storage/tables",
+        "/api/admin/storage/schema-export",
+        "/api/admin/storage/backup",
+        "/export",
+    ]:
+        assert endpoint in app_js
+
+    assert "function loadLocalStorageBrowser" in app_js
+    assert "function localStorageColumnLabel" in app_js
+    assert "function isLocalStorageBooleanField" in app_js
+    assert "function formatLocalStorageDateTimeValue(value)" in app_js
+    assert "formatLocalStorageValue(field, value)" in app_js
+    assert "formatLocalStorageDateTimeValue(value)" in app_js
+    assert '["enabled", "is_default"]' in app_js
+    assert 'if (isLocalStorageBooleanField(field) && value === 1) return "是";' in app_js
+    assert "return meta?.cn_name || field;" in app_js
+    assert '<th title="${escapeHtml(field)}">${escapeHtml(localStorageColumnLabel(field, fieldMeta[field]))}</th>' in app_js
+    assert "localStorageExportTableBtn" in app_js
+    assert "encodeURIComponent(localStorageBrowserState.selectedTable)" in app_js
+    assert "分页数据敏感字段脱敏展示" in app_js
+    assert 'name === "local-storage" && authState.user?.role !== "admin"' in app_js
+    assert 'document.querySelectorAll(".admin-only")' in app_js
+
+    assert ':root[data-page="local-storage"] #page-local-storage' in css
+    assert ':root[data-page="local-storage"] body' in css
+    assert ':root[data-page="local-storage"] .main-content' in css
+    assert ':root[data-page="local-storage"] .top-nav-item[data-page="local-storage"]' in css
+    assert "#page-local-storage .local-storage-browser-grid" in css
+    assert "#page-local-storage .local-storage-table-list" in css and "overflow: auto" in css
+    assert "#page-local-storage .local-storage-table-wrap" in css and "overflow: auto" in css
+    assert "#page-local-storage table" in css and "table-layout: auto" in css
+    assert "#page-local-storage th" in css and "min-width: var(--local-storage-col-min)" in css
+    assert "--local-storage-col-min" in css
+    assert "max-width: 260px" not in css
+    space_storage_page = re.search(r'\[data-theme="space-tech"\] #page-local-storage\s*\{(?P<body>.*?)\}', css, re.S)
+    assert space_storage_page is not None
+    assert "padding: 0;" in space_storage_page.group("body")
+    space_storage_title = re.search(
+        r'\[data-theme="space-tech"\] #page-local-storage \.local-storage-toolbar > div:first-child\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert space_storage_title is not None
+    assert "display: none;" in space_storage_title.group("body")
+    assert '[data-theme="space-tech"][data-color-mode="dark"] #page-local-storage' in css
+
+    assert "本地数据库查看器" in readme
+    assert "管理员可只读查看本地 `auto-check.db`" in readme
+    assert "敏感字段脱敏展示" in readme
+    assert "活力主题页内间距和日期时间展示优化" in readme
+    assert "导出当前表数据" in readme
     assert ".user-actions-cell" in css
     assert "white-space: nowrap" in css
     assert "overflow-wrap: anywhere" in css

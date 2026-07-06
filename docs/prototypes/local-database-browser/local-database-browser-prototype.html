@@ -1,0 +1,2048 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="space-tech" data-color-mode="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>本地数据库查看器原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6fbff;
+      --bg-soft: #eef6ff;
+      --panel: rgba(255, 255, 255, 0.78);
+      --panel-solid: #ffffff;
+      --panel-muted: rgba(241, 247, 253, 0.86);
+      --line: rgba(100, 116, 139, 0.28);
+      --line-strong: rgba(59, 130, 246, 0.28);
+      --text: #0f172a;
+      --muted: #536173;
+      --muted-2: #7a8797;
+      --blue: #2563eb;
+      --cyan: #0891b2;
+      --green: #0f9f6e;
+      --amber: #d97706;
+      --red: #dc2626;
+      --purple: #6d5dfc;
+      --shadow: 0 18px 44px rgba(15, 23, 42, 0.11);
+      --shadow-soft: 0 10px 24px rgba(15, 23, 42, 0.08);
+      --radius: 8px;
+      --topbar-h: 64px;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    [data-color-mode="dark"] {
+      color-scheme: dark;
+      --bg: #07111f;
+      --bg-soft: #0f172a;
+      --panel: rgba(15, 23, 42, 0.82);
+      --panel-solid: #111c2f;
+      --panel-muted: rgba(22, 33, 52, 0.88);
+      --line: rgba(148, 163, 184, 0.24);
+      --line-strong: rgba(56, 189, 248, 0.26);
+      --text: #e5eefb;
+      --muted: #a7b7ca;
+      --muted-2: #8391a4;
+      --blue: #3b82f6;
+      --cyan: #22b8cf;
+      --green: #34d399;
+      --amber: #f59e0b;
+      --red: #f87171;
+      --purple: #9b8cff;
+      --shadow: 0 18px 44px rgba(0, 0, 0, 0.30);
+      --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.22);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 8% 8%, rgba(37, 99, 235, 0.13), transparent 27%),
+        radial-gradient(circle at 86% 16%, rgba(8, 145, 178, 0.14), transparent 30%),
+        linear-gradient(135deg, var(--bg) 0%, var(--bg-soft) 52%, var(--bg) 100%);
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+    }
+
+    .app-shell {
+      width: min(1500px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 12px 0 40px;
+    }
+
+    .top-nav {
+      position: sticky;
+      top: 12px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: var(--topbar-h);
+      padding: 8px 10px 8px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(20px) saturate(1.12);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 210px;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 36px;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.28);
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-copy strong {
+      display: block;
+      font-size: 17px;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    .brand-copy span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .top-nav-tabs {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .nav-item,
+    .theme-toggle,
+    .toolbar-button,
+    .pager-button,
+    .tab-button,
+    .page-size-button {
+      min-height: 34px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      color: var(--text);
+      background: transparent;
+      cursor: pointer;
+      transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+      white-space: nowrap;
+    }
+
+    .nav-item {
+      padding: 8px 12px;
+      text-decoration: none;
+    }
+
+    .nav-item:hover,
+    .theme-toggle:hover,
+    .toolbar-button:hover,
+    .pager-button:hover,
+    .tab-button:hover,
+    .page-size-button:hover {
+      border-color: var(--line-strong);
+      background: rgba(37, 99, 235, 0.07);
+    }
+
+    .nav-item.active {
+      color: #fff;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      box-shadow: 0 12px 24px rgba(37, 99, 235, 0.22);
+    }
+
+    .theme-toggle {
+      width: 36px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border-color: var(--line);
+      background: var(--panel-solid);
+      font-weight: 800;
+    }
+
+    .user-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 34px;
+      padding: 4px 10px 4px 5px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel-solid);
+      white-space: nowrap;
+    }
+
+    .avatar {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--green), var(--cyan));
+    }
+
+    .workspace {
+      padding-top: 22px;
+    }
+
+    .page-title {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+    }
+
+    .page-title h1 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 34px);
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .title-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.40);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    [data-color-mode="dark"] .chip {
+      background: rgba(15, 23, 42, 0.34);
+    }
+
+    .chip.ok {
+      color: var(--green);
+      border-color: color-mix(in srgb, var(--green) 42%, var(--line));
+      background: color-mix(in srgb, var(--green) 10%, transparent);
+    }
+
+    .chip.warn {
+      color: var(--amber);
+      border-color: color-mix(in srgb, var(--amber) 42%, var(--line));
+      background: color-mix(in srgb, var(--amber) 10%, transparent);
+    }
+
+    .page-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .toolbar-button,
+    .pager-button,
+    .page-size-button {
+      padding: 7px 11px;
+      border-color: var(--line);
+      color: var(--text);
+      background: var(--panel-solid);
+    }
+
+    .toolbar-button.primary {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+    }
+
+    .health-strip {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(16px);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 20px;
+      line-height: 1.12;
+      overflow-wrap: anywhere;
+    }
+
+    .metric small {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted-2);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric.accent-blue { border-top: 3px solid var(--blue); }
+    .metric.accent-cyan { border-top: 3px solid var(--cyan); }
+    .metric.accent-green { border-top: 3px solid var(--green); }
+    .metric.accent-amber { border-top: 3px solid var(--amber); }
+    .metric.accent-purple { border-top: 3px solid var(--purple); }
+
+    .browser-grid {
+      display: grid;
+      grid-template-columns: minmax(270px, 330px) minmax(0, 1fr);
+      gap: 14px;
+      align-items: stretch;
+      min-height: 660px;
+    }
+
+    .panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(18px);
+    }
+
+    .table-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-head,
+    .table-summary,
+    .data-toolbar,
+    .pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .panel-head {
+      min-height: 58px;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head h2,
+    .table-summary h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+
+    .panel-count {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 12px 14px;
+      padding: 0 11px;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-solid);
+    }
+
+    .search-box span {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .search-box input {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      color: var(--text);
+      background: transparent;
+    }
+
+    .table-list {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 0 8px 12px;
+    }
+
+    .group-title {
+      margin: 14px 6px 6px;
+      color: var(--muted-2);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .table-button {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      color: var(--text);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .table-button:hover {
+      border-color: var(--line-strong);
+      background: rgba(37, 99, 235, 0.06);
+    }
+
+    .table-button.active {
+      border-color: color-mix(in srgb, var(--blue) 46%, var(--line));
+      background: color-mix(in srgb, var(--blue) 12%, transparent);
+    }
+
+    .table-main,
+    .table-sub {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .table-main {
+      font-weight: 700;
+    }
+
+    .table-sub {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .row-count {
+      align-self: center;
+      min-width: 42px;
+      padding: 4px 7px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--panel-muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .data-panel {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .table-summary {
+      min-height: 72px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .summary-main {
+      min-width: 0;
+    }
+
+    .summary-main h2 {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex-wrap: wrap;
+    }
+
+    .summary-cn {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .endpoint {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .summary-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(72px, 1fr));
+      gap: 8px;
+      min-width: 250px;
+    }
+
+    .summary-stat {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-solid);
+    }
+
+    .summary-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .summary-stat strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 16px;
+      line-height: 1.1;
+      overflow-wrap: anywhere;
+    }
+
+    .tabbar {
+      display: flex;
+      gap: 6px;
+      padding: 10px 12px 0;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    .tab-button {
+      padding: 8px 13px;
+      border-color: var(--line);
+      border-bottom-left-radius: 0;
+      border-bottom-right-radius: 0;
+      background: var(--panel-muted);
+    }
+
+    .tab-button.active {
+      color: #fff;
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+    }
+
+    .tab-view {
+      flex: 1;
+      min-height: 0;
+      display: none;
+      flex-direction: column;
+    }
+
+    .tab-view.active {
+      display: flex;
+    }
+
+    .data-toolbar {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left,
+    .toolbar-right,
+    .page-size-group,
+    .pager-controls {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .filter-input {
+      width: min(330px, 42vw);
+      min-height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--panel-solid);
+      outline: 0;
+    }
+
+    .select {
+      min-height: 34px;
+      padding: 0 30px 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--panel-solid);
+    }
+
+    .page-size-button.active {
+      color: #fff;
+      border-color: transparent;
+      background: var(--blue);
+    }
+
+    .table-wrap {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      background: rgba(255, 255, 255, 0.20);
+    }
+
+    [data-color-mode="dark"] .table-wrap {
+      background: rgba(15, 23, 42, 0.18);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 860px;
+    }
+
+    th,
+    td {
+      max-width: 260px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      color: var(--muted);
+      background: var(--panel-solid);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    tr:hover td {
+      background: color-mix(in srgb, var(--blue) 7%, transparent);
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .badge.green {
+      color: var(--green);
+      background: color-mix(in srgb, var(--green) 12%, transparent);
+    }
+
+    .badge.amber {
+      color: var(--amber);
+      background: color-mix(in srgb, var(--amber) 13%, transparent);
+    }
+
+    .badge.blue {
+      color: var(--blue);
+      background: color-mix(in srgb, var(--blue) 12%, transparent);
+    }
+
+    .badge.red {
+      color: var(--red);
+      background: color-mix(in srgb, var(--red) 12%, transparent);
+    }
+
+    .json-button {
+      min-height: 26px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--cyan);
+      background: var(--panel-solid);
+      cursor: pointer;
+    }
+
+    .pager {
+      min-height: 56px;
+      padding: 10px 14px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+
+    .schema-wrap,
+    .info-wrap {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px;
+    }
+
+    .schema-grid {
+      min-width: 760px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--panel-solid);
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .info-block {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-solid);
+    }
+
+    .info-block.full {
+      grid-column: 1 / -1;
+    }
+
+    .info-block h3 {
+      margin: 0 0 9px;
+      font-size: 14px;
+    }
+
+    .info-block p,
+    .info-block li {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .info-block ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .api-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .api-line {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-muted);
+    }
+
+    .api-line span {
+      color: var(--green);
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .api-line code {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+    }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: none;
+      background: rgba(15, 23, 42, 0.34);
+    }
+
+    .drawer-backdrop.open {
+      display: block;
+    }
+
+    .json-drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 60;
+      width: min(560px, 94vw);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid var(--line);
+      background: var(--panel-solid);
+      box-shadow: -18px 0 44px rgba(15, 23, 42, 0.18);
+      transform: translateX(104%);
+      transition: transform 0.22s ease;
+    }
+
+    .json-drawer.open {
+      transform: translateX(0);
+    }
+
+    .drawer-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 64px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .drawer-head h2 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .drawer-close {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      background: var(--panel-muted);
+      cursor: pointer;
+    }
+
+    .drawer-meta {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    pre {
+      flex: 1;
+      margin: 0;
+      padding: 16px;
+      overflow: auto;
+      color: var(--text);
+      background: transparent;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      white-space: pre-wrap;
+    }
+
+    .empty {
+      padding: 36px 14px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    @media (max-width: 1180px) {
+      .health-strip {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .summary-stats {
+        min-width: 210px;
+      }
+    }
+
+    @media (max-width: 920px) {
+      .app-shell {
+        width: min(100% - 24px, 720px);
+      }
+
+      .top-nav,
+      .page-title,
+      .table-summary {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .brand {
+        min-width: 0;
+      }
+
+      .top-nav-tabs {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .health-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .browser-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .table-panel {
+        max-height: 430px;
+      }
+
+      .summary-stats {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .filter-input {
+        width: 100%;
+      }
+
+      .info-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .health-strip,
+      .summary-stats {
+        grid-template-columns: 1fr;
+      }
+
+      .brand-copy span {
+        white-space: normal;
+      }
+
+      .page-actions,
+      .toolbar-left,
+      .toolbar-right,
+      .pager-controls {
+        width: 100%;
+        justify-content: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-nav">
+      <div class="brand" aria-label="监管智核">
+        <div class="brand-mark">核</div>
+        <div class="brand-copy">
+          <strong>监管智核</strong>
+          <span>监管报送核验平台</span>
+        </div>
+      </div>
+      <nav class="top-nav-tabs" aria-label="主导航">
+        <button class="theme-toggle" id="themeToggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">夜</button>
+        <a class="nav-item" href="#">首页</a>
+        <a class="nav-item" href="#">自动对数</a>
+        <a class="nav-item" href="#">核对历史</a>
+        <a class="nav-item" href="#">工具</a>
+        <a class="nav-item" href="#">系统设置</a>
+        <a class="nav-item" href="#">用户管理</a>
+        <a class="nav-item active" href="#">本地数据库</a>
+        <span class="user-pill"><span class="avatar">A</span><span>admin</span></span>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <section class="page-title" aria-labelledby="pageTitle">
+        <div>
+          <h1 id="pageTitle">本地数据库</h1>
+          <div class="title-meta">
+            <span class="chip ok">仅管理员</span>
+            <span class="chip ok">只读查询</span>
+            <span class="chip">SQLite 本地库</span>
+            <span class="chip warn">敏感字段脱敏</span>
+          </div>
+        </div>
+        <div class="page-actions">
+          <button class="toolbar-button" type="button" id="exportSchemaButton">导出表结构</button>
+          <button class="toolbar-button" type="button" id="backupButton">生成备份</button>
+          <button class="toolbar-button primary" type="button" id="refreshButton">刷新状态</button>
+        </div>
+      </section>
+
+      <section class="health-strip" aria-label="存储体检">
+        <div class="metric accent-green">
+          <span>结构版本</span>
+          <strong>v2</strong>
+          <small>schema_migrations 已应用</small>
+        </div>
+        <div class="metric accent-cyan">
+          <span>完整性检查</span>
+          <strong>ok</strong>
+          <small>PRAGMA integrity_check</small>
+        </div>
+        <div class="metric accent-green">
+          <span>外键异常</span>
+          <strong>0</strong>
+          <small>PRAGMA foreign_key_check</small>
+        </div>
+        <div class="metric accent-blue">
+          <span>业务表</span>
+          <strong id="businessTableMetric">22</strong>
+          <small>含兼容迁移表</small>
+        </div>
+        <div class="metric accent-purple">
+          <span>历史运行</span>
+          <strong>55</strong>
+          <small>对数 32 / 逐笔 16 / 流程 7</small>
+        </div>
+        <div class="metric accent-amber">
+          <span>最近备份</span>
+          <strong>11:06</strong>
+          <small>backup-before-storage-v2</small>
+        </div>
+      </section>
+
+      <section class="browser-grid" aria-label="本地数据库浏览">
+        <aside class="panel table-panel">
+          <div class="panel-head">
+            <h2>数据表</h2>
+            <span class="panel-count" id="tableCount">22 张表</span>
+          </div>
+          <label class="search-box">
+            <span>筛选</span>
+            <input id="tableSearch" type="search" autocomplete="off" placeholder="表名或中文名" />
+          </label>
+          <div class="table-list" id="tableList"></div>
+        </aside>
+
+        <section class="panel data-panel">
+          <div class="table-summary">
+            <div class="summary-main">
+              <h2>
+                <span class="mono" id="summaryName">reconcile_runs</span>
+                <span class="summary-cn" id="summaryCn">自动对数运行表</span>
+              </h2>
+              <code class="endpoint" id="summaryEndpoint">GET /api/admin/storage/tables/reconcile_runs/rows?page=1&page_size=20</code>
+            </div>
+            <div class="summary-stats">
+              <div class="summary-stat">
+                <span>记录数</span>
+                <strong id="summaryRows">32</strong>
+              </div>
+              <div class="summary-stat">
+                <span>字段数</span>
+                <strong id="summaryFields">13</strong>
+              </div>
+              <div class="summary-stat">
+                <span>主键</span>
+                <strong id="summaryPk">id</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="tabbar" role="tablist" aria-label="表详情">
+            <button class="tab-button active" type="button" data-tab="data">数据</button>
+            <button class="tab-button" type="button" data-tab="schema">字段</button>
+            <button class="tab-button" type="button" data-tab="info">说明</button>
+          </div>
+
+          <div class="tab-view active" id="tabData">
+            <div class="data-toolbar">
+              <div class="toolbar-left">
+                <input class="filter-input" id="rowFilter" type="search" autocomplete="off" placeholder="筛选当前页数据" />
+                <select class="select" id="sortSelect" aria-label="排序">
+                  <option value="created_desc">按创建时间倒序</option>
+                  <option value="created_asc">按创建时间正序</option>
+                  <option value="id_desc">按主键倒序</option>
+                </select>
+              </div>
+              <div class="toolbar-right">
+                <span class="chip">page_size</span>
+                <div class="page-size-group" id="pageSizeGroup">
+                  <button class="page-size-button" type="button" data-size="10">10</button>
+                  <button class="page-size-button active" type="button" data-size="20">20</button>
+                  <button class="page-size-button" type="button" data-size="50">50</button>
+                </div>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table aria-label="表数据">
+                <thead id="dataHead"></thead>
+                <tbody id="dataBody"></tbody>
+              </table>
+            </div>
+            <div class="pager">
+              <span id="pagerText">第 1 页，共 2 页</span>
+              <div class="pager-controls">
+                <button class="pager-button" type="button" id="prevPage">上一页</button>
+                <button class="pager-button" type="button" id="nextPage">下一页</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="tab-view" id="tabSchema">
+            <div class="schema-wrap">
+              <table class="schema-grid" aria-label="字段结构">
+                <thead>
+                  <tr>
+                    <th>字段</th>
+                    <th>类型</th>
+                    <th>约束</th>
+                    <th>中文说明</th>
+                    <th>展示策略</th>
+                  </tr>
+                </thead>
+                <tbody id="schemaBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-view" id="tabInfo">
+            <div class="info-wrap">
+              <div class="info-grid">
+                <article class="info-block">
+                  <h3>用途</h3>
+                  <p id="infoPurpose">保存自动对数运行摘要、配置名称、规则版本和增量数量。</p>
+                </article>
+                <article class="info-block">
+                  <h3>访问控制</h3>
+                  <p>管理员菜单可见；后端接口按会话角色二次校验；所有接口只返回查询结果。</p>
+                </article>
+                <article class="info-block full">
+                  <h3>接口</h3>
+                  <div class="api-list" id="apiList"></div>
+                </article>
+                <article class="info-block full">
+                  <h3>安全策略</h3>
+                  <ul>
+                    <li>不提供 SQL 输入框，不接受任意表达式、排序字段或 where 片段。</li>
+                    <li>表名必须来自白名单元数据，分页参数限制在 10、20、50、100。</li>
+                    <li>密码、密钥、token、连接串等字段统一脱敏，JSON 明细抽屉同样脱敏。</li>
+                    <li>默认按主键或创建时间倒序，最多只读取当前页数据。</li>
+                  </ul>
+                </article>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="json-drawer" id="jsonDrawer" aria-label="JSON 明细">
+    <div class="drawer-head">
+      <h2 id="drawerTitle">JSON 明细</h2>
+      <button class="drawer-close" id="drawerClose" type="button" aria-label="关闭">关</button>
+    </div>
+    <div class="drawer-meta" id="drawerMeta">reconcile_runs.config_snapshot</div>
+    <pre id="drawerContent">{}</pre>
+  </aside>
+
+  <script>
+    const tableCatalog = [
+      {
+        category: "配置与用户",
+        name: "data_sources",
+        cn: "数据源配置表",
+        rows: 5,
+        fields: [
+          ["id", "TEXT", "PK", "数据源 ID", "原文"],
+          ["name", "TEXT", "NOT NULL", "数据源名称", "原文"],
+          ["source_type", "TEXT", "NOT NULL", "DWS 或报表库", "标签"],
+          ["db_type", "TEXT", "NOT NULL", "数据库类型", "标签"],
+          ["host", "TEXT", "", "主机地址", "脱敏"],
+          ["port", "INTEGER", "", "端口", "原文"],
+          ["username", "TEXT", "", "用户名", "脱敏"],
+          ["password_encrypted", "TEXT", "", "加密密码", "隐藏"],
+          ["is_default", "INTEGER", "", "是否默认", "标签"],
+          ["updated_at", "TEXT", "", "更新时间", "原文"]
+        ],
+        purpose: "保存 DWS、报表库等本地数据源连接配置和默认标记。",
+        sampleRows: [
+          { id: "ds_dws_main", name: "DWS 生产只读", source_type: "dws", db_type: "mysql", host: "10.20.18.***", port: 3306, username: "risk_ro", password_encrypted: "******", is_default: 1, updated_at: "2026-07-03 10:42:18" },
+          { id: "ds_report_main", name: "报表库生产", source_type: "report", db_type: "postgresql", host: "10.20.21.***", port: 5432, username: "report_ro", password_encrypted: "******", is_default: 1, updated_at: "2026-07-02 18:15:36" }
+        ]
+      },
+      {
+        category: "配置与用户",
+        name: "app_settings",
+        cn: "应用设置表",
+        rows: 9,
+        fields: [
+          ["key", "TEXT", "PK", "设置键", "原文"],
+          ["setting_group", "TEXT", "", "设置分组", "标签"],
+          ["value_json", "TEXT", "NOT NULL", "结构化设置", "JSON 抽屉"],
+          ["updated_at", "TEXT", "", "更新时间", "原文"]
+        ],
+        purpose: "保存系统设置、默认设置、人行逐笔校验设置、流程工具设置等结构化配置。",
+        sampleRows: [
+          { key: "system.default", setting_group: "system", value_json: { theme: "space-tech", page_size: 20, visual_effects: "auto" }, updated_at: "2026-07-03 09:48:12" },
+          { key: "db_validation.options", setting_group: "db_validation", value_json: { enabled_rules: 42, warning_level: "strict" }, updated_at: "2026-07-02 16:35:28" }
+        ]
+      },
+      {
+        category: "配置与用户",
+        name: "users",
+        cn: "用户账号表",
+        rows: 3,
+        fields: [
+          ["id", "TEXT", "PK", "用户 ID", "原文"],
+          ["username", "TEXT", "UNIQUE", "登录名", "原文"],
+          ["display_name", "TEXT", "", "显示名称", "原文"],
+          ["role", "TEXT", "", "角色", "标签"],
+          ["enabled", "INTEGER", "", "是否启用", "标签"],
+          ["password_hash", "TEXT", "", "密码哈希", "隐藏"],
+          ["last_login_at", "TEXT", "", "最后登录时间", "原文"],
+          ["created_at", "TEXT", "", "创建时间", "原文"]
+        ],
+        purpose: "保存用户、角色、状态、密码哈希和登录时间。",
+        sampleRows: [
+          { id: "u_admin", username: "admin", display_name: "系统管理员", role: "admin", enabled: 1, password_hash: "******", last_login_at: "2026-07-03 11:28:42", created_at: "2025-11-04 09:00:00" },
+          { id: "u_ops", username: "ops01", display_name: "运营复核", role: "user", enabled: 1, password_hash: "******", last_login_at: "2026-07-02 17:22:11", created_at: "2026-04-19 10:16:21" }
+        ]
+      },
+      {
+        category: "历史公共",
+        name: "run_headers",
+        cn: "历史运行头表",
+        rows: 55,
+        fields: [
+          ["id", "TEXT", "PK", "运行 ID", "原文"],
+          ["run_type", "TEXT", "", "运行类型", "标签"],
+          ["title", "TEXT", "", "运行标题", "原文"],
+          ["status", "TEXT", "", "状态", "标签"],
+          ["started_at", "TEXT", "", "开始时间", "原文"],
+          ["finished_at", "TEXT", "", "结束时间", "原文"],
+          ["payload_json", "TEXT", "", "完整快照", "JSON 抽屉"]
+        ],
+        purpose: "保存各类历史运行的公共字段和完整 payload 快照。",
+        sampleRows: [
+          { id: "run_20260703_102218", run_type: "reconcile", title: "2026-06 自动对数", status: "success", started_at: "2026-07-03 10:22:18", finished_at: "2026-07-03 10:25:46", payload_json: { report_period: "2026-06", total: 245, unresolved: 12 } },
+          { id: "dbv_20260702_163100", run_type: "db_validation", title: "2026-06 人行逐笔校验", status: "success", started_at: "2026-07-02 16:31:00", finished_at: "2026-07-02 16:38:19", payload_json: { tables: 8, warnings: 3, results: 418 } }
+        ]
+      },
+      {
+        category: "自动对数",
+        name: "reconcile_runs",
+        cn: "自动对数运行表",
+        rows: 32,
+        fields: [
+          ["id", "TEXT", "PK", "运行 ID", "原文"],
+          ["report_period", "TEXT", "INDEX", "报告期", "原文"],
+          ["config_name", "TEXT", "", "配置名称", "原文"],
+          ["status", "TEXT", "", "运行状态", "标签"],
+          ["total_results", "INTEGER", "", "差异总数", "数字"],
+          ["unresolved_count", "INTEGER", "", "未解释数", "数字"],
+          ["new_diff_count", "INTEGER", "", "新增差异", "数字"],
+          ["reduced_diff_count", "INTEGER", "", "减少差异", "数字"],
+          ["rule_version", "TEXT", "", "规则版本", "原文"],
+          ["started_at", "TEXT", "", "开始时间", "原文"],
+          ["finished_at", "TEXT", "", "结束时间", "原文"],
+          ["config_snapshot", "TEXT", "", "执行配置快照", "JSON 抽屉"],
+          ["created_by", "TEXT", "", "执行人", "原文"]
+        ],
+        purpose: "保存自动对数运行摘要、配置名称、规则版本和增量数量。",
+        sampleRows: [
+          { id: "rec_20260703_102218", report_period: "2026-06", config_name: "默认对数方案", status: "success", total_results: 245, unresolved_count: 12, new_diff_count: 6, reduced_diff_count: 18, rule_version: "2026.07", started_at: "2026-07-03 10:22:18", finished_at: "2026-07-03 10:25:46", config_snapshot: { amount_tolerance: "0.01", compare_assets: true, source: "dws_prod", report_source: "report_prod" }, created_by: "admin" },
+          { id: "rec_20260630_184912", report_period: "2026-05", config_name: "默认对数方案", status: "success", total_results: 198, unresolved_count: 9, new_diff_count: 4, reduced_diff_count: 11, rule_version: "2026.06", started_at: "2026-06-30 18:49:12", finished_at: "2026-06-30 18:52:20", config_snapshot: { amount_tolerance: "0.01", compare_assets: true, source: "dws_prod", report_source: "report_prod" }, created_by: "admin" },
+          { id: "rec_20260620_093018", report_period: "2026-05", config_name: "补充复跑", status: "warning", total_results: 214, unresolved_count: 17, new_diff_count: 9, reduced_diff_count: 5, rule_version: "2026.06", started_at: "2026-06-20 09:30:18", finished_at: "2026-06-20 09:33:04", config_snapshot: { amount_tolerance: "0.01", compare_assets: true, remark: "重跑资产缺失细分" }, created_by: "ops01" }
+        ]
+      },
+      {
+        category: "自动对数",
+        name: "reconcile_run_counts",
+        cn: "自动对数运行统计表",
+        rows: 184,
+        fields: [
+          ["run_id", "TEXT", "PK/FK", "运行 ID", "原文"],
+          ["count_type", "TEXT", "PK", "统计类型", "标签"],
+          ["label", "TEXT", "PK", "统计标签", "原文"],
+          ["count_value", "INTEGER", "", "统计值", "数字"]
+        ],
+        purpose: "保存匹配状态、差异类型等聚合统计。",
+        sampleRows: [
+          { run_id: "rec_20260703_102218", count_type: "match_status", label: "未匹配", count_value: 36 },
+          { run_id: "rec_20260703_102218", count_type: "diff_type", label: "实收本金不一致", count_value: 14 }
+        ]
+      },
+      {
+        category: "自动对数",
+        name: "reconcile_results",
+        cn: "自动对数结果明细表",
+        rows: 245,
+        fields: [
+          ["id", "INTEGER", "PK", "结果 ID", "原文"],
+          ["run_id", "TEXT", "FK", "运行 ID", "原文"],
+          ["project_code", "TEXT", "INDEX", "项目编号", "原文"],
+          ["product_name", "TEXT", "", "产品名称", "原文"],
+          ["match_status", "TEXT", "", "匹配状态", "标签"],
+          ["diff_type", "TEXT", "", "差异类型", "标签"],
+          ["diff_amount", "REAL", "", "差异金额", "数字"],
+          ["reason", "TEXT", "", "具体原因", "原文"],
+          ["payload_json", "TEXT", "", "完整结果快照", "JSON 抽屉"]
+        ],
+        purpose: "保存项目编号、差异类型、匹配状态、差异金额等结果热字段。",
+        sampleRows: [
+          { id: 8012, run_id: "rec_20260703_102218", project_code: "XM20260618017", product_name: "稳健收益 6M", match_status: "unmatched", diff_type: "实收本金不一致", diff_amount: 125000.00, reason: "报表库实收本金少于 DWS", payload_json: { dws_amount: 1025000, report_amount: 900000, currency: "CNY" } },
+          { id: 8013, run_id: "rec_20260703_102218", project_code: "XM20260622008", product_name: "月享 3 号", match_status: "matched_with_diff", diff_type: "标的代码不一致", diff_amount: 0, reason: "同名项目标的代码映射变化", payload_json: { dws_target_code: "TGT-8801", report_target_code: "TGT-8801-A" } }
+        ]
+      },
+      {
+        category: "自动对数",
+        name: "reconcile_result_details",
+        cn: "自动对数结果详情表",
+        rows: 326,
+        fields: [
+          ["id", "INTEGER", "PK", "详情 ID", "原文"],
+          ["result_id", "INTEGER", "FK", "结果 ID", "原文"],
+          ["detail_type", "TEXT", "", "详情类型", "标签"],
+          ["reason_code", "TEXT", "", "原因代码", "标签"],
+          ["detail_json", "TEXT", "", "详情快照", "JSON 抽屉"]
+        ],
+        purpose: "保存结构化详情类型、具体原因和详情 payload。",
+        sampleRows: [
+          { id: 12031, result_id: 8012, detail_type: "amount_compare", reason_code: "principal_mismatch", detail_json: { field: "paid_in_principal", dws: 1025000, report: 900000 } },
+          { id: 12032, result_id: 8013, detail_type: "target_compare", reason_code: "target_code_mismatch", detail_json: { dws: "TGT-8801", report: "TGT-8801-A" } }
+        ]
+      },
+      {
+        category: "自动对数",
+        name: "reconcile_delta_results",
+        cn: "自动对数增量差异表",
+        rows: 54,
+        fields: [
+          ["run_id", "TEXT", "PK/FK", "运行 ID", "原文"],
+          ["delta_type", "TEXT", "PK", "增量类型", "标签"],
+          ["result_order", "INTEGER", "PK", "排序号", "数字"],
+          ["result_snapshot_json", "TEXT", "", "结果快照", "JSON 抽屉"]
+        ],
+        purpose: "保存本次新增差异和减少差异快照。",
+        sampleRows: [
+          { run_id: "rec_20260703_102218", delta_type: "new", result_order: 1, result_snapshot_json: { project_code: "XM20260618017", diff_type: "实收本金不一致" } },
+          { run_id: "rec_20260703_102218", delta_type: "reduced", result_order: 1, result_snapshot_json: { project_code: "XM20260512003", resolved_by: "本期报表修正" } }
+        ]
+      },
+      {
+        category: "人行逐笔校验",
+        name: "db_validation_runs",
+        cn: "人行逐笔校验运行表",
+        rows: 16,
+        fields: [
+          ["id", "TEXT", "PK", "运行 ID", "原文"],
+          ["report_period", "TEXT", "INDEX", "报告期", "原文"],
+          ["status", "TEXT", "", "状态", "标签"],
+          ["selected_table_count", "INTEGER", "", "选表数", "数字"],
+          ["result_count", "INTEGER", "", "结果数", "数字"],
+          ["warning_count", "INTEGER", "", "告警数", "数字"],
+          ["download_path", "TEXT", "", "下载路径", "脱敏"],
+          ["options_json", "TEXT", "", "校验选项", "JSON 抽屉"],
+          ["finished_at", "TEXT", "", "完成时间", "原文"]
+        ],
+        purpose: "保存逐笔校验报告期、结果数、告警数、校验开关和下载路径。",
+        sampleRows: [
+          { id: "dbv_20260702_163100", report_period: "2026-06", status: "success", selected_table_count: 8, result_count: 418, warning_count: 3, download_path: "D:\\\\auto-check\\\\exports\\\\***.xlsx", options_json: { strict_mode: true, include_warnings: true }, finished_at: "2026-07-02 16:38:19" },
+          { id: "dbv_20260630_110812", report_period: "2026-05", status: "success", selected_table_count: 7, result_count: 392, warning_count: 0, download_path: "D:\\\\auto-check\\\\exports\\\\***.xlsx", options_json: { strict_mode: true, include_warnings: true }, finished_at: "2026-06-30 11:15:34" }
+        ]
+      },
+      {
+        category: "人行逐笔校验",
+        name: "db_validation_selected_tables",
+        cn: "人行逐笔校验选表明细表",
+        rows: 96,
+        fields: [
+          ["run_id", "TEXT", "PK/FK", "运行 ID", "原文"],
+          ["table_order", "INTEGER", "PK", "排序号", "数字"],
+          ["zg_table", "TEXT", "", "ZG 表名", "原文"],
+          ["display_name", "TEXT", "", "展示名称", "原文"]
+        ],
+        purpose: "保存一次逐笔校验运行中勾选的 ZG 表清单。",
+        sampleRows: [
+          { run_id: "dbv_20260702_163100", table_order: 1, zg_table: "ZG01", display_name: "基础信息表" },
+          { run_id: "dbv_20260702_163100", table_order: 2, zg_table: "ZG02", display_name: "交易明细表" }
+        ]
+      },
+      {
+        category: "人行逐笔校验",
+        name: "db_validation_warnings",
+        cn: "人行逐笔校验告警表",
+        rows: 12,
+        fields: [
+          ["run_id", "TEXT", "PK/FK", "运行 ID", "原文"],
+          ["warning_order", "INTEGER", "PK", "排序号", "数字"],
+          ["level", "TEXT", "", "级别", "标签"],
+          ["message", "TEXT", "", "告警内容", "原文"]
+        ],
+        purpose: "保存一次逐笔校验运行产生的告警信息。",
+        sampleRows: [
+          { run_id: "dbv_20260702_163100", warning_order: 1, level: "warning", message: "ZG02 第 18 行客户类型为空" },
+          { run_id: "dbv_20260702_163100", warning_order: 2, level: "warning", message: "ZG05 存在可选字段未映射" }
+        ]
+      },
+      {
+        category: "人行逐笔校验",
+        name: "db_validation_result_rows",
+        cn: "人行逐笔校验结果行表",
+        rows: 418,
+        fields: [
+          ["id", "INTEGER", "PK", "结果行 ID", "原文"],
+          ["run_id", "TEXT", "FK", "运行 ID", "原文"],
+          ["zg_table", "TEXT", "INDEX", "ZG 表名", "原文"],
+          ["rule_code", "TEXT", "", "规则编号", "标签"],
+          ["level", "TEXT", "", "级别", "标签"],
+          ["message", "TEXT", "", "结果消息", "原文"],
+          ["row_snapshot_json", "TEXT", "", "行快照", "JSON 抽屉"]
+        ],
+        purpose: "保存逐笔校验结果行的表号、规则、级别、消息和完整行快照。",
+        sampleRows: [
+          { id: 9311, run_id: "dbv_20260702_163100", zg_table: "ZG02", rule_code: "R-0204", level: "error", message: "交易金额不能为空", row_snapshot_json: { row: 18, field: "amount", value: "" } },
+          { id: 9312, run_id: "dbv_20260702_163100", zg_table: "ZG05", rule_code: "R-0511", level: "warning", message: "可选字段未映射", row_snapshot_json: { row: 7, field: "asset_grade", value: null } }
+        ]
+      },
+      {
+        category: "流程链",
+        name: "flow_chain_runs",
+        cn: "流程链执行运行表",
+        rows: 7,
+        fields: [
+          ["id", "TEXT", "PK", "运行 ID", "原文"],
+          ["chain_name", "TEXT", "", "流程链名称", "原文"],
+          ["trigger_type", "TEXT", "", "触发方式", "标签"],
+          ["status", "TEXT", "", "状态", "标签"],
+          ["step_count", "INTEGER", "", "步骤数", "数字"],
+          ["duration_ms", "INTEGER", "", "耗时毫秒", "数字"],
+          ["error_message", "TEXT", "", "错误信息", "原文"],
+          ["started_at", "TEXT", "", "开始时间", "原文"]
+        ],
+        purpose: "保存流程链名称、触发方式、执行人、状态、错误、步骤数和总耗时。",
+        sampleRows: [
+          { id: "flow_20260703_091000", chain_name: "月度监管核验", trigger_type: "manual", status: "success", step_count: 4, duration_ms: 438000, error_message: "", started_at: "2026-07-03 09:10:00" },
+          { id: "flow_20260628_173500", chain_name: "导入后自动复核", trigger_type: "auto", status: "failed", step_count: 3, duration_ms: 182000, error_message: "报表库连接超时", started_at: "2026-06-28 17:35:00" }
+        ]
+      },
+      {
+        category: "流程链",
+        name: "flow_chain_run_steps",
+        cn: "流程链执行步骤表",
+        rows: 28,
+        fields: [
+          ["id", "INTEGER", "PK", "步骤 ID", "原文"],
+          ["run_id", "TEXT", "FK", "运行 ID", "原文"],
+          ["step_order", "INTEGER", "", "步骤顺序", "数字"],
+          ["flow_name", "TEXT", "", "流程名称", "原文"],
+          ["status", "TEXT", "", "状态", "标签"],
+          ["task_id", "TEXT", "", "任务号", "原文"]
+        ],
+        purpose: "保存每个流程步骤的流程编号、名称、状态、任务号和起止时间。",
+        sampleRows: [
+          { id: 1, run_id: "flow_20260703_091000", step_order: 1, flow_name: "人行全量产品导入", status: "success", task_id: "task_101" },
+          { id: 2, run_id: "flow_20260703_091000", step_order: 2, flow_name: "自动对数", status: "success", task_id: "task_102" }
+        ]
+      },
+      {
+        category: "流程链",
+        name: "flow_chain_run_logs",
+        cn: "流程链执行日志表",
+        rows: 83,
+        fields: [
+          ["id", "INTEGER", "PK", "日志 ID", "原文"],
+          ["run_id", "TEXT", "FK", "运行 ID", "原文"],
+          ["step_id", "INTEGER", "FK", "步骤 ID", "原文"],
+          ["level", "TEXT", "", "日志级别", "标签"],
+          ["message", "TEXT", "", "日志内容", "原文"],
+          ["created_at", "TEXT", "", "创建时间", "原文"]
+        ],
+        purpose: "保存流程链执行过程中的日志、进度和当前步骤。",
+        sampleRows: [
+          { id: 201, run_id: "flow_20260703_091000", step_id: 1, level: "info", message: "字段映射完成", created_at: "2026-07-03 09:11:18" },
+          { id: 202, run_id: "flow_20260703_091000", step_id: 2, level: "info", message: "自动对数执行完成", created_at: "2026-07-03 09:17:40" }
+        ]
+      },
+      {
+        category: "流程链",
+        name: "flow_chain_run_details",
+        cn: "流程链执行链路明细表",
+        rows: 7,
+        fields: [
+          ["id", "INTEGER", "PK", "明细 ID", "原文"],
+          ["run_id", "TEXT", "FK", "运行 ID", "原文"],
+          ["detail_json", "TEXT", "", "链路详情", "JSON 抽屉"]
+        ],
+        purpose: "保存单链路或多链路合并历史中的链路详情。",
+        sampleRows: [
+          { id: 1, run_id: "flow_20260703_091000", detail_json: { nodes: 4, success: 4, failed: 0 } },
+          { id: 2, run_id: "flow_20260628_173500", detail_json: { nodes: 3, success: 2, failed: 1, failed_step: "报表数据同步" } }
+        ]
+      },
+      {
+        category: "兼容与迁移",
+        name: "app_kv",
+        cn: "旧版键值快照表",
+        rows: 11,
+        fields: [
+          ["key", "TEXT", "PK", "旧键名", "原文"],
+          ["value_json", "TEXT", "", "旧值快照", "JSON 抽屉"],
+          ["updated_at", "TEXT", "", "更新时间", "原文"]
+        ],
+        purpose: "保留旧版 config_store、auth 等键值快照，作为兼容回退来源。",
+        sampleRows: [
+          { key: "config_store", value_json: { migrated_to: "data_sources/app_settings", version: 1 }, updated_at: "2026-07-03 10:59:20" },
+          { key: "auth", value_json: { migrated_to: "users", user_count: 3 }, updated_at: "2026-07-03 10:59:20" }
+        ]
+      },
+      {
+        category: "兼容与迁移",
+        name: "history_runs",
+        cn: "旧版历史兼容表",
+        rows: 55,
+        fields: [
+          ["kind", "TEXT", "PK", "历史类型", "标签"],
+          ["id", "TEXT", "PK", "旧历史 ID", "原文"],
+          ["payload_json", "TEXT", "", "旧 payload", "JSON 抽屉"],
+          ["migrated_at", "TEXT", "", "迁移时间", "原文"]
+        ],
+        purpose: "保留旧版历史 payload，按 kind 区分 reconcile、db_validation、flow_chain。",
+        sampleRows: [
+          { kind: "reconcile", id: "rec_20260703_102218", payload_json: { total: 245, unresolved: 12 }, migrated_at: "2026-07-03 10:59:21" },
+          { kind: "db_validation", id: "dbv_20260702_163100", payload_json: { result_count: 418 }, migrated_at: "2026-07-03 10:59:21" }
+        ]
+      },
+      {
+        category: "兼容与迁移",
+        name: "config_snapshots",
+        cn: "配置兼容快照表",
+        rows: 4,
+        fields: [
+          ["id", "TEXT", "PK", "快照 ID", "原文"],
+          ["source", "TEXT", "", "来源", "标签"],
+          ["payload_json", "TEXT", "", "配置快照", "JSON 抽屉"],
+          ["created_at", "TEXT", "", "创建时间", "原文"]
+        ],
+        purpose: "保存完整配置 payload 快照，便于兼容旧结构和后续排查。",
+        sampleRows: [
+          { id: "snap_20260703_105920", source: "migration", payload_json: { data_sources: 5, settings: 9 }, created_at: "2026-07-03 10:59:20" },
+          { id: "snap_20260630_181522", source: "manual_backup", payload_json: { data_sources: 5, users: 3 }, created_at: "2026-06-30 18:15:22" }
+        ]
+      },
+      {
+        category: "兼容与迁移",
+        name: "schema_migrations",
+        cn: "存储结构版本表",
+        rows: 2,
+        fields: [
+          ["version", "INTEGER", "PK", "版本号", "数字"],
+          ["name", "TEXT", "", "迁移名称", "原文"],
+          ["applied_at", "TEXT", "", "应用时间", "原文"]
+        ],
+        purpose: "记录本地 SQLite schema 已执行到的版本。",
+        sampleRows: [
+          { version: 1, name: "initial_json_storage", applied_at: "2025-11-04 09:00:00" },
+          { version: 2, name: "normalized_storage_tables", applied_at: "2026-07-03 10:59:22" }
+        ]
+      },
+      {
+        category: "兼容与迁移",
+        name: "storage_migration_runs",
+        cn: "数据迁移记录表",
+        rows: 1,
+        fields: [
+          ["id", "TEXT", "PK", "迁移 ID", "原文"],
+          ["source_path", "TEXT", "", "来源路径", "脱敏"],
+          ["source_fingerprint", "TEXT", "", "来源指纹", "原文"],
+          ["status", "TEXT", "", "迁移状态", "标签"],
+          ["counts_json", "TEXT", "", "迁移条数", "JSON 抽屉"],
+          ["started_at", "TEXT", "", "开始时间", "原文"],
+          ["finished_at", "TEXT", "", "结束时间", "原文"]
+        ],
+        purpose: "记录旧 SQLite/旧 JSON 来源的迁移路径、指纹、条数和状态。",
+        sampleRows: [
+          { id: "mig_20260703_105920", source_path: "C:\\\\Users\\\\***\\\\AppData\\\\Roaming\\\\auto-check\\\\auto-check.db", source_fingerprint: "7f0d...b91a", status: "success", counts_json: { data_sources: 5, users: 3, reconcile_runs: 32, db_validation_runs: 16, flow_chain_runs: 7 }, started_at: "2026-07-03 10:59:20", finished_at: "2026-07-03 10:59:22" }
+        ]
+      }
+    ];
+
+    const state = {
+      tableName: "reconcile_runs",
+      tab: "data",
+      page: 1,
+      pageSize: 20,
+      filter: ""
+    };
+
+    const tableListEl = document.getElementById("tableList");
+    const tableSearchEl = document.getElementById("tableSearch");
+    const dataHeadEl = document.getElementById("dataHead");
+    const dataBodyEl = document.getElementById("dataBody");
+    const schemaBodyEl = document.getElementById("schemaBody");
+    const apiListEl = document.getElementById("apiList");
+    const rowFilterEl = document.getElementById("rowFilter");
+    const drawer = document.getElementById("jsonDrawer");
+    const drawerBackdrop = document.getElementById("drawerBackdrop");
+    const drawerContent = document.getElementById("drawerContent");
+    const drawerMeta = document.getElementById("drawerMeta");
+
+    function currentTable() {
+      return tableCatalog.find((item) => item.name === state.tableName) || tableCatalog[0];
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function primaryKeyText(table) {
+      return table.fields.filter((field) => field[2].includes("PK")).map((field) => field[0]).join(", ") || "-";
+    }
+
+    function sheetName(baseName, usedNames) {
+      const cleaned = String(baseName || "sheet")
+        .replace(/[\[\]\*\/\\\?:]/g, "_")
+        .slice(0, 31) || "sheet";
+      let candidate = cleaned;
+      let index = 2;
+      while (usedNames.has(candidate)) {
+        const suffix = `_${index}`;
+        candidate = `${cleaned.slice(0, 31 - suffix.length)}${suffix}`;
+        index += 1;
+      }
+      usedNames.add(candidate);
+      return candidate;
+    }
+
+    function cellXml(value, styleId = "Cell") {
+      return `<Cell ss:StyleID="${styleId}"><Data ss:Type="String">${escapeHtml(value)}</Data></Cell>`;
+    }
+
+    function rowXml(values, styleId = "Cell") {
+      return `<Row>${values.map((value) => cellXml(value, styleId)).join("")}</Row>`;
+    }
+
+    function worksheetXml(name, rows, usedNames) {
+      const safeName = sheetName(name, usedNames);
+      return `
+        <Worksheet ss:Name="${escapeHtml(safeName)}">
+          <Table>
+            <Column ss:Width="78"/>
+            <Column ss:Width="150"/>
+            <Column ss:Width="110"/>
+            <Column ss:Width="110"/>
+            <Column ss:Width="230"/>
+            <Column ss:Width="120"/>
+            ${rows.map((row, index) => rowXml(row, index === 0 ? "Header" : "Cell")).join("")}
+          </Table>
+          <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+            <FreezePanes/>
+            <FrozenNoSplit/>
+            <SplitHorizontal>1</SplitHorizontal>
+            <TopRowBottomPane>1</TopRowBottomPane>
+            <ActivePane>2</ActivePane>
+          </WorksheetOptions>
+        </Worksheet>
+      `;
+    }
+
+    function schemaWorkbookXml() {
+      const usedNames = new Set();
+      const catalogRows = [
+        ["分类", "表名", "中文名", "记录数", "字段数", "主键", "用途"],
+        ...tableCatalog.map((table) => [
+          table.category,
+          table.name,
+          table.cn,
+          table.rows,
+          table.fields.length,
+          primaryKeyText(table),
+          table.purpose
+        ])
+      ];
+      const tableSheets = tableCatalog.map((table) => {
+        const rows = [
+          ["字段序号", "字段名", "类型", "约束", "中文说明", "展示策略"],
+          ...table.fields.map((field, index) => [index + 1, field[0], field[1], field[2] || "-", field[3], field[4]])
+        ];
+        return worksheetXml(table.name, rows, usedNames);
+      });
+      return `<?xml version="1.0" encoding="UTF-8"?>
+        <?mso-application progid="Excel.Sheet"?>
+        <Workbook
+          xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+          xmlns:o="urn:schemas-microsoft-com:office:office"
+          xmlns:x="urn:schemas-microsoft-com:office:excel"
+          xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+          xmlns:html="http://www.w3.org/TR/REC-html40">
+          <Styles>
+            <Style ss:ID="Header">
+              <Font ss:Bold="1" ss:Color="#0F172A"/>
+              <Interior ss:Color="#DBEAFE" ss:Pattern="Solid"/>
+              <Alignment ss:Vertical="Center" ss:WrapText="1"/>
+              <Borders>
+                <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#94A3B8"/>
+              </Borders>
+            </Style>
+            <Style ss:ID="Cell">
+              <Alignment ss:Vertical="Center" ss:WrapText="1"/>
+              <Borders>
+                <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/>
+              </Borders>
+            </Style>
+          </Styles>
+          ${worksheetXml("表目录", catalogRows, usedNames)}
+          ${tableSheets.join("")}
+        </Workbook>`;
+    }
+
+    function exportSchemaWorkbook() {
+      const xml = schemaWorkbookXml();
+      const blob = new Blob([xml], { type: "application/vnd.ms-excel;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "本地数据库表结构.xls";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function isJsonValue(value) {
+      return value && typeof value === "object";
+    }
+
+    function isSensitiveKey(key) {
+      return /password|token|secret|credential|encrypted|source_path|download_path|host|username/i.test(key);
+    }
+
+    function maskValue(key, value) {
+      if (!isSensitiveKey(key)) return value;
+      if (value === "" || value == null) return value;
+      if (/path/i.test(key)) return String(value).replace(/Users\\\\[^\\]+/i, "Users\\\\***");
+      if (/host/i.test(key)) return String(value).replace(/\d+$/, "***");
+      if (/username/i.test(key)) return String(value).slice(0, 2) + "***";
+      return "******";
+    }
+
+    function badgeClass(value) {
+      const text = String(value).toLowerCase();
+      if (["success", "ok", "enabled", "admin"].some((item) => text.includes(item)) || value === 1) return "green";
+      if (["warning", "warn", "manual", "user"].some((item) => text.includes(item))) return "amber";
+      if (["failed", "error", "disabled"].some((item) => text.includes(item)) || value === 0) return "red";
+      return "blue";
+    }
+
+    function renderCell(key, value) {
+      const safeValue = maskValue(key, value);
+      if (isJsonValue(safeValue)) {
+        const encoded = encodeURIComponent(JSON.stringify(safeValue));
+        return `<button class="json-button" type="button" data-json="${encoded}" data-field="${escapeHtml(key)}">查看 JSON</button>`;
+      }
+      if (/status|role|type|level|enabled|is_default|delta_type|source_type|db_type|kind|trigger/i.test(key)) {
+        return `<span class="badge ${badgeClass(safeValue)}">${escapeHtml(formatValue(safeValue))}</span>`;
+      }
+      return `<span title="${escapeHtml(safeValue)}">${escapeHtml(formatValue(safeValue))}</span>`;
+    }
+
+    function formatValue(value) {
+      if (value === 1) return "是";
+      if (value === 0) return "否";
+      if (value === null || value === undefined || value === "") return "-";
+      return value;
+    }
+
+    function getRows(table) {
+      const baseRows = table.sampleRows || [];
+      const generatedRows = [];
+      const targetCount = Math.min(table.rows, Math.max(baseRows.length, 8));
+      for (let index = baseRows.length; index < targetCount; index += 1) {
+        const row = {};
+        table.fields.forEach((field) => {
+          const key = field[0];
+          if (/id$|_id$/.test(key)) row[key] = `${table.name}_${String(index + 1).padStart(3, "0")}`;
+          else if (/count|value|order|version|duration|total|result/.test(key)) row[key] = (index + 1) * 3;
+          else if (/status/.test(key)) row[key] = index % 4 === 0 ? "warning" : "success";
+          else if (/json|payload|snapshot|detail|options/.test(key)) row[key] = { preview: true, row: index + 1, table: table.name };
+          else if (/at$|time/.test(key)) row[key] = `2026-07-${String((index % 3) + 1).padStart(2, "0")} 10:${String(20 + index).padStart(2, "0")}:00`;
+          else row[key] = `${field[3]} ${index + 1}`;
+        });
+        generatedRows.push(row);
+      }
+      return [...baseRows, ...generatedRows];
+    }
+
+    function renderTableList() {
+      const keyword = tableSearchEl.value.trim().toLowerCase();
+      const filtered = tableCatalog.filter((table) => {
+        const haystack = `${table.name} ${table.cn} ${table.category}`.toLowerCase();
+        return haystack.includes(keyword);
+      });
+      const groups = new Map();
+      filtered.forEach((table) => {
+        if (!groups.has(table.category)) groups.set(table.category, []);
+        groups.get(table.category).push(table);
+      });
+      document.getElementById("tableCount").textContent = `${filtered.length} 张表`;
+      document.getElementById("businessTableMetric").textContent = String(tableCatalog.length);
+      tableListEl.innerHTML = "";
+      groups.forEach((tables, category) => {
+        const groupTitle = document.createElement("div");
+        groupTitle.className = "group-title";
+        groupTitle.textContent = category;
+        tableListEl.appendChild(groupTitle);
+        tables.forEach((table) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `table-button${table.name === state.tableName ? " active" : ""}`;
+          button.dataset.table = table.name;
+          button.innerHTML = `
+            <span>
+              <span class="table-main mono">${escapeHtml(table.name)}</span>
+              <span class="table-sub">${escapeHtml(table.cn)}</span>
+            </span>
+            <span class="row-count">${escapeHtml(table.rows)}</span>
+          `;
+          tableListEl.appendChild(button);
+        });
+      });
+      if (!filtered.length) {
+        tableListEl.innerHTML = '<div class="empty">没有匹配的数据表</div>';
+      }
+    }
+
+    function renderSummary() {
+      const table = currentTable();
+      document.getElementById("summaryName").textContent = table.name;
+      document.getElementById("summaryCn").textContent = table.cn;
+      document.getElementById("summaryEndpoint").textContent = `GET /api/admin/storage/tables/${table.name}/rows?page=${state.page}&page_size=${state.pageSize}`;
+      document.getElementById("summaryRows").textContent = String(table.rows);
+      document.getElementById("summaryFields").textContent = String(table.fields.length);
+      document.getElementById("summaryPk").textContent = primaryKeyText(table);
+      document.getElementById("infoPurpose").textContent = table.purpose;
+      apiListEl.innerHTML = [
+        ["GET", "/api/admin/storage/health"],
+        ["GET", "/api/admin/storage/tables"],
+        ["GET", `/api/admin/storage/tables/${table.name}/schema`],
+        ["GET", `/api/admin/storage/tables/${table.name}/rows?page=1&page_size=${state.pageSize}`]
+      ].map(([method, path]) => `
+        <div class="api-line">
+          <span>${method}</span>
+          <code>${escapeHtml(path)}</code>
+        </div>
+      `).join("");
+    }
+
+    function visibleRows(table) {
+      const rows = getRows(table);
+      const keyword = state.filter.trim().toLowerCase();
+      if (!keyword) return rows;
+      return rows.filter((row) => JSON.stringify(row).toLowerCase().includes(keyword));
+    }
+
+    function renderDataTable() {
+      const table = currentTable();
+      const fields = table.fields.map((field) => field[0]);
+      const rows = visibleRows(table);
+      const totalPages = Math.max(1, Math.ceil(rows.length / state.pageSize));
+      state.page = Math.min(state.page, totalPages);
+      const offset = (state.page - 1) * state.pageSize;
+      const pageRows = rows.slice(offset, offset + state.pageSize);
+      dataHeadEl.innerHTML = `<tr>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>`;
+      dataBodyEl.innerHTML = pageRows.map((row) => `
+        <tr>
+          ${fields.map((field) => `<td class="${/id|key|code|json|payload|hash|path/.test(field) ? "mono" : ""}">${renderCell(field, row[field])}</td>`).join("")}
+        </tr>
+      `).join("");
+      if (!pageRows.length) {
+        dataBodyEl.innerHTML = `<tr><td colspan="${fields.length}" class="empty">当前筛选下没有数据</td></tr>`;
+      }
+      document.getElementById("pagerText").textContent = `第 ${state.page} 页，共 ${totalPages} 页；当前 ${pageRows.length} 条 / 模拟 ${rows.length} 条`;
+      document.getElementById("prevPage").disabled = state.page <= 1;
+      document.getElementById("nextPage").disabled = state.page >= totalPages;
+    }
+
+    function renderSchema() {
+      const table = currentTable();
+      schemaBodyEl.innerHTML = table.fields.map((field) => `
+        <tr>
+          <td class="mono">${escapeHtml(field[0])}</td>
+          <td>${escapeHtml(field[1])}</td>
+          <td><span class="badge ${field[2].includes("PK") ? "blue" : "green"}">${escapeHtml(field[2] || "-")}</span></td>
+          <td>${escapeHtml(field[3])}</td>
+          <td>${escapeHtml(field[4])}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderTabs() {
+      document.querySelectorAll(".tab-button").forEach((button) => {
+        button.classList.toggle("active", button.dataset.tab === state.tab);
+      });
+      document.querySelectorAll(".tab-view").forEach((view) => {
+        view.classList.toggle("active", view.id === `tab${state.tab[0].toUpperCase()}${state.tab.slice(1)}`);
+      });
+    }
+
+    function renderAll() {
+      renderTableList();
+      renderSummary();
+      renderDataTable();
+      renderSchema();
+      renderTabs();
+      document.querySelectorAll(".page-size-button").forEach((button) => {
+        button.classList.toggle("active", Number(button.dataset.size) === state.pageSize);
+      });
+    }
+
+    function openDrawer(field, value) {
+      drawerMeta.textContent = `${state.tableName}.${field}`;
+      drawerContent.textContent = JSON.stringify(value, null, 2);
+      drawer.classList.add("open");
+      drawerBackdrop.classList.add("open");
+    }
+
+    function closeDrawer() {
+      drawer.classList.remove("open");
+      drawerBackdrop.classList.remove("open");
+    }
+
+    tableListEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-table]");
+      if (!button) return;
+      state.tableName = button.dataset.table;
+      state.page = 1;
+      state.filter = "";
+      rowFilterEl.value = "";
+      renderAll();
+    });
+
+    tableSearchEl.addEventListener("input", renderTableList);
+
+    rowFilterEl.addEventListener("input", () => {
+      state.filter = rowFilterEl.value;
+      state.page = 1;
+      renderDataTable();
+    });
+
+    document.querySelectorAll(".tab-button").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.tab = button.dataset.tab;
+        renderTabs();
+      });
+    });
+
+    document.getElementById("pageSizeGroup").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-size]");
+      if (!button) return;
+      state.pageSize = Number(button.dataset.size);
+      state.page = 1;
+      renderAll();
+    });
+
+    document.getElementById("prevPage").addEventListener("click", () => {
+      state.page = Math.max(1, state.page - 1);
+      renderAll();
+    });
+
+    document.getElementById("nextPage").addEventListener("click", () => {
+      state.page += 1;
+      renderAll();
+    });
+
+    dataBodyEl.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-json]");
+      if (!button) return;
+      const json = JSON.parse(decodeURIComponent(button.dataset.json));
+      openDrawer(button.dataset.field, json);
+    });
+
+    document.getElementById("drawerClose").addEventListener("click", closeDrawer);
+    drawerBackdrop.addEventListener("click", closeDrawer);
+
+    document.getElementById("themeToggle").addEventListener("click", () => {
+      const root = document.documentElement;
+      const next = root.getAttribute("data-color-mode") === "dark" ? "light" : "dark";
+      root.setAttribute("data-color-mode", next);
+    });
+
+    document.getElementById("refreshButton").addEventListener("click", () => {
+      const button = document.getElementById("refreshButton");
+      button.textContent = "已刷新";
+      window.setTimeout(() => { button.textContent = "刷新状态"; }, 900);
+    });
+
+    document.getElementById("backupButton").addEventListener("click", () => {
+      const button = document.getElementById("backupButton");
+      button.textContent = "备份已生成";
+      window.setTimeout(() => { button.textContent = "生成备份"; }, 1100);
+    });
+
+    document.getElementById("exportSchemaButton").addEventListener("click", () => {
+      exportSchemaWorkbook();
+      const button = document.getElementById("exportSchemaButton");
+      button.textContent = "已导出";
+      window.setTimeout(() => { button.textContent = "导出表结构"; }, 1100);
+    });
+
+    renderAll();
+  </script>
+</body>
+</html>

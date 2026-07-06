@@ -36,6 +36,10 @@ JIANGSU_TRUST_TEXT = "\u6c5f\u82cf\u4fe1\u6258"
 CHINESE_PAREN_RE = re.compile(r"\uff08[^\uff08\uff09]*\uff09")
 COMMON_RECEIVABLE_ASSET_TYPE = "应收账款_共同类"
 COMMON_PAYABLE_ACCOUNT_TYPE = "应付账款_共同类"
+SECURITY_BALANCE_TABLE_LABEL = "DM FA 证券余额表"
+DM_PROJECT_INVEST_TABLE_LABEL = "DM AM 投融资余额表"
+DM_SPV_PROJECT_INVEST_TABLE_LABEL = "DM AM SPV 投融资余额表"
+PROPERTY_RIGHT_CONTRACT_TABLE_LABEL = "财产权合同信息表"
 
 
 class ReconcileRepository(Protocol):
@@ -1593,7 +1597,7 @@ class ReconcileEngine:
             valuation_row.account_name,
         )
         if security is None:
-            return f"该{asset_type}在dm.fa_security_balance_zgxg_dm中不存在或金额为0", check_table, ""
+            return f"该{asset_type}在{SECURITY_BALANCE_TABLE_LABEL}中不存在或金额为0", check_table, ""
 
         field_by_type = {
             "债券": ("sbm_seclas_h2024", "该债券债券类别_人行字段（sbm_seclas_h2024）为空"),
@@ -1629,7 +1633,7 @@ class ReconcileEngine:
     ) -> tuple[str, str, str]:
         check_table = "dm.am_projinvest_zgxg_dm"
         if self.repository.get_dm_project_invest_refinement(project.project_code, date, valuation_row.account_tail_code) is None:
-            return "该贷款在dm.am_projinvest_zgxg_dm不存在或投融资余额为0", check_table, ""
+            return f"该贷款在{DM_PROJECT_INVEST_TABLE_LABEL}不存在或投融资余额为0", check_table, ""
         report_table = ("currency_report_24", "currency_detail_project_2_1_2")
         if not self.repository.has_report_rows(report_table, date):
             return "资负数据子系统-除回购和拆借外贷款明细表无数据", ".".join(report_table), ""
@@ -1644,7 +1648,7 @@ class ReconcileEngine:
         check_table = "dm.am_projinvest_zgxg_dm"
         row = self.repository.get_dm_project_invest_refinement(project.project_code, date, valuation_row.account_tail_code)
         if row is None:
-            return "该股权投资在dm.am_projinvest_zgxg_dm不存在或投融资余额为0", check_table, ""
+            return f"该股权投资在{DM_PROJECT_INVEST_TABLE_LABEL}不存在或投融资余额为0", check_table, ""
         if _is_blank(row.get("pin_gqtype_h")):
             return "该股权投资股权投资类别字段（pin_gqtype_h）为空", check_table, "pin_gqtype_h"
         report_table = ("currency_report_24", "currency_detail_project_2_1_5_2")
@@ -1660,7 +1664,7 @@ class ReconcileEngine:
     ) -> tuple[str, str, str]:
         check_table = "dm.am_projinvest_spv_zgxg_dm"
         if self.repository.get_spv_project_invest_refinement(project.project_code, date, valuation_row.account_tail_code) is None:
-            return "该信托计划收益权在dm.am_projinvest_spv_zgxg_dm不存在或余额为0", check_table, ""
+            return f"该信托计划收益权在{DM_SPV_PROJECT_INVEST_TABLE_LABEL}不存在或余额为0", check_table, ""
         report_table = ("currency_report_24", "currency_detail_project_2_1_6")
         if not self.repository.has_report_rows(report_table, date):
             return "资负数据子系统-特定目的载体明细表无数据", ".".join(report_table), ""
@@ -1674,7 +1678,7 @@ class ReconcileEngine:
     ) -> tuple[str, str, str]:
         check_table = "zgxg_zhbs.ccqxx"
         if self.repository.get_property_right_refinement(project.project_code, valuation_row.account_tail_code) is None:
-            return "该财产权在zgxg_zhbs.ccqxx不存在或投融资余额为0", check_table, ""
+            return f"该财产权在{PROPERTY_RIGHT_CONTRACT_TABLE_LABEL}不存在或投融资余额为0", check_table, ""
         report_table = ("currency_report_24", "currency_detail_project_2_1_9")
         if not self.repository.has_report_rows(report_table, date):
             return "资负数据子系统-其他债权明细表无数据", ".".join(report_table), ""
@@ -1721,7 +1725,7 @@ class ReconcileEngine:
 
         spv_row = self.repository.get_spv_project_invest_refinement(project.project_code, date, stock_matched_asset.pact_id)
         if spv_row is None:
-            return "该特定目的载体在dm.am_projinvest_spv_zgxg_dm不存在或余额为0", "dm.am_projinvest_spv_zgxg_dm", "", _pact_asset_detail_fields(stock_matched_asset)
+            return f"该特定目的载体在{DM_SPV_PROJECT_INVEST_TABLE_LABEL}不存在或余额为0", "dm.am_projinvest_spv_zgxg_dm", "", _pact_asset_detail_fields(stock_matched_asset)
 
         if "收益凭证" in stock_matched_asset.asset_name:
             report_table = ("currency_report_24", "currency_detail_project_2_1_9")
