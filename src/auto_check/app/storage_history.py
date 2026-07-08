@@ -380,9 +380,24 @@ def migrate_reconcile_history_json(connection: sqlite3.Connection, config_path: 
     if migration_completed(connection, "history_json", str(path), "", source_fingerprint):
         return 0
 
+    runs, load_error = _load_runs_from_text_result(source_text)
+    if load_error:
+        record_migration(
+            connection,
+            source_type="history_json",
+            source_path=str(path),
+            source_key="",
+            source_fingerprint=source_fingerprint,
+            migrated_count=0,
+            skipped_count=0,
+            status="failed",
+            message=load_error,
+        )
+        return 0
+
     migrated_count = 0
     skipped_count = 0
-    for run in _load_runs_from_text(source_text):
+    for run in runs:
         run_id = _text(run.get("id"))
         if not run_id:
             skipped_count += 1
@@ -392,7 +407,6 @@ def migrate_reconcile_history_json(connection: sqlite3.Connection, config_path: 
         else:
             save_reconcile_run(connection, run)
             migrated_count += 1
-        _insert_legacy_history_run(connection, "reconcile", run)
 
     record_migration(
         connection,
@@ -422,9 +436,24 @@ def migrate_db_validation_history_json_to_legacy_runs(
     if migration_completed(connection, "db_validation_history_json", str(path), "", source_fingerprint):
         return 0
 
+    runs, load_error = _load_runs_from_text_result(source_text)
+    if load_error:
+        record_migration(
+            connection,
+            source_type="db_validation_history_json",
+            source_path=str(path),
+            source_key="",
+            source_fingerprint=source_fingerprint,
+            migrated_count=0,
+            skipped_count=0,
+            status="failed",
+            message=load_error,
+        )
+        return 0
+
     migrated_count = 0
     skipped_count = 0
-    for run in _load_runs_from_text(source_text):
+    for run in runs:
         run_id = _text(run.get("id"))
         if not run_id:
             skipped_count += 1
@@ -434,7 +463,6 @@ def migrate_db_validation_history_json_to_legacy_runs(
         else:
             save_db_validation_run(connection, run)
             migrated_count += 1
-        _insert_legacy_history_run(connection, "db_validation", run)
 
     record_migration(
         connection,
@@ -667,15 +695,20 @@ def _replace_flow_chain_children(connection: sqlite3.Connection, run_id: str, ru
 
 
 def _load_runs_from_text(text: str) -> list[dict[str, Any]]:
+    runs, _error = _load_runs_from_text_result(text)
+    return runs
+
+
+def _load_runs_from_text_result(text: str) -> tuple[list[dict[str, Any]], str]:
     try:
         payload = json.loads(text)
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        return [], f"JSON parse failed: {exc.msg} (line {exc.lineno}, column {exc.colno})"
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        return [item for item in payload if isinstance(item, dict)], ""
     if isinstance(payload, dict) and isinstance(payload.get("runs"), list):
-        return [item for item in payload["runs"] if isinstance(item, dict)]
-    return []
+        return [item for item in payload["runs"] if isinstance(item, dict)], ""
+    return [], ""
 
 
 def _replace_reconcile_children(connection: sqlite3.Connection, run_id: str, run: dict[str, Any]) -> None:

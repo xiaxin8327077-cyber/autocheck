@@ -1524,6 +1524,16 @@ h1, h2, h3, p { margin: 0; }
 
 .btn-outline:hover { background: var(--surface-container-low); }
 
+.btn-outline:disabled,
+.btn-outline:disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.52;
+  color: var(--on-surface-variant);
+  background: var(--surface-container-low);
+  border-color: var(--outline-variant);
+  box-shadow: none;
+}
+
 .btn-icon { font-size: 15px; }
 
 /* ===== Data Source Status Cards ===== */
@@ -5048,17 +5058,22 @@ input:focus, select:focus {
 
 .db-validation-history-table th:nth-child(2),
 .db-validation-history-table td:nth-child(2) {
-  width: 110px;
+  width: 120px;
 }
 
 .db-validation-history-table th:nth-child(3),
-.db-validation-history-table td:nth-child(3),
+.db-validation-history-table td:nth-child(3) {
+  width: 110px;
+}
+
 .db-validation-history-table th:nth-child(4),
 .db-validation-history-table td:nth-child(4),
 .db-validation-history-table th:nth-child(5),
 .db-validation-history-table td:nth-child(5),
 .db-validation-history-table th:nth-child(6),
-.db-validation-history-table td:nth-child(6) {
+.db-validation-history-table td:nth-child(6),
+.db-validation-history-table th:nth-child(7),
+.db-validation-history-table td:nth-child(7) {
   width: 84px;
 }
 
@@ -10188,6 +10203,12 @@ input.custom-input-native:disabled {
   flex-wrap: wrap;
 }
 
+#page-local-storage .local-storage-action-status {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 #page-local-storage .local-storage-health {
   display: grid;
   grid-template-columns: repeat(6, minmax(120px, 1fr));
@@ -10292,6 +10313,7 @@ input.custom-input-native:disabled {
 }
 
 #page-local-storage .local-storage-search span {
+  flex: 0 0 auto;
   color: var(--on-surface-variant);
   font-size: 12px;
 }
@@ -10304,6 +10326,14 @@ input.custom-input-native:disabled {
   outline: 0;
   color: var(--on-surface);
   background: transparent;
+}
+
+#page-local-storage .local-storage-search input {
+  flex: 1 1 0;
+  width: auto;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #page-local-storage .local-storage-table-list {
@@ -10467,6 +10497,8 @@ input.custom-input-native:disabled {
 }
 
 #page-local-storage .local-storage-data-toolbar {
+  justify-content: flex-start;
+  gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--outline-variant);
   flex-wrap: wrap;
@@ -10481,10 +10513,18 @@ input.custom-input-native:disabled {
   background: var(--surface-container-lowest);
 }
 
+#page-local-storage .local-storage-data-toolbar #localStorageExportTableBtn {
+  height: 34px;
+  min-height: 34px;
+  align-items: center;
+  border-radius: 8px;
+}
+
 #page-local-storage .local-storage-page-size {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 #page-local-storage .local-storage-page-size button {
@@ -10728,6 +10768,44 @@ input.custom-input-native:disabled {
 }
 
 @media (max-width: 640px) {
+  [data-theme="space-tech"] .top-nav {
+    left: 10px;
+    right: 10px;
+    max-width: calc(100vw - 20px);
+    align-items: flex-start;
+    overflow: hidden;
+  }
+
+  [data-theme="space-tech"] .top-nav-brand {
+    min-width: 0;
+  }
+
+  [data-theme="space-tech"] .top-nav-wordmark .brand-wordmark-sub {
+    display: none;
+  }
+
+  [data-theme="space-tech"] .top-nav-tabs {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: 2px;
+  }
+
+  [data-theme="space-tech"] .top-nav-item,
+  [data-theme="space-tech"] .top-nav-tabs .user-menu--top {
+    flex: 0 0 auto;
+  }
+
+  [data-theme="space-tech"] .top-nav-item {
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+
+  [data-theme="space-tech"] .main-content {
+    padding: 96px 10px 16px;
+  }
+
   #page-local-storage .local-storage-health,
   #page-local-storage .local-storage-summary-stats,
   #page-local-storage .local-storage-info-panel {

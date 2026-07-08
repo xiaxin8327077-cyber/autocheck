@@ -5,7 +5,7 @@
 迁移目标：
 
 - 保留本地 SQLite `auto-check.db`，不切换到 MySQL/PostgreSQL。
-- 将旧 `app_kv`、`history_runs` 和旧 JSON 历史导入结构化表。
+- 将旧 `app_kv`、`history_runs` 和旧 JSON 历史导入结构化表；旧历史导入由管理员手动触发，不在普通页面加载或查询链路中自动执行。
 - 保留旧表和旧 JSON 作为兼容快照，不在迁移过程中删除旧数据。
 - 迁移后应用 API、前端历史列表、详情和下载行为保持兼容。
 
@@ -253,9 +253,9 @@ cp -a /home/autocheck/data "$DRY_RUN_DIR"
 
 ## 六、正式迁移方式
 
-### 方式 A：通过新版本首次启动自动迁移
+### 方式 A：通过本地数据库页面手动迁移旧历史
 
-这是生产推荐方式，适合 exe 或 Linux 二进制部署。
+这是生产推荐方式，适合 exe 或 Linux 二进制部署。新版本启动时会创建或升级 V2 schema，并继续处理配置和用户的兼容迁移；旧历史迁移不再由系统信息、系统设置、历史列表等普通查询自动触发。
 
 步骤：
 
@@ -263,8 +263,10 @@ cp -a /home/autocheck/data "$DRY_RUN_DIR"
 2. 完整备份生产数据目录。
 3. 替换为新版本 exe 或二进制。
 4. 使用原生产启动参数启动新版本。
-5. 新版本在读取配置、用户和历史时自动创建 V2 schema 并迁移旧数据。
-6. 登录系统，检查数据源、用户、历史列表、人行逐笔校验历史和流程链历史。
+5. 使用管理员账号登录系统，进入“本地数据库”页面。
+6. 查看“旧历史迁移状态”；如果“迁移旧历史”按钮可点击，先确认备份已完成，再点击按钮执行迁移。
+7. 迁移完成后按钮应变为不可点击，并显示已完成、无旧历史或失败原因。
+8. 检查数据源、用户、自动对数历史、人行逐笔校验历史和流程链历史。
 
 Windows 示例：
 
@@ -279,9 +281,9 @@ sudo systemctl start auto-check
 sudo journalctl -u auto-check -n 200 --no-pager
 ```
 
-### 方式 B：源码或 Python 服务下手动触发迁移
+### 方式 B：源码或 Python 服务下脚本触发旧历史迁移
 
-如果生产环境是源码部署，或可以运行当前 Python 包，可在启动服务前手动执行以下脚本。
+如果生产环境是源码部署，或可以运行当前 Python 包，可在服务停机或低峰期手动执行以下脚本。
 
 脚本会触发：
 
@@ -306,6 +308,10 @@ from pathlib import Path
 
 from auto_check.app.config import load_store, save_store
 from auto_check.app.history import SqliteHistoryStore
+from auto_check.app.history_migration import (
+    build_legacy_history_migration_status,
+    migrate_legacy_histories,
+)
 from auto_check.app.local_store import db_path_for_config
 from auto_check.app.security import AuthManager
 from auto_check.app.storage_schema import get_schema_version
@@ -317,6 +323,10 @@ store = load_store(config_path)
 save_store(store, config_path)
 
 users = AuthManager(config_path=config_path).list_users()
+before_status = build_legacy_history_migration_status(config_path)
+migration_result = migrate_legacy_histories(config_path) if before_status["can_migrate"] else {}
+after_status = build_legacy_history_migration_status(config_path)
+
 reconcile_runs = SqliteHistoryStore(config_path, kind="reconcile").list_runs()
 db_validation_runs = SqliteHistoryStore(config_path, kind="db_validation").list_runs()
 flow_chain_runs = SqliteHistoryStore(config_path, kind="flow_chain").list_runs()
@@ -337,6 +347,8 @@ print("schema_version:", get_schema_version(db_path))
 print("integrity:", integrity)
 print("foreign_key_issues:", len(fk_issues))
 print("users:", len(users))
+print("migration_status:", after_status["status_text"])
+print("migration_result:", migration_result)
 print("run_headers:", run_headers)
 print("history_runs:", history_runs)
 print("api_counts:", {
@@ -363,6 +375,10 @@ from pathlib import Path
 
 from auto_check.app.config import load_store, save_store
 from auto_check.app.history import SqliteHistoryStore
+from auto_check.app.history_migration import (
+    build_legacy_history_migration_status,
+    migrate_legacy_histories,
+)
 from auto_check.app.local_store import db_path_for_config
 from auto_check.app.security import AuthManager
 from auto_check.app.storage_schema import get_schema_version
@@ -374,6 +390,10 @@ store = load_store(config_path)
 save_store(store, config_path)
 
 users = AuthManager(config_path=config_path).list_users()
+before_status = build_legacy_history_migration_status(config_path)
+migration_result = migrate_legacy_histories(config_path) if before_status["can_migrate"] else {}
+after_status = build_legacy_history_migration_status(config_path)
+
 reconcile_runs = SqliteHistoryStore(config_path, kind="reconcile").list_runs()
 db_validation_runs = SqliteHistoryStore(config_path, kind="db_validation").list_runs()
 flow_chain_runs = SqliteHistoryStore(config_path, kind="flow_chain").list_runs()
@@ -394,6 +414,8 @@ print("schema_version:", get_schema_version(db_path))
 print("integrity:", integrity)
 print("foreign_key_issues:", len(fk_issues))
 print("users:", len(users))
+print("migration_status:", after_status["status_text"])
+print("migration_result:", migration_result)
 print("run_headers:", run_headers)
 print("history_runs:", history_runs)
 print("api_counts:", {
@@ -471,6 +493,7 @@ ORDER BY id DESC;
 - `run_headers` 中应有已迁移的历史记录。
 - `history_runs` 旧兼容数据仍保留。
 - `storage_migration_runs` 中迁移状态为 `completed`。
+- “本地数据库”页面的旧历史迁移状态显示已完成、无旧历史或明确失败原因；已完成或无旧历史时“迁移旧历史”按钮不可点击。
 
 ### 3. 功能核验
 
@@ -482,6 +505,7 @@ ORDER BY id DESC;
 - 人行逐笔校验历史列表、详情和下载路径正常。
 - 流程链历史列表和详情正常。
 - 新执行一次自动对数、人行逐笔校验或流程链后，历史能正常新增。
+- 系统设置、人行逐笔校验弹窗和流程链弹窗进入时能自动加载配置，不应因为旧历史扫描出现长时间等待。
 
 ## 八、回退步骤
 
@@ -554,6 +578,7 @@ done
 - 不要把生产 `auto-check.db` 提交到 Git。
 - 不要把演练副本覆盖回生产目录。
 - 如果生产环境有多个实例，不要让多个进程同时写同一个 SQLite 文件。
+- 旧历史迁移完成后不要反复手动触发；页面按钮置灰时表示当前来源已迁移完成或没有可迁移旧历史。
 
 ## 十、交付确认清单
 
@@ -562,10 +587,11 @@ done
 - [ ] 已停止旧应用。
 - [ ] 已备份完整数据目录。
 - [ ] 已确认 `AUTO_CHECK_SECRET_KEY` 不变。
-- [ ] 已使用新版本程序完成迁移。
+- [ ] 已通过“本地数据库”页面或脚本显式完成旧历史手动迁移。
 - [ ] `PRAGMA integrity_check` 返回 `ok`。
 - [ ] `PRAGMA foreign_key_check` 返回 0 行。
 - [ ] `schema_migrations` 最大版本为 `2`。
+- [ ] “迁移旧历史”按钮在完成或无旧历史时不可点击。
 - [ ] 自动对数、人行逐笔校验、流程链历史数量符合预期。
 - [ ] 登录、数据源、历史详情、下载路径完成抽样验证。
 - [ ] 备份目录已登记并保留。

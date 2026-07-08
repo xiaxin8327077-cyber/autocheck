@@ -24,6 +24,9 @@ SENSITIVE_KEY_RE = re.compile(
     r"(password|password_hash|password_encrypted|token|secret|credential|host|username|source_path|download_path|excel_path)",
     re.I,
 )
+ISO_DATETIME_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 @dataclass(frozen=True)
@@ -764,8 +767,20 @@ def _serialize_row(row: sqlite3.Row, field_names: Iterable[str], field_info: dic
         value = row[field_name]
         if meta and meta.display == "JSON 抽屉":
             value = _parse_json_value(value)
+        else:
+            value = _format_datetime_value(value)
         payload[field_name] = _mask_value(field_name, value, bool(meta.sensitive) if meta else False)
     return payload
+
+
+def _format_datetime_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    match = ISO_DATETIME_RE.match(value.strip())
+    if not match:
+        return value
+    suffix = f" {match[3]}" if match[3] else ""
+    return f"{match[1]} {match[2]}{suffix}"
 
 
 def _parse_json_value(value: Any) -> Any:

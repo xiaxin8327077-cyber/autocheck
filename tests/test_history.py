@@ -1,6 +1,7 @@
-from datetime import datetime
+﻿from datetime import datetime
 
 from auto_check.app.history import JsonHistoryStore, SqliteHistoryStore, build_history_entry
+from auto_check.app.history_migration import build_legacy_history_migration_status, migrate_legacy_histories
 from auto_check.app.config import AppConfig, DataSourceConfig
 from auto_check.app.local_store import db_path_for_config
 
@@ -254,7 +255,6 @@ def test_json_history_store_persists_lists_gets_and_deletes_runs(tmp_path):
     assert [entry["id"] for entry in store.list_runs()] == [second["id"]]
     assert store.delete_run("missing") is False
 
-
 def test_sqlite_history_store_writes_reconcile_results_to_normalized_tables(tmp_path):
     import sqlite3
 
@@ -306,6 +306,113 @@ def test_sqlite_history_store_writes_reconcile_results_to_normalized_tables(tmp_
     assert store.list_runs()[0]["total_count"] == 1
 
 
+def test_sqlite_history_store_reads_do_not_trigger_legacy_migration(tmp_path):
+    import json
+    import sqlite3
+
+    config_path = tmp_path / "config.json"
+    store = SqliteHistoryStore(config_path)
+    run = build_history_entry(
+        previous_runs=[],
+        run_date="2026-06-30",
+        config_name="local",
+        config=_config(),
+        results=[_result("P001", "asset missing", "20")],
+    )
+    store.save_run(run)
+    legacy_run = build_history_entry(
+        previous_runs=[],
+        run_date="2026-06-30",
+        config_name="legacy",
+        config=_config(),
+        results=[_result("P999", "legacy only", "99")],
+    )
+    legacy_run["id"] = "legacy-reconcile-only"
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        connection.execute(
+            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "reconcile",
+                legacy_run["id"],
+                json.dumps(legacy_run, ensure_ascii=False),
+                legacy_run["run_date"],
+                legacy_run["run_at"],
+                legacy_run["config_fingerprint"],
+            ),
+        )
+
+    assert store.count_runs() == 1
+    assert store.get_run(run["id"])["id"] == run["id"]
+    assert store.get_run(legacy_run["id"]) is None
+    assert [entry["id"] for entry in store.list_runs()] == [run["id"]]
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        migration_count = connection.execute("SELECT COUNT(*) FROM storage_migration_runs").fetchone()[0]
+    assert migration_count == 0
+
+
+def test_sqlite_history_store_save_does_not_write_legacy_history_runs(tmp_path):
+    import sqlite3
+
+    config_path = tmp_path / "config.json"
+    store = SqliteHistoryStore(config_path)
+    run = build_history_entry(
+        previous_runs=[],
+        run_date="2026-06-30",
+        config_name="local",
+        config=_config(),
+        results=[_result("P001", "asset missing", "20")],
+    )
+
+    store.save_run(run)
+
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        legacy_count = connection.execute(
+            "SELECT COUNT(*) FROM history_runs WHERE kind = 'reconcile'"
+        ).fetchone()[0]
+
+    assert legacy_count == 0
+
+
+def test_legacy_history_migration_status_blocks_completed_sources(tmp_path):
+    import json
+    import sqlite3
+
+    config_path = tmp_path / "config.json"
+    SqliteHistoryStore(config_path).count_runs()
+    legacy_run = build_history_entry(
+        previous_runs=[],
+        run_date="2026-06-30",
+        config_name="legacy",
+        config=_config(),
+        results=[_result("P777", "legacy pending", "7")],
+    )
+    with sqlite3.connect(db_path_for_config(config_path)) as connection:
+        connection.execute(
+            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "reconcile",
+                legacy_run["id"],
+                json.dumps(legacy_run, ensure_ascii=False),
+                legacy_run["run_date"],
+                legacy_run["run_at"],
+                legacy_run["config_fingerprint"],
+            ),
+        )
+
+    before = build_legacy_history_migration_status(config_path)
+    assert before["can_migrate"] is True
+    assert before["pending_count"] == 1
+
+    result = migrate_legacy_histories(config_path)
+    assert result["reconcile_history_runs"] == 1
+
+    after = build_legacy_history_migration_status(config_path)
+    assert after["can_migrate"] is False
+    assert after["completed"] is True
+    assert after["completed_count"] == 1
+    assert after["pending_count"] == 0
+
+
 def test_reconcile_history_migrates_from_legacy_history_runs(tmp_path):
     import json
     import sqlite3
@@ -346,6 +453,9 @@ def test_reconcile_history_migrates_from_legacy_history_runs(tmp_path):
                 legacy_run["config_fingerprint"],
             ),
         )
+
+    result = migrate_legacy_histories(config_path)
+    assert result["reconcile_history_runs"] == 1
 
     store = SqliteHistoryStore(config_path)
     assert store.get_run(legacy_run["id"])["results"][0]["project_code"] == "P900"
@@ -389,8 +499,10 @@ def test_reconcile_history_migrates_from_legacy_history_json_file(tmp_path):
         encoding="utf-8",
     )
 
-    store = SqliteHistoryStore(config_path)
+    result = migrate_legacy_histories(config_path)
+    assert result["reconcile_history_json"] == 1
 
+    store = SqliteHistoryStore(config_path)
     assert store.get_run(legacy_run["id"])["results"][0]["project_code"] == "P901"
     with sqlite3.connect(db_path_for_config(config_path)) as connection:
         result_count = connection.execute("SELECT COUNT(*) FROM reconcile_results").fetchone()[0]
@@ -402,7 +514,7 @@ def test_reconcile_history_migrates_from_legacy_history_json_file(tmp_path):
     assert migration == ("completed", 1)
 
 
-def test_db_validation_history_json_imports_to_legacy_history_runs(tmp_path):
+def test_db_validation_history_json_imports_to_normalized_history_tables(tmp_path):
     import json
     import sqlite3
 
@@ -426,8 +538,10 @@ def test_db_validation_history_json_imports_to_legacy_history_runs(tmp_path):
         encoding="utf-8",
     )
 
-    store = SqliteHistoryStore(config_path, kind="db_validation")
+    result = migrate_legacy_histories(config_path)
+    assert result["db_validation_history_json"] == 1
 
+    store = SqliteHistoryStore(config_path, kind="db_validation")
     assert store.get_run("dbv-1")["result_count"] == 2
     assert store.list_runs()[0]["id"] == "dbv-1"
     with sqlite3.connect(db_path_for_config(config_path)) as connection:
@@ -531,8 +645,10 @@ def test_db_validation_history_migrates_from_legacy_history_runs(tmp_path):
             ),
         )
 
-    store = SqliteHistoryStore(config_path, kind="db_validation")
+    result = migrate_legacy_histories(config_path)
+    assert result["db_validation_history_runs"] == 1
 
+    store = SqliteHistoryStore(config_path, kind="db_validation")
     assert store.get_run(legacy_run["id"])["result_count"] == 3
     with sqlite3.connect(db_path_for_config(config_path)) as connection:
         row = connection.execute(
@@ -694,8 +810,10 @@ def test_flow_chain_history_migrates_from_legacy_history_runs(tmp_path):
             ),
         )
 
-    store = SqliteHistoryStore(config_path, kind="flow_chain")
+    result = migrate_legacy_histories(config_path)
+    assert result["flow_chain_history_runs"] == 1
 
+    store = SqliteHistoryStore(config_path, kind="flow_chain")
     assert store.get_run(legacy_run["id"])["chain_name"] == "历史链路"
     with sqlite3.connect(db_path_for_config(config_path)) as connection:
         run_row = connection.execute(

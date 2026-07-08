@@ -322,7 +322,6 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
     config_path = Path(path) if path is not None else default_config_path()
     normalized_store = _load_normalized_store(config_path)
     if normalized_store is not None:
-        _save_store_snapshot(config_path, normalized_store)
         return normalized_store
 
     sqlite_payload = read_app_value(config_path, CONFIG_STORE_KEY)
@@ -376,8 +375,7 @@ def load_store(path: str | Path | None = None) -> ConfigStore:
             reconcile_schema=reconcile_schema_settings_from_dict(payload.get("reconcile_schema", {})),
         )
         store = normalize_store(store)
-        if not loaded_from_sqlite:
-            save_store(store, config_path)
+        save_store(store, config_path)
         _record_config_migration(config_path, source_type, source_text, store)
         return store
 
@@ -449,7 +447,32 @@ def _load_normalized_store(config_path: Path) -> ConfigStore | None:
             flow_tool=flow_tool_settings_from_dict(load_setting(connection, "flow_tool", {})),
             reconcile_schema=reconcile_schema_settings_from_dict(load_setting(connection, "reconcile_schema", {})),
         )
+    if not store.data_sources and _legacy_config_has_data_sources(config_path):
+        return None
     return normalize_store(store)
+
+
+def _legacy_config_has_data_sources(config_path: Path) -> bool:
+    sqlite_payload = read_app_value(config_path, CONFIG_STORE_KEY)
+    if isinstance(sqlite_payload, dict) and _payload_has_data_sources(sqlite_payload):
+        return True
+    if not config_path.exists():
+        return False
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and _payload_has_data_sources(payload)
+
+
+def _payload_has_data_sources(payload: dict[str, Any]) -> bool:
+    data_sources = payload.get("data_sources")
+    configs = payload.get("configs")
+    if isinstance(data_sources, list) and any(isinstance(item, dict) for item in data_sources):
+        return True
+    if isinstance(configs, list) and any(isinstance(item, dict) for item in configs):
+        return True
+    return isinstance(payload.get("dws"), dict) and isinstance(payload.get("business"), dict)
 
 
 def _save_normalized_store(config_path: Path, store: ConfigStore) -> None:

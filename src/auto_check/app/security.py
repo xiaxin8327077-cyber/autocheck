@@ -434,9 +434,6 @@ class AuthManager:
 
     def _load_payload(self) -> dict[str, Any]:
         payload = load_combined_payload(self.config_path)
-        auth = payload.get(AUTH_KEY)
-        if isinstance(auth, dict):
-            write_app_value(self.config_path, AUTH_KEY, auth)
         return payload if isinstance(payload, dict) else {}
 
     def _session_ttl_seconds(self) -> int:

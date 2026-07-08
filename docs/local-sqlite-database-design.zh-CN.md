@@ -25,7 +25,7 @@
 
 - 结构化热字段：列表、筛选、统计、排序常用字段拆到关系表。
 - 兼容快照：完整 payload 继续保存在 JSON 快照列或旧兼容表中，保证旧功能和详情还原不受影响。
-- 迁移幂等：同一来源同一指纹只迁移一次，重复启动不会重复插入。
+- 迁移幂等：同一来源同一指纹只迁移一次，旧历史迁移由管理员手动触发，完成后不能重复迁移。
 - 旧数据保留：迁移后不删除旧 `app_kv`、`history_runs` 和旧 JSON 文件来源。
 - 级联删除：结构化历史表通过外键 `ON DELETE CASCADE` 保证删除运行头时自动清理子表。
 - 本地单实例：该数据库按单机本地文件使用，不设计多进程或多服务器并发写入。
@@ -393,7 +393,7 @@ erDiagram
 
 ## 十一、迁移策略
 
-系统启动或访问配置、历史时会执行 schema 初始化和必要迁移。
+系统启动或访问配置、用户时会执行 schema 初始化和必要兼容迁移；旧历史数据迁移不再放在普通查询链路中，不会因访问系统信息、系统设置、人行逐笔校验、流程链或历史列表而自动扫描旧历史来源。
 
 迁移来源：
 
@@ -409,11 +409,12 @@ erDiagram
 迁移规则：
 
 - 配置和用户迁移后写入结构化表，同时保留兼容快照。
+- 旧历史迁移仅由管理员在“本地数据库”页面点击“迁移旧历史”手动触发，或由运维脚本显式调用 `history_migration` 模块。
 - 自动对数历史迁移到 `run_headers`、`reconcile_runs` 及其明细表。
 - 人行逐笔校验历史迁移到 `run_headers`、`db_validation_runs` 及其明细表。
 - 流程链历史迁移到 `run_headers`、`flow_chain_runs` 及其明细表。
 - 迁移成功后不删除旧表或旧 JSON 文件。
-- 同一来源同一指纹已完成迁移时直接跳过。
+- 同一来源同一指纹已完成迁移时直接跳过；全部来源已完成或不存在旧历史来源时，页面迁移按钮禁用。
 
 ## 十二、写入策略
 
@@ -429,14 +430,14 @@ erDiagram
 
 历史写入：
 
-- `SqliteHistoryStore(kind='reconcile')` 写入自动对数结构化表，并同步写入 `history_runs` 兼容快照。
-- `SqliteHistoryStore(kind='db_validation')` 写入逐笔校验结构化表，并同步写入 `history_runs` 兼容快照。
-- `SqliteHistoryStore(kind='flow_chain')` 写入流程链结构化表，并同步写入 `history_runs` 兼容快照。
+- `SqliteHistoryStore(kind='reconcile')` 写入自动对数结构化表和 `run_headers.payload_json` 快照，不再回写 `history_runs`。
+- `SqliteHistoryStore(kind='db_validation')` 写入逐笔校验结构化表和 `run_headers.payload_json` 快照，不再回写 `history_runs`。
+- `SqliteHistoryStore(kind='flow_chain')` 写入流程链结构化表和 `run_headers.payload_json` 快照，不再回写 `history_runs`。
 
 删除历史：
 
 - 删除结构化历史时先删除 `run_headers`，相关子表通过外键级联清理。
-- 同时删除 `history_runs` 中对应兼容快照。
+- 旧 `history_runs` 仅作为兼容迁移来源保留，删除新历史不会回写或清理旧兼容表。
 
 ## 十三、备份与恢复
 

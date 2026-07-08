@@ -157,11 +157,10 @@ D:\xxx\auto-check.db
 
 结构化历史迁移遵循“旧数据保留、首次读取自动导入、同一来源同一指纹只迁移一次”的原则。
 
-- `history_runs(kind='reconcile')` 优先迁移到结构化自动对数历史表。
-- 如果旧 SQLite 中没有自动对数历史，再读取同目录 `history.json`。
+- `history_runs(kind='reconcile')` 和同目录 `history.json` 都会迁移到结构化自动对数历史表；两类旧来源同时存在时按记录 `id` 去重，不再因为旧 SQLite 已有记录而跳过 `history.json`。
 - `history.json` 支持顶层数组和 `{"runs": [...]}` 两种格式。
 - `history_runs(kind='db_validation')` 和人行逐笔校验旧文件 `db-validation-history.json` 会迁移到 `db_validation_runs`、`db_validation_selected_tables`、`db_validation_warnings` 和 `db_validation_result_rows`。
 - `history_runs(kind='flow_chain')` 会迁移到 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`。
-- 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数和跳过条数。
+- 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数、跳过条数、状态和错误摘要；旧 JSON 损坏时记录为 `failed`，不标记为已完成，也不删除原文件。
 
 详情页和导出仍可从 `run_headers.payload_json` 还原完整结果；列表、统计和后续筛选优先使用结构化热字段。回退时可以恢复迁移前备份的 `auto-check.db` 和旧 JSON 文件。

@@ -59,7 +59,7 @@
         </a>
         <a class="nav-item admin-only" data-page="local-storage" href="#">
           <span class="nav-icon nav-icon-storage" aria-hidden="true"></span>
-          <span>本地数据库</span>
+          <span>本地数据查询</span>
         </a>
       </nav>
       <div class="sidebar-footer">
@@ -102,7 +102,7 @@
         <a class="top-nav-item" data-page="tools" href="#">工具</a>
         <a class="top-nav-item" data-page="settings" href="#">系统设置</a>
         <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
-        <a class="top-nav-item admin-only" data-page="local-storage" href="#">本地数据库</a>
+        <a class="top-nav-item admin-only" data-page="local-storage" href="#">本地数据查询</a>
         <div class="user-menu user-menu--top" id="topUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
             <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
@@ -781,6 +781,7 @@
               <thead>
                 <tr>
                   <th>执行时间</th>
+                  <th>执行人</th>
                   <th>报告期</th>
                   <th>结果条数</th>
                   <th>公开信息</th>
@@ -789,7 +790,7 @@
                 </tr>
               </thead>
               <tbody id="dbValidationHistoryBody">
-                <tr><td colspan="6" class="empty">暂无历史记录</td></tr>
+                <tr><td colspan="7" class="empty">暂无历史记录</td></tr>
               </tbody>
             </table>
           </div>
@@ -1051,16 +1052,18 @@
         </div>
       </section>
 
-      <!-- 本地数据库 -->
+      <!-- 本地数据查询 -->
       <section class="page" id="page-local-storage">
         <div class="local-storage-page">
           <div class="local-storage-toolbar">
             <div>
               <p class="section-kicker">LOCAL STORAGE</p>
-              <h2>本地数据库</h2>
+              <h2>本地数据查询</h2>
               <p>管理员可只读查看本地 auto-check.db 的结构、分页数据和存储状态。</p>
             </div>
             <div class="local-storage-actions">
+              <button id="localStorageMigrateHistoryBtn" type="button" class="btn-outline" disabled>迁移旧历史</button>
+              <small id="localStorageMigrationStatus" class="local-storage-action-status">旧历史迁移状态待加载</small>
               <button id="localStorageExportSchemaBtn" type="button" class="btn-outline">导出表结构</button>
               <button id="localStorageBackupBtn" type="button" class="btn-outline">生成备份</button>
               <button id="localStorageRefreshBtn" type="button" class="btn-primary">刷新状态</button>

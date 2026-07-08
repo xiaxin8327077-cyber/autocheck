@@ -1,6 +1,8 @@
 ﻿from decimal import Decimal
 from io import BytesIO
 from datetime import date
+import errno
+import socket
 import sqlite3
 import threading
 import time
@@ -28,7 +30,15 @@ from auto_check.app.local_store import db_path_for_config
 from auto_check.app.flow_tool import FlowChainRunResult, FlowChainStepResult, FlowDefinition
 from auto_check.app.pbc_import import TableColumn
 from auto_check.app.repositories import DEFAULT_RECONCILE_TABLES
-from auto_check.app.server import ApiRouter, RunJob, _connection_error_message, _runtime_error_message, build_display_details, previous_month_end
+from auto_check.app.server import (
+    ApiRouter,
+    AutoCheckRequestHandler,
+    RunJob,
+    _connection_error_message,
+    _runtime_error_message,
+    build_display_details,
+    previous_month_end,
+)
 from auto_check.app.reconcile_schema import ReconcileSchemaSettings, ReconcileSourceRef, ReconcileTableSchema
 from auto_check.db_validation.metadata import TableFieldCatalog
 from auto_check.db_validation.models import DbValidationRunResult, ValidationResultRow
@@ -62,6 +72,45 @@ class FakeRunner:
                 ],
             )
         ]
+
+
+class DisconnectingWriter:
+    def write(self, _data):
+        raise ConnectionAbortedError(10053, "client disconnected")
+
+
+class CountingHistoryStore:
+    def __init__(self, count=0):
+        self.count = count
+        self.list_called = False
+        self.count_called = False
+
+    def list_runs(self):
+        self.list_called = True
+        raise AssertionError("system info should not load full history payloads")
+
+    def get_run(self, run_id):
+        return None
+
+    def save_run(self, run):
+        pass
+
+    def delete_run(self, run_id):
+        return False
+
+    def count_runs(self):
+        self.count_called = True
+        return self.count
+
+
+def test_send_json_ignores_client_disconnect():
+    handler = object.__new__(AutoCheckRequestHandler)
+    handler.wfile = DisconnectingWriter()
+    handler.send_response = lambda status: None
+    handler.send_header = lambda name, value: None
+    handler.end_headers = lambda: None
+
+    handler._send_json(200, {"ok": True})
 
 
 class FakeConnectionTester:
@@ -325,6 +374,56 @@ def test_run_job_uses_beijing_timestamp_and_log_time(monkeypatch):
     payload = job.to_payload()
     assert payload["started_at"] == "2026-06-04T08:15:20"
     assert payload["logs"][0]["time"] == "08:15:20"
+
+
+def test_run_server_opens_existing_url_when_port_is_busy(monkeypatch, tmp_path):
+    opened_urls = []
+
+    def raise_port_busy(_address, _handler):
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    monkeypatch.setattr(server_module, "ThreadingHTTPServer", raise_port_busy)
+    monkeypatch.setattr(server_module.webbrowser, "open", lambda url: opened_urls.append(url))
+
+    server = server_module.run_server(
+        host="127.0.0.1",
+        port=8765,
+        open_browser=True,
+        config_path=tmp_path / "config.json",
+    )
+
+    assert server is None
+    assert opened_urls == ["http://127.0.0.1:8765"]
+    assert not db_path_for_config(tmp_path / "config.json").exists()
+
+
+def test_run_server_probes_port_before_creating_local_services(monkeypatch, tmp_path):
+    opened_urls = []
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def fail_if_server_created(_address, _handler):
+        raise AssertionError("run_server should not create a second server on an active port")
+
+    monkeypatch.setattr(server_module, "ThreadingHTTPServer", fail_if_server_created)
+    monkeypatch.setattr(server_module.webbrowser, "open", lambda url: opened_urls.append(url))
+
+    try:
+        server = server_module.run_server(
+            host="127.0.0.1",
+            port=port,
+            open_browser=True,
+            config_path=tmp_path / "config.json",
+        )
+    finally:
+        listener.close()
+
+    assert server is None
+    assert opened_urls == [f"http://127.0.0.1:{port}"]
+    assert not db_path_for_config(tmp_path / "config.json").exists()
 
 
 def test_post_config_saves_payload(tmp_path):
@@ -730,6 +829,39 @@ def test_api_router_uses_sqlite_history_store_by_default(tmp_path):
     assert not config_path.with_name("history.json").exists()
 
 
+def test_system_info_api_uses_lightweight_history_count(tmp_path):
+    config_path = tmp_path / "config.json"
+    save_store(
+        ConfigStore(
+            data_sources=[
+                DataSourceEntry(
+                    id="source-one",
+                    name="one",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "db", "dws", "u", "p"),
+                    is_default=True,
+                ),
+                DataSourceEntry(
+                    id="source-two",
+                    name="two",
+                    config=DataSourceConfig("postgresql", "localhost", 5432, "db", "dm", "u", "p"),
+                ),
+            ]
+        ),
+        config_path,
+    )
+    history_store = CountingHistoryStore(count=37)
+    router = ApiRouter(config_path=config_path, history_store=history_store)
+
+    status, payload = router.handle("GET", "/api/system-info", None)
+
+    assert status == 200
+    assert payload["history_run_count"] == 37
+    assert payload["config_count"] == 2
+    assert "settings" in payload
+    assert history_store.count_called is True
+    assert history_store.list_called is False
+
+
 def test_pbc_import_settings_api_returns_sources_and_saved_tables(tmp_path):
     config_path = tmp_path / "config.json"
     save_store(
@@ -1025,8 +1157,8 @@ def test_flow_chain_status_returns_active_job_payload(tmp_path):
         raise AssertionError("active flow chain job not found")
 
     for _ in range(40):
-        status, _ = router.handle("GET", "/api/flow-chain/status", None)
-        if status == 404:
+        status, status_payload = router.handle("GET", "/api/flow-chain/status", None)
+        if status == 200 and status_payload["job"] is None:
             break
         time.sleep(0.05)
     else:
@@ -1766,6 +1898,7 @@ def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path):
             "enable_public_info_check": True,
             "enable_template_check": True,
         },
+        current_user={"id": "u1", "username": "operator", "display_name": "张三"},
     )
 
     assert status == 200
@@ -1804,6 +1937,9 @@ def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path):
     assert "T" not in history["run_at"]
     assert history["report_date"] == "2026-05-31"
     assert history["result_count"] == 1
+    assert history["executor_id"] == "u1"
+    assert history["executor_username"] == "operator"
+    assert history["executor_name"] == "张三"
     assert history["enable_public_info_check"] is True
     assert history["enable_template_check"] is True
     assert history["download_url"] == f"/api/tools/db-validation/history/download/{job_id}"

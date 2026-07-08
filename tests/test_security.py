@@ -102,6 +102,32 @@ def test_auth_manager_sets_password_hash_and_validates_sessions(tmp_path):
     assert auth.validate_session(session.session_id) is None
 
 
+def test_validate_session_does_not_write_auth_store_when_database_is_locked(tmp_path):
+    import sqlite3
+
+    config_path = tmp_path / "config.json"
+    auth = AuthManager(config_path)
+    auth.set_admin_password("StrongerPass123")
+    session = auth.login("admin", "StrongerPass123")
+    assert session is not None
+
+    db_path = db_path_for_config(config_path)
+    writer = sqlite3.connect(db_path, timeout=1)
+    writer.execute("PRAGMA journal_mode = WAL")
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute(
+        "UPDATE app_kv SET updated_at = datetime('now') WHERE key = 'auth'"
+    )
+    try:
+        validated = auth.validate_session(session.session_id)
+    finally:
+        writer.rollback()
+        writer.close()
+
+    assert validated is not None
+    assert validated.username == "admin"
+
+
 def test_auth_manager_persists_users_to_sqlite_and_can_load_without_json_snapshot(tmp_path):
     config_path = tmp_path / "config.json"
     auth = AuthManager(config_path)

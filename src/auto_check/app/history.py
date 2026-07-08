@@ -13,10 +13,6 @@ from auto_check.app.config import AppConfig, default_config_path
 from auto_check.app.local_store import (
     _connect,
     db_path_for_config,
-    delete_history_run,
-    get_history_run,
-    list_history_runs,
-    save_history_run,
 )
 from auto_check.app.storage_history import (
     delete_db_validation_run,
@@ -25,15 +21,9 @@ from auto_check.app.storage_history import (
     get_db_validation_run,
     get_flow_chain_run,
     get_reconcile_run,
-    has_reconcile_runs,
     list_db_validation_runs,
     list_flow_chain_runs,
     list_reconcile_runs,
-    migrate_db_validation_history_json_to_legacy_runs,
-    migrate_legacy_db_validation_runs,
-    migrate_legacy_flow_chain_runs,
-    migrate_legacy_reconcile_runs,
-    migrate_reconcile_history_json,
     save_db_validation_run,
     save_flow_chain_run,
     save_reconcile_run,
@@ -49,6 +39,8 @@ class HistoryStore(Protocol):
 
     def list_runs(self) -> list[dict[str, Any]]: ...
 
+    def count_runs(self) -> int: ...
+
     def get_run(self, run_id: str) -> dict[str, Any] | None: ...
 
     def save_run(self, run: dict[str, Any]) -> None: ...
@@ -62,6 +54,9 @@ class JsonHistoryStore:
 
     def list_runs(self) -> list[dict[str, Any]]:
         return sorted(_load_runs(self.path), key=_history_sort_key, reverse=True)
+
+    def count_runs(self) -> int:
+        return len(_load_runs(self.path))
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         for run in self.list_runs():
@@ -89,24 +84,28 @@ class SqliteHistoryStore:
         self.kind = str(kind or "reconcile")
 
     def list_runs(self) -> list[dict[str, Any]]:
-        self._migrate_if_needed()
         if self.kind == "reconcile":
             with _connect(db_path_for_config(self.config_path)) as connection:
                 return list_reconcile_runs(connection)
         if self.kind == "db_validation":
             with _connect(db_path_for_config(self.config_path)) as connection:
-                runs = list_db_validation_runs(connection)
-            if runs:
-                return runs
+                return list_db_validation_runs(connection)
         if self.kind == "flow_chain":
             with _connect(db_path_for_config(self.config_path)) as connection:
-                runs = list_flow_chain_runs(connection)
-            if runs:
-                return runs
-        return list_history_runs(self.config_path, self.kind)
+                return list_flow_chain_runs(connection)
+        return []
+
+    def count_runs(self) -> int:
+        if self.kind in {"reconcile", "db_validation", "flow_chain"}:
+            with _connect(db_path_for_config(self.config_path)) as connection:
+                row = connection.execute(
+                    "SELECT COUNT(*) FROM run_headers WHERE kind = ?",
+                    (self.kind,),
+                ).fetchone()
+            return int(row[0] if row is not None else 0)
+        return 0
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
-        self._migrate_if_needed()
         if self.kind == "reconcile":
             with _connect(db_path_for_config(self.config_path)) as connection:
                 run = get_reconcile_run(connection, run_id)
@@ -122,7 +121,7 @@ class SqliteHistoryStore:
                 run = get_flow_chain_run(connection, run_id)
             if run is not None:
                 return run
-        return get_history_run(self.config_path, self.kind, run_id)
+        return None
 
     def save_run(self, run: dict[str, Any]) -> None:
         if self.kind == "reconcile":
@@ -134,39 +133,18 @@ class SqliteHistoryStore:
         elif self.kind == "flow_chain":
             with _connect(db_path_for_config(self.config_path)) as connection:
                 save_flow_chain_run(connection, run)
-        save_history_run(self.config_path, self.kind, run)
 
     def delete_run(self, run_id: str) -> bool:
         if self.kind == "reconcile":
             with _connect(db_path_for_config(self.config_path)) as connection:
-                deleted = delete_reconcile_run(connection, run_id)
-            legacy_deleted = delete_history_run(self.config_path, self.kind, run_id)
-            return deleted or legacy_deleted
+                return delete_reconcile_run(connection, run_id)
         if self.kind == "db_validation":
             with _connect(db_path_for_config(self.config_path)) as connection:
-                deleted = delete_db_validation_run(connection, run_id)
-            legacy_deleted = delete_history_run(self.config_path, self.kind, run_id)
-            return deleted or legacy_deleted
+                return delete_db_validation_run(connection, run_id)
         if self.kind == "flow_chain":
             with _connect(db_path_for_config(self.config_path)) as connection:
-                deleted = delete_flow_chain_run(connection, run_id)
-            legacy_deleted = delete_history_run(self.config_path, self.kind, run_id)
-            return deleted or legacy_deleted
-        return delete_history_run(self.config_path, self.kind, run_id)
-
-    def _migrate_if_needed(self) -> None:
-        if self.kind == "reconcile":
-            with _connect(db_path_for_config(self.config_path)) as connection:
-                migrate_legacy_reconcile_runs(connection, self.config_path)
-                if not has_reconcile_runs(connection):
-                    migrate_reconcile_history_json(connection, self.config_path)
-        elif self.kind == "db_validation":
-            with _connect(db_path_for_config(self.config_path)) as connection:
-                migrate_legacy_db_validation_runs(connection, self.config_path)
-                migrate_db_validation_history_json_to_legacy_runs(connection, self.config_path)
-        elif self.kind == "flow_chain":
-            with _connect(db_path_for_config(self.config_path)) as connection:
-                migrate_legacy_flow_chain_runs(connection, self.config_path)
+                return delete_flow_chain_run(connection, run_id)
+        return False
 
 
 def default_history_path(config_path: str | Path | None = None) -> Path:

@@ -16,7 +16,7 @@
 
 1. 已有 `_start_flow_chain_job` 后台线程机制，无需重构。
 2. 保留现有的"同一时间只允许一个活跃任务"限制。
-3. 新增轻量接口 `GET /api/flow-chain/status`，返回当前活跃任务状态（无需 job_id），方便全局轮询。
+3. 新增轻量接口 `GET /api/flow-chain/status`，返回当前活跃任务状态（无需 job_id），无活跃任务时返回 `job: null`，方便全局轮询且避免前端 404 噪声。
 
 #### 接口定义
 
@@ -42,7 +42,7 @@ GET /api/flow-chain/status
 }
 
 响应（无活跃任务）：
-HTTP 404 { "error": "no active flow chain job" }
+HTTP 200 { "job": null }
 ```
 
 ### 3.2 前端

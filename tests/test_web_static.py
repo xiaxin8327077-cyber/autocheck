@@ -1393,6 +1393,7 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     assert "- 应用界面版本：`v2.1`" in readme
 
     change_items = [
+        "人行逐笔校验执行历史新增执行人展示",
         "自动对数 AM 复核在名称无法匹配时新增兜底",
         "首页最新趋势横轴改为展示每次自动对数的执行日期和时间",
         "兜底明细与资产缺失细分明细重复计数",
@@ -1409,6 +1410,21 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     for text in change_items:
         assert text in readme
         assert text in app_js
+
+    for text in [
+        "重复启动本地服务时检测默认端口占用",
+        "本地 SQLite 旧库结构迁移前自动生成",
+        "系统设置和工具页的配置加载改为模块间互不阻塞",
+        "系统信息改用轻量统计接口",
+        "避免切页或刷新时拉取全量历史记录",
+        "逐笔字段映射加载结果少于系统内置表单",
+        "旧历史结构化迁移从普通查询链路移除",
+        "改为管理员在“本地数据查询”页面手动触发",
+        "SQLite 锁等待",
+        "历史记录写入当前登录用户的姓名、账号和用户 ID",
+    ]:
+        assert text in readme
+    assert "系统优化及BUG修复。" in app_js
 
 
 def test_version_205_documents_scheme_a_logo_update():
@@ -2250,6 +2266,72 @@ def test_latest_result_detail_list_is_restored_from_local_snapshot_before_histor
     assert body.index("restoreLatestResultsSnapshot()") < body.index("await loadLatestHistoryResults()")
 
 
+def test_tool_and_settings_page_loaders_are_isolated():
+    app_js = _read(APP_JS)
+
+    assert "async function loadPageSection" in app_js
+    assert "async function loadToolsPageData" in app_js
+    assert "async function loadSettingsPageData" in app_js
+
+    tools_loader = re.search(r"async function loadToolsPageData\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert tools_loader is not None
+    tools_body = tools_loader.group("body")
+    assert "Promise.all" in tools_body
+    assert 'loadPageSection("PBC导入配置", loadPbcImportSettings)' in tools_body
+    assert 'loadPageSection("逐笔校验配置", loadDbValidationSettings)' in tools_body
+    assert 'loadPageSection("流程执行配置", loadFlowSettings)' in tools_body
+
+    settings_loader = re.search(r"async function loadSettingsPageData\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert settings_loader is not None
+    settings_body = settings_loader.group("body")
+    assert "Promise.all" in settings_body
+    assert 'loadPageSection("系统信息", loadSystemInfo)' in settings_body
+    assert 'loadPageSection("数据源配置", loadConfigList)' in settings_body
+    assert 'loadPageSection("逐笔校验配置", loadDbValidationSettings)' in settings_body
+    assert 'loadPageSection("流程执行配置", loadFlowSettings)' in settings_body
+    assert 'loadPageSection("业务字段配置", loadReconcileSchemaSettings)' in settings_body
+    assert "applySettingsRoleAccess();" in settings_body
+
+    switch_page = re.search(r"async function switchPage\(name, options = \{\}\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert switch_page is not None
+    switch_body = switch_page.group("body")
+    assert 'if (name === "tools") loadToolsPageData();' in switch_body
+    assert 'if (name === "settings") loadSettingsPageData();' in switch_body
+    assert 'if (name === "tools") await loadToolsPageData();' not in switch_body
+    assert 'if (name === "settings") await loadSettingsPageData();' not in switch_body
+    assert 'await loadPbcImportSettings(); await loadDbValidationSettings(); await loadFlowSettings();' not in switch_body
+
+
+def test_system_info_uses_lightweight_summary_api():
+    app_js = _read(APP_JS)
+
+    load_system_info = re.search(r"async function loadSystemInfo\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert load_system_info is not None
+    body = load_system_info.group("body")
+    assert 'api("/api/system-info")' in body
+    assert 'api("/api/history")' not in body
+
+
+def test_tool_settings_load_failures_render_visible_placeholders():
+    app_js = _read(APP_JS)
+
+    assert "function renderDbValidationSettingsLoading" in app_js
+    assert "function renderDbValidationSettingsError" in app_js
+    assert "正在加载逐笔校验配置" in app_js
+    assert "逐笔校验配置加载失败" in app_js
+
+    assert "function renderFlowSettingsLoadError" in app_js
+    assert "流程链配置加载失败" in app_js
+    assert "flowStartBtn.disabled = true" in app_js
+
+
+def test_db_validation_field_mapping_warns_when_metadata_is_partial():
+    app_js = _read(APP_JS)
+
+    assert "少于系统内置表单" in app_js
+    assert "请检查字段映射数据源、baseinfo/field_info 或筛选条件" in app_js
+
+
 def test_pbc_import_tool_is_exposed_in_tools_page():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -2735,6 +2817,9 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_present():
 
     assert 'class="nav-item admin-only" data-page="local-storage"' in html
     assert 'class="top-nav-item admin-only" data-page="local-storage"' in html
+    assert '<span>本地数据查询</span>' in html
+    assert 'data-page="local-storage" href="#">本地数据查询</a>' in html
+    assert '<h2>本地数据查询</h2>' in html
     assert 'id="page-local-storage"' in html
     assert 'id="localStorageTableList"' in html
     assert 'id="localStorageDataHead"' in html
@@ -2742,6 +2827,8 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_present():
     assert 'id="localStorageInfoPanel"' in html
     assert 'id="localStorageJsonDrawer"' in html
     assert 'id="localStorageExportSchemaBtn"' in html
+    assert 'id="localStorageMigrateHistoryBtn"' in html
+    assert 'id="localStorageMigrationStatus"' in html
     assert 'id="localStorageExportTableBtn"' in html
     assert 'id="localStorageBackupBtn"' in html
     assert 'id="localStorageRefreshBtn"' in html
@@ -2756,6 +2843,7 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_present():
     for endpoint in [
         "/api/admin/storage/health",
         "/api/admin/storage/tables",
+        "/api/admin/storage/history-migration",
         "/api/admin/storage/schema-export",
         "/api/admin/storage/backup",
         "/export",
@@ -2773,6 +2861,11 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_present():
     assert "return meta?.cn_name || field;" in app_js
     assert '<th title="${escapeHtml(field)}">${escapeHtml(localStorageColumnLabel(field, fieldMeta[field]))}</th>' in app_js
     assert "localStorageExportTableBtn" in app_js
+    assert "localStorageMigrateHistoryBtn" in app_js
+    assert "renderLocalStorageMigrationStatus" in app_js
+    assert "async function loadLocalStorageMigrationStatus" in app_js
+    assert "旧历史迁移已完成" in app_js
+    assert "migration.can_migrate" in app_js
     assert "encodeURIComponent(localStorageBrowserState.selectedTable)" in app_js
     assert "分页数据敏感字段脱敏展示" in app_js
     assert 'name === "local-storage" && authState.user?.role !== "admin"' in app_js
@@ -2783,6 +2876,35 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_present():
     assert ':root[data-page="local-storage"] .main-content' in css
     assert ':root[data-page="local-storage"] .top-nav-item[data-page="local-storage"]' in css
     assert "#page-local-storage .local-storage-browser-grid" in css
+    assert "#page-local-storage .local-storage-search span" in css
+    assert "#page-local-storage .local-storage-search input" in css
+    assert "#page-local-storage .local-storage-search:focus-within span" not in css
+    assert "#page-local-storage .local-storage-search:has(input:not(:placeholder-shown)) span" not in css
+    local_storage_toolbar = re.search(
+        r"#page-local-storage \.local-storage-data-toolbar\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert local_storage_toolbar is not None
+    assert "justify-content: flex-start;" in local_storage_toolbar.group("body")
+    local_storage_export_button = re.search(
+        r"#page-local-storage \.local-storage-data-toolbar #localStorageExportTableBtn\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert local_storage_export_button is not None
+    assert "height: 34px;" in local_storage_export_button.group("body")
+    assert "min-height: 34px;" in local_storage_export_button.group("body")
+    assert "border-radius: 8px;" in local_storage_export_button.group("body")
+    local_storage_page_size = re.search(
+        r"#page-local-storage \.local-storage-page-size\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert local_storage_page_size is not None
+    assert "margin-left: auto;" in local_storage_page_size.group("body")
+    assert "#page-local-storage .local-storage-action-status" in css
+    assert ".btn-outline:disabled" in css
     assert "#page-local-storage .local-storage-table-list" in css and "overflow: auto" in css
     assert "#page-local-storage .local-storage-table-wrap" in css and "overflow: auto" in css
     assert "#page-local-storage table" in css and "table-layout: auto" in css
@@ -2801,11 +2923,13 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_present():
     assert "display: none;" in space_storage_title.group("body")
     assert '[data-theme="space-tech"][data-color-mode="dark"] #page-local-storage' in css
 
-    assert "本地数据库查看器" in readme
+    assert "本地数据查询" in readme
     assert "管理员可只读查看本地 `auto-check.db`" in readme
     assert "敏感字段脱敏展示" in readme
-    assert "活力主题页内间距和日期时间展示优化" in readme
+    assert "检索输入展示和日期时间展示优化" in readme
     assert "导出当前表数据" in readme
+    assert "手动触发旧历史迁移" in readme
+    assert "旧历史迁移完成或未发现旧历史时按钮禁用" in readme
     assert ".user-actions-cell" in css
     assert "white-space: nowrap" in css
     assert "overflow-wrap: anywhere" in css
@@ -3456,7 +3580,10 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
     assert ".db-validation-table-list" in css
     assert 'id="dbValidationHistoryBtn"' in html
     assert 'id="dbValidationHistoryBody"' in html
+    assert "<th>执行人</th>" in html
     assert "db-validation-history-count-link" in app_js
+    assert "function dbValidationHistoryExecutorName" in app_js
+    assert "dbValidationHistoryExecutorName(run)" in app_js
     assert "function formatDbValidationHistoryTime" in app_js
     assert '.replace("T", " ")' in app_js
     assert ".db-validation-history-modal" in css
@@ -3736,7 +3863,8 @@ def test_system_info_shows_runtime_status_and_history_count():
     assert 'id="dwsStatus"' not in html
     assert 'id="bizStatus"' not in html
     assert 'id="historyCount"' not in html
-    assert 'api("/api/history")' in body
+    assert 'api("/api/system-info")' in body
+    assert 'api("/api/history")' not in body
     assert "historyRunCount" in body
     assert "authState.authenticated" not in body
     assert "userDisplayName(authState.user || {})" in body
@@ -4021,6 +4149,29 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     assert "left: 14px" in mobile_content_frost.group("body")
     assert "right: 14px" in mobile_content_frost.group("body")
 
+    compact_css = css[css.index("@media (max-width: 640px)") :]
+    compact_top_nav = re.search(
+        r"\[data-theme=\"space-tech\"\] \.top-nav\s*\{(?P<body>.*?)\}",
+        compact_css,
+        re.S,
+    )
+    assert compact_top_nav is not None
+    assert "max-width: calc(100vw - 20px)" in compact_top_nav.group("body")
+    compact_tabs = re.search(
+        r"\[data-theme=\"space-tech\"\] \.top-nav-tabs\s*\{(?P<body>.*?)\}",
+        compact_css,
+        re.S,
+    )
+    assert compact_tabs is not None
+    assert "overflow-x: auto" in compact_tabs.group("body")
+    compact_subtitle = re.search(
+        r"\[data-theme=\"space-tech\"\] \.top-nav-wordmark \.brand-wordmark-sub\s*\{(?P<body>.*?)\}",
+        compact_css,
+        re.S,
+    )
+    assert compact_subtitle is not None
+    assert "display: none" in compact_subtitle.group("body")
+
 
 def test_flow_chain_ui_is_manual_only_and_uses_editor_modal_with_scrollable_list():
     html = _read(INDEX_HTML)
@@ -4252,6 +4403,8 @@ def test_flow_chain_background_toast_has_container_and_theme_styles():
     assert "/api/flow-chain/status" in app_js
     assert "data-action=\"toggle-flow-toast\"" in app_js
     assert "data-action=\"close-flow-toast\"" in app_js
+    assert "if (flowBgRunBtn) flowBgRunBtn.hidden = !flowCurrentJobId;" in app_js
+    assert "流程任务正在提交" in app_js
     assert ".flow-toast-container" in css
     assert ".flow-toast.flow-toast--vitality.running .flow-toast-header" in css
     assert ".flow-toast.flow-toast--calm.running .flow-toast-header" in css

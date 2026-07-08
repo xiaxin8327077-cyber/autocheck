@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 from auto_check.app.config import (
     AppConfig,
@@ -26,7 +27,7 @@ from auto_check.app.reconcile_schema import (
     ReconcileTableSchema,
     ReconcileSchemaSettings,
 )
-from auto_check.app.local_store import db_path_for_config, read_app_value
+from auto_check.app.local_store import db_path_for_config, read_app_value, write_app_value
 
 
 def test_local_store_creates_v2_storage_schema(tmp_path):
@@ -66,8 +67,6 @@ def test_local_store_creates_v2_storage_schema(tmp_path):
 
 
 def test_local_store_adds_remaining_history_tables_to_existing_v2_database(tmp_path):
-    import sqlite3
-
     from auto_check.app.storage_schema import CURRENT_SCHEMA_VERSION
 
     path = tmp_path / "config.json"
@@ -101,6 +100,98 @@ def test_local_store_adds_remaining_history_tables_to_existing_v2_database(tmp_p
         "flow_chain_run_logs",
         "flow_chain_run_details",
     } <= tables
+
+
+def test_read_app_value_does_not_run_schema_migration_when_database_is_current_and_locked(tmp_path):
+    path = tmp_path / "config.json"
+    db_path = db_path_for_config(path)
+    committed_payload = {"default_settings": {"session_expire_hours": 8}, "marker": "committed"}
+    write_app_value(path, "config_store", committed_payload)
+
+    writer = sqlite3.connect(db_path, timeout=1)
+    writer.execute("PRAGMA journal_mode = WAL")
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute(
+        "UPDATE app_kv SET value = ? WHERE key = 'config_store'",
+        (json.dumps({"marker": "uncommitted"}, ensure_ascii=False),),
+    )
+    try:
+        assert read_app_value(path, "config_store") == committed_payload
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_load_config_from_normalized_sqlite_does_not_write_snapshot_when_locked(tmp_path):
+    path = tmp_path / "config.json"
+    store = ConfigStore(
+        data_sources=[
+            DataSourceEntry(
+                id="source-dws",
+                name="local DWS",
+                config=DataSourceConfig("postgresql", "localhost", 5432, "dwdb", "dws", "reader", "secret"),
+                is_default=True,
+            ),
+            DataSourceEntry(
+                id="source-business",
+                name="local business",
+                config=DataSourceConfig("mysql", "localhost", 3306, "bizdb", "", "writer", "biz-secret"),
+            ),
+        ],
+        reconcile_data_sources=ReconcileDataSourceSettings(
+            dws_source_id="source-dws",
+            business_source_id="source-business",
+        ),
+    )
+    save_store(store, path)
+
+    db_path = db_path_for_config(path)
+    writer = sqlite3.connect(db_path, timeout=1)
+    writer.execute("PRAGMA journal_mode = WAL")
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute(
+        "UPDATE app_kv SET value = ? WHERE key = 'config_store'",
+        (json.dumps({"marker": "uncommitted"}, ensure_ascii=False),),
+    )
+    try:
+        loaded = load_config(path)
+    finally:
+        writer.rollback()
+        writer.close()
+
+    assert loaded.dws.database == "dwdb"
+    assert loaded.business.database == "bizdb"
+
+
+def test_local_store_backs_up_existing_database_before_schema_migration(tmp_path):
+    path = tmp_path / "config.json"
+    db_path = db_path_for_config(path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE app_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO app_kv(key, value, updated_at) VALUES ('legacy', '{\"ok\": true}', '2026-07-03 10:00:00')"
+        )
+
+    read_app_value(path, "missing")
+
+    backups = list(tmp_path.glob("backup-before-storage-v2-*/auto-check.db"))
+    assert len(backups) == 1
+    with sqlite3.connect(backups[0]) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        legacy_value = connection.execute(
+            "SELECT value FROM app_kv WHERE key = 'legacy'"
+        ).fetchone()[0]
+
+    assert "app_kv" in tables
+    assert "data_sources" not in tables
+    assert legacy_value == '{"ok": true}'
 
 
 def test_default_config_has_two_sources():
@@ -705,6 +796,50 @@ def test_store_migrates_from_config_json_when_sqlite_is_empty(tmp_path):
         ).fetchone()
 
     assert source_count == 1
+    assert migration == ("completed", 1)
+
+
+def test_store_migrates_sqlite_config_store_with_data_sources_to_normalized_tables(tmp_path):
+    path = tmp_path / "config.json"
+    write_app_value(
+        path,
+        "config_store",
+        {
+            "data_sources": [
+                {
+                    "id": "source-sqlite",
+                    "name": "SQLite legacy source",
+                    "db_type": "mysql",
+                    "host": "10.8.0.15",
+                    "port": 3306,
+                    "database": "legacy_db",
+                    "schema": "",
+                    "username": "reader",
+                    "password": "Legacy123",
+                    "is_default": True,
+                }
+            ],
+            "reconcile_data_sources": {
+                "dws_source_id": "source-sqlite",
+                "business_source_id": "source-sqlite",
+            },
+            "default_settings": {"page_size": 50},
+        },
+    )
+
+    store = load_store(path)
+
+    assert store.data_sources[0].id == "source-sqlite"
+    assert store.data_sources[0].config.password == "Legacy123"
+    with sqlite3.connect(db_path_for_config(path)) as connection:
+        source_count = connection.execute("SELECT COUNT(*) FROM data_sources").fetchone()[0]
+        setting_count = connection.execute("SELECT COUNT(*) FROM app_settings").fetchone()[0]
+        migration = connection.execute(
+            "SELECT status, migrated_count FROM storage_migration_runs WHERE source_type = 'config_store'"
+        ).fetchone()
+
+    assert source_count == 1
+    assert setting_count > 0
     assert migration == ("completed", 1)
 
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import errno
 import json
 import mimetypes
 import re
 import shutil
+import socket
 import sys
 import threading
 import uuid
@@ -52,6 +54,7 @@ from auto_check.app.history import (
     build_history_entry,
     summarize_run,
 )
+from auto_check.app.history_migration import build_legacy_history_migration_status, migrate_legacy_histories
 from auto_check.app.flow_tool import (
     DatabaseFlowGateway,
     FlowChainRunContext,
@@ -347,6 +350,14 @@ class ApiRouter:
                     return 404, {"error": "history not found"}
                 return 200, {"history": run}
 
+            if method == "GET" and path == "/api/system-info":
+                store = load_store(self.config_path)
+                return 200, {
+                    "history_run_count": _history_run_count(self.history_store),
+                    "config_count": len(store.data_sources),
+                    "settings": default_settings_to_dict(store.default_settings),
+                }
+
             # ---- Default Settings ----
             if method == "GET" and path == "/api/settings/defaults":
                 store = load_store(self.config_path)
@@ -549,7 +560,7 @@ class ApiRouter:
             if method == "POST" and path == "/api/tools/db-validation/field-mapping/refresh":
                 return 200, {"field_mapping": self._refresh_db_validation_field_mapping(source="manual")}
             if method == "POST" and path == "/api/tools/db-validation/start":
-                job = self._start_db_validation_job(body or {})
+                job = self._start_db_validation_job(body or {}, current_user=current_user)
                 return 200, {"job_id": job.id}
             if method == "GET" and path.startswith("/api/tools/db-validation/status/"):
                 job_id = path.rsplit("/", 1)[-1]
@@ -581,8 +592,6 @@ class ApiRouter:
                 return 200, {"flows": flows, "limit": flow_limit, "truncated": len(flows) >= flow_limit}
             if method == "GET" and path == "/api/flow-chain/status":
                 active_job = self.get_active_flow_chain_job_payload()
-                if active_job is None:
-                    return 404, {"error": "no active flow chain job"}
                 return 200, {"job": active_job}
             if method == "POST" and path == "/api/tools/flow/start":
                 chain_id = str((body or {}).get("chain_id", "") or "").strip()
@@ -1036,7 +1045,12 @@ class ApiRouter:
             except Exception as exc:
                 print(f"[auto-check][db-validation] 字段映射自动刷新失败：{_runtime_error_message(str(exc))}", flush=True)
 
-    def _start_db_validation_job(self, body: dict[str, Any]) -> "DbValidationJob":
+    def _start_db_validation_job(
+        self,
+        body: dict[str, Any],
+        *,
+        current_user: dict[str, Any] | None = None,
+    ) -> "DbValidationJob":
         store = load_store(self.config_path)
         settings = store.db_validation
         detail_source_id = settings.detail.source_id
@@ -1079,6 +1093,7 @@ class ApiRouter:
             selected_tables=selected_tables,
             enable_public_info_check=enable_public_info_check,
             enable_template_check=enable_template_check,
+            current_user=current_user,
         )
         with self._db_validation_jobs_lock:
             if any(existing.is_active() for existing in self._db_validation_jobs.values()):
@@ -1176,6 +1191,17 @@ class ApiRouter:
                 return 200, {"health": build_storage_health(self.config_path)}
             if method == "GET" and parts == ["api", "admin", "storage", "tables"]:
                 return 200, {"tables": list_storage_tables(self.config_path)}
+            if method == "GET" and parts == ["api", "admin", "storage", "history-migration"]:
+                return 200, {"migration": build_legacy_history_migration_status(self.config_path)}
+            if method == "POST" and parts == ["api", "admin", "storage", "history-migration"]:
+                status = build_legacy_history_migration_status(self.config_path)
+                if not status["can_migrate"]:
+                    return 400, {"error": status["status_text"], "migration": status}
+                result = migrate_legacy_histories(self.config_path)
+                return 200, {
+                    "result": result,
+                    "migration": build_legacy_history_migration_status(self.config_path),
+                }
             if method == "POST" and parts == ["api", "admin", "storage", "backup"]:
                 return 200, {"backup": generate_storage_backup(self.config_path)}
             if method == "GET" and len(parts) == 6 and parts[:4] == ["api", "admin", "storage", "tables"] and parts[5] == "schema":
@@ -1727,6 +1753,7 @@ class DbValidationJob:
         selected_tables: list[str],
         enable_public_info_check: bool,
         enable_template_check: bool,
+        current_user: dict[str, Any] | None = None,
     ):
         self.id = uuid.uuid4().hex
         self.config_name = config_name
@@ -1754,6 +1781,9 @@ class DbValidationJob:
         self.selected_tables = selected_tables
         self.enable_public_info_check = enable_public_info_check
         self.enable_template_check = enable_template_check
+        self.executor_id = str((current_user or {}).get("id", ""))
+        self.executor_username = str((current_user or {}).get("username", ""))
+        self.executor_name = str((current_user or {}).get("display_name") or (current_user or {}).get("username") or "")
         self.status = "pending"
         self.progress = 0
         self.step = "等待执行"
@@ -1829,6 +1859,9 @@ class DbValidationJob:
                 "template_sys_manage_id": self.template_sys_manage_id,
                 "template_classification_id": self.template_classification_id,
                 "report_date": self.report_date.isoformat(),
+                "executor_id": self.executor_id,
+                "executor_username": self.executor_username,
+                "executor_name": self.executor_name,
                 "selected_tables": list(self.selected_tables),
                 "enable_public_info_check": self.enable_public_info_check,
                 "enable_template_check": self.enable_template_check,
@@ -2323,6 +2356,13 @@ def _db_validation_result_payload(result: DbValidationRunResult | None) -> dict[
     }
 
 
+def _history_run_count(history_store: HistoryStore) -> int:
+    count_runs = getattr(history_store, "count_runs", None)
+    if callable(count_runs):
+        return int(count_runs())
+    return len(history_store.list_runs())
+
+
 def _db_validation_history_entry(job: DbValidationJob, result: DbValidationRunResult) -> dict[str, Any]:
     return {
         "id": job.id,
@@ -2331,6 +2371,9 @@ def _db_validation_history_entry(job: DbValidationJob, result: DbValidationRunRe
         "run_date": result.report_date,
         "report_date": result.report_date,
         "status": job.status,
+        "executor_id": job.executor_id,
+        "executor_username": job.executor_username,
+        "executor_name": job.executor_name,
         "result_count": result.error_count,
         "warning_count": len(result.warnings),
         "table_count": len(job.selected_tables),
@@ -2774,6 +2817,15 @@ def _looks_like_mojibake(text: str) -> bool:
     return suspicious >= 2
 
 
+def _is_client_disconnect_error(exc: BaseException) -> bool:
+    if isinstance(exc, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+        return True
+    if not isinstance(exc, OSError):
+        return False
+    disconnect_codes = {errno.EPIPE, errno.ECONNABORTED, errno.ECONNRESET, 10053, 10054}
+    return getattr(exc, "errno", None) in disconnect_codes or getattr(exc, "winerror", None) in disconnect_codes
+
+
 class AutoCheckRequestHandler(BaseHTTPRequestHandler):
     router: ApiRouter
     web_dir: Path
@@ -3010,7 +3062,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
 
     def _handle_db_validation_history_download(self, path: str) -> None:
         history_id = path.rsplit("/", 1)[-1]
@@ -3027,7 +3079,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
 
     def _handle_db_validation_rules_document_download(self) -> None:
         filename, data = self.router.get_db_validation_rules_document()
@@ -3038,7 +3090,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
 
     def _handle_storage_schema_export(self, session: AuthSession) -> None:
         try:
@@ -3053,7 +3105,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
 
     def _handle_storage_table_data_export(self, path: str, session: AuthSession) -> None:
         parts = [part for part in path.split("/") if part]
@@ -3075,7 +3127,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
 
     def _serve_static(self) -> None:
         relative = self.path.split("?", 1)[0].lstrip("/") or "index.html"
@@ -3100,7 +3152,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
 
     def _send_json(self, status: int, payload: dict[str, Any], headers: list[tuple[str, str]] | None = None) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -3112,7 +3164,16 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         for name, value in headers or []:
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(data)
+        self._write_response_body(data)
+
+    def _write_response_body(self, data: bytes) -> bool:
+        try:
+            self.wfile.write(data)
+        except OSError as exc:
+            if _is_client_disconnect_error(exc):
+                return False
+            raise
+        return True
 
 
 def _cookie_value(cookie_header: str, name: str) -> str:
@@ -3658,19 +3719,36 @@ def run_server(
     port: int = DEFAULT_SERVER_PORT,
     open_browser: bool = True,
     config_path: str | Path | None = None,
-) -> ThreadingHTTPServer:
-    router = ApiRouter(config_path=config_path, start_field_mapping_auto_refresh=True)
-    auth_manager = AuthManager(router.config_path)
-
+) -> ThreadingHTTPServer | None:
     class Handler(AutoCheckRequestHandler):
         pass
 
-    Handler.router = router
     Handler.web_dir = web_root()
+    browser_host = _browser_host(host)
+    url = f"http://{browser_host}:{port}"
+    if _is_tcp_port_active(host, port):
+        print(f"Auto Check appears to be already running at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        return None
+
+    try:
+        server = ThreadingHTTPServer((host, port), Handler)
+    except OSError as exc:
+        if _is_port_in_use_error(exc):
+            print(f"Auto Check appears to be already running at {url}")
+            if open_browser:
+                webbrowser.open(url)
+            return None
+        raise
+
+    router = ApiRouter(config_path=config_path, start_field_mapping_auto_refresh=True)
+    auth_manager = AuthManager(router.config_path)
+
+    Handler.router = router
     Handler.auth_manager = auth_manager
-    server = ThreadingHTTPServer((host, port), Handler)
     actual_port = server.server_address[1]
-    url = f"http://{host}:{actual_port}"
+    url = f"http://{browser_host}:{actual_port}"
     print(f"Auto Check running at {url}")
     if open_browser:
         webbrowser.open(url)
@@ -3679,3 +3757,32 @@ def run_server(
     except KeyboardInterrupt:
         pass
     return server
+
+
+def _browser_host(host: str) -> str:
+    normalized = str(host or "127.0.0.1")
+    if normalized in {"0.0.0.0", "::"}:
+        return "127.0.0.1"
+    return normalized
+
+
+def _is_tcp_port_active(host: str, port: int) -> bool:
+    try:
+        normalized_port = int(port)
+    except (TypeError, ValueError):
+        return False
+    if normalized_port <= 0:
+        return False
+    probe_host = _browser_host(host)
+    try:
+        with socket.create_connection((probe_host, normalized_port), timeout=0.25):
+            return True
+    except OSError:
+        return False
+
+
+def _is_port_in_use_error(exc: OSError) -> bool:
+    if exc.errno in {errno.EADDRINUSE, 10048}:
+        return True
+    message = str(exc).lower()
+    return "address already in use" in message or "only one usage of each socket address" in message

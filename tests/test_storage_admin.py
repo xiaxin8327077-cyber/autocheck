@@ -1,4 +1,5 @@
 from io import BytesIO
+import json
 
 from openpyxl import load_workbook
 
@@ -32,8 +33,8 @@ def _seed_storage_rows(config_path):
                 "risk_reader",
                 "aesgcm$very-secret",
                 1,
-                "2026-07-03 10:00:00",
-                "2026-07-03 10:01:00",
+                "2026-07-03T10:00:00",
+                "2026-07-03T10:01:00",
             ),
         )
         connection.execute(
@@ -62,9 +63,9 @@ def _seed_storage_rows(config_path):
                 "admin",
                 "pbkdf2_sha256$260000$v1Sz$raw-secret-hash",
                 1,
-                "2026-07-03 09:00:00",
-                "2026-07-03 09:01:00",
-                "2026-07-03 09:02:00",
+                "2026-07-03T09:00:00",
+                "2026-07-03T09:01:00",
+                "2026-07-03T09:02:00",
             ),
         )
 
@@ -101,6 +102,47 @@ def test_admin_storage_health_reports_schema_integrity_and_counts(tmp_path):
     assert health["table_counts"]["data_sources"] == 1
 
 
+def test_admin_storage_history_migration_is_manual_and_single_use(tmp_path):
+    config_path = tmp_path / "config.json"
+    router = ApiRouter(config_path=config_path)
+    legacy_run = {
+        "id": "legacy-reconcile-1",
+        "run_date": "2026-06-30",
+        "run_at": "2026-07-03 10:00:00",
+        "config_name": "legacy",
+        "results": [],
+    }
+    with _connect(db_path_for_config(config_path)) as connection:
+        connection.execute(
+            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                "reconcile",
+                legacy_run["id"],
+                json.dumps(legacy_run, ensure_ascii=False),
+                legacy_run["run_date"],
+                legacy_run["run_at"],
+                "",
+            ),
+        )
+
+    assert router.handle("GET", "/api/admin/storage/history-migration", None, current_user=NORMAL_USER)[0] == 403
+
+    status, payload = router.handle("GET", "/api/admin/storage/history-migration", None, current_user=ADMIN_USER)
+    assert status == 200
+    assert payload["migration"]["can_migrate"] is True
+    assert payload["migration"]["pending_count"] == 1
+
+    status, payload = router.handle("POST", "/api/admin/storage/history-migration", {}, current_user=ADMIN_USER)
+    assert status == 200
+    assert payload["result"]["reconcile_history_runs"] == 1
+    assert payload["migration"]["can_migrate"] is False
+    assert payload["migration"]["completed"] is True
+
+    status, payload = router.handle("POST", "/api/admin/storage/history-migration", {}, current_user=ADMIN_USER)
+    assert status == 400
+    assert "完成" in payload["error"]
+
+
 def test_admin_storage_rows_are_paginated_whitelisted_and_mask_sensitive_values(tmp_path):
     config_path = tmp_path / "config.json"
     router = ApiRouter(config_path=config_path)
@@ -121,6 +163,8 @@ def test_admin_storage_rows_are_paginated_whitelisted_and_mask_sensitive_values(
     assert row["host"] == "10.20.18.***"
     assert row["username"] == "ri***"
     assert row["password_encrypted"] == "******"
+    assert row["created_at"] == "2026-07-03 10:00:00"
+    assert row["updated_at"] == "2026-07-03 10:01:00"
     assert payload["fields"]["password_encrypted"]["sensitive"] is True
     assert payload["fields"]["password_encrypted"]["display"] == "脱敏"
 
@@ -147,6 +191,9 @@ def test_admin_storage_rows_are_paginated_whitelisted_and_mask_sensitive_values(
     user_row = payload["rows"][0]
     assert user_row["username"] == "ad***"
     assert user_row["password_hash"] == "******"
+    assert user_row["created_at"] == "2026-07-03 09:00:00"
+    assert user_row["updated_at"] == "2026-07-03 09:01:00"
+    assert user_row["last_login_at"] == "2026-07-03 09:02:00"
 
 
 def test_admin_storage_rejects_unlisted_tables_and_invalid_page_size(tmp_path):
@@ -215,4 +262,14 @@ def test_admin_storage_table_data_export_uses_cn_headers_and_masked_values(tmp_p
     assert rows[0][:2] == ("设置键", "设置内容")
     assert '"token": "******"' in rows[1][1]
     assert '"username": "op***"' in rows[1][1]
+    workbook.close()
+
+    filename, payload = router.get_storage_table_data_export("users", current_user=ADMIN_USER)
+    workbook = load_workbook(BytesIO(payload), read_only=True, data_only=True)
+    rows = list(workbook["users"].iter_rows(values_only=True))
+    assert rows[1][6:9] == (
+        "2026-07-03 09:00:00",
+        "2026-07-03 09:01:00",
+        "2026-07-03 09:02:00",
+    )
     workbook.close()

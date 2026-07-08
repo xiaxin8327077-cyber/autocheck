@@ -9,12 +9,55 @@ from pathlib import Path
 
 CURRENT_SCHEMA_VERSION = 2
 MIGRATION_STATUSES = {"completed", "skipped", "failed"}
+REQUIRED_SCHEMA_TABLES = {
+    "app_kv",
+    "history_runs",
+    "schema_migrations",
+    "storage_migration_runs",
+    "data_sources",
+    "app_settings",
+    "users",
+    "config_snapshots",
+    "run_headers",
+    "reconcile_runs",
+    "reconcile_run_counts",
+    "reconcile_results",
+    "reconcile_result_details",
+    "reconcile_delta_results",
+    "db_validation_runs",
+    "db_validation_selected_tables",
+    "db_validation_warnings",
+    "db_validation_result_rows",
+    "flow_chain_runs",
+    "flow_chain_run_steps",
+    "flow_chain_run_logs",
+    "flow_chain_run_details",
+}
 
 
 def ensure_storage_schema(connection: sqlite3.Connection) -> None:
+    if storage_schema_is_current(connection):
+        return
+    _backup_before_schema_migration(connection)
     _ensure_legacy_tables(connection)
     _ensure_migration_tables(connection)
     _migrate_v2(connection)
+
+
+def storage_schema_is_current(connection: sqlite3.Connection) -> bool:
+    if _schema_version_for_connection(connection) < CURRENT_SCHEMA_VERSION:
+        return False
+    try:
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return False
+    table_names = {
+        str(row["name"] if hasattr(row, "keys") else row[0])
+        for row in rows
+    }
+    return REQUIRED_SCHEMA_TABLES <= table_names
 
 
 def get_schema_version(db_path: str | Path) -> int:
@@ -40,6 +83,52 @@ def backup_database_if_exists(db_path: str | Path) -> Path | None:
     backup_path = backup_dir / path.name
     shutil.copy2(path, backup_path)
     return backup_path
+
+
+def _backup_before_schema_migration(connection: sqlite3.Connection) -> Path | None:
+    db_path = _main_database_path(connection)
+    if db_path is None:
+        return None
+    if not _has_existing_database_content(connection):
+        return None
+    if _schema_version_for_connection(connection) >= CURRENT_SCHEMA_VERSION:
+        return None
+    try:
+        connection.execute("PRAGMA wal_checkpoint(FULL)")
+    except sqlite3.DatabaseError:
+        pass
+    return backup_database_if_exists(db_path)
+
+
+def _main_database_path(connection: sqlite3.Connection) -> Path | None:
+    for row in connection.execute("PRAGMA database_list").fetchall():
+        name = row["name"] if hasattr(row, "keys") else row[1]
+        filename = row["file"] if hasattr(row, "keys") else row[2]
+        if str(name) == "main" and str(filename or "").strip():
+            return Path(str(filename))
+    return None
+
+
+def _has_existing_database_content(connection: sqlite3.Connection) -> bool:
+    row = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+        """
+    ).fetchone()
+    return int(row[0] if row is not None else 0) > 0
+
+
+def _schema_version_for_connection(connection: sqlite3.Connection) -> int:
+    try:
+        row = connection.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    if row is None or row[0] is None:
+        return 0
+    return int(row[0])
 
 
 def fingerprint_text(text: str) -> str:

@@ -108,6 +108,8 @@ const localStorageJsonClose = document.getElementById("localStorageJsonClose");
 const localStorageJsonContent = document.getElementById("localStorageJsonContent");
 const localStorageJsonMeta = document.getElementById("localStorageJsonMeta");
 const localStorageExportSchemaBtn = document.getElementById("localStorageExportSchemaBtn");
+const localStorageMigrateHistoryBtn = document.getElementById("localStorageMigrateHistoryBtn");
+const localStorageMigrationStatus = document.getElementById("localStorageMigrationStatus");
 const localStorageExportTableBtn = document.getElementById("localStorageExportTableBtn");
 const localStorageBackupBtn = document.getElementById("localStorageBackupBtn");
 const localStorageRefreshBtn = document.getElementById("localStorageRefreshBtn");
@@ -377,6 +379,7 @@ const localStorageBrowserState = {
   loading: false,
   tables: [],
   health: null,
+  migration: null,
   selectedTable: "",
   schema: null,
   rowsPayload: null,
@@ -669,6 +672,34 @@ function applyRoleAccess() {
   }
 }
 
+async function loadPageSection(label, loader) {
+  try {
+    return await loader();
+  } catch (error) {
+    console.error(`${label}加载失败`, error);
+    return null;
+  }
+}
+
+async function loadToolsPageData() {
+  await Promise.all([
+    loadPageSection("PBC导入配置", loadPbcImportSettings),
+    loadPageSection("逐笔校验配置", loadDbValidationSettings),
+    loadPageSection("流程执行配置", loadFlowSettings),
+  ]);
+}
+
+async function loadSettingsPageData() {
+  await Promise.all([
+    loadPageSection("系统信息", loadSystemInfo),
+    loadPageSection("数据源配置", loadConfigList),
+    loadPageSection("逐笔校验配置", loadDbValidationSettings),
+    loadPageSection("流程执行配置", loadFlowSettings),
+    loadPageSection("业务字段配置", loadReconcileSchemaSettings),
+  ]);
+  applySettingsRoleAccess();
+}
+
 [...navItems, ...topNavItems].forEach((item) => {
   item.addEventListener("click", (e) => { e.preventDefault(); switchPage(item.dataset.page); });
 });
@@ -681,7 +712,7 @@ async function switchPage(name, options = {}) {
     options = { ...options, forceHomeRefresh: true };
   }
   if (name === "local-storage" && authState.user?.role !== "admin") {
-    showToast("普通用户无权访问本地数据库", "error");
+    showToast("普通用户无权访问本地数据查询", "error");
     name = "home";
     options = { ...options, forceHomeRefresh: true };
   }
@@ -690,8 +721,8 @@ async function switchPage(name, options = {}) {
   const nextHash = `#${name}`;
   if (location.hash !== nextHash) location.hash = name;
   if (name === "history") loadHistoryList(true);
-  if (name === "tools") { await loadPbcImportSettings(); await loadDbValidationSettings(); await loadFlowSettings(); }
-  if (name === "settings") { await loadConfigList(); await loadDbValidationSettings(); await loadFlowSettings(); await loadReconcileSchemaSettings(); applySettingsRoleAccess(); }
+  if (name === "tools") loadToolsPageData();
+  if (name === "settings") loadSettingsPageData();
   if (name === "users") await loadUsers();
   if (name === "local-storage") await loadLocalStorageBrowser();
   if (name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)) {
@@ -1305,12 +1336,13 @@ async function loadLocalStorageBrowser(options = {}) {
       localStorageBrowserState.selectedTable = firstTable.name;
     }
     renderLocalStorageBrowser();
+    loadLocalStorageMigrationStatus();
     if (localStorageBrowserState.selectedTable) {
       await selectLocalStorageTable(localStorageBrowserState.selectedTable, { keepPage: true });
     }
   } catch (error) {
-    localStorageTableList.innerHTML = `<p class="placeholder-text">${escapeHtml(error.message || "本地数据库加载失败")}</p>`;
-    showToast(error.message || "本地数据库加载失败", "error");
+    localStorageTableList.innerHTML = `<p class="placeholder-text">${escapeHtml(error.message || "本地数据查询加载失败")}</p>`;
+    showToast(error.message || "本地数据查询加载失败", "error");
   } finally {
     localStorageBrowserState.loading = false;
   }
@@ -1318,6 +1350,7 @@ async function loadLocalStorageBrowser(options = {}) {
 
 function renderLocalStorageBrowser() {
   renderLocalStorageHealth();
+  renderLocalStorageMigrationStatus();
   renderLocalStorageTableList();
   renderLocalStorageTabs();
   renderLocalStorageSummary();
@@ -1338,6 +1371,29 @@ function renderLocalStorageHealth() {
   localStorageSetText("localStorageHistoryRuns", String(historyTotal || 0));
   localStorageSetText("localStorageLatestBackup", health.latest_backup?.created_at || "暂无备份");
   localStorageSetText("localStorageDatabasePath", health.database?.display_path || "auto-check.db");
+}
+
+function renderLocalStorageMigrationStatus() {
+  const migration = localStorageBrowserState.migration || {};
+  const text = migration.status_text || "旧历史迁移状态待加载";
+  if (localStorageMigrationStatus) localStorageMigrationStatus.textContent = text;
+  if (localStorageMigrateHistoryBtn) {
+    localStorageMigrateHistoryBtn.disabled = !migration.can_migrate;
+    localStorageMigrateHistoryBtn.title = migration.can_migrate ? "手动迁移旧历史数据" : text;
+  }
+}
+
+async function loadLocalStorageMigrationStatus() {
+  if (authState.user?.role !== "admin" || !localStorageMigrateHistoryBtn) return;
+  try {
+    const payload = await api("/api/admin/storage/history-migration");
+    localStorageBrowserState.migration = payload.migration || null;
+    renderLocalStorageMigrationStatus();
+  } catch (error) {
+    localStorageBrowserState.migration = null;
+    if (localStorageMigrationStatus) localStorageMigrationStatus.textContent = error.message || "旧历史迁移状态加载失败";
+    if (localStorageMigrateHistoryBtn) localStorageMigrateHistoryBtn.disabled = true;
+  }
 }
 
 function renderLocalStorageTableList() {
@@ -1637,6 +1693,30 @@ localStorageExportSchemaBtn?.addEventListener("click", () => {
   window.location.href = "/api/admin/storage/schema-export";
 });
 
+localStorageMigrateHistoryBtn?.addEventListener("click", async () => {
+  if (!localStorageBrowserState.migration?.can_migrate) {
+    showToast(localStorageBrowserState.migration?.status_text || "旧历史无需迁移", "info");
+    return;
+  }
+  const confirmed = await showConfirm(
+    "迁移旧历史",
+    "将旧 history_runs/history.json 中的历史记录迁移到新的结构化历史表。迁移完成后不能重复执行，是否继续？"
+  );
+  if (!confirmed) return;
+  localStorageMigrateHistoryBtn.disabled = true;
+  if (localStorageMigrationStatus) localStorageMigrationStatus.textContent = "旧历史迁移中...";
+  try {
+    const payload = await api("/api/admin/storage/history-migration", { method: "POST", body: "{}" });
+    localStorageBrowserState.migration = payload.migration || null;
+    renderLocalStorageMigrationStatus();
+    await loadLocalStorageBrowser({ force: true });
+    showToast("旧历史迁移已完成", "success");
+  } catch (error) {
+    showToast(error.message || "旧历史迁移失败", "error");
+    await loadLocalStorageBrowser({ force: true });
+  }
+});
+
 localStorageExportTableBtn?.addEventListener("click", () => {
   if (!localStorageBrowserState.selectedTable) {
     showToast("请先选择要导出的数据表", "error");
@@ -1650,7 +1730,7 @@ localStorageBackupBtn?.addEventListener("click", async () => {
   try {
     const payload = await api("/api/admin/storage/backup", { method: "POST", body: "{}" });
     localStorageSetText("localStorageLatestBackup", payload.backup?.created_at || "备份已生成");
-    showToast("本地数据库备份已生成", "success");
+    showToast("本地数据查询备份已生成", "success");
     await loadLocalStorageBrowser({ force: true });
   } catch (error) {
     showToast(error.message || "生成备份失败", "error");
@@ -1663,7 +1743,7 @@ localStorageRefreshBtn?.addEventListener("click", async () => {
   localStorageRefreshBtn.disabled = true;
   try {
     await loadLocalStorageBrowser({ force: true });
-    showToast("本地数据库状态已刷新", "success");
+    showToast("本地数据查询状态已刷新", "success");
   } finally {
     localStorageRefreshBtn.disabled = false;
   }
@@ -7115,18 +7195,12 @@ function showInfo(title, content, options = {}) {
 // System Info
 async function loadSystemInfo() {
   try {
-    const [configsData, settingsData, historyData] = await Promise.all([
-      api("/api/configs").catch(() => ({ data_sources: [], configs: [] })),
-      api("/api/settings/defaults").catch(() => ({ settings: {} })),
-      api("/api/history").catch(() => ({ history: [] }))
-    ]);
-
-    const sourceCount = (configsData.data_sources || configsData.configs || []).length;
-    const settings = serverSettingsToClient(settingsData.settings || {});
-    document.getElementById("historyRunCount").textContent = String((historyData.history || []).length);
+    const payload = await api("/api/system-info");
+    const settings = serverSettingsToClient(payload.settings || {});
+    document.getElementById("historyRunCount").textContent = String(payload.history_run_count || 0);
     document.getElementById("loginUserInfo").textContent = userDisplayName(authState.user || {});
     document.getElementById("autoRefreshInfo").textContent = settings.autoRefreshHome === "true" ? "开启" : "关闭";
-    document.getElementById("configCount").textContent = sourceCount;
+    document.getElementById("configCount").textContent = String(payload.config_count || 0);
     return true;
   } catch (_) {
     return false;
@@ -7469,7 +7543,12 @@ function dbValidationFieldMappingStatusText(status = {}) {
   }
   const sourceText = status.refresh_source === "auto" ? "自动刷新" : "手动刷新";
   const refreshedAt = status.refreshed_at ? `，${status.refreshed_at}` : "";
-  return `字段映射已加载：${status.table_count || 0} 张表，${status.field_count || 0} 个字段，未映射 ${status.unmapped_field_count || 0} 个字段，${sourceText}${refreshedAt}`;
+  const tableCount = Number(status.table_count || 0);
+  const expectedTableCount = Array.isArray(dbValidationTables) ? dbValidationTables.length : 0;
+  const coverageHint = expectedTableCount && tableCount < expectedTableCount
+    ? `；少于系统内置表单 ${tableCount}/${expectedTableCount} 张，请检查字段映射数据源、baseinfo/field_info 或筛选条件`
+    : "";
+  return `字段映射已加载：${tableCount} 张表，${status.field_count || 0} 个字段，未映射 ${status.unmapped_field_count || 0} 个字段，${sourceText}${refreshedAt}${coverageHint}`;
 }
 
 function renderDbValidationFieldMappingStatus(status = {}, prefix = "") {
@@ -7495,8 +7574,33 @@ function renderDbValidationSettings(settings = {}, dataSources = [], tables = []
   if (fieldMappingStatus) renderDbValidationFieldMappingStatus(fieldMappingStatus);
 }
 
+function renderDbValidationSettingsLoading() {
+  if (dbValidationTableList) dbValidationTableList.innerHTML = '<p class="placeholder-text">正在加载逐笔校验配置...</p>';
+  if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = "正在加载逐笔校验配置...";
+  if (dbValidationSelectAllTablesBtn) {
+    dbValidationSelectAllTablesBtn.checked = false;
+    dbValidationSelectAllTablesBtn.indeterminate = false;
+  }
+}
+
+function renderDbValidationSettingsError(message = "逐笔校验配置加载失败") {
+  const text = message ? `逐笔校验配置加载失败：${message}` : "逐笔校验配置加载失败";
+  dbValidationDataSources = [];
+  dbValidationTables = [];
+  [dbValidationDetailSource, dbValidationPublicInfoSource, dbValidationTemplateSource, dbValidationMetadataSource].forEach((select) => {
+    if (select) select.innerHTML = "";
+  });
+  if (dbValidationTableList) dbValidationTableList.innerHTML = `<p class="placeholder-text">${escapeHtml(text)}</p>`;
+  if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = text;
+  if (dbValidationSelectAllTablesBtn) {
+    dbValidationSelectAllTablesBtn.checked = false;
+    dbValidationSelectAllTablesBtn.indeterminate = false;
+  }
+}
+
 async function loadDbValidationSettings() {
   if (!toolCardDbValidation && !dbValidationMetadataSource) return;
+  renderDbValidationSettingsLoading();
   try {
     const payload = await api("/api/tools/db-validation/settings");
     renderDbValidationSettings(
@@ -7506,8 +7610,11 @@ async function loadDbValidationSettings() {
       payload.default_report_date || "",
       payload.field_mapping || {}
     );
+    return payload;
   } catch (e) {
     console.error("数据库校验配置加载失败", e);
+    renderDbValidationSettingsError(e.message || "请检查本地服务状态");
+    return null;
   }
 }
 
@@ -7677,7 +7784,7 @@ async function loadDbValidationHistory() {
     const sortedHistory = [...(payload.history || [])].sort(compareDbValidationHistoryRunsDesc);
     renderDbValidationHistory(sortedHistory);
   } catch (e) {
-    dbValidationHistoryBody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    dbValidationHistoryBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -7709,10 +7816,14 @@ function compareDbValidationHistoryRunsDesc(left, right) {
   return String(right.id || "").localeCompare(String(left.id || ""));
 }
 
+function dbValidationHistoryExecutorName(run = {}) {
+  return String(run.executor_name || run.executor_username || run.executor || "-").trim() || "-";
+}
+
 function renderDbValidationHistory(history = []) {
   if (!dbValidationHistoryBody) return;
   if (!history.length) {
-    dbValidationHistoryBody.innerHTML = '<tr><td colspan="6" class="empty">暂无历史记录</td></tr>';
+    dbValidationHistoryBody.innerHTML = '<tr><td colspan="7" class="empty">暂无历史记录</td></tr>';
     return;
   }
   dbValidationHistoryBody.innerHTML = history.map((run) => {
@@ -7720,6 +7831,7 @@ function renderDbValidationHistory(history = []) {
     return `
     <tr>
       <td>${escapeHtml(formatDbValidationHistoryTime(run.run_at || run.started_at || ""))}</td>
+      <td>${escapeHtml(dbValidationHistoryExecutorName(run))}</td>
       <td>${escapeHtml(run.report_date || run.run_date || "-")}</td>
       <td class="money-cell">
         <button type="button" class="db-validation-history-count-link db-validation-history-download" data-url="${escapeHtml(downloadUrl)}">${formatMoney(run.result_count || 0)}</button>
@@ -7878,25 +7990,43 @@ function fillFlowSourceSelect(select, dataSources, selected = "") {
   }
 }
 
+function renderFlowSettingsLoadError(message = "流程链配置加载失败") {
+  const text = message ? `流程链配置加载失败：${message}` : "流程链配置加载失败";
+  flowSettings = { ...(flowSettings || {}), chains: [] };
+  flowDataSources = [];
+  selectedFlowChainIds = [];
+  if (flowSource) flowSource.innerHTML = "";
+  if (flowChainSettingsList) flowChainSettingsList.innerHTML = `<p class="placeholder-text">${escapeHtml(text)}</p>`;
+  if (flowChainList) flowChainList.innerHTML = `<p class="placeholder-text">${escapeHtml(text)}</p>`;
+  if (flowStartBtn) flowStartBtn.disabled = true;
+  updateFlowChainSelectionSummary();
+}
+
 async function loadFlowSettings() {
   if (!flowSource && !toolCardFlow) return null;
-  const payload = await api("/api/tools/flow/settings");
-  flowSettings = payload.settings || {};
-  flowDataSources = payload.data_sources || [];
-  fillFlowSourceSelect(flowSource, flowDataSources, flowSettings.source_id || "");
-  if (flowExecuteUrl) flowExecuteUrl.value = flowSettings.execute_url || "";
-  if (flowFlowTable) flowFlowTable.value = flowSettings.flow_table || "sp_flow";
-  if (flowTaskTable) flowTaskTable.value = flowSettings.task_table || "sp_task";
-  if (flowPollInterval) flowPollInterval.value = flowSettings.poll_interval_seconds || 5;
-  if (flowStepTimeout) flowStepTimeout.value = flowSettings.step_timeout_minutes || 60;
-  flowDefinitions = [];
-  flowDefinitionsLoaded = false;
-  flowDefinitionSearchItems = [];
-  renderFlowDefinitionLimitHint();
-  renderFlowChainSettings(flowSettings.chains || []);
-  renderFlowChainPicker();
-  await loadFlowToastStatus();
-  return flowSettings;
+  try {
+    const payload = await api("/api/tools/flow/settings");
+    flowSettings = payload.settings || {};
+    flowDataSources = payload.data_sources || [];
+    fillFlowSourceSelect(flowSource, flowDataSources, flowSettings.source_id || "");
+    if (flowExecuteUrl) flowExecuteUrl.value = flowSettings.execute_url || "";
+    if (flowFlowTable) flowFlowTable.value = flowSettings.flow_table || "sp_flow";
+    if (flowTaskTable) flowTaskTable.value = flowSettings.task_table || "sp_task";
+    if (flowPollInterval) flowPollInterval.value = flowSettings.poll_interval_seconds || 5;
+    if (flowStepTimeout) flowStepTimeout.value = flowSettings.step_timeout_minutes || 60;
+    flowDefinitions = [];
+    flowDefinitionsLoaded = false;
+    flowDefinitionSearchItems = [];
+    renderFlowDefinitionLimitHint();
+    renderFlowChainSettings(flowSettings.chains || []);
+    renderFlowChainPicker();
+    await loadFlowToastStatus();
+    return flowSettings;
+  } catch (e) {
+    console.error("流程链配置加载失败", e);
+    renderFlowSettingsLoadError(e.message || "请检查本地服务状态");
+    return null;
+  }
 }
 
 function flowStepsToText(steps = []) {
@@ -8225,7 +8355,7 @@ async function openFlowModal() {
       return;
     }
   } catch (_) {
-    // 404 = no active job, continue to new execution mode
+    // Network or auth errors are handled elsewhere; continue to new execution mode.
   }
   if (flowLog) flowLog.innerHTML = '<div class="pbc-log-entry pbc-log-entry--info">准备开始执行...</div>';
   setFlowProgress("等待开始", "选择流程链后开始执行", 0, false);
@@ -8340,9 +8470,9 @@ async function startFlowChain() {
   flowChainExecutionResults = []; // 初始化执行结果收集数组
   if (flowStartBtn) flowStartBtn.disabled = true;
   if (flowCancelBtn) flowCancelBtn.disabled = false;
-  if (flowBgRunBtn) flowBgRunBtn.hidden = false;
+  if (flowBgRunBtn) flowBgRunBtn.hidden = true;
   if (flowLog) flowLog.innerHTML = "";
-  if (flowStatus) flowStatus.textContent = "已提交，流程在后台运行中，可点击「后台运行」关闭弹窗";
+  if (flowStatus) flowStatus.textContent = "流程任务正在提交...";
   
   await executeNextFlowChain(chains);
 }
@@ -8386,6 +8516,8 @@ async function executeNextFlowChain(allChains) {
       }),
     });
     flowCurrentJobId = payload.job_id || "";
+    if (flowBgRunBtn) flowBgRunBtn.hidden = !flowCurrentJobId;
+    if (flowStatus) flowStatus.textContent = "已提交，流程在后台运行中，可点击「后台运行」关闭弹窗";
     appendFlowLog(`流程任务已启动：${flowCurrentJobId}`, "info");
     await pollFlowChainJob(flowCurrentJobId, allChains);
   } catch (e) {
@@ -8395,6 +8527,7 @@ async function executeNextFlowChain(allChains) {
     isFlowExecuting = false;
     if (flowStartBtn) flowStartBtn.disabled = false;
     if (flowCancelBtn) flowCancelBtn.disabled = true;
+    if (flowBgRunBtn) flowBgRunBtn.hidden = true;
   }
 }
 
@@ -8727,6 +8860,10 @@ flowModalClose?.addEventListener("click", closeFlowModal);
 flowStartBtn?.addEventListener("click", startFlowChain);
 flowCancelBtn?.addEventListener("click", cancelFlowChain);
 flowBgRunBtn?.addEventListener("click", () => {
+  if (!flowCurrentJobId || !flowCurrentChainInfo) {
+    showToast("流程任务正在提交，请稍后再切到后台运行", "info");
+    return;
+  }
   if (flowCurrentJobId && flowCurrentChainInfo) {
     flowToastStarted = true;
     flowToastRunContext = {
@@ -8906,9 +9043,11 @@ async function loadFlowToastStatus() {
       flowToastJob = job;
       renderFlowToast();
       startFlowToastPollIfNeeded();
+    } else if (!job) {
+      stopFlowToastPoll();
     }
   } catch (_) {
-    // 404 or network error: keep existing toast state, don't clear
+    // Network error: keep existing toast state, don't clear
     stopFlowToastPoll();
   }
 }
@@ -9816,7 +9955,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-07-02</span>
       </div>
        <ul>
-        <li>新增本地数据库查看器，支持管理员查看存储体检、白名单表结构、分页数据敏感字段脱敏展示、表结构/表数据导出和本地备份。</li>
+        <li>新增本地数据查询，支持管理员查看存储体检、白名单表结构、分页数据敏感字段脱敏展示、表结构/表数据导出和本地备份。</li>
+        <li>人行逐笔校验执行历史新增执行人展示。</li>
         <li>自动对数 AM 复核在名称无法匹配时新增兜底：先用 FA 科目尾码匹配 AM 标的代码并按合同开始日取最新合同；尾码未命中时，江苏信托项目支持单边中文括号名称兜底，并要求报表库 <code>zf_detail_2024.projname</code> 去括号后按核对日期唯一命中，否则仍判定 AM 标的缺失。</li>
         <li>首页最新趋势横轴改为展示每次自动对数的执行日期和时间；“标的代码不一致”统计改为按结构化详情逐条累计，一个项目出现多条 FA/AM 标的不一致时计为多条，并避免 <code>fa_am</code> 兜底明细与资产缺失细分明细重复计数；项目明细弹框仍按项目记录展示。</li>
         <li>流程链配置可选流程列表保留 500 条初始展示上限，并支持按流程名称或 <code>flow_id</code> 搜索；超过初始列表的流程可通过搜索或手工输入 <code>flow_id</code> 加入链路。</li>
@@ -9830,7 +9970,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>系统设置数据源配置保存时补充表字段真实存在性校验，表或字段不存在时按逻辑表、物理表、字段、问题和详情分列展示。</li>
         <li>流程链配置的数据源下拉改为仅显示数据源名称；执行接口补充规则说明并在保存时校验，不允许固定填写 <code>id</code> 参数；流程表读取失败时提示当前数据源、流程表和可排查原因。</li>
         <li>前端静态测试和 README 同步更新自动对账表字段配置、流程链、首页统计和版本号断言。</li>
-       </ul>
+        <li>系统优化及BUG修复。</li>
+      </ul>
     </div>
 
     <div class="changelog-item">
@@ -10036,7 +10177,6 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
 // Initialize settings
 initializeCustomSelects();
-loadSettings();
 window.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true });
 mainContent?.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true });
 window.addEventListener("resize", updateSpaceTopNavFrost);
