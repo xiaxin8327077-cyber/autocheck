@@ -63,15 +63,6 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
-from auto_check.app.storage_admin import (
-    build_storage_health,
-    build_storage_schema_workbook,
-    build_storage_table_data_workbook,
-    generate_storage_backup,
-    get_storage_table_rows,
-    get_storage_table_schema,
-    list_storage_tables,
-)
 from auto_check.app.time_utils import beijing_now, beijing_time_text, beijing_timestamp, beijing_today
 from auto_check.app.pbc_import import (
     ColumnMapping,
@@ -117,6 +108,7 @@ PasswordDecryptor = Callable[[str], str]
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
 DEFAULT_SERVER_PORT = 8765
+STORAGE_ADMIN_DISABLED_ERROR = "local storage administration is disabled"
 
 
 _RECONCILE_FIELD_LABELS: dict[str, dict[str, str]] = {
@@ -1174,11 +1166,11 @@ class ApiRouter:
 
     def get_storage_schema_export(self, *, current_user: dict[str, Any] | None = None) -> tuple[str, bytes]:
         self._require_admin_storage_user(current_user)
-        return build_storage_schema_workbook(self.config_path)
+        raise RuntimeError(STORAGE_ADMIN_DISABLED_ERROR)
 
     def get_storage_table_data_export(self, table_name: str, *, current_user: dict[str, Any] | None = None) -> tuple[str, bytes]:
         self._require_admin_storage_user(current_user)
-        return build_storage_table_data_workbook(self.config_path, table_name)
+        raise RuntimeError(STORAGE_ADMIN_DISABLED_ERROR)
 
     def _handle_admin_storage(
         self,
@@ -1192,32 +1184,7 @@ class ApiRouter:
         if auth_error is not None:
             return auth_error
 
-        parts = [part for part in path.split("/") if part]
-        query = dict(parse_qsl(getattr(self, "_query_string", ""), keep_blank_values=True))
-        try:
-            if method == "GET" and parts == ["api", "admin", "storage", "health"]:
-                return 200, {"health": build_storage_health(self.config_path)}
-            if method == "GET" and parts == ["api", "admin", "storage", "tables"]:
-                return 200, {"tables": list_storage_tables(self.config_path)}
-            if method == "GET" and parts == ["api", "admin", "storage", "history-migration"]:
-                return 410, {"error": "legacy SQLite history migration is disabled"}
-            if method == "POST" and parts == ["api", "admin", "storage", "history-migration"]:
-                return 410, {"error": "legacy SQLite history migration is disabled"}
-            if method == "POST" and parts == ["api", "admin", "storage", "backup"]:
-                return 200, {"backup": generate_storage_backup(self.config_path)}
-            if method == "GET" and len(parts) == 6 and parts[:4] == ["api", "admin", "storage", "tables"] and parts[5] == "schema":
-                return 200, get_storage_table_schema(self.config_path, parts[4])
-            if method == "GET" and len(parts) == 6 and parts[:4] == ["api", "admin", "storage", "tables"] and parts[5] == "rows":
-                page = _positive_int(query.get("page"), default=1)
-                page_size = _positive_int(query.get("page_size"), default=20)
-                return 200, get_storage_table_rows(self.config_path, parts[4], page=page, page_size=page_size)
-        except LookupError as exc:
-            return 404, {"error": str(exc)}
-        except PermissionError as exc:
-            return 403, {"error": str(exc)}
-        except ValueError as exc:
-            return 400, {"error": str(exc)}
-        return 404, {"error": "not found"}
+        return 410, {"error": STORAGE_ADMIN_DISABLED_ERROR}
 
     def _require_admin_storage_user(self, current_user: dict[str, Any] | None) -> None:
         auth_error = self._admin_storage_auth_error(current_user)
@@ -2889,10 +2856,16 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             self._handle_users(method, path, session)
             return
         if method == "GET" and path.startswith("/api/admin/storage/tables/") and path.endswith("/export"):
-            self._handle_storage_table_data_export(path, session)
+            if _session_user(session).get("role") != "admin":
+                self._send_json(403, {"error": "admin role required"})
+            else:
+                self._send_json(410, {"error": STORAGE_ADMIN_DISABLED_ERROR})
             return
         if method == "GET" and path == "/api/admin/storage/schema-export":
-            self._handle_storage_schema_export(session)
+            if _session_user(session).get("role") != "admin":
+                self._send_json(403, {"error": "admin role required"})
+            else:
+                self._send_json(410, {"error": STORAGE_ADMIN_DISABLED_ERROR})
             return
         if method == "POST" and path == "/api/tools/pbc-import/upload":
             self._handle_pbc_import_upload()

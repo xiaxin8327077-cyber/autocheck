@@ -57,10 +57,6 @@
           <span class="nav-icon nav-icon-users" aria-hidden="true"></span>
           <span>用户管理</span>
         </a>
-        <a class="nav-item admin-only" data-page="local-storage" href="#">
-          <span class="nav-icon nav-icon-storage" aria-hidden="true"></span>
-          <span>本地数据查询</span>
-        </a>
       </nav>
       <div class="sidebar-footer">
         <div class="sidebar-footer-main">
@@ -102,7 +98,6 @@
         <a class="top-nav-item" data-page="tools" href="#">工具</a>
         <a class="top-nav-item" data-page="settings" href="#">系统设置</a>
         <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
-        <a class="top-nav-item admin-only" data-page="local-storage" href="#">本地数据查询</a>
         <div class="user-menu user-menu--top" id="topUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
             <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
@@ -1049,171 +1044,6 @@
               </div>
             </div>
           </section>
-        </div>
-      </section>
-
-      <!-- 本地数据查询 -->
-      <section class="page" id="page-local-storage">
-        <div class="local-storage-page">
-          <div class="local-storage-toolbar">
-            <div>
-              <p class="section-kicker">LOCAL STORAGE</p>
-              <h2>本地数据查询</h2>
-              <p>管理员可只读查看本地 auto-check.db 的结构、分页数据和存储状态。</p>
-            </div>
-            <div class="local-storage-actions">
-              <button id="localStorageMigrateHistoryBtn" type="button" class="btn-outline" disabled>迁移旧历史</button>
-              <small id="localStorageMigrationStatus" class="local-storage-action-status">旧历史迁移状态待加载</small>
-              <button id="localStorageExportSchemaBtn" type="button" class="btn-outline">导出表结构</button>
-              <button id="localStorageBackupBtn" type="button" class="btn-outline">生成备份</button>
-              <button id="localStorageRefreshBtn" type="button" class="btn-primary">刷新状态</button>
-            </div>
-          </div>
-
-          <div class="local-storage-health" aria-label="存储体检">
-            <div class="local-storage-metric">
-              <span>结构版本</span>
-              <strong id="localStorageSchemaVersion">--</strong>
-              <small id="localStorageSchemaExpected">等待加载</small>
-            </div>
-            <div class="local-storage-metric">
-              <span>完整性检查</span>
-              <strong id="localStorageIntegrity">--</strong>
-              <small>PRAGMA integrity_check</small>
-            </div>
-            <div class="local-storage-metric">
-              <span>外键异常</span>
-              <strong id="localStorageForeignKeys">--</strong>
-              <small>PRAGMA foreign_key_check</small>
-            </div>
-            <div class="local-storage-metric">
-              <span>业务表数量</span>
-              <strong id="localStorageBusinessTables">--</strong>
-              <small>白名单表</small>
-            </div>
-            <div class="local-storage-metric">
-              <span>历史运行数量</span>
-              <strong id="localStorageHistoryRuns">--</strong>
-              <small>run_headers</small>
-            </div>
-            <div class="local-storage-metric">
-              <span>最近备份</span>
-              <strong id="localStorageLatestBackup">--</strong>
-              <small id="localStorageDatabasePath">auto-check.db</small>
-            </div>
-          </div>
-
-          <div class="local-storage-browser-grid">
-            <aside class="local-storage-table-panel">
-              <div class="local-storage-panel-head">
-                <h3>数据表</h3>
-                <span id="localStorageTableCount">0 张表</span>
-              </div>
-              <label class="local-storage-search">
-                <span>筛选</span>
-                <input id="localStorageTableSearch" type="search" autocomplete="off" placeholder="表名或中文名" />
-              </label>
-              <div id="localStorageTableList" class="local-storage-table-list">
-                <p class="placeholder-text">正在加载数据表...</p>
-              </div>
-            </aside>
-
-            <section class="local-storage-detail-panel">
-              <div class="local-storage-summary">
-                <div>
-                  <h3><span id="localStorageSummaryName">--</span><small id="localStorageSummaryCn">--</small></h3>
-                  <code id="localStorageSummaryEndpoint">GET /api/admin/storage/tables</code>
-                </div>
-                <div class="local-storage-summary-stats">
-                  <span>记录数 <strong id="localStorageSummaryRows">0</strong></span>
-                  <span>字段数 <strong id="localStorageSummaryFields">0</strong></span>
-                  <span>主键 <strong id="localStorageSummaryPk">-</strong></span>
-                </div>
-              </div>
-
-              <div class="local-storage-tabs" role="tablist">
-                <button type="button" class="local-storage-tab active" data-storage-tab="data">数据</button>
-                <button type="button" class="local-storage-tab" data-storage-tab="schema">字段</button>
-                <button type="button" class="local-storage-tab" data-storage-tab="info">说明</button>
-              </div>
-
-              <div class="local-storage-tab-view active" id="localStorageTabData">
-                <div class="local-storage-data-toolbar">
-                  <input id="localStorageRowFilter" type="search" autocomplete="off" placeholder="筛选当前页数据" />
-                  <button id="localStorageExportTableBtn" type="button" class="btn-outline btn-xs">导出当前表</button>
-                  <div class="local-storage-page-size" id="localStoragePageSizeGroup">
-                    <button type="button" data-storage-page-size="10">10</button>
-                    <button type="button" data-storage-page-size="20" class="active">20</button>
-                    <button type="button" data-storage-page-size="50">50</button>
-                    <button type="button" data-storage-page-size="100">100</button>
-                  </div>
-                </div>
-                <div class="local-storage-table-wrap">
-                  <table aria-label="本地数据库表数据">
-                    <thead id="localStorageDataHead"></thead>
-                    <tbody id="localStorageDataBody">
-                      <tr><td class="empty">请选择数据表</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div class="local-storage-pager">
-                  <span id="localStoragePagerText">第 1 页</span>
-                  <div>
-                    <button id="localStoragePrevPage" type="button" class="btn-outline btn-xs">上一页</button>
-                    <button id="localStorageNextPage" type="button" class="btn-outline btn-xs">下一页</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="local-storage-tab-view" id="localStorageTabSchema">
-                <div class="local-storage-table-wrap local-storage-schema-wrap">
-                  <table aria-label="本地数据库字段结构">
-                    <thead>
-                      <tr>
-                        <th>字段</th>
-                        <th>类型</th>
-                        <th>约束</th>
-                        <th>中文说明</th>
-                        <th>展示策略</th>
-                      </tr>
-                    </thead>
-                    <tbody id="localStorageSchemaBody">
-                      <tr><td colspan="5" class="empty">请选择数据表</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div class="local-storage-tab-view" id="localStorageTabInfo">
-                <div class="local-storage-info-panel" id="localStorageInfoPanel">
-                  <article>
-                    <h3>表用途</h3>
-                    <p id="localStorageInfoPurpose">请选择数据表。</p>
-                  </article>
-                  <article>
-                    <h3>接口路径</h3>
-                    <div id="localStorageApiList" class="local-storage-api-list"></div>
-                  </article>
-                  <article>
-                    <h3>安全策略</h3>
-                    <p>仅管理员可访问；不提供 SQL 输入框；表名、字段和分页大小均由服务端白名单控制；分页数据按敏感字段脱敏只读展示。</p>
-                  </article>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div id="localStorageJsonBackdrop" class="local-storage-json-backdrop" hidden></div>
-          <aside id="localStorageJsonDrawer" class="local-storage-json-drawer" aria-label="JSON 明细" hidden>
-            <div class="local-storage-json-head">
-              <div>
-                <h3>JSON 明细</h3>
-                <code id="localStorageJsonMeta">--</code>
-              </div>
-              <button id="localStorageJsonClose" type="button" class="btn-outline btn-xs" aria-label="关闭 JSON 明细">关闭</button>
-            </div>
-            <pre id="localStorageJsonContent">{}</pre>
-          </aside>
         </div>
       </section>
 

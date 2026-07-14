@@ -2809,130 +2809,42 @@ def test_user_management_table_keeps_action_column_compact():
     assert ".user-table col.user-actions-col" in css
 
 
-def test_admin_local_storage_browser_page_and_api_hooks_are_present():
+def test_admin_local_storage_browser_page_and_api_hooks_are_removed():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
-    css = _read(STYLES_CSS)
-    readme = _read(README_MD)
 
-    assert 'class="nav-item admin-only" data-page="local-storage"' in html
-    assert 'class="top-nav-item admin-only" data-page="local-storage"' in html
-    assert '<span>本地数据查询</span>' in html
-    assert 'data-page="local-storage" href="#">本地数据查询</a>' in html
-    assert '<h2>本地数据查询</h2>' in html
-    assert 'id="page-local-storage"' in html
-    assert 'id="localStorageTableList"' in html
-    assert 'id="localStorageDataHead"' in html
-    assert 'id="localStorageSchemaBody"' in html
-    assert 'id="localStorageInfoPanel"' in html
-    assert 'id="localStorageJsonDrawer"' in html
-    assert 'id="localStorageExportSchemaBtn"' in html
-    assert 'id="localStorageMigrateHistoryBtn"' in html
-    assert 'id="localStorageMigrationStatus"' in html
-    assert 'id="localStorageExportTableBtn"' in html
-    assert 'id="localStorageBackupBtn"' in html
-    assert 'id="localStorageRefreshBtn"' in html
-    assert 'data-storage-tab="data">数据</button>' in html
-    assert 'data-storage-tab="schema">字段</button>' in html
-    assert 'data-storage-tab="info">说明</button>' in html
-    assert "分页数据按敏感字段脱敏只读展示" in html
-    assert "<textarea" not in html
-    assert "contenteditable" not in html
-    assert 'placeholder="SQL' not in html
-
-    for endpoint in [
-        "/api/admin/storage/health",
-        "/api/admin/storage/tables",
-        "/api/admin/storage/history-migration",
-        "/api/admin/storage/schema-export",
-        "/api/admin/storage/backup",
-        "/export",
+    for markup in [
+        'data-page="local-storage"',
+        'id="page-local-storage"',
+        "本地数据查询",
+        "localStorageTableList",
+        "localStorageDataHead",
+        "localStorageSchemaBody",
+        "localStorageInfoPanel",
+        "localStorageJsonDrawer",
+        "localStorageExportSchemaBtn",
+        "localStorageMigrateHistoryBtn",
+        "localStorageExportTableBtn",
+        "localStorageBackupBtn",
+        "localStorageRefreshBtn",
     ]:
-        assert endpoint in app_js
+        assert markup not in html
 
-    assert "function loadLocalStorageBrowser" in app_js
-    assert "function localStorageColumnLabel" in app_js
-    assert "function isLocalStorageBooleanField" in app_js
-    assert "function formatLocalStorageDateTimeValue(value)" in app_js
-    assert "formatLocalStorageValue(field, value)" in app_js
-    assert "formatLocalStorageDateTimeValue(value)" in app_js
-    assert '["enabled", "is_default"]' in app_js
-    assert 'if (isLocalStorageBooleanField(field) && value === 1) return "是";' in app_js
-    assert "return meta?.cn_name || field;" in app_js
-    assert '<th title="${escapeHtml(field)}">${escapeHtml(localStorageColumnLabel(field, fieldMeta[field]))}</th>' in app_js
-    assert "localStorageExportTableBtn" in app_js
-    assert "localStorageMigrateHistoryBtn" in app_js
-    assert "renderLocalStorageMigrationStatus" in app_js
-    assert "async function loadLocalStorageMigrationStatus" in app_js
-    assert "旧历史迁移已完成" in app_js
-    assert "migration.can_migrate" in app_js
-    assert "encodeURIComponent(localStorageBrowserState.selectedTable)" in app_js
-    assert "分页数据敏感字段脱敏展示" in app_js
-    assert 'name === "local-storage" && authState.user?.role !== "admin"' in app_js
+    for script_marker in [
+        "/api/admin/storage",
+        "function loadLocalStorageBrowser",
+        "function localStorageColumnLabel",
+        "function isLocalStorageBooleanField",
+        "formatLocalStorageValue(field, value)",
+        "localStorageBrowserState",
+        "localStorageExportTableBtn",
+        "localStorageMigrateHistoryBtn",
+        "renderLocalStorageMigrationStatus",
+        'name === "local-storage"',
+    ]:
+        assert script_marker not in app_js
+
     assert 'document.querySelectorAll(".admin-only")' in app_js
-
-    assert ':root[data-page="local-storage"] #page-local-storage' in css
-    assert ':root[data-page="local-storage"] body' in css
-    assert ':root[data-page="local-storage"] .main-content' in css
-    assert ':root[data-page="local-storage"] .top-nav-item[data-page="local-storage"]' in css
-    assert "#page-local-storage .local-storage-browser-grid" in css
-    assert "#page-local-storage .local-storage-search span" in css
-    assert "#page-local-storage .local-storage-search input" in css
-    assert "#page-local-storage .local-storage-search:focus-within span" not in css
-    assert "#page-local-storage .local-storage-search:has(input:not(:placeholder-shown)) span" not in css
-    local_storage_toolbar = re.search(
-        r"#page-local-storage \.local-storage-data-toolbar\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert local_storage_toolbar is not None
-    assert "justify-content: flex-start;" in local_storage_toolbar.group("body")
-    local_storage_export_button = re.search(
-        r"#page-local-storage \.local-storage-data-toolbar #localStorageExportTableBtn\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert local_storage_export_button is not None
-    assert "height: 34px;" in local_storage_export_button.group("body")
-    assert "min-height: 34px;" in local_storage_export_button.group("body")
-    assert "border-radius: 8px;" in local_storage_export_button.group("body")
-    local_storage_page_size = re.search(
-        r"#page-local-storage \.local-storage-page-size\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert local_storage_page_size is not None
-    assert "margin-left: auto;" in local_storage_page_size.group("body")
-    assert "#page-local-storage .local-storage-action-status" in css
-    assert ".btn-outline:disabled" in css
-    assert "#page-local-storage .local-storage-table-list" in css and "overflow: auto" in css
-    assert "#page-local-storage .local-storage-table-wrap" in css and "overflow: auto" in css
-    assert "#page-local-storage table" in css and "table-layout: auto" in css
-    assert "#page-local-storage th" in css and "min-width: var(--local-storage-col-min)" in css
-    assert "--local-storage-col-min" in css
-    assert "max-width: 260px" not in css
-    space_storage_page = re.search(r'\[data-theme="space-tech"\] #page-local-storage\s*\{(?P<body>.*?)\}', css, re.S)
-    assert space_storage_page is not None
-    assert "padding: 0;" in space_storage_page.group("body")
-    space_storage_title = re.search(
-        r'\[data-theme="space-tech"\] #page-local-storage \.local-storage-toolbar > div:first-child\s*\{(?P<body>.*?)\}',
-        css,
-        re.S,
-    )
-    assert space_storage_title is not None
-    assert "display: none;" in space_storage_title.group("body")
-    assert '[data-theme="space-tech"][data-color-mode="dark"] #page-local-storage' in css
-
-    assert "本地数据查询" in readme
-    assert "管理员可只读查看本地 `auto-check.db`" in readme
-    assert "敏感字段脱敏展示" in readme
-    assert "检索输入展示和日期时间展示优化" in readme
-    assert "导出当前表数据" in readme
-    assert "手动触发旧历史迁移" in readme
-    assert "旧历史迁移完成或未发现旧历史时按钮禁用" in readme
-    assert ".user-actions-cell" in css
-    assert "white-space: nowrap" in css
-    assert "overflow-wrap: anywhere" in css
 
 
 def test_user_management_cards_and_rows_have_theme_glow_hover_motion():
