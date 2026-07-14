@@ -9,12 +9,10 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.config import AppConfig, default_config_path
-from auto_check.app.local_store import (
-    _connect,
-    db_path_for_config,
-)
 from auto_check.app.storage_history import (
+    count_kind_runs,
     delete_db_validation_run,
     delete_flow_chain_run,
     delete_reconcile_run,
@@ -78,71 +76,56 @@ class JsonHistoryStore:
         return True
 
 
-class SqliteHistoryStore:
-    def __init__(self, config_path: str | Path, *, kind: str = "reconcile"):
-        self.config_path = Path(config_path)
+class DatabaseHistoryStore:
+    def __init__(self, database: ApplicationDatabase, *, kind: str = "reconcile"):
+        self.database = database
         self.kind = str(kind or "reconcile")
 
     def list_runs(self) -> list[dict[str, Any]]:
-        if self.kind == "reconcile":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+        with self.database.connect() as connection:
+            if self.kind == "reconcile":
                 return list_reconcile_runs(connection)
-        if self.kind == "db_validation":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            if self.kind == "db_validation":
                 return list_db_validation_runs(connection)
-        if self.kind == "flow_chain":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            if self.kind == "flow_chain":
                 return list_flow_chain_runs(connection)
         return []
 
     def count_runs(self) -> int:
         if self.kind in {"reconcile", "db_validation", "flow_chain"}:
-            with _connect(db_path_for_config(self.config_path)) as connection:
-                row = connection.execute(
-                    "SELECT COUNT(*) FROM run_headers WHERE kind = ?",
-                    (self.kind,),
-                ).fetchone()
-            return int(row[0] if row is not None else 0)
+            with self.database.connect() as connection:
+                return count_kind_runs(connection, self.kind)
         return 0
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
-        if self.kind == "reconcile":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+        with self.database.connect() as connection:
+            if self.kind == "reconcile":
                 run = get_reconcile_run(connection, run_id)
-            if run is not None:
                 return run
-        if self.kind == "db_validation":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            if self.kind == "db_validation":
                 run = get_db_validation_run(connection, run_id)
-            if run is not None:
                 return run
-        if self.kind == "flow_chain":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            if self.kind == "flow_chain":
                 run = get_flow_chain_run(connection, run_id)
-            if run is not None:
                 return run
         return None
 
     def save_run(self, run: dict[str, Any]) -> None:
-        if self.kind == "reconcile":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+        with self.database.transaction() as connection:
+            if self.kind == "reconcile":
                 save_reconcile_run(connection, run)
-        elif self.kind == "db_validation":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            elif self.kind == "db_validation":
                 save_db_validation_run(connection, run)
-        elif self.kind == "flow_chain":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            elif self.kind == "flow_chain":
                 save_flow_chain_run(connection, run)
 
     def delete_run(self, run_id: str) -> bool:
-        if self.kind == "reconcile":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+        with self.database.transaction() as connection:
+            if self.kind == "reconcile":
                 return delete_reconcile_run(connection, run_id)
-        if self.kind == "db_validation":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            if self.kind == "db_validation":
                 return delete_db_validation_run(connection, run_id)
-        if self.kind == "flow_chain":
-            with _connect(db_path_for_config(self.config_path)) as connection:
+            if self.kind == "flow_chain":
                 return delete_flow_chain_run(connection, run_id)
         return False
 

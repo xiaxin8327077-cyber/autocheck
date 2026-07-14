@@ -49,13 +49,12 @@ from auto_check.app.config import (
 from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.db import DatabaseClient
 from auto_check.app.history import (
+    DatabaseHistoryStore,
     HistoryStore,
     JsonHistoryStore,
-    SqliteHistoryStore,
     build_history_entry,
     summarize_run,
 )
-from auto_check.app.history_migration import build_legacy_history_migration_status, migrate_legacy_histories
 from auto_check.app.flow_tool import (
     DatabaseFlowGateway,
     FlowChainRunContext,
@@ -269,9 +268,9 @@ class ApiRouter:
         elif history_path is not None:
             self.history_store = JsonHistoryStore(Path(history_path))
         else:
-            self.history_store = SqliteHistoryStore(self.config_path)
-        self.db_validation_history_store = SqliteHistoryStore(self.config_path, kind="db_validation")
-        self.flow_chain_history_store = SqliteHistoryStore(self.config_path, kind="flow_chain")
+            self.history_store = DatabaseHistoryStore(self.application_database)
+        self.db_validation_history_store = DatabaseHistoryStore(self.application_database, kind="db_validation")
+        self.flow_chain_history_store = DatabaseHistoryStore(self.application_database, kind="flow_chain")
         self.runner_factory = runner_factory
         self.connection_tester = connection_tester or test_connections
         self.pbc_import_executor = pbc_import_executor or execute_pbc_import
@@ -1201,16 +1200,9 @@ class ApiRouter:
             if method == "GET" and parts == ["api", "admin", "storage", "tables"]:
                 return 200, {"tables": list_storage_tables(self.config_path)}
             if method == "GET" and parts == ["api", "admin", "storage", "history-migration"]:
-                return 200, {"migration": build_legacy_history_migration_status(self.config_path)}
+                return 410, {"error": "legacy SQLite history migration is disabled"}
             if method == "POST" and parts == ["api", "admin", "storage", "history-migration"]:
-                status = build_legacy_history_migration_status(self.config_path)
-                if not status["can_migrate"]:
-                    return 400, {"error": status["status_text"], "migration": status}
-                result = migrate_legacy_histories(self.config_path)
-                return 200, {
-                    "result": result,
-                    "migration": build_legacy_history_migration_status(self.config_path),
-                }
+                return 410, {"error": "legacy SQLite history migration is disabled"}
             if method == "POST" and parts == ["api", "admin", "storage", "backup"]:
                 return 200, {"backup": generate_storage_backup(self.config_path)}
             if method == "GET" and len(parts) == 6 and parts[:4] == ["api", "admin", "storage", "tables"] and parts[5] == "schema":

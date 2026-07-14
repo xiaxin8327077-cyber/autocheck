@@ -948,7 +948,7 @@ def test_reconcile_schema_columns_api_returns_table_columns_for_selected_source(
     assert "数据源" in missing_payload["error"]
 
 
-def test_api_router_uses_sqlite_history_store_by_default(tmp_path):
+def test_api_router_uses_mysql_history_store_by_default(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     router = ApiRouter(config_path=config_path)
 
@@ -966,7 +966,8 @@ def test_api_router_uses_sqlite_history_store_by_default(tmp_path):
 
     assert status == 200
     assert [entry["id"] for entry in payload["history"]] == ["run-1"]
-    assert db_path_for_config(config_path).exists()
+    assert [row["id"] for row in shared_application_database.connection.tables["run_headers"]] == ["run-1"]
+    assert not db_path_for_config(config_path).exists()
     assert not config_path.with_name("history.json").exists()
 
 
@@ -1417,7 +1418,7 @@ def test_flow_chain_failure_saves_history_with_error_and_logs(tmp_path):
     assert any("流程B执行失败" in log.get("message", "") for log in entry["logs"])
 
 
-def test_flow_chain_success_persists_logs_to_local_storage(tmp_path):
+def test_flow_chain_success_persists_logs_to_mysql_storage(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     save_store(
         ConfigStore(
@@ -1458,16 +1459,11 @@ def test_flow_chain_success_persists_logs_to_local_storage(tmp_path):
     else:
         raise AssertionError("flow chain job did not complete")
 
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        logs = connection.execute(
-            """
-            SELECT message, progress, step
-            FROM flow_chain_run_logs
-            WHERE run_id = ?
-            ORDER BY log_order
-            """,
-            (job_id,),
-        ).fetchall()
+    logs = [
+        (row["message"], row["progress"], row["step"])
+        for row in shared_application_database.connection.tables["flow_chain_run_logs"]
+        if row["run_id"] == job_id
+    ]
 
     assert logs
     assert any("流程A执行结束" in message for message, _progress, _step in logs)
@@ -1985,7 +1981,7 @@ def test_db_validation_settings_api_returns_sources_and_persists_settings(tmp_pa
     assert loaded["settings"]["public_info"]["sys_manage_id"] == "P2"
 
 
-def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path):
+def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     save_store(
         ConfigStore(
@@ -2088,28 +2084,19 @@ def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path):
     assert history_path == download_path
     assert history_name == "result.xlsx"
 
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        warning_messages = connection.execute(
-            """
-            SELECT message
-            FROM db_validation_warnings
-            WHERE run_id = ?
-            ORDER BY warning_order
-            """,
-            (job_id,),
-        ).fetchall()
-        result_rows = connection.execute(
-            """
-            SELECT payload_json
-            FROM db_validation_result_rows
-            WHERE run_id = ?
-            ORDER BY row_order
-            """,
-            (job_id,),
-        ).fetchall()
-    assert [row[0] for row in warning_messages] == ["ZG02 当期表无数据"]
+    warning_messages = [
+        row["message"]
+        for row in shared_application_database.connection.tables["db_validation_warnings"]
+        if row["run_id"] == job_id
+    ]
+    result_rows = [
+        row["payload_json"]
+        for row in shared_application_database.connection.tables["db_validation_result_rows"]
+        if row["run_id"] == job_id
+    ]
+    assert warning_messages == ["ZG02 当期表无数据"]
     assert len(result_rows) == 1
-    assert "Zg01_Rule6" in result_rows[0][0]
+    assert "Zg01_Rule6" in result_rows[0]
 
 
 def test_db_validation_history_api_sorts_by_execution_time_desc(tmp_path):

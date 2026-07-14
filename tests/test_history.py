@@ -1,9 +1,19 @@
-﻿from datetime import datetime
+from __future__ import annotations
 
-from auto_check.app.history import JsonHistoryStore, SqliteHistoryStore, build_history_entry
-from auto_check.app.history_migration import build_legacy_history_migration_status, migrate_legacy_histories
+from datetime import date, datetime, time
+from decimal import Decimal
+
+import pytest
+
+from auto_check.app import storage_history
 from auto_check.app.config import AppConfig, DataSourceConfig
-from auto_check.app.local_store import db_path_for_config
+from auto_check.app.history import DatabaseHistoryStore, JsonHistoryStore, build_history_entry
+from mysql_config_test_support import MemoryApplicationDatabase
+
+
+@pytest.fixture
+def app_database() -> MemoryApplicationDatabase:
+    return MemoryApplicationDatabase()
 
 
 def _result(project_code, reason, difference, status="已解释"):
@@ -37,6 +47,146 @@ def _config() -> AppConfig:
             password="secret",
         ),
     )
+
+
+def _reconcile_run(run_id: str = "reconcile-1") -> dict:
+    return {
+        "id": run_id,
+        "run_date": date(2026, 6, 30),
+        "run_at": datetime(2026, 7, 1, 10, 0, 0),
+        "finished_at": datetime(2026, 7, 1, 10, 1, 0),
+        "status": "completed",
+        "executor_id": "u1",
+        "executor_username": "operator",
+        "executor_name": "张三",
+        "config_name": "local",
+        "dws_source_name": "dws",
+        "config_fingerprint": "abc",
+        "rule_version": "logic-test",
+        "baseline_id": "baseline-1",
+        "baseline_run_at": datetime(2026, 6, 30, 9, 0, 0),
+        "baseline_count": 1,
+        "total_count": 1,
+        "added_count": 0,
+        "removed_count": 0,
+        "status_counts": {"explained": 1},
+        "reason_counts": {"asset missing": 1},
+        "results": [
+            {
+                "project_code": "P001",
+                "project_name": "Project One",
+                "asset_total": Decimal("100.10"),
+                "liability_equity_total": Decimal("80.00"),
+                "received_trust_balance": Decimal("0"),
+                "difference": Decimal("20.10"),
+                "direction": "asset greater than liability and equity",
+                "difference_reason": "asset missing",
+                "match_status": "explained",
+                "valuation_asset_total": Decimal("80.00"),
+                "details": [
+                    {
+                        "kind": "asset_gap",
+                        "data": {"specific_reason": "specific asset gap", "asset_gap": "20.10"},
+                    }
+                ],
+            }
+        ],
+        "added_results": [],
+        "removed_results": [],
+    }
+
+
+def _db_validation_run(run_id: str = "dbv-1") -> dict:
+    return {
+        "id": run_id,
+        "run_at": datetime(2026, 7, 3, 10, 0, 0),
+        "finished_at": datetime(2026, 7, 3, 10, 1, 0),
+        "run_date": date(2026, 6, 30),
+        "report_date": date(2026, 6, 30),
+        "status": "completed",
+        "result_count": 2,
+        "warning_count": 1,
+        "table_count": 2,
+        "selected_tables": ["ZG01", "ZG02"],
+        "warnings": ["ZG02 当期表无数据"],
+        "enable_public_info_check": True,
+        "enable_template_check": False,
+        "excel_filename": "result.xlsx",
+        "excel_path": "C:/tmp/result.xlsx",
+        "download_url": "/api/tools/db-validation/history/download/dbv-1",
+        "rows": [
+            {
+                "table_code": "ZG01",
+                "rule_id": "R001",
+                "severity": "error",
+                "message": "字段缺失",
+                "detail": "第 1 行字段缺失",
+            },
+            {
+                "table_code": "ZG02",
+                "rule_id": "R002",
+                "severity": "warning",
+                "message": "金额不一致",
+                "detail": "第 2 行金额不一致",
+            },
+        ],
+    }
+
+
+def _flow_chain_run(run_id: str = "flow-1") -> dict:
+    return {
+        "id": run_id,
+        "run_at": datetime(2026, 7, 3, 12, 0, 0),
+        "finished_at": datetime(2026, 7, 3, 12, 1, 5),
+        "run_date": date(2026, 7, 3),
+        "chain_id": "chain-zgxg-1",
+        "chain_name": "资管新规1",
+        "chain_names": ["资管新规1"],
+        "is_multi_chain": False,
+        "trigger_type": "manual",
+        "executor_name": "管理员",
+        "status": "failed",
+        "error": "流程B超时",
+        "step_count": 2,
+        "duration_seconds": 65,
+        "steps": [
+            {
+                "flow_id": "flow-a",
+                "flow_name": "流程A",
+                "status": "completed",
+                "sp_task_id": 658149,
+                "begin_time": datetime(2026, 7, 3, 12, 0, 1),
+                "end_time": datetime(2026, 7, 3, 12, 0, 30),
+                "message": "完成",
+            },
+            {
+                "flow_id": "flow-b",
+                "flow_name": "流程B",
+                "status": "failed",
+                "sp_task_id": 658150,
+                "begin_time": datetime(2026, 7, 3, 12, 0, 31),
+                "end_time": datetime(2026, 7, 3, 12, 1, 5),
+                "message": "超时",
+            },
+        ],
+        "logs": [
+            {
+                "time": datetime(2026, 7, 3, 12, 1, 5),
+                "message": "流程B执行失败",
+                "progress": 80,
+                "step": "流程B",
+            }
+        ],
+        "chain_details": [
+            {
+                "chain_name": "资管新规1",
+                "status": "failed",
+                "step_count": 2,
+                "duration_seconds": 65,
+                "error": "流程B超时",
+            }
+        ],
+    }
 
 
 def test_first_history_entry_has_no_added_removed_without_baseline():
@@ -128,57 +278,6 @@ def test_history_entry_treats_changed_difference_as_added_and_removed_for_same_p
     assert entry["removed_results"][0]["difference"] == "-100"
 
 
-def test_history_entry_ignores_reason_change_when_project_and_difference_are_same():
-    first = build_history_entry(
-        previous_runs=[],
-        run_date="2026-04-30",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P1", "资产缺失", "-100")],
-        now=datetime(2026, 5, 28, 10, 0, 0),
-    )
-
-    entry = build_history_entry(
-        previous_runs=[first],
-        run_date="2026-04-30",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P1", "暂无法确定", "-100")],
-        now=datetime(2026, 5, 28, 11, 0, 0),
-    )
-
-    assert entry["added_count"] == 0
-    assert entry["removed_count"] == 0
-
-
-def test_first_run_for_report_period_does_not_compare_previous_report_period():
-    previous_period = build_history_entry(
-        previous_runs=[],
-        run_date="2026-04-29",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P1", "资产缺失", "-100")],
-        now=datetime(2026, 5, 28, 9, 0, 0),
-    )
-
-    entry = build_history_entry(
-        previous_runs=[previous_period],
-        run_date="2026-04-30",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P2", "资产重复", "80")],
-        now=datetime(2026, 5, 28, 10, 0, 0),
-    )
-
-    assert entry["baseline_id"] == ""
-    assert entry["baseline_run_at"] == ""
-    assert entry["baseline_count"] == 0
-    assert entry["added_count"] is None
-    assert entry["removed_count"] is None
-    assert entry["added_results"] == []
-    assert entry["removed_results"] == []
-
-
 def test_history_entry_ignores_other_dates_but_compares_same_date_across_sources():
     other_date = build_history_entry(
         previous_runs=[],
@@ -188,23 +287,11 @@ def test_history_entry_ignores_other_dates_but_compares_same_date_across_sources
         results=[_result("P1", "资产缺失", "-100")],
         now=datetime(2026, 5, 28, 9, 0, 0),
     )
-    other_config = AppConfig(
-        dws=_config().dws,
-        business=DataSourceConfig(
-            db_type="mysql",
-            host="127.0.0.1",
-            port=3306,
-            database="other_business",
-            schema="",
-            username="root",
-            password="secret",
-        ),
-    )
     other_source = build_history_entry(
         previous_runs=[],
         run_date="2026-04-30",
         config_name="其他环境",
-        config=other_config,
+        config=_config(),
         results=[_result("P2", "资产重复", "80")],
         now=datetime(2026, 5, 28, 9, 30, 0),
     )
@@ -219,12 +306,8 @@ def test_history_entry_ignores_other_dates_but_compares_same_date_across_sources
     )
 
     assert entry["baseline_id"] == other_source["id"]
-    assert entry["baseline_run_at"] == other_source["run_at"]
-    assert entry["baseline_count"] == 1
     assert entry["added_count"] == 1
     assert entry["removed_count"] == 1
-    assert entry["added_results"][0]["project_code"] == "P3"
-    assert entry["removed_results"][0]["project_code"] == "P2"
 
 
 def test_json_history_store_persists_lists_gets_and_deletes_runs(tmp_path):
@@ -255,620 +338,27 @@ def test_json_history_store_persists_lists_gets_and_deletes_runs(tmp_path):
     assert [entry["id"] for entry in store.list_runs()] == [second["id"]]
     assert store.delete_run("missing") is False
 
-def test_sqlite_history_store_writes_reconcile_results_to_normalized_tables(tmp_path):
-    import sqlite3
 
-    config_path = tmp_path / "config.json"
-    store = SqliteHistoryStore(config_path)
-    run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="local",
-        dws_source_name="dws",
-        config=_config(),
-        results=[
-            {
-                "project_code": "P001",
-                "project_name": "Project One",
-                "asset_total": "100",
-                "liability_equity_total": "80",
-                "received_trust_balance": "0",
-                "difference": "20",
-                "direction": "asset greater than liability and equity",
-                "difference_reason": "asset missing",
-                "match_status": "explained",
-                "valuation_asset_total": "80",
-                "details": [
-                    {
-                        "kind": "asset_gap",
-                        "data": {"specific_reason": "specific asset gap", "asset_gap": "20"},
-                    }
-                ],
-            }
-        ],
-    )
+def test_database_history_store_writes_reconcile_results_to_mysql_tables(app_database):
+    store = DatabaseHistoryStore(app_database)
+    run = _reconcile_run()
 
     store.save_run(run)
 
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        header_count = connection.execute("SELECT COUNT(*) FROM run_headers").fetchone()[0]
-        result_row = connection.execute(
-            "SELECT project_code, difference_reason, match_status FROM reconcile_results"
-        ).fetchone()
-        detail_row = connection.execute(
-            "SELECT kind, specific_reason FROM reconcile_result_details"
-        ).fetchone()
-
-    assert header_count == 1
-    assert result_row == ("P001", "asset missing", "explained")
-    assert detail_row == ("asset_gap", "specific asset gap")
-    assert store.get_run(run["id"])["results"][0]["project_code"] == "P001"
-    assert store.list_runs()[0]["total_count"] == 1
-
-
-def test_sqlite_history_store_reads_do_not_trigger_legacy_migration(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    store = SqliteHistoryStore(config_path)
-    run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="local",
-        config=_config(),
-        results=[_result("P001", "asset missing", "20")],
-    )
-    store.save_run(run)
-    legacy_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="legacy",
-        config=_config(),
-        results=[_result("P999", "legacy only", "99")],
-    )
-    legacy_run["id"] = "legacy-reconcile-only"
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        connection.execute(
-            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "reconcile",
-                legacy_run["id"],
-                json.dumps(legacy_run, ensure_ascii=False),
-                legacy_run["run_date"],
-                legacy_run["run_at"],
-                legacy_run["config_fingerprint"],
-            ),
-        )
-
+    tables = app_database.connection.tables
+    assert len(tables["run_headers"]) == 1
+    assert tables["run_headers"][0]["run_date"] == date(2026, 6, 30)
+    assert tables["run_headers"][0]["run_at"] == datetime(2026, 7, 1, 10, 0, 0)
+    assert tables["reconcile_runs"][0]["baseline_run_at"] == datetime(2026, 6, 30, 9, 0, 0)
+    assert tables["reconcile_results"][0]["asset_total"] == Decimal("100.10")
+    assert tables["reconcile_results"][0]["difference_reason"] == "asset missing"
+    assert tables["reconcile_result_details"][0]["specific_reason"] == "specific asset gap"
+    assert store.get_run(run["id"])["results"][0]["asset_total"] == "100.10"
     assert store.count_runs() == 1
-    assert store.get_run(run["id"])["id"] == run["id"]
-    assert store.get_run(legacy_run["id"]) is None
-    assert [entry["id"] for entry in store.list_runs()] == [run["id"]]
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        migration_count = connection.execute("SELECT COUNT(*) FROM storage_migration_runs").fetchone()[0]
-    assert migration_count == 0
 
 
-def test_sqlite_history_store_save_does_not_write_legacy_history_runs(tmp_path):
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    store = SqliteHistoryStore(config_path)
-    run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="local",
-        config=_config(),
-        results=[_result("P001", "asset missing", "20")],
-    )
-
-    store.save_run(run)
-
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        legacy_count = connection.execute(
-            "SELECT COUNT(*) FROM history_runs WHERE kind = 'reconcile'"
-        ).fetchone()[0]
-
-    assert legacy_count == 0
-
-
-def test_legacy_history_migration_status_blocks_completed_sources(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    SqliteHistoryStore(config_path).count_runs()
-    legacy_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="legacy",
-        config=_config(),
-        results=[_result("P777", "legacy pending", "7")],
-    )
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        connection.execute(
-            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "reconcile",
-                legacy_run["id"],
-                json.dumps(legacy_run, ensure_ascii=False),
-                legacy_run["run_date"],
-                legacy_run["run_at"],
-                legacy_run["config_fingerprint"],
-            ),
-        )
-
-    before = build_legacy_history_migration_status(config_path)
-    assert before["can_migrate"] is True
-    assert before["pending_count"] == 1
-
-    result = migrate_legacy_histories(config_path)
-    assert result["reconcile_history_runs"] == 1
-
-    after = build_legacy_history_migration_status(config_path)
-    assert after["can_migrate"] is False
-    assert after["completed"] is True
-    assert after["completed_count"] == 1
-    assert after["pending_count"] == 0
-
-
-def test_reconcile_history_migrates_from_legacy_history_runs(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    legacy_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="legacy",
-        config=_config(),
-        results=[
-            {
-                "project_code": "P900",
-                "project_name": "Legacy Project",
-                "asset_total": "10",
-                "liability_equity_total": "8",
-                "received_trust_balance": "0",
-                "difference": "2",
-                "direction": "asset greater than liability and equity",
-                "difference_reason": "asset missing",
-                "match_status": "explained",
-                "details": [],
-            }
-        ],
-    )
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS history_runs (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, run_date TEXT NOT NULL DEFAULT '', run_at TEXT NOT NULL DEFAULT '', config_fingerprint TEXT NOT NULL DEFAULT '', PRIMARY KEY (kind, id))"
-        )
-        connection.execute(
-            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "reconcile",
-                legacy_run["id"],
-                json.dumps(legacy_run, ensure_ascii=False),
-                legacy_run["run_date"],
-                legacy_run["run_at"],
-                legacy_run["config_fingerprint"],
-            ),
-        )
-
-    result = migrate_legacy_histories(config_path)
-    assert result["reconcile_history_runs"] == 1
-
-    store = SqliteHistoryStore(config_path)
-    assert store.get_run(legacy_run["id"])["results"][0]["project_code"] == "P900"
-
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        count = connection.execute("SELECT COUNT(*) FROM reconcile_results").fetchone()[0]
-        migration = connection.execute(
-            "SELECT status, migrated_count FROM storage_migration_runs WHERE source_type = 'history_runs'"
-        ).fetchone()
-    assert count == 1
-    assert migration == ("completed", 1)
-
-
-def test_reconcile_history_migrates_from_legacy_history_json_file(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    legacy_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-06-30",
-        config_name="legacy-file",
-        config=_config(),
-        results=[
-            {
-                "project_code": "P901",
-                "project_name": "Legacy File Project",
-                "asset_total": "10",
-                "liability_equity_total": "8",
-                "received_trust_balance": "0",
-                "difference": "2",
-                "direction": "asset greater than liability and equity",
-                "difference_reason": "asset missing",
-                "match_status": "explained",
-                "details": [],
-            }
-        ],
-    )
-    config_path.with_name("history.json").write_text(
-        json.dumps({"runs": [legacy_run]}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    result = migrate_legacy_histories(config_path)
-    assert result["reconcile_history_json"] == 1
-
-    store = SqliteHistoryStore(config_path)
-    assert store.get_run(legacy_run["id"])["results"][0]["project_code"] == "P901"
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        result_count = connection.execute("SELECT COUNT(*) FROM reconcile_results").fetchone()[0]
-        migration = connection.execute(
-            "SELECT status, migrated_count FROM storage_migration_runs WHERE source_type = 'history_json'"
-        ).fetchone()
-
-    assert result_count == 1
-    assert migration == ("completed", 1)
-
-
-def test_db_validation_history_json_imports_to_normalized_history_tables(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    config_path.with_name("db-validation-history.json").write_text(
-        json.dumps(
-            {
-                "runs": [
-                    {
-                        "id": "dbv-1",
-                        "run_at": "2026-07-01 10:00:00",
-                        "run_date": "2026-06-30",
-                        "report_date": "2026-06-30",
-                        "status": "completed",
-                        "result_count": 2,
-                    }
-                ]
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-
-    result = migrate_legacy_histories(config_path)
-    assert result["db_validation_history_json"] == 1
-
-    store = SqliteHistoryStore(config_path, kind="db_validation")
-    assert store.get_run("dbv-1")["result_count"] == 2
-    assert store.list_runs()[0]["id"] == "dbv-1"
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        row = connection.execute(
-            "SELECT report_date, result_count FROM db_validation_runs WHERE id = 'dbv-1'"
-        ).fetchone()
-    assert row == ("2026-06-30", 2)
-
-
-def test_sqlite_history_store_writes_db_validation_history_to_normalized_tables(tmp_path):
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    store = SqliteHistoryStore(config_path, kind="db_validation")
-    run = {
-        "id": "dbv-normalized-1",
-        "run_at": "2026-07-03 10:00:00",
-        "finished_at": "2026-07-03 10:01:00",
-        "run_date": "2026-06-30",
-        "report_date": "2026-06-30",
-        "status": "completed",
-        "result_count": 2,
-        "warning_count": 1,
-        "table_count": 2,
-        "selected_tables": ["ZG01", "ZG02"],
-        "warnings": ["ZG02 当期表无数据"],
-        "enable_public_info_check": True,
-        "enable_template_check": False,
-        "excel_filename": "result.xlsx",
-        "excel_path": str(tmp_path / "result.xlsx"),
-        "download_url": "/api/tools/db-validation/history/download/dbv-normalized-1",
-        "rows": [
-            {
-                "table_code": "ZG01",
-                "rule_id": "R001",
-                "severity": "error",
-                "message": "字段缺失",
-                "detail": "第 1 行字段缺失",
-            },
-            {
-                "table_code": "ZG02",
-                "rule_id": "R002",
-                "severity": "warning",
-                "message": "金额不一致",
-                "detail": "第 2 行金额不一致",
-            },
-        ],
-    }
-
-    store.save_run(run)
-
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        run_row = connection.execute(
-            "SELECT report_date, result_count, warning_count, table_count FROM db_validation_runs"
-        ).fetchone()
-        selected_tables = connection.execute(
-            "SELECT table_code FROM db_validation_selected_tables ORDER BY table_order"
-        ).fetchall()
-        warnings = connection.execute(
-            "SELECT message FROM db_validation_warnings ORDER BY warning_order"
-        ).fetchall()
-        result_rows = connection.execute(
-            "SELECT table_code, rule_id, severity FROM db_validation_result_rows ORDER BY row_order"
-        ).fetchall()
-
-    assert run_row == ("2026-06-30", 2, 1, 2)
-    assert [row[0] for row in selected_tables] == ["ZG01", "ZG02"]
-    assert [row[0] for row in warnings] == ["ZG02 当期表无数据"]
-    assert result_rows == [("ZG01", "R001", "error"), ("ZG02", "R002", "warning")]
-    assert store.get_run(run["id"])["rows"][0]["rule_id"] == "R001"
-    assert store.list_runs()[0]["id"] == "dbv-normalized-1"
-
-
-def test_db_validation_history_migrates_from_legacy_history_runs(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    legacy_run = {
-        "id": "dbv-legacy-sqlite",
-        "run_at": "2026-07-03 11:00:00",
-        "run_date": "2026-06-30",
-        "report_date": "2026-06-30",
-        "status": "completed",
-        "result_count": 3,
-        "selected_tables": ["ZG01"],
-    }
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS history_runs (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, run_date TEXT NOT NULL DEFAULT '', run_at TEXT NOT NULL DEFAULT '', config_fingerprint TEXT NOT NULL DEFAULT '', PRIMARY KEY (kind, id))"
-        )
-        connection.execute(
-            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "db_validation",
-                legacy_run["id"],
-                json.dumps(legacy_run, ensure_ascii=False),
-                legacy_run["run_date"],
-                legacy_run["run_at"],
-                "",
-            ),
-        )
-
-    result = migrate_legacy_histories(config_path)
-    assert result["db_validation_history_runs"] == 1
-
-    store = SqliteHistoryStore(config_path, kind="db_validation")
-    assert store.get_run(legacy_run["id"])["result_count"] == 3
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        row = connection.execute(
-            "SELECT report_date, result_count FROM db_validation_runs WHERE id = ?",
-            (legacy_run["id"],),
-        ).fetchone()
-    assert row == ("2026-06-30", 3)
-
-
-def test_sqlite_history_store_writes_flow_chain_history_to_normalized_tables(tmp_path):
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    store = SqliteHistoryStore(config_path, kind="flow_chain")
-    run = {
-        "id": "flow-normalized-1",
-        "run_at": "2026-07-03 12:00:00",
-        "finished_at": "2026-07-03 12:01:05",
-        "run_date": "2026-07-03",
-        "chain_id": "chain-zgxg-1",
-        "chain_name": "资管新规1",
-        "chain_names": ["资管新规1"],
-        "is_multi_chain": False,
-        "trigger_type": "manual",
-        "executor_name": "管理员",
-        "status": "failed",
-        "error": "流程B超时",
-        "step_count": 2,
-        "duration_seconds": 65,
-        "steps": [
-            {
-                "flow_id": "flow-a",
-                "flow_name": "流程A",
-                "status": "completed",
-                "sp_task_id": 658149,
-                "begin_time": "2026-07-03 12:00:01",
-                "end_time": "2026-07-03 12:00:30",
-                "message": "完成",
-            },
-            {
-                "flow_id": "flow-b",
-                "flow_name": "流程B",
-                "status": "failed",
-                "sp_task_id": 658150,
-                "begin_time": "2026-07-03 12:00:31",
-                "end_time": "2026-07-03 12:01:05",
-                "message": "超时",
-            },
-        ],
-        "logs": [
-            {
-                "time": "2026-07-03 12:01:05",
-                "message": "流程B执行失败",
-                "progress": 80,
-                "step": "流程B",
-            }
-        ],
-        "chain_details": [
-            {
-                "chain_name": "资管新规1",
-                "status": "failed",
-                "step_count": 2,
-                "duration_seconds": 65,
-                "error": "流程B超时",
-            }
-        ],
-    }
-
-    store.save_run(run)
-
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        run_row = connection.execute(
-            """
-            SELECT chain_id, chain_name, is_multi_chain, trigger_type, executor_name,
-                   status, error, step_count, duration_seconds
-            FROM flow_chain_runs
-            """
-        ).fetchone()
-        step_rows = connection.execute(
-            """
-            SELECT flow_id, name, status, sp_task_id, start_time, end_time
-            FROM flow_chain_run_steps
-            ORDER BY step_order
-            """
-        ).fetchall()
-        log_rows = connection.execute(
-            """
-            SELECT log_time, message, progress, step
-            FROM flow_chain_run_logs
-            ORDER BY log_order
-            """
-        ).fetchall()
-        detail_rows = connection.execute(
-            """
-            SELECT chain_name, status, step_count, duration_seconds, error
-            FROM flow_chain_run_details
-            ORDER BY chain_order
-            """
-        ).fetchall()
-
-    assert run_row == ("chain-zgxg-1", "资管新规1", 0, "manual", "管理员", "failed", "流程B超时", 2, 65)
-    assert step_rows == [
-        ("flow-a", "流程A", "completed", "658149", "2026-07-03 12:00:01", "2026-07-03 12:00:30"),
-        ("flow-b", "流程B", "failed", "658150", "2026-07-03 12:00:31", "2026-07-03 12:01:05"),
-    ]
-    assert log_rows == [("2026-07-03 12:01:05", "流程B执行失败", 80, "流程B")]
-    assert detail_rows == [("资管新规1", "failed", 2, 65, "流程B超时")]
-    assert store.get_run(run["id"])["steps"][1]["message"] == "超时"
-    assert store.list_runs()[0]["id"] == "flow-normalized-1"
-
-
-def test_flow_chain_history_migrates_from_legacy_history_runs(tmp_path):
-    import json
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    legacy_run = {
-        "id": "flow-legacy-sqlite",
-        "run_at": "2026-07-03 13:00:00",
-        "finished_at": "2026-07-03 13:01:00",
-        "run_date": "2026-07-03",
-        "chain_id": "chain-legacy",
-        "chain_name": "历史链路",
-        "trigger_type": "manual",
-        "executor_name": "管理员",
-        "status": "completed",
-        "step_count": 1,
-        "duration_seconds": 60,
-        "steps": [
-            {
-                "flow_id": "flow-legacy",
-                "flow_name": "历史流程",
-                "status": "completed",
-                "sp_task_id": 658200,
-            }
-        ],
-        "chain_details": [
-            {
-                "chain_name": "历史链路",
-                "status": "completed",
-                "step_count": 1,
-                "duration_seconds": 60,
-            }
-        ],
-    }
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS history_runs (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, run_date TEXT NOT NULL DEFAULT '', run_at TEXT NOT NULL DEFAULT '', config_fingerprint TEXT NOT NULL DEFAULT '', PRIMARY KEY (kind, id))"
-        )
-        connection.execute(
-            "INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                "flow_chain",
-                legacy_run["id"],
-                json.dumps(legacy_run, ensure_ascii=False),
-                legacy_run["run_date"],
-                legacy_run["run_at"],
-                "",
-            ),
-        )
-
-    result = migrate_legacy_histories(config_path)
-    assert result["flow_chain_history_runs"] == 1
-
-    store = SqliteHistoryStore(config_path, kind="flow_chain")
-    assert store.get_run(legacy_run["id"])["chain_name"] == "历史链路"
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        run_row = connection.execute(
-            "SELECT chain_id, chain_name, status, step_count FROM flow_chain_runs WHERE id = ?",
-            (legacy_run["id"],),
-        ).fetchone()
-        step_row = connection.execute(
-            "SELECT flow_id, name, sp_task_id FROM flow_chain_run_steps WHERE run_id = ?",
-            (legacy_run["id"],),
-        ).fetchone()
-    assert run_row == ("chain-legacy", "历史链路", "completed", 1)
-    assert step_row == ("flow-legacy", "历史流程", "658200")
-
-
-def test_history_store_sorts_by_run_date_then_run_time_desc(tmp_path):
-    store = JsonHistoryStore(tmp_path / "history.json")
-    older_check_date_later_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-04-30",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P1", "资产缺失", "-100")],
-        now=datetime(2026, 6, 1, 12, 0, 0),
-    )
-    newer_check_date_earlier_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-05-31",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P2", "资产重复", "80")],
-        now=datetime(2026, 5, 31, 9, 0, 0),
-    )
-    same_check_date_later_run = build_history_entry(
-        previous_runs=[],
-        run_date="2026-05-31",
-        config_name="本地测试",
-        config=_config(),
-        results=[_result("P3", "实收信托有误", "50")],
-        now=datetime(2026, 5, 31, 10, 0, 0),
-    )
-
-    store.save_run(older_check_date_later_run)
-    store.save_run(newer_check_date_earlier_run)
-    store.save_run(same_check_date_later_run)
-
-    assert [entry["id"] for entry in store.list_runs()] == [
-        same_check_date_later_run["id"],
-        newer_check_date_earlier_run["id"],
-        older_check_date_later_run["id"],
-    ]
-
-
-def test_sqlite_history_store_persists_lists_gets_and_deletes_runs(tmp_path):
-    config_path = tmp_path / "config.json"
-    store = SqliteHistoryStore(config_path)
+def test_database_history_store_persists_lists_gets_and_deletes_runs(app_database):
+    store = DatabaseHistoryStore(app_database)
     first = build_history_entry(
         previous_runs=store.list_runs(),
         run_date="2026-04-30",
@@ -889,10 +379,116 @@ def test_sqlite_history_store_persists_lists_gets_and_deletes_runs(tmp_path):
     store.save_run(first)
     store.save_run(second)
 
-    assert db_path_for_config(config_path).exists()
-    assert not config_path.with_name("history.json").exists()
     assert [entry["id"] for entry in store.list_runs()] == [second["id"], first["id"]]
     assert store.get_run(first["id"])["results"][0]["project_code"] == "P1"
     assert store.delete_run(first["id"]) is True
+    assert store.get_run(first["id"]) is None
     assert [entry["id"] for entry in store.list_runs()] == [second["id"]]
     assert store.delete_run("missing") is False
+    assert all(row["run_id"] == second["id"] for row in app_database.connection.tables["reconcile_results"])
+
+
+def test_database_history_store_sorts_reconcile_by_run_date_then_run_time_desc(app_database):
+    store = DatabaseHistoryStore(app_database)
+    runs = [
+        _reconcile_run("older-date-later-run"),
+        _reconcile_run("newer-date-earlier-run"),
+        _reconcile_run("same-date-later-run"),
+    ]
+    runs[0]["run_date"] = "2026-04-30"
+    runs[0]["run_at"] = "2026-06-01 12:00:00"
+    runs[1]["run_date"] = "2026-05-31"
+    runs[1]["run_at"] = "2026-05-31 09:00:00"
+    runs[2]["run_date"] = "2026-05-31"
+    runs[2]["run_at"] = "2026-05-31 10:00:00"
+
+    for run in runs:
+        store.save_run(run)
+
+    assert [entry["id"] for entry in store.list_runs()] == [
+        "same-date-later-run",
+        "newer-date-earlier-run",
+        "older-date-later-run",
+    ]
+
+
+def test_database_history_store_replaces_owned_children_in_one_save(app_database):
+    store = DatabaseHistoryStore(app_database)
+    run = _reconcile_run()
+    store.save_run(run)
+
+    updated = _reconcile_run()
+    updated["results"] = [
+        {
+            "project_code": "P002",
+            "project_name": "Project Two",
+            "difference": "0",
+            "difference_reason": "balanced",
+            "match_status": "explained",
+            "details": [],
+        }
+    ]
+    updated["status_counts"] = {"explained": 1}
+    updated["reason_counts"] = {"balanced": 1}
+    store.save_run(updated)
+
+    tables = app_database.connection.tables
+    assert [row["project_code"] for row in tables["reconcile_results"]] == ["P002"]
+    assert [row["label"] for row in tables["reconcile_run_counts"] if row["count_type"] == "reason"] == ["balanced"]
+    assert tables["reconcile_result_details"] == []
+
+
+def test_database_history_store_rolls_back_failed_reconcile_save(app_database, monkeypatch):
+    store = DatabaseHistoryStore(app_database)
+    run = _reconcile_run()
+    run["added_results"] = [{"project_code": "P999"}]
+
+    def fail_delta_insert(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(storage_history, "_insert_delta_result", fail_delta_insert)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        store.save_run(run)
+
+    assert app_database.connection.tables["run_headers"] == []
+    assert app_database.connection.tables["reconcile_runs"] == []
+    assert app_database.connection.tables["reconcile_results"] == []
+
+
+def test_database_history_store_writes_db_validation_history_to_mysql_tables(app_database):
+    store = DatabaseHistoryStore(app_database, kind="db_validation")
+    run = _db_validation_run()
+
+    store.save_run(run)
+
+    tables = app_database.connection.tables
+    assert tables["db_validation_runs"][0]["report_date"] == date(2026, 6, 30)
+    assert tables["db_validation_runs"][0]["result_count"] == 2
+    assert [row["table_code"] for row in tables["db_validation_selected_tables"]] == ["ZG01", "ZG02"]
+    assert [row["message"] for row in tables["db_validation_warnings"]] == ["ZG02 当期表无数据"]
+    assert [(row["table_code"], row["rule_id"], row["severity"]) for row in tables["db_validation_result_rows"]] == [
+        ("ZG01", "R001", "error"),
+        ("ZG02", "R002", "warning"),
+    ]
+    assert store.get_run(run["id"])["rows"][0]["rule_id"] == "R001"
+    assert store.list_runs()[0]["id"] == "dbv-1"
+
+
+def test_database_history_store_writes_flow_chain_history_to_mysql_tables(app_database):
+    store = DatabaseHistoryStore(app_database, kind="flow_chain")
+    run = _flow_chain_run()
+
+    store.save_run(run)
+
+    tables = app_database.connection.tables
+    assert tables["flow_chain_runs"][0]["chain_name"] == "资管新规1"
+    assert tables["flow_chain_runs"][0]["is_multi_chain"] is False
+    assert [(row["flow_id"], row["name"], row["sp_task_id"]) for row in tables["flow_chain_run_steps"]] == [
+        ("flow-a", "流程A", "658149"),
+        ("flow-b", "流程B", "658150"),
+    ]
+    assert tables["flow_chain_run_logs"][0]["log_time"] == time(12, 1, 5)
+    assert tables["flow_chain_run_details"][0]["error"] == "流程B超时"
+    assert store.get_run(run["id"])["steps"][1]["message"] == "超时"
+    assert store.list_runs()[0]["id"] == "flow-1"

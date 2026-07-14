@@ -1,733 +1,418 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
+from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 
-from auto_check.app.storage_schema import fingerprint_text, migration_completed, record_migration
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    Integer,
+    MetaData,
+    Numeric,
+    String,
+    Table,
+    Text,
+    delete,
+    func,
+    select,
+)
+from sqlalchemy.dialects.mysql import DATE, DATETIME, TIME, insert as mysql_insert
+from sqlalchemy.engine import Connection
 
 
-def save_reconcile_run(connection: sqlite3.Connection, run: dict[str, Any]) -> None:
-    run_id = str(run.get("id", "") or "")
-    if not run_id:
-        raise ValueError("history run id is required")
+_METADATA = MetaData()
 
-    connection.execute(
-        """
-        INSERT INTO run_headers(
-            id, kind, run_date, run_at, finished_at, status,
-            executor_id, executor_username, executor_name,
-            config_fingerprint, payload_json
-        )
-        VALUES (?, 'reconcile', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            kind = excluded.kind,
-            run_date = excluded.run_date,
-            run_at = excluded.run_at,
-            finished_at = excluded.finished_at,
-            status = excluded.status,
-            executor_id = excluded.executor_id,
-            executor_username = excluded.executor_username,
-            executor_name = excluded.executor_name,
-            config_fingerprint = excluded.config_fingerprint,
-            payload_json = excluded.payload_json
-        """,
-        (
-            run_id,
-            _text(run.get("run_date")),
-            _text(run.get("run_at")),
-            _text(run.get("finished_at")),
-            _text(run.get("status")),
-            _text(run.get("executor_id")),
-            _text(run.get("executor_username")),
-            _text(run.get("executor_name")),
-            _text(run.get("config_fingerprint")),
-            _json(run),
-        ),
-    )
-    connection.execute(
-        """
-        INSERT INTO reconcile_runs(
-            id, config_name, dws_source_name, rule_version,
-            baseline_id, baseline_run_at, baseline_count,
-            total_count, added_count, removed_count
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            config_name = excluded.config_name,
-            dws_source_name = excluded.dws_source_name,
-            rule_version = excluded.rule_version,
-            baseline_id = excluded.baseline_id,
-            baseline_run_at = excluded.baseline_run_at,
-            baseline_count = excluded.baseline_count,
-            total_count = excluded.total_count,
-            added_count = excluded.added_count,
-            removed_count = excluded.removed_count
-        """,
-        (
-            run_id,
-            _text(run.get("config_name")),
-            _text(run.get("dws_source_name")),
-            _text(run.get("rule_version")),
-            _text(run.get("baseline_id")),
-            _text(run.get("baseline_run_at")),
-            _optional_int(run.get("baseline_count")),
-            _optional_int(run.get("total_count")) or 0,
-            _optional_int(run.get("added_count")),
-            _optional_int(run.get("removed_count")),
-        ),
+RUN_HEADERS = Table(
+    "run_headers",
+    _METADATA,
+    Column("id", String(64), primary_key=True),
+    Column("kind", String(32), nullable=False),
+    Column("run_date", DATE, nullable=True),
+    Column("run_at", DATETIME(fsp=6), nullable=True),
+    Column("finished_at", DATETIME(fsp=6), nullable=True),
+    Column("status", String(64), nullable=False),
+    Column("executor_id", String(64), nullable=False),
+    Column("executor_username", String(191), nullable=False),
+    Column("executor_name", String(191), nullable=False),
+    Column("config_fingerprint", String(64), nullable=False),
+    Column("payload_json", Text, nullable=False),
+)
+
+RECONCILE_RUNS = Table(
+    "reconcile_runs",
+    _METADATA,
+    Column("id", String(64), primary_key=True),
+    Column("config_name", String(255), nullable=False),
+    Column("dws_source_name", String(255), nullable=False),
+    Column("rule_version", String(64), nullable=False),
+    Column("baseline_id", String(64), nullable=False),
+    Column("baseline_run_at", DATETIME(fsp=6), nullable=True),
+    Column("baseline_count", Integer, nullable=True),
+    Column("total_count", Integer, nullable=False),
+    Column("added_count", Integer, nullable=True),
+    Column("removed_count", Integer, nullable=True),
+)
+
+RECONCILE_RUN_COUNTS = Table(
+    "reconcile_run_counts",
+    _METADATA,
+    Column("run_id", String(64), nullable=False),
+    Column("count_type", String(32), nullable=False),
+    Column("label", String(255), nullable=False),
+    Column("count_value", Integer, nullable=False),
+)
+
+RECONCILE_RESULTS = Table(
+    "reconcile_results",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("run_id", String(64), nullable=False),
+    Column("result_order", Integer, nullable=False),
+    Column("project_code", String(191), nullable=False),
+    Column("project_name", String(255), nullable=False),
+    Column("asset_total", Numeric(38, 12), nullable=True),
+    Column("liability_equity_total", Numeric(38, 12), nullable=True),
+    Column("received_trust_balance", Numeric(38, 12), nullable=True),
+    Column("difference", Numeric(38, 12), nullable=True),
+    Column("direction", String(255), nullable=False),
+    Column("difference_reason", String(255), nullable=False),
+    Column("match_status", String(64), nullable=False),
+    Column("valuation_asset_total", Numeric(38, 12), nullable=True),
+    Column("payload_json", Text, nullable=False),
+)
+
+RECONCILE_RESULT_DETAILS = Table(
+    "reconcile_result_details",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("result_id", BigInteger, nullable=False),
+    Column("detail_order", Integer, nullable=False),
+    Column("kind", String(64), nullable=False),
+    Column("specific_reason", String(255), nullable=False),
+    Column("data_json", Text, nullable=False),
+)
+
+RECONCILE_DELTA_RESULTS = Table(
+    "reconcile_delta_results",
+    _METADATA,
+    Column("run_id", String(64), nullable=False),
+    Column("delta_type", String(16), nullable=False),
+    Column("result_order", Integer, nullable=False),
+    Column("payload_json", Text, nullable=False),
+)
+
+DB_VALIDATION_RUNS = Table(
+    "db_validation_runs",
+    _METADATA,
+    Column("id", String(64), primary_key=True),
+    Column("report_date", DATE, nullable=True),
+    Column("result_count", Integer, nullable=False),
+    Column("warning_count", Integer, nullable=False),
+    Column("table_count", Integer, nullable=False),
+    Column("enable_public_info_check", Boolean, nullable=False),
+    Column("enable_template_check", Boolean, nullable=False),
+    Column("excel_filename", String(255), nullable=False),
+    Column("excel_path", String(1024), nullable=False),
+    Column("download_url", String(1024), nullable=False),
+)
+
+DB_VALIDATION_SELECTED_TABLES = Table(
+    "db_validation_selected_tables",
+    _METADATA,
+    Column("run_id", String(64), nullable=False),
+    Column("table_order", Integer, nullable=False),
+    Column("table_code", String(64), nullable=False),
+)
+
+DB_VALIDATION_WARNINGS = Table(
+    "db_validation_warnings",
+    _METADATA,
+    Column("run_id", String(64), nullable=False),
+    Column("warning_order", Integer, nullable=False),
+    Column("message", Text, nullable=False),
+)
+
+DB_VALIDATION_RESULT_ROWS = Table(
+    "db_validation_result_rows",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("run_id", String(64), nullable=False),
+    Column("row_order", Integer, nullable=False),
+    Column("table_code", String(64), nullable=False),
+    Column("rule_id", String(191), nullable=False),
+    Column("severity", String(32), nullable=False),
+    Column("message", Text, nullable=False),
+    Column("detail", Text, nullable=False),
+    Column("payload_json", Text, nullable=False),
+)
+
+FLOW_CHAIN_RUNS = Table(
+    "flow_chain_runs",
+    _METADATA,
+    Column("id", String(64), primary_key=True),
+    Column("chain_id", String(191), nullable=False),
+    Column("chain_name", String(255), nullable=False),
+    Column("is_multi_chain", Boolean, nullable=False),
+    Column("trigger_type", String(32), nullable=False),
+    Column("executor_name", String(191), nullable=False),
+    Column("status", String(64), nullable=False),
+    Column("error", Text, nullable=False),
+    Column("step_count", Integer, nullable=False),
+    Column("duration_seconds", Integer, nullable=False),
+)
+
+FLOW_CHAIN_RUN_STEPS = Table(
+    "flow_chain_run_steps",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("run_id", String(64), nullable=False),
+    Column("step_order", Integer, nullable=False),
+    Column("flow_id", String(191), nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("status", String(64), nullable=False),
+    Column("sp_task_id", String(64), nullable=False),
+    Column("start_time", DATETIME(fsp=6), nullable=True),
+    Column("end_time", DATETIME(fsp=6), nullable=True),
+    Column("duration_seconds", Integer, nullable=True),
+    Column("payload_json", Text, nullable=False),
+)
+
+FLOW_CHAIN_RUN_LOGS = Table(
+    "flow_chain_run_logs",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("run_id", String(64), nullable=False),
+    Column("log_order", Integer, nullable=False),
+    Column("log_time", TIME(fsp=6), nullable=True),
+    Column("message", Text, nullable=False),
+    Column("progress", Integer, nullable=True),
+    Column("step", String(255), nullable=False),
+    Column("payload_json", Text, nullable=False),
+)
+
+FLOW_CHAIN_RUN_DETAILS = Table(
+    "flow_chain_run_details",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("run_id", String(64), nullable=False),
+    Column("chain_order", Integer, nullable=False),
+    Column("chain_name", String(255), nullable=False),
+    Column("status", String(64), nullable=False),
+    Column("step_count", Integer, nullable=False),
+    Column("duration_seconds", Integer, nullable=False),
+    Column("error", Text, nullable=False),
+    Column("payload_json", Text, nullable=False),
+)
+
+
+def save_reconcile_run(connection: Connection, run: dict[str, Any]) -> None:
+    run_id = _required_run_id(run)
+    _upsert_run_header(connection, "reconcile", run)
+    _execute_upsert(
+        connection,
+        RECONCILE_RUNS,
+        {
+            "id": run_id,
+            "config_name": _text(run.get("config_name")),
+            "dws_source_name": _text(run.get("dws_source_name")),
+            "rule_version": _text(run.get("rule_version")),
+            "baseline_id": _text(run.get("baseline_id")),
+            "baseline_run_at": _optional_datetime(run.get("baseline_run_at")),
+            "baseline_count": _optional_int(run.get("baseline_count")),
+            "total_count": _optional_int(run.get("total_count")) or 0,
+            "added_count": _optional_int(run.get("added_count")),
+            "removed_count": _optional_int(run.get("removed_count")),
+        },
     )
     _replace_reconcile_children(connection, run_id, run)
 
 
-def list_reconcile_runs(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = connection.execute(
-        """
-        SELECT payload_json
-        FROM run_headers
-        WHERE kind = 'reconcile'
-        ORDER BY run_date DESC, run_at DESC
-        """
-    ).fetchall()
-    return [_parse_payload(row["payload_json"]) for row in rows]
+def list_reconcile_runs(connection: Connection) -> list[dict[str, Any]]:
+    return _list_kind_runs(connection, "reconcile", RUN_HEADERS.c.run_date.desc(), RUN_HEADERS.c.run_at.desc())
 
 
-def get_reconcile_run(connection: sqlite3.Connection, run_id: str) -> dict[str, Any] | None:
-    row = connection.execute(
-        "SELECT payload_json FROM run_headers WHERE kind = 'reconcile' AND id = ?",
-        (str(run_id),),
-    ).fetchone()
-    if row is None:
-        return None
-    return _parse_payload(row["payload_json"])
+def get_reconcile_run(connection: Connection, run_id: str) -> dict[str, Any] | None:
+    return _get_kind_run(connection, "reconcile", run_id)
 
 
-def delete_reconcile_run(connection: sqlite3.Connection, run_id: str) -> bool:
-    cursor = connection.execute(
-        "DELETE FROM run_headers WHERE kind = 'reconcile' AND id = ?",
-        (str(run_id),),
-    )
-    return cursor.rowcount > 0
+def delete_reconcile_run(connection: Connection, run_id: str) -> bool:
+    return _delete_kind_run(connection, "reconcile", run_id)
 
 
-def save_db_validation_run(connection: sqlite3.Connection, run: dict[str, Any]) -> None:
+def save_db_validation_run(connection: Connection, run: dict[str, Any]) -> None:
     run_id = _required_run_id(run)
     _upsert_run_header(connection, "db_validation", run)
-    connection.execute(
-        """
-        INSERT INTO db_validation_runs(
-            id, report_date, result_count, warning_count, table_count,
-            enable_public_info_check, enable_template_check,
-            excel_filename, excel_path, download_url
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            report_date = excluded.report_date,
-            result_count = excluded.result_count,
-            warning_count = excluded.warning_count,
-            table_count = excluded.table_count,
-            enable_public_info_check = excluded.enable_public_info_check,
-            enable_template_check = excluded.enable_template_check,
-            excel_filename = excluded.excel_filename,
-            excel_path = excluded.excel_path,
-            download_url = excluded.download_url
-        """,
-        (
-            run_id,
-            _text(run.get("report_date") or run.get("run_date")),
-            _optional_int(run.get("result_count")) or 0,
-            _optional_int(run.get("warning_count")) or len(_list(run.get("warnings"))),
-            _optional_int(run.get("table_count")) or len(_list(run.get("selected_tables"))),
-            1 if bool(run.get("enable_public_info_check")) else 0,
-            1 if bool(run.get("enable_template_check")) else 0,
-            _text(run.get("excel_filename")),
-            _text(run.get("excel_path")),
-            _text(run.get("download_url")),
-        ),
+    _execute_upsert(
+        connection,
+        DB_VALIDATION_RUNS,
+        {
+            "id": run_id,
+            "report_date": _optional_date(run.get("report_date") or run.get("run_date")),
+            "result_count": _optional_int(run.get("result_count")) or 0,
+            "warning_count": _optional_int(run.get("warning_count")) or len(_list(run.get("warnings"))),
+            "table_count": _optional_int(run.get("table_count")) or len(_list(run.get("selected_tables"))),
+            "enable_public_info_check": bool(run.get("enable_public_info_check")),
+            "enable_template_check": bool(run.get("enable_template_check")),
+            "excel_filename": _text(run.get("excel_filename")),
+            "excel_path": _text(run.get("excel_path")),
+            "download_url": _text(run.get("download_url")),
+        },
     )
     _replace_db_validation_children(connection, run_id, run)
 
 
-def list_db_validation_runs(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = connection.execute(
-        """
-        SELECT payload_json
-        FROM run_headers
-        WHERE kind = 'db_validation'
-        ORDER BY run_at DESC, id DESC
-        """
-    ).fetchall()
-    return [_parse_payload(row["payload_json"]) for row in rows]
+def list_db_validation_runs(connection: Connection) -> list[dict[str, Any]]:
+    return _list_kind_runs(connection, "db_validation", RUN_HEADERS.c.run_at.desc(), RUN_HEADERS.c.id.desc())
 
 
-def get_db_validation_run(connection: sqlite3.Connection, run_id: str) -> dict[str, Any] | None:
+def get_db_validation_run(connection: Connection, run_id: str) -> dict[str, Any] | None:
     return _get_kind_run(connection, "db_validation", run_id)
 
 
-def delete_db_validation_run(connection: sqlite3.Connection, run_id: str) -> bool:
+def delete_db_validation_run(connection: Connection, run_id: str) -> bool:
     return _delete_kind_run(connection, "db_validation", run_id)
 
 
-def save_flow_chain_run(connection: sqlite3.Connection, run: dict[str, Any]) -> None:
+def save_flow_chain_run(connection: Connection, run: dict[str, Any]) -> None:
     run_id = _required_run_id(run)
     _upsert_run_header(connection, "flow_chain", run)
-    connection.execute(
-        """
-        INSERT INTO flow_chain_runs(
-            id, chain_id, chain_name, is_multi_chain, trigger_type,
-            executor_name, status, error, step_count, duration_seconds
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            chain_id = excluded.chain_id,
-            chain_name = excluded.chain_name,
-            is_multi_chain = excluded.is_multi_chain,
-            trigger_type = excluded.trigger_type,
-            executor_name = excluded.executor_name,
-            status = excluded.status,
-            error = excluded.error,
-            step_count = excluded.step_count,
-            duration_seconds = excluded.duration_seconds
-        """,
-        (
-            run_id,
-            _text(run.get("chain_id")),
-            _text(run.get("chain_name")),
-            1 if bool(run.get("is_multi_chain")) else 0,
-            _text(run.get("trigger_type")),
-            _text(run.get("executor_name")),
-            _text(run.get("status")),
-            _text(run.get("error")),
-            _optional_int(run.get("step_count")) or len(_list(run.get("steps"))),
-            _optional_int(run.get("duration_seconds")) or 0,
-        ),
+    _execute_upsert(
+        connection,
+        FLOW_CHAIN_RUNS,
+        {
+            "id": run_id,
+            "chain_id": _text(run.get("chain_id")),
+            "chain_name": _text(run.get("chain_name")),
+            "is_multi_chain": bool(run.get("is_multi_chain")),
+            "trigger_type": _text(run.get("trigger_type")),
+            "executor_name": _text(run.get("executor_name")),
+            "status": _text(run.get("status")),
+            "error": _text(run.get("error")),
+            "step_count": _optional_int(run.get("step_count")) or len(_list(run.get("steps"))),
+            "duration_seconds": _optional_int(run.get("duration_seconds")) or 0,
+        },
     )
     _replace_flow_chain_children(connection, run_id, run)
 
 
-def list_flow_chain_runs(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = connection.execute(
-        """
-        SELECT payload_json
-        FROM run_headers
-        WHERE kind = 'flow_chain'
-        ORDER BY run_at DESC, id DESC
-        """
-    ).fetchall()
-    return [_parse_payload(row["payload_json"]) for row in rows]
+def list_flow_chain_runs(connection: Connection) -> list[dict[str, Any]]:
+    return _list_kind_runs(connection, "flow_chain", RUN_HEADERS.c.run_at.desc(), RUN_HEADERS.c.id.desc())
 
 
-def get_flow_chain_run(connection: sqlite3.Connection, run_id: str) -> dict[str, Any] | None:
+def get_flow_chain_run(connection: Connection, run_id: str) -> dict[str, Any] | None:
     return _get_kind_run(connection, "flow_chain", run_id)
 
 
-def delete_flow_chain_run(connection: sqlite3.Connection, run_id: str) -> bool:
+def delete_flow_chain_run(connection: Connection, run_id: str) -> bool:
     return _delete_kind_run(connection, "flow_chain", run_id)
 
 
-def has_reconcile_runs(connection: sqlite3.Connection) -> bool:
-    row = connection.execute(
-        "SELECT COUNT(*) FROM run_headers WHERE kind = 'reconcile'"
-    ).fetchone()
-    return int(row[0]) > 0
+def count_kind_runs(connection: Connection, kind: str) -> int:
+    value = connection.execute(
+        select(func.count()).select_from(RUN_HEADERS).where(RUN_HEADERS.c.kind == str(kind))
+    ).scalar_one()
+    return int(value or 0)
 
 
-def migrate_legacy_reconcile_runs(connection: sqlite3.Connection, config_path: str | Path) -> int:
+def _upsert_run_header(connection: Connection, kind: str, run: dict[str, Any]) -> None:
+    _execute_upsert(
+        connection,
+        RUN_HEADERS,
+        {
+            "id": _required_run_id(run),
+            "kind": kind,
+            "run_date": _optional_date(run.get("run_date") or run.get("report_date")),
+            "run_at": _optional_datetime(run.get("run_at") or run.get("started_at")),
+            "finished_at": _optional_datetime(run.get("finished_at")),
+            "status": _text(run.get("status")),
+            "executor_id": _text(run.get("executor_id")),
+            "executor_username": _text(run.get("executor_username")),
+            "executor_name": _text(run.get("executor_name")),
+            "config_fingerprint": _text(run.get("config_fingerprint")),
+            "payload_json": _json(run),
+        },
+    )
+
+
+def _execute_upsert(connection: Connection, table: Table, values: dict[str, Any]) -> None:
+    statement = mysql_insert(table).values(**values)
+    update_values = {
+        column.name: getattr(statement.inserted, column.name)
+        for column in table.columns
+        if not column.primary_key
+    }
+    connection.execute(statement.on_duplicate_key_update(**update_values))
+
+
+def _list_kind_runs(connection: Connection, kind: str, *order_by: Any) -> list[dict[str, Any]]:
     rows = connection.execute(
-        """
-        SELECT id, payload
-        FROM history_runs
-        WHERE kind = 'reconcile'
-        ORDER BY run_date DESC, run_at DESC
-        """
-    ).fetchall()
-    if not rows:
-        return 0
-    source_text = "\n".join(str(row["payload"] or "") for row in rows)
-    source_fingerprint = fingerprint_text(source_text)
-    source_path = str(Path(config_path).with_name("auto-check.db"))
-    if migration_completed(connection, "history_runs", source_path, "reconcile", source_fingerprint):
-        return 0
-
-    migrated_count = 0
-    skipped_count = 0
-    for row in rows:
-        run = _parse_payload(row["payload"])
-        run_id = _text(run.get("id") or row["id"])
-        if not run_id:
-            skipped_count += 1
-            continue
-        run["id"] = run_id
-        if _reconcile_run_exists(connection, run_id):
-            skipped_count += 1
-            continue
-        save_reconcile_run(connection, run)
-        migrated_count += 1
-
-    record_migration(
-        connection,
-        source_type="history_runs",
-        source_path=source_path,
-        source_key="reconcile",
-        source_fingerprint=source_fingerprint,
-        migrated_count=migrated_count,
-        skipped_count=skipped_count,
-        status="completed",
-    )
-    return migrated_count
+        select(RUN_HEADERS.c.payload_json).where(RUN_HEADERS.c.kind == str(kind)).order_by(*order_by)
+    ).mappings().all()
+    return [_parse_payload(row["payload_json"]) for row in rows]
 
 
-def migrate_legacy_db_validation_runs(connection: sqlite3.Connection, config_path: str | Path) -> int:
-    rows = connection.execute(
-        """
-        SELECT id, payload
-        FROM history_runs
-        WHERE kind = 'db_validation'
-        ORDER BY run_date DESC, run_at DESC
-        """
-    ).fetchall()
-    if not rows:
-        return 0
-    source_text = "\n".join(str(row["payload"] or "") for row in rows)
-    source_fingerprint = fingerprint_text(source_text)
-    source_path = str(Path(config_path).with_name("auto-check.db"))
-    if migration_completed(connection, "history_runs", source_path, "db_validation", source_fingerprint):
-        return 0
-
-    migrated_count = 0
-    skipped_count = 0
-    for row in rows:
-        run = _parse_payload(row["payload"])
-        run_id = _text(run.get("id") or row["id"])
-        if not run_id:
-            skipped_count += 1
-            continue
-        run["id"] = run_id
-        if _kind_run_exists(connection, "db_validation", run_id):
-            skipped_count += 1
-            continue
-        save_db_validation_run(connection, run)
-        migrated_count += 1
-
-    record_migration(
-        connection,
-        source_type="history_runs",
-        source_path=source_path,
-        source_key="db_validation",
-        source_fingerprint=source_fingerprint,
-        migrated_count=migrated_count,
-        skipped_count=skipped_count,
-        status="completed",
-    )
-    return migrated_count
-
-
-def migrate_legacy_flow_chain_runs(connection: sqlite3.Connection, config_path: str | Path) -> int:
-    rows = connection.execute(
-        """
-        SELECT id, payload
-        FROM history_runs
-        WHERE kind = 'flow_chain'
-        ORDER BY run_date DESC, run_at DESC
-        """
-    ).fetchall()
-    if not rows:
-        return 0
-    source_text = "\n".join(str(row["payload"] or "") for row in rows)
-    source_fingerprint = fingerprint_text(source_text)
-    source_path = str(Path(config_path).with_name("auto-check.db"))
-    if migration_completed(connection, "history_runs", source_path, "flow_chain", source_fingerprint):
-        return 0
-
-    migrated_count = 0
-    skipped_count = 0
-    for row in rows:
-        run = _parse_payload(row["payload"])
-        run_id = _text(run.get("id") or row["id"])
-        if not run_id:
-            skipped_count += 1
-            continue
-        run["id"] = run_id
-        if _kind_run_exists(connection, "flow_chain", run_id):
-            skipped_count += 1
-            continue
-        save_flow_chain_run(connection, run)
-        migrated_count += 1
-
-    record_migration(
-        connection,
-        source_type="history_runs",
-        source_path=source_path,
-        source_key="flow_chain",
-        source_fingerprint=source_fingerprint,
-        migrated_count=migrated_count,
-        skipped_count=skipped_count,
-        status="completed",
-    )
-    return migrated_count
-
-
-def migrate_reconcile_history_json(connection: sqlite3.Connection, config_path: str | Path) -> int:
-    path = Path(config_path).with_name("history.json")
-    if not path.exists():
-        return 0
-    try:
-        source_text = path.read_text(encoding="utf-8")
-    except OSError:
-        return 0
-    source_fingerprint = fingerprint_text(source_text)
-    if migration_completed(connection, "history_json", str(path), "", source_fingerprint):
-        return 0
-
-    runs, load_error = _load_runs_from_text_result(source_text)
-    if load_error:
-        record_migration(
-            connection,
-            source_type="history_json",
-            source_path=str(path),
-            source_key="",
-            source_fingerprint=source_fingerprint,
-            migrated_count=0,
-            skipped_count=0,
-            status="failed",
-            message=load_error,
+def _get_kind_run(connection: Connection, kind: str, run_id: str) -> dict[str, Any] | None:
+    row = connection.execute(
+        select(RUN_HEADERS.c.payload_json).where(
+            RUN_HEADERS.c.kind == str(kind),
+            RUN_HEADERS.c.id == str(run_id),
         )
-        return 0
-
-    migrated_count = 0
-    skipped_count = 0
-    for run in runs:
-        run_id = _text(run.get("id"))
-        if not run_id:
-            skipped_count += 1
-            continue
-        if _reconcile_run_exists(connection, run_id):
-            skipped_count += 1
-        else:
-            save_reconcile_run(connection, run)
-            migrated_count += 1
-
-    record_migration(
-        connection,
-        source_type="history_json",
-        source_path=str(path),
-        source_key="",
-        source_fingerprint=source_fingerprint,
-        migrated_count=migrated_count,
-        skipped_count=skipped_count,
-        status="completed",
-    )
-    return migrated_count
-
-
-def migrate_db_validation_history_json_to_legacy_runs(
-    connection: sqlite3.Connection,
-    config_path: str | Path,
-) -> int:
-    path = Path(config_path).with_name("db-validation-history.json")
-    if not path.exists():
-        return 0
-    try:
-        source_text = path.read_text(encoding="utf-8")
-    except OSError:
-        return 0
-    source_fingerprint = fingerprint_text(source_text)
-    if migration_completed(connection, "db_validation_history_json", str(path), "", source_fingerprint):
-        return 0
-
-    runs, load_error = _load_runs_from_text_result(source_text)
-    if load_error:
-        record_migration(
-            connection,
-            source_type="db_validation_history_json",
-            source_path=str(path),
-            source_key="",
-            source_fingerprint=source_fingerprint,
-            migrated_count=0,
-            skipped_count=0,
-            status="failed",
-            message=load_error,
-        )
-        return 0
-
-    migrated_count = 0
-    skipped_count = 0
-    for run in runs:
-        run_id = _text(run.get("id"))
-        if not run_id:
-            skipped_count += 1
-            continue
-        if _kind_run_exists(connection, "db_validation", run_id):
-            skipped_count += 1
-        else:
-            save_db_validation_run(connection, run)
-            migrated_count += 1
-
-    record_migration(
-        connection,
-        source_type="db_validation_history_json",
-        source_path=str(path),
-        source_key="",
-        source_fingerprint=source_fingerprint,
-        migrated_count=migrated_count,
-        skipped_count=skipped_count,
-        status="completed",
-    )
-    return migrated_count
-
-
-def _reconcile_run_exists(connection: sqlite3.Connection, run_id: str) -> bool:
-    row = connection.execute(
-        "SELECT 1 FROM run_headers WHERE kind = 'reconcile' AND id = ?",
-        (str(run_id),),
-    ).fetchone()
-    return row is not None
-
-
-def _legacy_history_run_exists(connection: sqlite3.Connection, kind: str, run_id: str) -> bool:
-    row = connection.execute(
-        "SELECT 1 FROM history_runs WHERE kind = ? AND id = ?",
-        (str(kind), str(run_id)),
-    ).fetchone()
-    return row is not None
-
-
-def _kind_run_exists(connection: sqlite3.Connection, kind: str, run_id: str) -> bool:
-    row = connection.execute(
-        "SELECT 1 FROM run_headers WHERE kind = ? AND id = ?",
-        (str(kind), str(run_id)),
-    ).fetchone()
-    return row is not None
-
-
-def _insert_legacy_history_run(connection: sqlite3.Connection, kind: str, run: dict[str, Any]) -> None:
-    run_id = _text(run.get("id"))
-    if not run_id:
-        return
-    connection.execute(
-        """
-        INSERT INTO history_runs(kind, id, payload, run_date, run_at, config_fingerprint)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(kind, id) DO UPDATE SET
-            payload = excluded.payload,
-            run_date = excluded.run_date,
-            run_at = excluded.run_at,
-            config_fingerprint = excluded.config_fingerprint
-        """,
-        (
-            str(kind),
-            run_id,
-            _json(run),
-            _text(run.get("run_date") or run.get("report_date")),
-            _text(run.get("run_at")),
-            _text(run.get("config_fingerprint")),
-        ),
-    )
-
-
-def _upsert_run_header(connection: sqlite3.Connection, kind: str, run: dict[str, Any]) -> None:
-    run_id = _required_run_id(run)
-    connection.execute(
-        """
-        INSERT INTO run_headers(
-            id, kind, run_date, run_at, finished_at, status,
-            executor_id, executor_username, executor_name,
-            config_fingerprint, payload_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            kind = excluded.kind,
-            run_date = excluded.run_date,
-            run_at = excluded.run_at,
-            finished_at = excluded.finished_at,
-            status = excluded.status,
-            executor_id = excluded.executor_id,
-            executor_username = excluded.executor_username,
-            executor_name = excluded.executor_name,
-            config_fingerprint = excluded.config_fingerprint,
-            payload_json = excluded.payload_json
-        """,
-        (
-            run_id,
-            kind,
-            _text(run.get("run_date") or run.get("report_date")),
-            _text(run.get("run_at") or run.get("started_at")),
-            _text(run.get("finished_at")),
-            _text(run.get("status")),
-            _text(run.get("executor_id")),
-            _text(run.get("executor_username")),
-            _text(run.get("executor_name")),
-            _text(run.get("config_fingerprint")),
-            _json(run),
-        ),
-    )
-
-
-def _get_kind_run(connection: sqlite3.Connection, kind: str, run_id: str) -> dict[str, Any] | None:
-    row = connection.execute(
-        "SELECT payload_json FROM run_headers WHERE kind = ? AND id = ?",
-        (str(kind), str(run_id)),
-    ).fetchone()
+    ).mappings().first()
     if row is None:
         return None
     return _parse_payload(row["payload_json"])
 
 
-def _delete_kind_run(connection: sqlite3.Connection, kind: str, run_id: str) -> bool:
-    cursor = connection.execute(
-        "DELETE FROM run_headers WHERE kind = ? AND id = ?",
-        (str(kind), str(run_id)),
+def _delete_kind_run(connection: Connection, kind: str, run_id: str) -> bool:
+    run_id = str(run_id)
+    _delete_children(connection, run_id)
+    result = connection.execute(
+        delete(RUN_HEADERS).where(RUN_HEADERS.c.kind == str(kind), RUN_HEADERS.c.id == run_id)
     )
-    return cursor.rowcount > 0
+    return bool(getattr(result, "rowcount", 0))
 
 
-def _replace_db_validation_children(connection: sqlite3.Connection, run_id: str, run: dict[str, Any]) -> None:
-    connection.execute("DELETE FROM db_validation_selected_tables WHERE run_id = ?", (run_id,))
-    connection.execute("DELETE FROM db_validation_warnings WHERE run_id = ?", (run_id,))
-    connection.execute("DELETE FROM db_validation_result_rows WHERE run_id = ?", (run_id,))
-
-    for index, table_code in enumerate(_list(run.get("selected_tables"))):
-        connection.execute(
-            """
-            INSERT INTO db_validation_selected_tables(run_id, table_order, table_code)
-            VALUES (?, ?, ?)
-            """,
-            (run_id, index, _text(table_code)),
-        )
-    for index, message in enumerate(_list(run.get("warnings"))):
-        connection.execute(
-            """
-            INSERT INTO db_validation_warnings(run_id, warning_order, message)
-            VALUES (?, ?, ?)
-            """,
-            (run_id, index, _text(message)),
-        )
-    for index, row in enumerate(_dict_list(run.get("rows"))):
-        connection.execute(
-            """
-            INSERT INTO db_validation_result_rows(
-                run_id, row_order, table_code, rule_id, severity,
-                message, detail, payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                index,
-                _text(row.get("table_code") or row.get("table")),
-                _text(row.get("rule_id") or row.get("rule")),
-                _text(row.get("severity") or row.get("level")),
-                _text(row.get("message")),
-                _text(row.get("detail")),
-                _json(row),
-            ),
-        )
+def _delete_children(connection: Connection, run_id: str) -> None:
+    _delete_reconcile_children(connection, run_id)
+    for table in (
+        DB_VALIDATION_SELECTED_TABLES,
+        DB_VALIDATION_WARNINGS,
+        DB_VALIDATION_RESULT_ROWS,
+        FLOW_CHAIN_RUN_STEPS,
+        FLOW_CHAIN_RUN_LOGS,
+        FLOW_CHAIN_RUN_DETAILS,
+    ):
+        connection.execute(delete(table).where(table.c.run_id == str(run_id)))
+    for table in (RECONCILE_RUNS, DB_VALIDATION_RUNS, FLOW_CHAIN_RUNS):
+        connection.execute(delete(table).where(table.c.id == str(run_id)))
 
 
-def _replace_flow_chain_children(connection: sqlite3.Connection, run_id: str, run: dict[str, Any]) -> None:
-    connection.execute("DELETE FROM flow_chain_run_steps WHERE run_id = ?", (run_id,))
-    connection.execute("DELETE FROM flow_chain_run_logs WHERE run_id = ?", (run_id,))
-    connection.execute("DELETE FROM flow_chain_run_details WHERE run_id = ?", (run_id,))
-
-    for index, step in enumerate(_dict_list(run.get("steps"))):
-        connection.execute(
-            """
-            INSERT INTO flow_chain_run_steps(
-                run_id, step_order, flow_id, name, status, sp_task_id,
-                start_time, end_time, duration_seconds, payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                index,
-                _text(step.get("flow_id")),
-                _text(step.get("name") or step.get("flow_name")),
-                _text(step.get("status")),
-                _text(step.get("sp_task_id")),
-                _text(step.get("start_time") or step.get("begin_time")),
-                _text(step.get("end_time") or step.get("finished_at")),
-                _optional_int(step.get("duration_seconds")),
-                _json(step),
-            ),
-        )
-
-    for index, log in enumerate(_dict_list(run.get("logs"))):
-        connection.execute(
-            """
-            INSERT INTO flow_chain_run_logs(
-                run_id, log_order, log_time, message, progress, step, payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                index,
-                _text(log.get("time") or log.get("log_time") or log.get("created_at")),
-                _text(log.get("message")),
-                _optional_int(log.get("progress")),
-                _text(log.get("step")),
-                _json(log),
-            ),
-        )
-
-    for index, detail in enumerate(_dict_list(run.get("chain_details"))):
-        connection.execute(
-            """
-            INSERT INTO flow_chain_run_details(
-                run_id, chain_order, chain_name, status,
-                step_count, duration_seconds, error, payload_json
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                index,
-                _text(detail.get("chain_name")),
-                _text(detail.get("status")),
-                _optional_int(detail.get("step_count")) or 0,
-                _optional_int(detail.get("duration_seconds")) or 0,
-                _text(detail.get("error")),
-                _json(detail),
-            ),
-        )
+def _delete_reconcile_children(connection: Connection, run_id: str) -> None:
+    result_ids = [
+        row["id"]
+        for row in connection.execute(
+            select(RECONCILE_RESULTS.c.id).where(RECONCILE_RESULTS.c.run_id == str(run_id))
+        ).mappings().all()
+    ]
+    if result_ids:
+        connection.execute(delete(RECONCILE_RESULT_DETAILS).where(RECONCILE_RESULT_DETAILS.c.result_id.in_(result_ids)))
+    for table in (
+        RECONCILE_RUN_COUNTS,
+        RECONCILE_DELTA_RESULTS,
+        RECONCILE_RESULTS,
+    ):
+        connection.execute(delete(table).where(table.c.run_id == str(run_id)))
 
 
-def _load_runs_from_text(text: str) -> list[dict[str, Any]]:
-    runs, _error = _load_runs_from_text_result(text)
-    return runs
-
-
-def _load_runs_from_text_result(text: str) -> tuple[list[dict[str, Any]], str]:
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        return [], f"JSON parse failed: {exc.msg} (line {exc.lineno}, column {exc.colno})"
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)], ""
-    if isinstance(payload, dict) and isinstance(payload.get("runs"), list):
-        return [item for item in payload["runs"] if isinstance(item, dict)], ""
-    return [], ""
-
-
-def _replace_reconcile_children(connection: sqlite3.Connection, run_id: str, run: dict[str, Any]) -> None:
-    connection.execute("DELETE FROM reconcile_run_counts WHERE run_id = ?", (run_id,))
-    connection.execute("DELETE FROM reconcile_delta_results WHERE run_id = ?", (run_id,))
-    connection.execute(
-        """
-        DELETE FROM reconcile_result_details
-        WHERE result_id IN (SELECT id FROM reconcile_results WHERE run_id = ?)
-        """,
-        (run_id,),
-    )
-    connection.execute("DELETE FROM reconcile_results WHERE run_id = ?", (run_id,))
-
+def _replace_reconcile_children(connection: Connection, run_id: str, run: dict[str, Any]) -> None:
+    _delete_reconcile_children(connection, run_id)
     for label, count in _count_items(run.get("status_counts")).items():
         _insert_count(connection, run_id, "status", label, count)
     for label, count in _count_items(run.get("reason_counts")).items():
         _insert_count(connection, run_id, "reason", label, count)
-
     for index, result in enumerate(_dict_list(run.get("results"))):
         _insert_reconcile_result(connection, run_id, index, result)
     for index, result in enumerate(_dict_list(run.get("added_results"))):
@@ -736,83 +421,145 @@ def _replace_reconcile_children(connection: sqlite3.Connection, run_id: str, run
         _insert_delta_result(connection, run_id, "removed", index, result)
 
 
-def _insert_count(connection: sqlite3.Connection, run_id: str, count_type: str, label: str, count: int) -> None:
+def _insert_count(connection: Connection, run_id: str, count_type: str, label: str, count: int) -> None:
     connection.execute(
-        """
-        INSERT INTO reconcile_run_counts(run_id, count_type, label, count_value)
-        VALUES (?, ?, ?, ?)
-        """,
-        (run_id, count_type, label, count),
-    )
-
-
-def _insert_reconcile_result(
-    connection: sqlite3.Connection,
-    run_id: str,
-    result_order: int,
-    result: dict[str, Any],
-) -> None:
-    cursor = connection.execute(
-        """
-        INSERT INTO reconcile_results(
-            run_id, result_order, project_code, project_name,
-            asset_total, liability_equity_total, received_trust_balance,
-            difference, direction, difference_reason, match_status,
-            valuation_asset_total, payload_json
+        mysql_insert(RECONCILE_RUN_COUNTS).values(
+            run_id=run_id,
+            count_type=count_type,
+            label=label,
+            count_value=int(count),
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            run_id,
-            result_order,
-            _text(result.get("project_code")),
-            _text(result.get("project_name")),
-            _text(result.get("asset_total")),
-            _text(result.get("liability_equity_total")),
-            _text(result.get("received_trust_balance")),
-            _text(result.get("difference")),
-            _text(result.get("direction")),
-            _text(result.get("difference_reason")),
-            _text(result.get("match_status")),
-            _text(result.get("valuation_asset_total")),
-            _json(result),
-        ),
     )
-    result_id = int(cursor.lastrowid)
+
+
+def _insert_reconcile_result(connection: Connection, run_id: str, result_order: int, result: dict[str, Any]) -> None:
+    insert_result = connection.execute(
+        mysql_insert(RECONCILE_RESULTS).values(
+            run_id=run_id,
+            result_order=result_order,
+            project_code=_text(result.get("project_code")),
+            project_name=_text(result.get("project_name")),
+            asset_total=_optional_decimal(result.get("asset_total")),
+            liability_equity_total=_optional_decimal(result.get("liability_equity_total")),
+            received_trust_balance=_optional_decimal(result.get("received_trust_balance")),
+            difference=_optional_decimal(result.get("difference")),
+            direction=_text(result.get("direction")),
+            difference_reason=_text(result.get("difference_reason")),
+            match_status=_text(result.get("match_status")),
+            valuation_asset_total=_optional_decimal(result.get("valuation_asset_total")),
+            payload_json=_json(result),
+        )
+    )
+    result_id = _inserted_id(insert_result)
     for detail_order, detail in enumerate(_dict_list(result.get("details"))):
         data = detail.get("data") if isinstance(detail.get("data"), dict) else {}
         specific_reason = _text(data.get("specific_reason") or detail.get("specific_reason"))
         connection.execute(
-            """
-            INSERT INTO reconcile_result_details(
-                result_id, detail_order, kind, specific_reason, data_json
+            mysql_insert(RECONCILE_RESULT_DETAILS).values(
+                result_id=result_id,
+                detail_order=detail_order,
+                kind=_text(detail.get("kind")),
+                specific_reason=specific_reason,
+                data_json=_json(data),
             )
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                result_id,
-                detail_order,
-                _text(detail.get("kind")),
-                specific_reason,
-                _json(data),
-            ),
         )
 
 
-def _insert_delta_result(
-    connection: sqlite3.Connection,
-    run_id: str,
-    delta_type: str,
-    result_order: int,
-    result: dict[str, Any],
-) -> None:
+def _insert_delta_result(connection: Connection, run_id: str, delta_type: str, result_order: int, result: dict[str, Any]) -> None:
     connection.execute(
-        """
-        INSERT INTO reconcile_delta_results(run_id, delta_type, result_order, payload_json)
-        VALUES (?, ?, ?, ?)
-        """,
-        (run_id, delta_type, result_order, _json(result)),
+        mysql_insert(RECONCILE_DELTA_RESULTS).values(
+            run_id=run_id,
+            delta_type=delta_type,
+            result_order=result_order,
+            payload_json=_json(result),
+        )
     )
+
+
+def _replace_db_validation_children(connection: Connection, run_id: str, run: dict[str, Any]) -> None:
+    for table in (DB_VALIDATION_SELECTED_TABLES, DB_VALIDATION_WARNINGS, DB_VALIDATION_RESULT_ROWS):
+        connection.execute(delete(table).where(table.c.run_id == run_id))
+    for index, table_code in enumerate(_list(run.get("selected_tables"))):
+        connection.execute(
+            mysql_insert(DB_VALIDATION_SELECTED_TABLES).values(
+                run_id=run_id,
+                table_order=index,
+                table_code=_text(table_code),
+            )
+        )
+    for index, message in enumerate(_list(run.get("warnings"))):
+        connection.execute(
+            mysql_insert(DB_VALIDATION_WARNINGS).values(
+                run_id=run_id,
+                warning_order=index,
+                message=_text(message),
+            )
+        )
+    for index, row in enumerate(_dict_list(run.get("rows"))):
+        connection.execute(
+            mysql_insert(DB_VALIDATION_RESULT_ROWS).values(
+                run_id=run_id,
+                row_order=index,
+                table_code=_text(row.get("table_code") or row.get("table")),
+                rule_id=_text(row.get("rule_id") or row.get("rule")),
+                severity=_text(row.get("severity") or row.get("level")),
+                message=_text(row.get("message")),
+                detail=_text(row.get("detail")),
+                payload_json=_json(row),
+            )
+        )
+
+
+def _replace_flow_chain_children(connection: Connection, run_id: str, run: dict[str, Any]) -> None:
+    for table in (FLOW_CHAIN_RUN_STEPS, FLOW_CHAIN_RUN_LOGS, FLOW_CHAIN_RUN_DETAILS):
+        connection.execute(delete(table).where(table.c.run_id == run_id))
+    for index, step in enumerate(_dict_list(run.get("steps"))):
+        connection.execute(
+            mysql_insert(FLOW_CHAIN_RUN_STEPS).values(
+                run_id=run_id,
+                step_order=index,
+                flow_id=_text(step.get("flow_id")),
+                name=_text(step.get("name") or step.get("flow_name")),
+                status=_text(step.get("status")),
+                sp_task_id=_text(step.get("sp_task_id")),
+                start_time=_optional_datetime(step.get("start_time") or step.get("begin_time")),
+                end_time=_optional_datetime(step.get("end_time") or step.get("finished_at")),
+                duration_seconds=_optional_int(step.get("duration_seconds")),
+                payload_json=_json(step),
+            )
+        )
+    for index, log in enumerate(_dict_list(run.get("logs"))):
+        connection.execute(
+            mysql_insert(FLOW_CHAIN_RUN_LOGS).values(
+                run_id=run_id,
+                log_order=index,
+                log_time=_optional_time(log.get("time") or log.get("log_time") or log.get("created_at")),
+                message=_text(log.get("message")),
+                progress=_optional_int(log.get("progress")),
+                step=_text(log.get("step")),
+                payload_json=_json(log),
+            )
+        )
+    for index, detail in enumerate(_dict_list(run.get("chain_details"))):
+        connection.execute(
+            mysql_insert(FLOW_CHAIN_RUN_DETAILS).values(
+                run_id=run_id,
+                chain_order=index,
+                chain_name=_text(detail.get("chain_name")),
+                status=_text(detail.get("status")),
+                step_count=_optional_int(detail.get("step_count")) or 0,
+                duration_seconds=_optional_int(detail.get("duration_seconds")) or 0,
+                error=_text(detail.get("error")),
+                payload_json=_json(detail),
+            )
+        )
+
+
+def _inserted_id(result: Any) -> int:
+    primary_key = getattr(result, "inserted_primary_key", None)
+    if primary_key:
+        return int(primary_key[0])
+    return int(getattr(result, "lastrowid"))
 
 
 def _count_items(value: Any) -> dict[str, int]:
@@ -852,6 +599,46 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _optional_decimal(value: Any) -> Decimal | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return Decimal(str(value))
+
+
+def _optional_date(value: Any) -> date | None:
+    if value is None or str(value).strip() == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value).strip()[:10])
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    if value is None or str(value).strip() == "":
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    text = str(value).strip().replace("T", " ")
+    if len(text) == 10:
+        text += " 00:00:00"
+    return datetime.fromisoformat(text).replace(tzinfo=None)
+
+
+def _optional_time(value: Any) -> time | None:
+    if value is None or str(value).strip() == "":
+        return None
+    if isinstance(value, datetime):
+        return value.time().replace(tzinfo=None)
+    if isinstance(value, time):
+        return value.replace(tzinfo=None)
+    text = str(value).strip().replace("T", " ")
+    if " " in text:
+        text = text.rsplit(" ", 1)[1]
+    return time.fromisoformat(text).replace(tzinfo=None)
+
+
 def _required_run_id(run: dict[str, Any]) -> str:
     run_id = _text(run.get("id"))
     if not run_id:
@@ -864,4 +651,20 @@ def _text(value: Any) -> str:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return json.dumps(_json_safe(value), ensure_ascii=False, sort_keys=True)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="microseconds")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
+        return value.isoformat(timespec="microseconds")
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value

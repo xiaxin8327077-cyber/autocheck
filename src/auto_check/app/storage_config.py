@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from datetime import UTC, datetime
 from typing import Any, TYPE_CHECKING
 
@@ -229,53 +228,3 @@ def _decode_json(value: Any, default: Any) -> Any:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
-
-
-def save_users(connection: sqlite3.Connection, users: list[dict[str, Any]]) -> None:
-    connection.execute("DELETE FROM users")
-    for user in users:
-        connection.execute(
-            """
-            INSERT INTO users(
-                id, username, display_name, role, password_hash, enabled,
-                created_at, updated_at, last_login_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(user.get("id", "")),
-                str(user.get("username", "")),
-                str(user.get("display_name", "")),
-                str(user.get("role", "user")),
-                str(user.get("password_hash", "")),
-                1 if bool(user.get("enabled", True)) else 0,
-                str(user.get("created_at", "")),
-                str(user.get("updated_at", "")),
-                str(user.get("last_login_at", "")),
-            ),
-        )
-
-
-def load_users(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    rows = connection.execute(
-        """
-        SELECT id, username, display_name, role, password_hash, enabled,
-               created_at, updated_at, last_login_at
-        FROM users
-        ORDER BY rowid
-        """
-    ).fetchall()
-    return [
-        {
-            "id": str(row["id"]),
-            "username": str(row["username"]),
-            "display_name": str(row["display_name"]),
-            "role": str(row["role"]),
-            "password_hash": str(row["password_hash"]),
-            "enabled": bool(row["enabled"]),
-            "created_at": str(row["created_at"]),
-            "updated_at": str(row["updated_at"]),
-            "last_login_at": str(row["last_login_at"]),
-        }
-        for row in rows
-    ]
