@@ -16,10 +16,12 @@ from auto_check.app.storage_history import (
     delete_db_validation_run,
     delete_flow_chain_run,
     delete_reconcile_run,
+    get_db_validation_download_metadata,
     get_db_validation_run,
     get_flow_chain_run,
     get_reconcile_run,
     list_db_validation_runs,
+    list_db_validation_run_summaries,
     list_flow_chain_runs,
     list_reconcile_runs,
     save_db_validation_run,
@@ -97,6 +99,12 @@ class DatabaseHistoryStore:
                 return count_kind_runs(connection, self.kind)
         return 0
 
+    def list_summaries(self) -> list[dict[str, Any]]:
+        if self.kind == "db_validation":
+            with self.database.connect() as connection:
+                return list_db_validation_run_summaries(connection)
+        return [summarize_run(run) for run in self.list_runs()]
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.database.connect() as connection:
             if self.kind == "reconcile":
@@ -109,6 +117,12 @@ class DatabaseHistoryStore:
                 run = get_flow_chain_run(connection, run_id)
                 return run
         return None
+
+    def get_download_metadata(self, run_id: str) -> dict[str, str] | None:
+        if self.kind != "db_validation":
+            return None
+        with self.database.connect() as connection:
+            return get_db_validation_download_metadata(connection, run_id)
 
     def save_run(self, run: dict[str, Any]) -> None:
         with self.database.transaction() as connection:

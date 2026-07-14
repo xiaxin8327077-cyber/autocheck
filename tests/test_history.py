@@ -475,6 +475,48 @@ def test_database_history_store_writes_db_validation_history_to_mysql_tables(app
     assert store.list_runs()[0]["id"] == "dbv-1"
 
 
+def test_database_history_store_lists_db_validation_summaries_without_payload_json(app_database):
+    store = DatabaseHistoryStore(app_database, kind="db_validation")
+    run = _db_validation_run()
+    store.save_run(run)
+    app_database.connection.executed_sql.clear()
+
+    summaries = store.list_summaries()
+
+    assert summaries == [
+        {
+            "id": "dbv-1",
+            "run_at": "2026-07-03 10:00:00",
+            "finished_at": "2026-07-03 10:01:00",
+            "run_date": "2026-06-30",
+            "report_date": "2026-06-30",
+            "status": "completed",
+            "executor_id": "",
+            "executor_username": "",
+            "executor_name": "",
+            "result_count": 2,
+            "warning_count": 1,
+            "table_count": 2,
+            "enable_public_info_check": True,
+            "enable_template_check": False,
+            "download_url": "/api/tools/db-validation/history/download/dbv-1",
+        }
+    ]
+    assert "excel_path" not in summaries[0]
+    assert all("payload_json" not in sql for sql in app_database.connection.executed_sql)
+
+
+def test_database_history_store_reads_db_validation_download_metadata_without_payload_json(app_database):
+    store = DatabaseHistoryStore(app_database, kind="db_validation")
+    store.save_run(_db_validation_run())
+    app_database.connection.executed_sql.clear()
+
+    metadata = store.get_download_metadata("dbv-1")
+
+    assert metadata == {"excel_path": "C:/tmp/result.xlsx", "excel_filename": "result.xlsx"}
+    assert all("payload_json" not in sql for sql in app_database.connection.executed_sql)
+
+
 def test_database_history_store_writes_flow_chain_history_to_mysql_tables(app_database):
     store = DatabaseHistoryStore(app_database, kind="flow_chain")
     run = _flow_chain_run()

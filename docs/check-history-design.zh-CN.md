@@ -51,6 +51,8 @@
 
 业务代码只依赖 `HistoryStore`，不直接依赖具体表结构。`DatabaseHistoryStore` 维护 MySQL 结构化表和 `run_headers.payload_json` 完整快照，`JsonHistoryStore` 仅保留给测试和旧文件场景使用。
 
+人行逐笔校验执行历史列表只从 `run_headers` 和 `db_validation_runs` 读取页面需要的摘要字段，不读取、排序或向浏览器返回完整 `payload_json`/`rows`。历史下载仅从 `db_validation_runs` 读取 `excel_path` 和 `excel_filename`，再返回运行时已生成的 Excel 文件；下载过程不依赖完整结果 JSON。
+
 ## 四、历史记录字段
 
 每次核对生成一条历史记录，主要字段如下：
@@ -149,4 +151,4 @@
 - `history_runs(kind='flow_chain')` 会迁移到 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`。
 - 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数、跳过条数、状态和错误摘要；旧 JSON 损坏时应先在离线导出阶段处理，不由运行时静默迁移。
 
-详情页和导出仍可从 `run_headers.payload_json` 还原完整结果；列表、统计和后续筛选优先使用结构化热字段。回退时可以恢复旧版本程序、迁移前备份的 `auto-check.db` 和旧 JSON 文件。
+`run_headers.payload_json` 作为兼容完整快照保留；人行逐笔校验结果同时保存在 `db_validation_result_rows`。列表、统计、下载元数据和后续筛选优先使用结构化字段，避免加载大结果快照。回退时可以恢复旧版本程序、迁移前备份的 `auto-check.db` 和旧 JSON 文件。

@@ -37,6 +37,7 @@ class MySqlContractConnection:
     """In-memory executor that compiles repository statements as MySQL SQL."""
 
     def __init__(self):
+        self.executed_sql: list[str] = []
         self.tables: dict[str, list[dict[str, Any]]] = {
             "data_sources": [],
             "app_settings": [],
@@ -63,6 +64,7 @@ class MySqlContractConnection:
             raise AssertionError("configuration repository must use SQLAlchemy Core statements")
         compiled = statement.compile(dialect=mysql.dialect())
         sql = str(compiled)
+        self.executed_sql.append(sql)
         params = dict(compiled.params)
         if isinstance(parameters, dict):
             params.update(parameters)
@@ -156,7 +158,16 @@ class MySqlContractConnection:
         return filters
 
     def _matches_filters(self, row: dict[str, Any], filters: dict[str, Any]) -> bool:
-        return all(str(row.get(name)) == str(value) for name, value in filters.items() if name in row)
+        for name, value in filters.items():
+            if name not in row:
+                continue
+            if isinstance(value, (list, tuple, set)):
+                if str(row.get(name)) not in {str(item) for item in value}:
+                    return False
+                continue
+            if str(row.get(name)) != str(value):
+                return False
+        return True
 
     def _sort_value(self, value: Any) -> str:
         return "" if value is None else str(value)

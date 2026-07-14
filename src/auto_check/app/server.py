@@ -323,11 +323,11 @@ class ApiRouter:
 
             if method == "GET" and path == "/api/tools/db-validation/history":
                 history = sorted(
-                    self.db_validation_history_store.list_runs(),
+                    self.db_validation_history_store.list_summaries(),
                     key=_db_validation_history_execution_sort_key,
                     reverse=True,
                 )
-                return 200, {"history": [summarize_run(run) for run in history]}
+                return 200, {"history": history}
 
             if method == "GET" and path == "/api/tools/flow/history":
                 history = sorted(
@@ -1153,13 +1153,13 @@ class ApiRouter:
         return result.excel_path, result.excel_path.name
 
     def get_db_validation_history_download(self, history_id: str) -> tuple[Path, str]:
-        run = self.db_validation_history_store.get_run(history_id)
-        if run is None:
+        metadata = self.db_validation_history_store.get_download_metadata(history_id)
+        if metadata is None:
             raise FileNotFoundError("history not found")
-        excel_path = Path(str(run.get("excel_path", "")))
+        excel_path = Path(str(metadata.get("excel_path", "")))
         if not excel_path.exists() or not excel_path.is_file():
             raise FileNotFoundError("result file not found")
-        return excel_path, str(run.get("excel_filename") or excel_path.name)
+        return excel_path, str(metadata.get("excel_filename") or excel_path.name)
 
     def get_db_validation_rules_document(self) -> tuple[str, bytes]:
         return build_rules_document()

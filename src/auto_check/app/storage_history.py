@@ -268,8 +268,83 @@ def list_db_validation_runs(connection: Connection) -> list[dict[str, Any]]:
     return _list_kind_runs(connection, "db_validation", RUN_HEADERS.c.run_at.desc(), RUN_HEADERS.c.id.desc())
 
 
+def list_db_validation_run_summaries(connection: Connection) -> list[dict[str, Any]]:
+    header_rows = connection.execute(
+        select(
+            RUN_HEADERS.c.id,
+            RUN_HEADERS.c.run_date,
+            RUN_HEADERS.c.run_at,
+            RUN_HEADERS.c.finished_at,
+            RUN_HEADERS.c.status,
+            RUN_HEADERS.c.executor_id,
+            RUN_HEADERS.c.executor_username,
+            RUN_HEADERS.c.executor_name,
+        )
+        .where(RUN_HEADERS.c.kind == "db_validation")
+        .order_by(RUN_HEADERS.c.run_at.desc(), RUN_HEADERS.c.id.desc())
+    ).mappings().all()
+    if not header_rows:
+        return []
+
+    run_ids = [str(row["id"]) for row in header_rows]
+    detail_rows = connection.execute(
+        select(
+            DB_VALIDATION_RUNS.c.id,
+            DB_VALIDATION_RUNS.c.report_date,
+            DB_VALIDATION_RUNS.c.result_count,
+            DB_VALIDATION_RUNS.c.warning_count,
+            DB_VALIDATION_RUNS.c.table_count,
+            DB_VALIDATION_RUNS.c.enable_public_info_check,
+            DB_VALIDATION_RUNS.c.enable_template_check,
+            DB_VALIDATION_RUNS.c.download_url,
+        ).where(DB_VALIDATION_RUNS.c.id.in_(run_ids))
+    ).mappings().all()
+    details_by_id = {str(row["id"]): row for row in detail_rows}
+
+    summaries: list[dict[str, Any]] = []
+    for header in header_rows:
+        run_id = str(header["id"])
+        detail = details_by_id.get(run_id)
+        if detail is None:
+            continue
+        summaries.append(
+            {
+                "id": run_id,
+                "run_at": _history_text(header["run_at"]),
+                "finished_at": _history_text(header["finished_at"]),
+                "run_date": _history_text(header["run_date"]),
+                "report_date": _history_text(detail["report_date"]),
+                "status": _text(header["status"]),
+                "executor_id": _text(header["executor_id"]),
+                "executor_username": _text(header["executor_username"]),
+                "executor_name": _text(header["executor_name"]),
+                "result_count": int(detail["result_count"] or 0),
+                "warning_count": int(detail["warning_count"] or 0),
+                "table_count": int(detail["table_count"] or 0),
+                "enable_public_info_check": bool(detail["enable_public_info_check"]),
+                "enable_template_check": bool(detail["enable_template_check"]),
+                "download_url": _text(detail["download_url"]),
+            }
+        )
+    return summaries
+
+
 def get_db_validation_run(connection: Connection, run_id: str) -> dict[str, Any] | None:
     return _get_kind_run(connection, "db_validation", run_id)
+
+
+def get_db_validation_download_metadata(connection: Connection, run_id: str) -> dict[str, str] | None:
+    row = connection.execute(
+        select(DB_VALIDATION_RUNS.c.excel_path, DB_VALIDATION_RUNS.c.excel_filename).where(
+            DB_VALIDATION_RUNS.c.id == str(run_id)
+        )
+    ).mappings().first()
+    if row is None:
+        return None
+    return {
+        "excel_path": _text(row["excel_path"]),
+        "excel_filename": _text(row["excel_filename"]),
+    }
 
 
 def delete_db_validation_run(connection: Connection, run_id: str) -> bool:
@@ -648,6 +723,15 @@ def _required_run_id(run: dict[str, Any]) -> str:
 
 def _text(value: Any) -> str:
     return str(value or "")
+
+
+def _history_text(value: Any) -> str:
+    if isinstance(value, datetime):
+        timespec = "microseconds" if value.microsecond else "seconds"
+        return value.isoformat(sep=" ", timespec=timespec)
+    if isinstance(value, (date, time)):
+        return value.isoformat()
+    return _text(value)
 
 
 def _json(value: Any) -> str:

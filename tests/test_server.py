@@ -2083,6 +2083,7 @@ def test_db_validation_start_runs_background_job_and_exposes_download(tmp_path, 
     assert history["enable_public_info_check"] is True
     assert history["enable_template_check"] is True
     assert history["download_url"] == f"/api/tools/db-validation/history/download/{job_id}"
+    assert "rows" not in history
     history_path, history_name = router.get_db_validation_history_download(job_id)
     assert history_path == download_path
     assert history_name == "result.xlsx"
