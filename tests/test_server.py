@@ -465,8 +465,8 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
             self.config_path = Path(config_path)
 
     class FakeAuthManager:
-        def __init__(self, path):
-            events.append(("auth", Path(path)))
+        def __init__(self, path, *, database):
+            events.append(("auth", Path(path), database))
 
     monkeypatch.setattr(server_module, "ThreadingHTTPServer", build_http_server)
     monkeypatch.setattr(server_module, "ApiRouter", FakeRouter)
@@ -492,7 +492,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "validate_schema",
         "http_server",
         ("router", application_database),
-        ("auth", config_path),
+        ("auth", config_path, application_database),
         "serve_forever",
         "close",
     ]

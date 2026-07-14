@@ -33,6 +33,7 @@ class MySqlContractConnection:
             "data_sources": [],
             "app_settings": [],
             "config_snapshots": [],
+            "users": [],
         }
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> MemoryResult:
@@ -41,7 +42,7 @@ class MySqlContractConnection:
         compiled = statement.compile(dialect=mysql.dialect())
         sql = str(compiled)
         params = dict(compiled.params)
-        if parameters:
+        if isinstance(parameters, dict):
             params.update(parameters)
 
         table = statement.get_final_froms()[0] if getattr(statement, "is_select", False) else statement.table
@@ -57,21 +58,11 @@ class MySqlContractConnection:
                 ]
             return MemoryResult()
         if getattr(statement, "is_insert", False):
-            row = {column.name: params[column.name] for column in table.columns if column.name in params}
-            if table_name == "config_snapshots" and "id" not in row:
-                row["id"] = len(self.tables[table_name]) + 1
-            key_name = "key" if table_name == "app_settings" else "id"
-            existing = next(
-                (item for item in self.tables[table_name] if item.get(key_name) == row.get(key_name)),
-                None,
-            )
-            if existing is None:
-                self.tables[table_name].append(row)
-            else:
-                created_at = existing.get("created_at")
-                existing.update(row)
-                if created_at is not None:
-                    existing["created_at"] = created_at
+            if isinstance(parameters, list):
+                for item in parameters:
+                    self._insert_row(table_name, table, dict(item))
+                return MemoryResult()
+            self._insert_row(table_name, table, params)
             return MemoryResult()
         if getattr(statement, "is_select", False):
             rows = [dict(row) for row in self.tables[table_name]]
@@ -84,8 +75,27 @@ class MySqlContractConnection:
                 rows.sort(key=lambda row: (row["name"], row["id"]))
             if table_name == "config_snapshots":
                 rows.sort(key=lambda row: (row["created_at"], row["id"]), reverse=True)
+            if table_name == "users":
+                rows.sort(key=lambda row: (row["created_at"], row["id"]))
             return MemoryResult(rows=rows)
         raise AssertionError(f"unsupported SQLAlchemy statement: {statement!r}")
+
+    def _insert_row(self, table_name: str, table: Any, params: dict[str, Any]) -> None:
+        row = {column.name: params[column.name] for column in table.columns if column.name in params}
+        if table_name == "config_snapshots" and "id" not in row:
+            row["id"] = len(self.tables[table_name]) + 1
+        key_name = "key" if table_name == "app_settings" else "id"
+        existing = next(
+            (item for item in self.tables[table_name] if item.get(key_name) == row.get(key_name)),
+            None,
+        )
+        if existing is None:
+            self.tables[table_name].append(row)
+        else:
+            created_at = existing.get("created_at")
+            existing.update(row)
+            if created_at is not None:
+                existing["created_at"] = created_at
 
 
 class MemoryApplicationDatabase:

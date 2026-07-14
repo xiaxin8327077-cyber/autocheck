@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from auto_check.app.security import AuthManager
+from mysql_config_test_support import MemoryApplicationDatabase
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +13,7 @@ CRYPTO_FALLBACK_JS = ROOT / "src" / "auto_check" / "web" / "crypto_fallback.js"
 
 
 def test_js_rsa_oaep_fallback_encrypts_password_for_auth_manager(tmp_path: Path) -> None:
-    auth = AuthManager(tmp_path / "config.json")
+    auth = AuthManager(tmp_path / "config.json", database=MemoryApplicationDatabase())
     password = "AdminPass123"
     script = f"""
 const {{ encryptPasswordWithJwk }} = require({json.dumps(str(CRYPTO_FALLBACK_JS))});

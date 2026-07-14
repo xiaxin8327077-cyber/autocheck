@@ -1,6 +1,7 @@
 import json
 import http.client
 from io import BytesIO
+import sys
 import threading
 import zipfile
 
@@ -10,9 +11,38 @@ from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 
 from auto_check.app.config import ConfigStore, DataSourceConfig, DefaultSettings, NamedConfig, load_store, save_store
-from auto_check.app.local_store import db_path_for_config, read_app_value
 from auto_check.app.security import AuthManager, hash_password, sanitize_error_message
 from auto_check.app.server import ApiRouter, AutoCheckRequestHandler, ThreadingHTTPServer, web_root
+from mysql_config_test_support import MemoryApplicationDatabase
+
+
+@pytest.fixture(autouse=True)
+def shared_application_database(monkeypatch):
+    database = MemoryApplicationDatabase()
+    original_auth_init = AuthManager.__init__
+    original_router_init = ApiRouter.__init__
+    original_load_store = load_store
+    original_save_store = save_store
+
+    def auth_init(self, config_path, *, database_override=None, database=None):
+        original_auth_init(self, config_path, database=database or database_override or shared_database)
+
+    def router_init(self, *args, **kwargs):
+        kwargs.setdefault("application_database", database)
+        original_router_init(self, *args, **kwargs)
+
+    def test_load_store(path=None, *, database=None):
+        return original_load_store(path, database=database or shared_database)
+
+    def test_save_store(store, path=None, *, database=None):
+        return original_save_store(store, path, database=database or shared_database)
+
+    shared_database = database
+    monkeypatch.setattr(AuthManager, "__init__", auth_init)
+    monkeypatch.setattr(ApiRouter, "__init__", router_init)
+    monkeypatch.setattr(sys.modules[__name__], "load_store", test_load_store)
+    monkeypatch.setattr(sys.modules[__name__], "save_store", test_save_store)
+    return database
 
 
 def _zip_bytes(files: dict[str, str]) -> bytes:
@@ -75,23 +105,23 @@ def _encrypted_password(server, password: str) -> str:
     return cipher.encrypt(password.encode("utf-8")).hex()
 
 
-def test_auth_manager_sets_password_hash_and_validates_sessions(tmp_path):
+def test_auth_manager_sets_password_hash_and_validates_sessions(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     auth = AuthManager(config_path)
 
     assert auth.setup_required() is True
-
     auth.set_admin_password("StrongerPass123")
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
-    assert "StrongerPass123" not in json.dumps(raw, ensure_ascii=False)
-    assert raw["auth"]["users"][0]["username"] == "admin"
-    assert raw["auth"]["users"][0]["display_name"] == "管理员"
-    assert raw["auth"]["users"][0]["role"] == "admin"
-    assert raw["auth"]["users"][0]["password_hash"].startswith("pbkdf2_sha256$")
 
-    failed = auth.login("admin", "wrong")
-    assert failed is None
+    rows = shared_application_database.connection.tables["users"]
+    assert len(rows) == 1
+    assert rows[0]["username"] == "admin"
+    assert rows[0]["display_name"] == "管理员"
+    assert rows[0]["role"] == "admin"
+    assert rows[0]["password_hash"].startswith("pbkdf2_sha256$")
+    assert "StrongerPass123" not in rows[0]["password_hash"]
+    assert not config_path.exists()
 
+    assert auth.login("admin", "wrong") is None
     session = auth.login("admin", "StrongerPass123")
     assert session is not None
     assert session.username == "admin"
@@ -102,69 +132,83 @@ def test_auth_manager_sets_password_hash_and_validates_sessions(tmp_path):
     assert auth.validate_session(session.session_id) is None
 
 
-def test_validate_session_does_not_write_auth_store_when_database_is_locked(tmp_path):
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    auth = AuthManager(config_path)
+def test_validate_session_does_not_write_user_storage(tmp_path, shared_application_database):
+    auth = AuthManager(tmp_path / "config.json")
     auth.set_admin_password("StrongerPass123")
     session = auth.login("admin", "StrongerPass123")
     assert session is not None
+    transaction_count = shared_application_database.transaction_count
 
-    db_path = db_path_for_config(config_path)
-    writer = sqlite3.connect(db_path, timeout=1)
-    writer.execute("PRAGMA journal_mode = WAL")
-    writer.execute("BEGIN IMMEDIATE")
-    writer.execute(
-        "UPDATE app_kv SET updated_at = datetime('now') WHERE key = 'auth'"
-    )
-    try:
-        validated = auth.validate_session(session.session_id)
-    finally:
-        writer.rollback()
-        writer.close()
+    validated = auth.validate_session(session.session_id)
 
     assert validated is not None
     assert validated.username == "admin"
+    assert shared_application_database.transaction_count == transaction_count
 
 
-def test_auth_manager_persists_users_to_sqlite_and_can_load_without_json_snapshot(tmp_path):
+def test_auth_manager_persists_users_to_mysql_across_instances(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     auth = AuthManager(config_path)
     auth.set_admin_password("StrongerPass123")
     auth.create_user(username="operator", password="Operator123", role="user", display_name="Operator")
 
-    assert db_path_for_config(config_path).exists()
-    assert read_app_value(config_path, "auth")["users"][0]["username"] == "admin"
-
-    config_path.unlink()
     restarted = AuthManager(config_path)
     session = restarted.login("operator", "Operator123")
 
     assert session is not None
     assert session.display_name == "Operator"
     assert session.role == "user"
+    assert {row["username"] for row in shared_application_database.connection.tables["users"]} == {"admin", "operator"}
+    assert not config_path.exists()
 
 
-def test_auth_manager_persists_users_to_normalized_table(tmp_path):
-    import sqlite3
-
-    config_path = tmp_path / "config.json"
-    manager = AuthManager(config_path)
+def test_auth_manager_persists_native_mysql_user_fields(tmp_path, shared_application_database):
+    manager = AuthManager(tmp_path / "config.json")
     manager.set_admin_password("Admin123")
     manager.create_user(username="alice", password="Alice123", role="user")
 
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        rows = connection.execute(
-            "SELECT username, role, enabled FROM users ORDER BY username"
-        ).fetchall()
+    rows = sorted(shared_application_database.connection.tables["users"], key=lambda row: row["username"])
+    assert [(row["username"], row["role"], row["enabled"]) for row in rows] == [
+        ("admin", "admin", True),
+        ("alice", "user", True),
+    ]
+    assert all(row["created_at"].__class__.__name__ == "datetime" for row in rows)
+    assert all(row["updated_at"].__class__.__name__ == "datetime" for row in rows)
 
-    assert rows == [("admin", "admin", 1), ("alice", "user", 1)]
-    assert read_app_value(config_path, "auth")["users"][0]["username"] == "admin"
 
-    config_path.unlink()
-    reloaded = AuthManager(config_path)
-    assert {user["username"] for user in reloaded.list_users()} == {"admin", "alice"}
+def test_auth_manager_user_writes_hold_lock(tmp_path):
+    manager = AuthManager(tmp_path / "config.json")
+    original_save_users = manager._save_users
+    write_checks = []
+
+    def save_users_with_lock_assertion(users):
+        write_checks.append(True)
+        assert manager._users_lock._is_owned()
+        original_save_users(users)
+
+    manager._save_users = save_users_with_lock_assertion
+
+    manager.set_admin_password("Admin123")
+    admin = manager.list_users()[0]
+
+    session = manager.login("admin", "Admin123")
+    assert session is not None
+
+    operator = manager.create_user(
+        username="operator",
+        password="Operator123",
+        role="user",
+        current_user_id=admin["id"],
+    )
+    manager.update_user(
+        operator["id"],
+        display_name="Operator Updated",
+        current_user_id=admin["id"],
+    )
+    manager.reset_password(operator["id"], "Operator456", current_user_id=admin["id"])
+    manager.delete_user(operator["id"], current_user_id=admin["id"])
+
+    assert len(write_checks) == 6
 
 
 def test_auth_session_uses_configured_idle_expire_hours_and_renews_on_activity(tmp_path, monkeypatch):
@@ -210,66 +254,46 @@ def test_new_auth_passwords_require_six_chars_and_one_letter(tmp_path):
     assert auth.login("operator", "xy789z") is not None
 
 
-def test_auth_migrates_legacy_admin_hash_to_admin_user(tmp_path):
-    config_path = tmp_path / "config.json"
-    legacy = AuthManager(config_path)
-    legacy.set_admin_password("StrongerPass123")
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
-    legacy_hash = raw["auth"]["users"][0]["password_hash"]
-    raw["auth"] = {"admin_password_hash": legacy_hash}
-    config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
-
-    auth = AuthManager(config_path)
-    session = auth.login("admin", "StrongerPass123")
-
-    assert session is not None
-    migrated = json.loads(config_path.read_text(encoding="utf-8"))["auth"]
-    assert "admin_password_hash" not in migrated
-    assert migrated["users"][0]["username"] == "admin"
-    assert migrated["users"][0]["display_name"] == "管理员"
-    assert migrated["users"][0]["role"] == "admin"
-
-
-def test_auth_migrates_from_config_json_auth_when_users_table_is_empty(tmp_path):
-    import sqlite3
-
+def test_auth_does_not_automatically_migrate_config_json(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps(
-            {
-                "auth": {
-                    "users": [
-                        {
-                            "id": "u-admin",
-                            "username": "admin",
-                            "display_name": "admin",
-                            "role": "admin",
-                            "password_hash": hash_password("Admin123"),
-                            "enabled": True,
-                            "created_at": "2026-07-01 10:00:00",
-                            "updated_at": "2026-07-01 10:00:00",
-                            "last_login_at": "",
-                        }
-                    ]
-                }
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps({"auth": {"admin_password_hash": hash_password("Admin123")}}),
         encoding="utf-8",
     )
 
     manager = AuthManager(config_path)
 
-    assert manager.list_users()[0]["username"] == "admin"
-    with sqlite3.connect(db_path_for_config(config_path)) as connection:
-        row = connection.execute("SELECT username, role FROM users").fetchone()
-        migration = connection.execute(
-            "SELECT status, migrated_count FROM storage_migration_runs WHERE source_type = 'auth_json'"
-        ).fetchone()
+    assert manager.setup_required() is True
+    assert manager.login("admin", "Admin123") is None
+    assert shared_application_database.connection.tables["users"] == []
 
-    assert row == ("admin", "admin")
-    assert migration == ("completed", 1)
 
+def test_manually_imported_mysql_users_are_immediately_valid(tmp_path, shared_application_database):
+    from auto_check.app.storage_users import replace_users
+
+    with shared_application_database.transaction() as connection:
+        replace_users(
+            connection,
+            [
+                {
+                    "id": "u-admin",
+                    "username": "admin",
+                    "display_name": "管理员",
+                    "role": "admin",
+                    "password_hash": hash_password("Admin123"),
+                    "enabled": True,
+                    "created_at": "2026-07-01 10:00:00",
+                    "updated_at": "2026-07-01 10:00:00",
+                    "last_login_at": "",
+                }
+            ],
+        )
+
+    manager = AuthManager(tmp_path / "config.json")
+    session = manager.login("admin", "Admin123")
+
+    assert session is not None
+    assert session.display_name == "管理员"
 
 def test_login_failure_response_does_not_enumerate_accounts(tmp_path):
     server = _start_auth_test_server(tmp_path / "config.json")
@@ -854,7 +878,7 @@ def test_config_list_redacts_passwords_and_blank_password_keeps_existing(tmp_pat
     assert loaded.configs[0].business.password == "p2"
 
 
-def test_config_password_transport_requires_encrypted_values(tmp_path):
+def test_config_password_transport_requires_encrypted_values(tmp_path, shared_application_database):
     config_path = tmp_path / "config.json"
     server = _start_auth_test_server(config_path)
     try:
@@ -925,9 +949,13 @@ def test_config_password_transport_requires_encrypted_values(tmp_path):
         saved = next(config for config in loaded.configs if config.name == "local")
         assert saved.dws.password == "dws-secret"
         assert saved.business.password == "biz-secret"
-        raw = json.loads(config_path.read_text(encoding="utf-8"))
-        assert "dws-secret" not in json.dumps(raw, ensure_ascii=False)
-        assert "biz-secret" not in json.dumps(raw, ensure_ascii=False)
+        assert not config_path.exists()
+        rows = shared_application_database.connection.tables["data_sources"]
+        assert len(rows) == 2
+        raw = json.dumps(rows, ensure_ascii=False, default=str)
+        assert "dws-secret" not in raw
+        assert "biz-secret" not in raw
+        assert all(row["password_encrypted"] for row in rows)
     finally:
         server.shutdown()
         server.server_close()

@@ -3775,7 +3775,7 @@ def run_server(
             application_database=application_database,
             start_field_mapping_auto_refresh=True,
         )
-        auth_manager = AuthManager(router.config_path)
+        auth_manager = AuthManager(router.config_path, database=application_database)
 
         Handler.router = router
         Handler.auth_manager = auth_manager
