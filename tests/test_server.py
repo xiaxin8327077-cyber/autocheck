@@ -1,14 +1,17 @@
 ﻿from decimal import Decimal
 from io import BytesIO
 from datetime import date
+from pathlib import Path
 import errno
 import socket
 import sqlite3
+import sys
 import threading
 import time
 import zipfile
 
 from openpyxl import load_workbook
+import pytest
 
 import auto_check.app.server as server_module
 from auto_check.app.config import (
@@ -44,6 +47,39 @@ from auto_check.db_validation.metadata import TableFieldCatalog
 from auto_check.db_validation.models import DbValidationRunResult, ValidationResultRow
 from auto_check.engine.models import DifferenceDetail, ReconcileResult, ValuationMatch, ValuationRow
 from auto_check.engine.reconcile import NoSourceReportData
+from mysql_config_test_support import MemoryApplicationDatabase
+
+
+@pytest.fixture(autouse=True)
+def shared_application_database(monkeypatch):
+    """Keep legacy router tests on one MySQL-contract store per test."""
+    database = MemoryApplicationDatabase()
+    original_router_init = ApiRouter.__init__
+    original_load_store = load_store
+    original_save_store = save_store
+
+    def router_init(self, *args, **kwargs):
+        kwargs.setdefault("application_database", database)
+        original_router_init(self, *args, **kwargs)
+
+    def test_load_store(path=None, *, database_override=None, database=None):
+        selected = database or database_override or shared_database
+        return original_load_store(path, database=selected)
+
+    def test_save_store(store, path=None, *, database_override=None, database=None):
+        selected = database or database_override or shared_database
+        return original_save_store(store, path, database=selected)
+
+    shared_database = database
+    monkeypatch.setattr(ApiRouter, "__init__", router_init)
+    monkeypatch.setattr(sys.modules[__name__], "load_store", test_load_store)
+    monkeypatch.setattr(sys.modules[__name__], "save_store", test_save_store)
+    monkeypatch.setattr(
+        server_module.ApplicationDatabase,
+        "from_config_path",
+        staticmethod(lambda _path: database),
+    )
+    return database
 
 
 class FakeRunner:
@@ -355,6 +391,111 @@ def test_get_config_returns_defaults(tmp_path):
     assert payload["dws"]["db_type"] == "postgresql"
     assert payload["business"]["db_type"] == "mysql"
     assert payload["default_run_date"] == previous_month_end()
+
+
+def test_api_router_passes_one_shared_application_database_to_config_handlers(
+    monkeypatch, tmp_path
+):
+    application_database = object()
+    calls = []
+    store = ConfigStore()
+
+    def fake_load_store(path, *, database):
+        calls.append(("load", Path(path), database))
+        return store
+
+    def fake_save_store(saved_store, path, *, database):
+        calls.append(("save", Path(path), database))
+        assert saved_store is store
+
+    monkeypatch.setattr(server_module, "load_store", fake_load_store)
+    monkeypatch.setattr(server_module, "save_store", fake_save_store)
+    config_path = tmp_path / "config.json"
+
+    router = ApiRouter(
+        config_path=config_path,
+        application_database=application_database,
+        history_path=tmp_path / "history.json",
+    )
+    assert router.handle("GET", "/api/settings/defaults", None)[0] == 200
+    assert router.handle("POST", "/api/settings/defaults", {"page_size": 20})[0] == 200
+
+    assert calls == [
+        ("load", config_path, application_database),
+        ("load", config_path, application_database),
+        ("save", config_path, application_database),
+    ]
+
+
+def test_run_server_builds_validates_and_closes_application_database_before_services(
+    monkeypatch, tmp_path
+):
+    events = []
+    config_path = tmp_path / "config.json"
+
+    class FakeApplicationDatabase:
+        def test_connection(self):
+            events.append("test_connection")
+
+        def validate_schema(self):
+            events.append("validate_schema")
+
+        def close(self):
+            events.append("close")
+
+    application_database = FakeApplicationDatabase()
+
+    def from_config_path(path):
+        events.append(("from_config_path", Path(path)))
+        return application_database
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 8765)
+
+        def serve_forever(self):
+            events.append("serve_forever")
+
+    def build_http_server(_address, _handler):
+        events.append("http_server")
+        return FakeServer()
+
+    class FakeRouter:
+        def __init__(self, *, config_path, application_database, **_kwargs):
+            events.append(("router", application_database))
+            self.config_path = Path(config_path)
+
+    class FakeAuthManager:
+        def __init__(self, path):
+            events.append(("auth", Path(path)))
+
+    monkeypatch.setattr(server_module, "ThreadingHTTPServer", build_http_server)
+    monkeypatch.setattr(server_module, "ApiRouter", FakeRouter)
+    monkeypatch.setattr(server_module, "AuthManager", FakeAuthManager)
+    monkeypatch.setattr(server_module, "_is_tcp_port_active", lambda _host, _port: False)
+    monkeypatch.setattr(
+        server_module.ApplicationDatabase,
+        "from_config_path",
+        staticmethod(from_config_path),
+    )
+
+    server = server_module.run_server(
+        host="127.0.0.1",
+        port=8765,
+        open_browser=False,
+        config_path=config_path,
+    )
+
+    assert server is not None
+    assert events == [
+        ("from_config_path", config_path),
+        "test_connection",
+        "validate_schema",
+        "http_server",
+        ("router", application_database),
+        ("auth", config_path),
+        "serve_forever",
+        "close",
+    ]
 
 
 def test_previous_month_end_uses_beijing_today(monkeypatch):

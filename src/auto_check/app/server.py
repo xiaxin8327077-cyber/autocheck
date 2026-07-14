@@ -46,6 +46,7 @@ from auto_check.app.config import (
     save_config,
     save_store,
 )
+from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.db import DatabaseClient
 from auto_check.app.history import (
     HistoryStore,
@@ -247,6 +248,7 @@ class ApiRouter:
         self,
         *,
         config_path: str | Path | None = None,
+        application_database: ApplicationDatabase,
         history_path: str | Path | None = None,
         history_store: HistoryStore | None = None,
         runner_factory: RunnerFactory | None = None,
@@ -261,6 +263,7 @@ class ApiRouter:
         max_archive_member_bytes: int = MAX_ARCHIVE_MEMBER_BYTES,
     ):
         self.config_path = Path(config_path) if config_path is not None else default_config_path()
+        self.application_database = application_database
         if history_store is not None:
             self.history_store = history_store
         elif history_path is not None:
@@ -351,7 +354,7 @@ class ApiRouter:
                 return 200, {"history": run}
 
             if method == "GET" and path == "/api/system-info":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "history_run_count": _history_run_count(self.history_store),
                     "config_count": len(store.data_sources),
@@ -360,21 +363,21 @@ class ApiRouter:
 
             # ---- Default Settings ----
             if method == "GET" and path == "/api/settings/defaults":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "settings": default_settings_to_dict(store.default_settings),
                     "api_default_run_date": previous_month_end(),
                 }
 
             if method == "POST" and path == "/api/settings/defaults":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 store.default_settings = default_settings_from_dict(body or {})
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {"settings": default_settings_to_dict(store.default_settings)}
 
             # ---- Config Store ----
             if method == "GET" and path == "/api/configs":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 data_sources = sorted(store.data_sources, key=lambda c: (0 if c.is_default else 1, c.name))
                 default_source = next((entry for entry in data_sources if entry.is_default), data_sources[0] if data_sources else None)
                 return 200, {
@@ -383,7 +386,7 @@ class ApiRouter:
                 }
 
             if method == "GET" and path == "/api/configs/export":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "data_sources": [_public_data_source_entry(entry) for entry in store.data_sources],
                     "reconcile_data_sources": asdict(store.reconcile_data_sources),
@@ -397,10 +400,10 @@ class ApiRouter:
                 name = str((body or {}).get("name", "")).strip()
                 if not name:
                     return 400, {"error": "name is required"}
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 if "dws" in (body or {}) and "business" in (body or {}):
                     _save_legacy_grouped_config(store, body or {}, decrypt_password=self.transport_password_decryptor)
-                    save_store(store, self.config_path)
+                    save_store(store, self.config_path, database=self.application_database)
                     return 200, {"ok": True}
 
                 editing_id = str((body or {}).get("editing_id", "") or "").strip()
@@ -426,7 +429,7 @@ class ApiRouter:
                     store.data_sources.append(new_entry)
                 if not any(entry.is_default for entry in store.data_sources) and store.data_sources:
                     store.data_sources[0].is_default = True
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {"ok": True}
 
             if method == "DELETE" and path == "/api/configs":
@@ -434,7 +437,7 @@ class ApiRouter:
                 name = str((body or {}).get("name", "") or "").strip()
                 if not source_id and not name:
                     return 400, {"error": "id is required"}
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 delete_ids = {source_id} if source_id else {entry.id for entry in store.data_sources if entry.name == name}
                 referenced = _referenced_data_source_labels(store, delete_ids)
                 if referenced:
@@ -442,14 +445,14 @@ class ApiRouter:
                 store.data_sources = [entry for entry in store.data_sources if entry.id not in delete_ids]
                 if store.data_sources and not any(entry.is_default for entry in store.data_sources):
                     store.data_sources[0].is_default = True
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {"ok": True}
 
             if method == "POST" and path == "/api/configs/default":
                 source_id = str((body or {}).get("id", "") or "").strip()
                 if not source_id:
                     return 400, {"error": "id is required"}
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 found = False
                 for entry in store.data_sources:
                     if entry.id == source_id:
@@ -457,18 +460,18 @@ class ApiRouter:
                     entry.is_default = entry.id == source_id
                 if not found:
                     return 404, {"error": "data source not found"}
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {"ok": True}
 
             if method == "GET" and path == "/api/settings/reconcile-data-sources":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "settings": asdict(store.reconcile_data_sources),
                     "data_sources": [_public_data_source_entry(entry) for entry in store.data_sources],
                 }
 
             if method == "POST" and path == "/api/settings/reconcile-data-sources":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 settings = ReconcileDataSourceSettings(
                     dws_source_id=str((body or {}).get("dws_source_id", "") or "").strip(),
                     business_source_id=str((body or {}).get("business_source_id", "") or "").strip(),
@@ -476,11 +479,11 @@ class ApiRouter:
                 resolve_data_source(store, settings.dws_source_id)
                 resolve_data_source(store, settings.business_source_id)
                 store.reconcile_data_sources = settings
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {"settings": asdict(settings)}
 
             if method == "GET" and path == "/api/settings/reconcile-schema":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
                     "schema_file_path": str(reconcile_schema_path_for_config(self.config_path)),
@@ -488,7 +491,7 @@ class ApiRouter:
                 }
 
             if method == "POST" and path == "/api/settings/reconcile-schema":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 schema_payload = (body or {}).get("schema") if isinstance((body or {}).get("schema"), dict) else (body or {})
                 schema = reconcile_schema_settings_from_dict(schema_payload)
                 self._validate_reconcile_schema_settings(store, schema)
@@ -497,18 +500,18 @@ class ApiRouter:
                     tables=schema.tables,
                     strict=True,
                 )
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {"schema": reconcile_schema_settings_to_dict(store.reconcile_schema)}
 
             if method == "POST" and path == "/api/settings/reconcile-schema/init-from-file":
                 schema_path = reconcile_schema_path_for_config(self.config_path)
                 if not schema_path.exists():
                     return 404, {"error": f"reconcile schema file not found: {schema_path}"}
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 schema = load_reconcile_schema_settings_from_yaml(schema_path)
                 self._validate_reconcile_schema_settings(store, schema)
                 store.reconcile_schema = schema
-                save_store(store, self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
                 return 200, {
                     "schema": reconcile_schema_settings_to_dict(store.reconcile_schema),
                     "schema_file_path": str(schema_path),
@@ -519,7 +522,7 @@ class ApiRouter:
 
             # ---- Tools: PBC full product import ----
             if method == "GET" and path == "/api/tools/pbc-import/settings":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "settings": asdict(store.pbc_import_tool),
                     "data_sources": _pbc_import_data_sources(store),
@@ -538,7 +541,7 @@ class ApiRouter:
 
             # ---- Tools: database validation ----
             if method == "GET" and path == "/api/tools/db-validation/settings":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "settings": db_validation_settings_to_dict(store.db_validation),
                     "data_sources": [_public_data_source_entry(entry) for entry in store.data_sources],
@@ -547,11 +550,11 @@ class ApiRouter:
                     "field_mapping": self._db_validation_field_mapping_cache.status_payload(),
                 }
             if method == "POST" and path == "/api/tools/db-validation/settings":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 settings_payload = (body or {}).get("settings") if isinstance((body or {}).get("settings"), dict) else (body or {})
                 store.db_validation = db_validation_settings_from_dict(settings_payload)
-                save_store(store, self.config_path)
-                store = load_store(self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
+                store = load_store(self.config_path, database=self.application_database)
                 self._db_validation_field_mapping_cache.invalidate()
                 return 200, {
                     "settings": db_validation_settings_to_dict(store.db_validation),
@@ -571,18 +574,18 @@ class ApiRouter:
 
             # ---- Tools: flow chain execution ----
             if method == "GET" and path == "/api/tools/flow/settings":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {
                     "settings": flow_tool_settings_to_dict(store.flow_tool),
                     "data_sources": [_public_data_source_entry(entry) for entry in store.data_sources],
                 }
             if method == "POST" and path == "/api/tools/flow/settings":
-                store = load_store(self.config_path)
+                store = load_store(self.config_path, database=self.application_database)
                 flow_settings = flow_tool_settings_from_dict(body or {})
                 _validate_flow_tool_settings(store, flow_settings)
                 store.flow_tool = flow_settings
-                save_store(store, self.config_path)
-                store = load_store(self.config_path)
+                save_store(store, self.config_path, database=self.application_database)
+                store = load_store(self.config_path, database=self.application_database)
                 return 200, {"settings": flow_tool_settings_to_dict(store.flow_tool)}
             if method == "GET" and path == "/api/tools/flow/definitions":
                 query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
@@ -626,13 +629,13 @@ class ApiRouter:
 
             # ---- Read-only connection status ----
             if method == "GET" and path == "/api/connection-status":
-                config = load_config(self.config_path)
+                config = load_config(self.config_path, database=self.application_database)
                 return 200, self.connection_tester(config)
 
             # ---- Test connection (supports body with dws/business) ----
             if method == "POST" and path == "/api/test-connection":
                 if body and "dws" in body:
-                    store = load_store(self.config_path)
+                    store = load_store(self.config_path, database=self.application_database)
                     editing_name = str(body.get("editing_name", "")).strip()
                     existing_cfg = next((c for c in store.configs if c.name == editing_name), None)
                     dws = _build_ds(
@@ -651,7 +654,7 @@ class ApiRouter:
                     )
                     config = AppConfig(dws=dws, business=biz)
                 elif body and "db_type" in body:
-                    store = load_store(self.config_path)
+                    store = load_store(self.config_path, database=self.application_database)
                     editing_id = str(body.get("editing_id", "") or body.get("id", "") or "").strip()
                     existing_entry = next((entry for entry in store.data_sources if entry.id == editing_id), None)
                     data_source = _build_ds(
@@ -663,19 +666,19 @@ class ApiRouter:
                     )
                     return 200, {"source": _test_one_source(DatabaseClient(data_source))}
                 else:
-                    config = load_config(self.config_path)
+                    config = load_config(self.config_path, database=self.application_database)
                 return 200, self.connection_tester(config)
 
             # ---- Legacy ----
             if method == "GET" and path == "/api/config":
-                payload = _public_config(load_config(self.config_path))
+                payload = _public_config(load_config(self.config_path, database=self.application_database))
                 payload["default_run_date"] = previous_month_end()
                 return 200, payload
             if method == "POST" and path == "/api/config":
                 if _contains_plaintext_password(body or {}):
                     return 400, {"error": "encrypted database password is required"}
                 config = config_from_dict(body or {})
-                save_config(config, self.config_path)
+                save_config(config, self.config_path, database=self.application_database)
                 return 200, {"ok": True}
             if method == "POST" and path == "/api/run":
                 date = str((body or {}).get("date", "")).strip()
@@ -753,7 +756,7 @@ class ApiRouter:
         upload_paths = [path for upload_id in upload_ids if (path := self._pbc_import_upload_path(upload_id)) is not None]
         if not upload_paths or len(upload_paths) != len(upload_ids):
             raise ValueError("uploaded file not found")
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         config_name = str(body.get("config_name", "")).strip()
         source = str(body.get("source", "dws") or "dws").strip()
         data_source = _select_pbc_import_source(store, config_name, source)
@@ -775,7 +778,13 @@ class ApiRouter:
         if mode not in {"append", "replace"}:
             raise ValueError("mode must be append or replace")
 
-        _save_pbc_import_preferences(self.config_path, target_table, config_name, source)
+        _save_pbc_import_preferences(
+            self.config_path,
+            target_table,
+            config_name,
+            source,
+            database=self.application_database,
+        )
         job = PbcImportJob(
             upload_path=upload_paths[0],
             upload_paths=upload_paths,
@@ -835,7 +844,7 @@ class ApiRouter:
             job.fail(_runtime_error_message(str(exc)))
 
     def _load_reconcile_schema_columns(self, body: dict[str, Any]) -> dict[str, Any]:
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         source_id = str(body.get("source_id", "") or "").strip()
         if not source_id:
             raise ValueError("source_id is required")
@@ -915,7 +924,7 @@ class ApiRouter:
             raise ValueError(f"表字段配置校验失败：{'；'.join(errors)}")
 
     def _load_pbc_import_columns(self, body: dict[str, Any]) -> dict[str, Any]:
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         config_name = str(body.get("config_name", "")).strip()
         source = str(body.get("source", "dws") or "dws").strip()
         data_source = _select_pbc_import_source(store, config_name, source)
@@ -956,7 +965,7 @@ class ApiRouter:
         }
 
     def _refresh_db_validation_field_mapping(self, *, source: str) -> dict[str, Any]:
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         settings = store.db_validation
         metadata_source = resolve_data_source(store, settings.field_mapping_source_id or settings.detail.source_id)
         try:
@@ -1051,7 +1060,7 @@ class ApiRouter:
         *,
         current_user: dict[str, Any] | None = None,
     ) -> "DbValidationJob":
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         settings = store.db_validation
         detail_source_id = settings.detail.source_id
         data_source = resolve_data_source(store, detail_source_id)
@@ -1235,7 +1244,7 @@ class ApiRouter:
         return None
 
     def _load_flow_definitions(self, keyword: str) -> list[dict[str, Any]]:
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         settings = store.flow_tool
         if not settings.source_id:
             return []
@@ -1251,7 +1260,7 @@ class ApiRouter:
             ) from exc
 
     def _start_flow_chain_job(self, chain_id: str, *, trigger_type: str, current_user: dict[str, Any] | None = None, save_history: bool = True) -> "FlowChainJob":
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         settings = store.flow_tool
         chain = _find_flow_chain(settings.chains, chain_id)
         if chain is None:
@@ -1412,7 +1421,7 @@ class ApiRouter:
         cancel_event: threading.Event | None = None,
         current_user: dict[str, Any] | None = None,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        store = load_store(self.config_path)
+        store = load_store(self.config_path, database=self.application_database)
         config, config_name, dws_source_name = _active_config_and_name_from_store(store, config_path=self.config_path)
         runner = self._create_runner(
             config,
@@ -2186,8 +2195,15 @@ def _select_pbc_import_source(store: Any, config_name: str, source: str) -> Data
     return selected.config
 
 
-def _save_pbc_import_preferences(config_path: str | Path, table: str, config_name: str, source: str) -> None:
-    store = load_store(config_path)
+def _save_pbc_import_preferences(
+    config_path: str | Path,
+    table: str,
+    config_name: str,
+    source: str,
+    *,
+    database: ApplicationDatabase,
+) -> None:
+    store = load_store(config_path, database=database)
     recent_tables = [table]
     recent_tables.extend(item for item in store.pbc_import_tool.recent_tables if item != table)
     store.pbc_import_tool = PbcImportToolSettings(
@@ -2195,7 +2211,7 @@ def _save_pbc_import_preferences(config_path: str | Path, table: str, config_nam
         last_config_name=config_name,
         last_source=source if source in {"dws", "business"} else "dws",
     )
-    save_store(store, config_path)
+    save_store(store, config_path, database=database)
 
 
 def execute_pbc_import(
@@ -2487,8 +2503,15 @@ def _calculate_duration_seconds(start_str: str, end_str: str) -> int:
         return 0
 
 
-def _active_config_and_name(config_path: str | Path) -> tuple[AppConfig, str, str]:
-    return _active_config_and_name_from_store(load_store(config_path), config_path=config_path)
+def _active_config_and_name(
+    config_path: str | Path,
+    *,
+    database: ApplicationDatabase,
+) -> tuple[AppConfig, str, str]:
+    return _active_config_and_name_from_store(
+        load_store(config_path, database=database),
+        config_path=config_path,
+    )
 
 
 def _active_config_and_name_from_store(store: Any, *, config_path: str | Path | None = None) -> tuple[AppConfig, str, str]:
@@ -2512,7 +2535,7 @@ def _active_config_and_name_from_store(store: Any, *, config_path: str | Path | 
     if store.configs:
         named_config = store.configs[0]
         return AppConfig(dws=named_config.dws, business=named_config.business), named_config.name, f"{named_config.name} - DWS"
-    fallback_config = load_config(config_path) if config_path is not None else default_config()
+    fallback_config = default_config()
     return fallback_config, "默认配置", "默认配置 - DWS"
 
 
@@ -3732,31 +3755,42 @@ def run_server(
             webbrowser.open(url)
         return None
 
+    resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
+    application_database = ApplicationDatabase.from_config_path(resolved_config_path)
     try:
-        server = ThreadingHTTPServer((host, port), Handler)
-    except OSError as exc:
-        if _is_port_in_use_error(exc):
-            print(f"Auto Check appears to be already running at {url}")
-            if open_browser:
-                webbrowser.open(url)
-            return None
-        raise
+        application_database.test_connection()
+        application_database.validate_schema()
+        try:
+            server = ThreadingHTTPServer((host, port), Handler)
+        except OSError as exc:
+            if _is_port_in_use_error(exc):
+                print(f"Auto Check appears to be already running at {url}")
+                if open_browser:
+                    webbrowser.open(url)
+                return None
+            raise
 
-    router = ApiRouter(config_path=config_path, start_field_mapping_auto_refresh=True)
-    auth_manager = AuthManager(router.config_path)
+        router = ApiRouter(
+            config_path=resolved_config_path,
+            application_database=application_database,
+            start_field_mapping_auto_refresh=True,
+        )
+        auth_manager = AuthManager(router.config_path)
 
-    Handler.router = router
-    Handler.auth_manager = auth_manager
-    actual_port = server.server_address[1]
-    url = f"http://{browser_host}:{actual_port}"
-    print(f"Auto Check running at {url}")
-    if open_browser:
-        webbrowser.open(url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    return server
+        Handler.router = router
+        Handler.auth_manager = auth_manager
+        actual_port = server.server_address[1]
+        url = f"http://{browser_host}:{actual_port}"
+        print(f"Auto Check running at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        return server
+    finally:
+        application_database.close()
 
 
 def _browser_host(host: str) -> str:
