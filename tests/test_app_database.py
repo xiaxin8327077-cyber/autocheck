@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -28,6 +29,7 @@ def _write_config(path: Path, **overrides: object) -> dict[str, object]:
         "pool_size": 7,
         "pool_max_overflow": 3,
         "ssl": True,
+        "ssl_ca": "C:/certs/mysql-ca.pem",
     }
     node.update(overrides)
     path.write_text(json.dumps({"app_database": node}), encoding="utf-8")
@@ -126,6 +128,12 @@ def _assert_no_ddl(connection: _FakeConnection) -> None:
     assert all(sql.lstrip().split(maxsplit=1)[0].lower() not in ddl_words for sql, _ in connection.statements)
 
 
+def test_application_database_config_repr_does_not_include_plaintext_password():
+    config = _config()
+
+    assert config.password not in repr(config)
+
+
 def test_from_config_path_loads_valid_mysql_config_and_engine_options(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     expected = _write_config(config_path)
@@ -151,14 +159,30 @@ def test_from_config_path_loads_valid_mysql_config_and_engine_options(tmp_path, 
         pool_size=expected["pool_size"],
         pool_max_overflow=expected["pool_max_overflow"],
         ssl=expected["ssl"],
+        ssl_ca=expected["ssl_ca"],
     )
     assert captured["options"] == {
         "pool_pre_ping": True,
         "pool_recycle": 1800,
         "pool_size": 7,
         "max_overflow": 3,
-        "connect_args": {"connect_timeout": 12, "ssl": {"check_hostname": False}},
+        "connect_args": {
+            "connect_timeout": 12,
+            "ssl": {
+                "ca": "C:/certs/mysql-ca.pem",
+                "check_hostname": True,
+                "verify_mode": ssl.CERT_REQUIRED,
+            },
+        },
     }
+
+
+def test_from_config_path_requires_ssl_ca_when_ssl_enabled(tmp_path):
+    config_path = tmp_path / "config.json"
+    _write_config(config_path, ssl=True, ssl_ca="")
+
+    with pytest.raises(ValueError, match="ssl_ca"):
+        ApplicationDatabase.from_config_path(config_path)
 
 
 def test_from_config_path_requires_app_database_node(tmp_path):

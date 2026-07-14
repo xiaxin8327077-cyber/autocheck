@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import ssl
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -186,12 +187,13 @@ class ApplicationDatabaseConfig:
     port: int
     database: str
     username: str
-    password: str
+    password: str = field(repr=False)
     charset: str = "utf8mb4"
     connect_timeout: int = 10
     pool_size: int = 5
     pool_max_overflow: int = 5
     ssl: bool = False
+    ssl_ca: str = ""
 
 
 class ApplicationDatabase:
@@ -296,6 +298,12 @@ def _load_application_database_config(config_path: str | Path) -> ApplicationDat
     ssl = node.get("ssl", False)
     if not isinstance(ssl, bool):
         raise ValueError("app_database.ssl 必须是布尔值")
+    ssl_ca_value = node.get("ssl_ca", "")
+    if not isinstance(ssl_ca_value, str):
+        raise ValueError("app_database.ssl_ca 必须是字符串")
+    ssl_ca = ssl_ca_value.strip()
+    if ssl and not ssl_ca:
+        raise ValueError("app_database.ssl=true 时必须提供非空 ssl_ca")
 
     return ApplicationDatabaseConfig(
         host=host,
@@ -308,6 +316,7 @@ def _load_application_database_config(config_path: str | Path) -> ApplicationDat
         pool_size=pool_size,
         pool_max_overflow=pool_max_overflow,
         ssl=ssl,
+        ssl_ca=ssl_ca,
     )
 
 
@@ -323,7 +332,11 @@ def _create_application_engine(config: ApplicationDatabaseConfig) -> Engine:
     )
     connect_args: dict[str, Any] = {"connect_timeout": config.connect_timeout}
     if config.ssl:
-        connect_args["ssl"] = {"check_hostname": False}
+        connect_args["ssl"] = {
+            "ca": config.ssl_ca,
+            "check_hostname": True,
+            "verify_mode": ssl.CERT_REQUIRED,
+        }
     return create_engine(
         url,
         pool_pre_ping=True,
