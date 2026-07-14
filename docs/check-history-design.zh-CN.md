@@ -1,33 +1,19 @@
 # 核对历史记录设计说明
 
-本文档说明“核对历史”功能的当前实现、结构化本地存储和旧历史数据迁移方式。
+本文档说明“核对历史”功能的当前实现、MySQL 应用存储结构和旧历史数据离线迁移方式。
 
 ## 一、设计目标
 
 - 每次自动对数成功后，自动保存一条历史记录。
 - 历史记录必须能展示本次结果相对上一次的变化。
-- 当前保存到本地 SQLite `auto-check.db`，并保留旧 JSON/旧表兼容快照。
+- 当前保存到 MySQL 应用库 `auto_check`，由 `DatabaseHistoryStore` 通过 SQLAlchemy Core 读写结构化历史表。
 - 历史记录属于工具自身数据，不写入业务数据库。
 
 ## 二、当前存储方式
 
-当前默认实现使用 `SqliteHistoryStore`，数据保存在配置文件同目录的 SQLite 数据库：
+当前默认实现使用 `DatabaseHistoryStore`，数据保存在 `config.json` 中 `app_database` 指向的 MySQL 应用库 `auto_check`。`config.json` 仅提供启动连接信息，历史记录不再写入同目录 JSON 或 SQLite。
 
-```text
-auto-check.db
-```
-
-如果程序使用默认配置路径，则数据库文件位于：
-
-```text
-%APPDATA%\auto-check\auto-check.db
-```
-
-如果启动时传入 `--config D:\xxx\config.json`，则数据库文件位于：
-
-```text
-D:\xxx\auto-check.db
-```
+运行时不再自动迁移旧 SQLite 或旧 JSON 历史；如需迁移旧数据，应在停机备份后使用 `scripts/export_sqlite_to_mysql.py` 只读导出 SQL，再由运维人员人工执行。
 
 自动对数历史使用结构化表保存常用查询字段：
 
@@ -52,7 +38,7 @@ D:\xxx\auto-check.db
 - `flow_chain_run_logs`：执行日志、进度和当前步骤。
 - `flow_chain_run_details`：单链路或多链路合并历史中的链路明细。
 
-旧 `history_runs(kind='reconcile')`、`history_runs(kind='db_validation')`、`history_runs(kind='flow_chain')`，以及同目录 `history.json`、`db-validation-history.json` 会在首次读取历史时自动迁移到结构化表；迁移过程幂等，不删除旧数据。
+旧 `history_runs(kind='reconcile')`、`history_runs(kind='db_validation')`、`history_runs(kind='flow_chain')`，以及同目录 `history.json`、`db-validation-history.json` 仅作为离线迁移来源保留，当前运行版本不会在首次读取历史时自动迁移。
 
 ## 三、存储抽象
 
@@ -63,7 +49,7 @@ D:\xxx\auto-check.db
 - `save_run(run)`：保存一次核对记录。
 - `delete_run(run_id)`：删除一条历史记录。
 
-业务代码只依赖 `HistoryStore`，不直接依赖具体表结构。`SqliteHistoryStore` 会同时维护结构化表和旧 `history_runs` 兼容快照，`JsonHistoryStore` 仅保留给测试和旧文件场景使用。
+业务代码只依赖 `HistoryStore`，不直接依赖具体表结构。`DatabaseHistoryStore` 维护 MySQL 结构化表和 `run_headers.payload_json` 完整快照，`JsonHistoryStore` 仅保留给测试和旧文件场景使用。
 
 ## 四、历史记录字段
 
@@ -155,12 +141,12 @@ D:\xxx\auto-check.db
 
 ## 八、迁移与回退
 
-结构化历史迁移遵循“旧数据保留、首次读取自动导入、同一来源同一指纹只迁移一次”的原则。
+结构化历史迁移遵循“旧数据保留、离线只读导出、人工执行 SQL”的原则。运行时不再自动迁移旧 SQLite 或旧 JSON 历史。
 
-- `history_runs(kind='reconcile')` 和同目录 `history.json` 都会迁移到结构化自动对数历史表；两类旧来源同时存在时按记录 `id` 去重，不再因为旧 SQLite 已有记录而跳过 `history.json`。
+- `history_runs(kind='reconcile')` 和同目录 `history.json` 可通过离线导出脚本迁移到结构化自动对数历史表；两类旧来源同时存在时由导出报告记录来源和行数。
 - `history.json` 支持顶层数组和 `{"runs": [...]}` 两种格式。
 - `history_runs(kind='db_validation')` 和人行逐笔校验旧文件 `db-validation-history.json` 会迁移到 `db_validation_runs`、`db_validation_selected_tables`、`db_validation_warnings` 和 `db_validation_result_rows`。
 - `history_runs(kind='flow_chain')` 会迁移到 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`。
-- 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数、跳过条数、状态和错误摘要；旧 JSON 损坏时记录为 `failed`，不标记为已完成，也不删除原文件。
+- 迁移记录写入 `storage_migration_runs`，记录来源类型、路径、指纹、导入条数、跳过条数、状态和错误摘要；旧 JSON 损坏时应先在离线导出阶段处理，不由运行时静默迁移。
 
-详情页和导出仍可从 `run_headers.payload_json` 还原完整结果；列表、统计和后续筛选优先使用结构化热字段。回退时可以恢复迁移前备份的 `auto-check.db` 和旧 JSON 文件。
+详情页和导出仍可从 `run_headers.payload_json` 还原完整结果；列表、统计和后续筛选优先使用结构化热字段。回退时可以恢复旧版本程序、迁移前备份的 `auto-check.db` 和旧 JSON 文件。

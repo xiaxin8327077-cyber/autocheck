@@ -1409,22 +1409,29 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     assert '<span class="changelog-date">2026-07-02</span>' in app_js
     for text in change_items:
         assert text in readme
-        assert text in app_js
+
+    for text in [
+        "应用自身配置、用户和历史记录改为保存到 MySQL `auto_check` 应用库",
+        "config.json 仅保留 `app_database` 启动连接信息",
+        "sql/app_storage/mysql/001_init_schema.sql",
+        "scripts/export_sqlite_to_mysql.py",
+        "本地数据查询页面及入口已隐藏",
+        "删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行",
+    ]:
+        assert text in readme
 
     for text in [
         "重复启动本地服务时检测默认端口占用",
-        "本地 SQLite 旧库结构迁移前自动生成",
         "系统设置和工具页的配置加载改为模块间互不阻塞",
         "系统信息改用轻量统计接口",
         "避免切页或刷新时拉取全量历史记录",
         "逐笔字段映射加载结果少于系统内置表单",
-        "旧历史结构化迁移从普通查询链路移除",
-        "改为管理员在“本地数据查询”页面手动触发",
-        "SQLite 锁等待",
         "历史记录写入当前登录用户的姓名、账号和用户 ID",
     ]:
         assert text in readme
     assert "系统优化及BUG修复。" in app_js
+    assert "本地数据查询" not in app_js
+    assert "auto-check.db" not in app_js
 
 
 def test_version_205_documents_scheme_a_logo_update():

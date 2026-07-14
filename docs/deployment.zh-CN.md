@@ -1,6 +1,34 @@
 # Auto Check 部署说明
 
-当前版本暂不接应用数据库，应用自身配置、用户和历史仍保存为本地 JSON 文件。因此部署时按单实例处理：只在一台机器上启动一个服务进程，Windows 或 Linux 客户端通过服务端 IP 和固定端口访问。
+当前版本使用 MySQL 应用库保存系统自身配置、用户、认证数据和执行历史。部署时仍按单实例处理：只在一台机器上启动一个服务进程，Windows 或 Linux 客户端通过服务端 IP 和固定端口访问。
+
+## MySQL 应用库前置准备
+
+上线前必须由运维人员手工准备 MySQL 应用库 `auto_check`，应用启动时只连接和校验表结构，不自动建库、建表、升级或迁移 SQLite 数据。
+
+1. 手工创建空库 `auto_check`，并为应用账号授予必要读写权限。
+2. 执行 `sql/app_storage/mysql/001_init_schema.sql` 创建 20 张应用存储表；该脚本不包含生产数据，也不包含 `CREATE DATABASE`、`DROP` 或 `TRUNCATE`。
+3. 如需迁移旧 SQLite `auto-check.db`，停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读生成数据 SQL 和迁移报告，再由运维人员人工执行数据 SQL。
+4. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
+5. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
+6. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
+7. 上线验收需确认 MySQL 20 张目标表和迁移行数齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+
+`app_database` 示例：
+
+```json
+{
+  "app_database": {
+    "backend": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "auto_check",
+    "username": "auto_check_app",
+    "password": "<set-by-operations>",
+    "charset": "utf8mb4"
+  }
+}
+```
 
 本系统面向桌面端浏览器使用，建议在常规电脑屏幕或浏览器窗口宽度不低于 `900px` 的环境下操作；移动端、390px 等极窄屏不纳入本版本部署验收范围。
 

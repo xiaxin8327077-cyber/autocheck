@@ -129,21 +129,21 @@ HTTP 200 { "job": null }
 
 - `flow_tool.py` 核心逻辑不变。
 - 执行、轮询、超时、取消机制不变。
-- 流程链执行记录的对外 payload 和 API 结构不变；本地历史会写入 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`，并继续维护旧 `history_runs(kind='flow_chain')` 兼容快照。
+- 流程链执行记录的对外 payload 和 API 结构不变；当前版本通过 `DatabaseHistoryStore` 写入 MySQL 应用库中的 `flow_chain_runs`、`flow_chain_run_steps`、`flow_chain_run_logs` 和 `flow_chain_run_details`，并在 `run_headers.payload_json` 保留完整快照，不再维护旧 `history_runs(kind='flow_chain')` 兼容快照。
 
 ## 四、涉及文件
 
 | 文件 | 改动内容 |
 |------|----------|
 | `src/auto_check/app/server.py` | 新增 `GET /api/flow-chain/status` 接口 |
-| `src/auto_check/app/history.py` | 流程链历史读写接入结构化存储并保留兼容回退 |
-| `src/auto_check/app/storage_history.py` | 流程链历史结构化写入、旧表迁移和删除级联 |
-| `src/auto_check/app/storage_schema.py` | 流程链历史结构化表定义 |
+| `src/auto_check/app/history.py` | 流程链历史读写接入 `DatabaseHistoryStore` |
+| `src/auto_check/app/storage_history.py` | 流程链历史 MySQL 结构化写入和删除级联 |
+| `sql/app_storage/mysql/001_init_schema.sql` | MySQL 应用库流程链历史表定义 |
 | `src/auto_check/web/app.js` | 浮动提示条渲染、轮询、展开收起逻辑；弹窗交互调整（提交后提示、重开查看进度） |
 | `src/auto_check/web/styles.css` | 浮动提示条样式，活力/沉稳主题及暗色模式适配 |
 | `src/auto_check/web/index.html` | 浮动提示条 DOM 容器 |
 | `tests/test_server.py` | 新增 status 接口测试 |
-| `tests/test_history.py` | 新增流程链历史分表写入和旧表迁移测试 |
+| `tests/test_history.py` | 新增流程链历史 MySQL 分表写入测试 |
 | `tests/test_web_static.py` | 新增浮动提示条相关静态检查 |
 | `docs/prototypes/flow-float-toast/` | 设计预览原型 |
 

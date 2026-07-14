@@ -2,6 +2,34 @@
 
 本文适用于在内网生产服务器上部署 `auto-check` Linux 可执行文件。部署方式为：使用已创建好的 `autocheck` 专用用户运行服务，程序、配置、数据均放在 `/home/autocheck` 下，使用 systemd 管理后台服务。
 
+## MySQL 应用库前置要求
+
+当前版本的系统自身配置、用户、认证数据和执行历史统一保存到 MySQL 应用库 `auto_check`。生产部署前需完成以下工作，应用启动时只做连接和结构校验，不自动建库、建表、升级或迁移旧 SQLite 数据。
+
+1. 在 MySQL 中手工创建 `auto_check` 数据库，并为应用账号授予必要读写权限。
+2. 执行 `sql/app_storage/mysql/001_init_schema.sql` 创建 20 张应用存储表；该脚本不包含生产数据，也不包含 `CREATE DATABASE`、`DROP` 或 `TRUNCATE`。
+3. 如需迁移旧 SQLite `auto-check.db`，停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读生成数据 SQL 和迁移报告，再由运维人员人工执行数据 SQL。
+4. `/home/autocheck/data/config.json` 中只保留 `app_database` 启动连接信息和必要启动参数，动态配置、用户和历史记录不再写回 JSON。
+5. `AUTO_CHECK_SECRET_KEY` 必须与旧环境保持一致，避免旧数据源加密密码无法解密。
+6. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
+7. 上线验收需确认 MySQL 20 张目标表和迁移行数齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+
+`app_database` 配置示例：
+
+```json
+{
+  "app_database": {
+    "backend": "mysql",
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "auto_check",
+    "username": "auto_check_app",
+    "password": "<set-by-operations>",
+    "charset": "utf8mb4"
+  }
+}
+```
+
 ## 一、部署前提
 
 ### 1. 服务器环境
