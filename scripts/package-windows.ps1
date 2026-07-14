@@ -68,6 +68,8 @@ $pyinstallerArgs = @(
   "--hidden-import", "psycopg_binary",
   "--hidden-import", "psycopg.pq",
   "--hidden-import", "pymysql",
+  "--hidden-import", "sqlalchemy.dialects.mysql",
+  "--hidden-import", "sqlalchemy.dialects.mysql.pymysql",
   "--distpath", $distPath,
   "--workpath", $buildPath,
   "--specpath", $buildPath

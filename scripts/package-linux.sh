@@ -69,6 +69,8 @@ PYINSTALLER_ARGS=(
   "--hidden-import" "psycopg_binary"
   "--hidden-import" "psycopg.pq"
   "--hidden-import" "pymysql"
+  "--hidden-import" "sqlalchemy.dialects.mysql"
+  "--hidden-import" "sqlalchemy.dialects.mysql.pymysql"
   "--distpath" "$DIST_PATH"
   "--workpath" "$BUILD_PATH"
   "--specpath" "$BUILD_PATH"
