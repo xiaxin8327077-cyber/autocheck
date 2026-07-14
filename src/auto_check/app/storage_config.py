@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
+from datetime import UTC, datetime
 from typing import Any, TYPE_CHECKING
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    delete,
+    func,
+    select,
+)
+from sqlalchemy.dialects.mysql import DATETIME, insert as mysql_insert
+from sqlalchemy.engine import Connection
 
 from auto_check.app.security import decrypt_secret, encrypt_secret
 
@@ -10,51 +28,111 @@ if TYPE_CHECKING:
     from auto_check.app.config import DataSourceEntry
 
 
-def has_normalized_config(connection: sqlite3.Connection) -> bool:
-    data_source_count = connection.execute("SELECT COUNT(*) FROM data_sources").fetchone()[0]
-    setting_count = connection.execute("SELECT COUNT(*) FROM app_settings").fetchone()[0]
+_METADATA = MetaData()
+
+_DATA_SOURCES = Table(
+    "data_sources",
+    _METADATA,
+    Column("id", String(255), primary_key=True),
+    Column("name", String(255), nullable=False),
+    Column("db_type", String(32), nullable=False),
+    Column("host", String(255), nullable=False),
+    Column("port", Integer, nullable=False),
+    Column("database_name", String(255), nullable=False),
+    Column("schema_name", String(255), nullable=False),
+    Column("username", String(255), nullable=False),
+    Column("password_encrypted", Text, nullable=False),
+    Column("is_default", Boolean, nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+    Column("updated_at", DATETIME(fsp=6), nullable=False),
+)
+
+_APP_SETTINGS = Table(
+    "app_settings",
+    _METADATA,
+    Column("key", String(255), primary_key=True),
+    Column("value_json", Text, nullable=False),
+    Column("updated_at", DATETIME(fsp=6), nullable=False),
+)
+
+_CONFIG_SNAPSHOTS = Table(
+    "config_snapshots",
+    _METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("fingerprint", String(64), nullable=False),
+    Column("payload_json", Text, nullable=False),
+    Column("created_at", DATETIME(fsp=6), nullable=False),
+)
+
+
+def has_normalized_config(connection: Connection) -> bool:
+    data_source_count = connection.execute(
+        select(func.count()).select_from(_DATA_SOURCES)
+    ).scalar_one()
+    setting_count = connection.execute(
+        select(func.count()).select_from(_APP_SETTINGS)
+    ).scalar_one()
     return int(data_source_count) > 0 or int(setting_count) > 0
 
 
-def save_data_sources(connection: sqlite3.Connection, entries: list[DataSourceEntry]) -> None:
-    connection.execute("DELETE FROM data_sources")
+def save_data_sources(connection: Connection, entries: list[DataSourceEntry]) -> None:
+    entry_ids = [str(entry.id) for entry in entries]
+    delete_statement = delete(_DATA_SOURCES)
+    if entry_ids:
+        delete_statement = delete_statement.where(_DATA_SOURCES.c.id.not_in(entry_ids))
+    connection.execute(delete_statement)
+
+    now = _utc_now()
     for entry in entries:
         source = entry.config
         password_encrypted = encrypt_secret(source.password) if source.password else ""
+        statement = mysql_insert(_DATA_SOURCES).values(
+            id=str(entry.id),
+            name=str(entry.name),
+            db_type=str(source.db_type),
+            host=str(source.host),
+            port=int(source.port),
+            database_name=str(source.database),
+            schema_name=str(source.schema),
+            username=str(source.username),
+            password_encrypted=password_encrypted,
+            is_default=bool(entry.is_default),
+            created_at=now,
+            updated_at=now,
+        )
         connection.execute(
-            """
-            INSERT INTO data_sources(
-                id, name, db_type, host, port, database_name, schema_name,
-                username, password_encrypted, is_default, created_at, updated_at
+            statement.on_duplicate_key_update(
+                name=statement.inserted.name,
+                db_type=statement.inserted.db_type,
+                host=statement.inserted.host,
+                port=statement.inserted.port,
+                database_name=statement.inserted.database_name,
+                schema_name=statement.inserted.schema_name,
+                username=statement.inserted.username,
+                password_encrypted=statement.inserted.password_encrypted,
+                is_default=statement.inserted.is_default,
+                updated_at=statement.inserted.updated_at,
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-            """,
-            (
-                str(entry.id),
-                str(entry.name),
-                str(source.db_type),
-                str(source.host),
-                int(source.port),
-                str(source.database),
-                str(source.schema),
-                str(source.username),
-                password_encrypted,
-                1 if entry.is_default else 0,
-            ),
         )
 
 
-def load_data_sources(connection: sqlite3.Connection) -> list[DataSourceEntry]:
+def load_data_sources(connection: Connection) -> list[DataSourceEntry]:
     from auto_check.app.config import DataSourceConfig, DataSourceEntry
 
     rows = connection.execute(
-        """
-        SELECT id, name, db_type, host, port, database_name, schema_name,
-               username, password_encrypted, is_default
-        FROM data_sources
-        ORDER BY rowid
-        """
-    ).fetchall()
+        select(
+            _DATA_SOURCES.c.id,
+            _DATA_SOURCES.c.name,
+            _DATA_SOURCES.c.db_type,
+            _DATA_SOURCES.c.host,
+            _DATA_SOURCES.c.port,
+            _DATA_SOURCES.c.database_name,
+            _DATA_SOURCES.c.schema_name,
+            _DATA_SOURCES.c.username,
+            _DATA_SOURCES.c.password_encrypted,
+            _DATA_SOURCES.c.is_default,
+        ).order_by(_DATA_SOURCES.c.name, _DATA_SOURCES.c.id)
+    ).mappings().all()
     entries: list[DataSourceEntry] = []
     for row in rows:
         encrypted_password = str(row["password_encrypted"] or "")
@@ -78,30 +156,79 @@ def load_data_sources(connection: sqlite3.Connection) -> list[DataSourceEntry]:
     return entries
 
 
-def save_setting(connection: sqlite3.Connection, key: str, value: Any) -> None:
+def save_setting(connection: Connection, key: str, value: Any) -> None:
+    statement = mysql_insert(_APP_SETTINGS).values(
+        key=str(key),
+        value_json=_stable_json(value),
+        updated_at=_utc_now(),
+    )
     connection.execute(
-        """
-        INSERT INTO app_settings(key, value_json, updated_at)
-        VALUES (?, ?, datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET
-            value_json = excluded.value_json,
-            updated_at = excluded.updated_at
-        """,
-        (str(key), json.dumps(value, ensure_ascii=False, sort_keys=True)),
+        statement.on_duplicate_key_update(
+            value_json=statement.inserted.value_json,
+            updated_at=statement.inserted.updated_at,
+        )
     )
 
 
-def load_setting(connection: sqlite3.Connection, key: str, default: Any) -> Any:
+def load_setting(connection: Connection, key: str, default: Any) -> Any:
     row = connection.execute(
-        "SELECT value_json FROM app_settings WHERE key = ?",
-        (str(key),),
-    ).fetchone()
+        select(_APP_SETTINGS.c.value_json).where(_APP_SETTINGS.c.key == str(key))
+    ).mappings().first()
     if row is None:
         return default
+    return _decode_json(row["value_json"], default)
+
+
+def save_config_snapshot(connection: Connection, payload: Any) -> str:
+    payload_json = _stable_json(payload)
+    fingerprint = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    connection.execute(
+        mysql_insert(_CONFIG_SNAPSHOTS).values(
+            fingerprint=fingerprint,
+            payload_json=payload_json,
+            created_at=_utc_now(),
+        )
+    )
+    return fingerprint
+
+
+def load_config_snapshot(connection: Connection) -> dict[str, Any] | None:
+    row = connection.execute(
+        select(
+            _CONFIG_SNAPSHOTS.c.id,
+            _CONFIG_SNAPSHOTS.c.fingerprint,
+            _CONFIG_SNAPSHOTS.c.payload_json,
+            _CONFIG_SNAPSHOTS.c.created_at,
+        ).order_by(
+            _CONFIG_SNAPSHOTS.c.created_at.desc(),
+            _CONFIG_SNAPSHOTS.c.id.desc(),
+        ).limit(1)
+    ).mappings().first()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "fingerprint": str(row["fingerprint"]),
+        "payload": _decode_json(row["payload_json"], {}),
+        "created_at": row["created_at"],
+    }
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _decode_json(value: Any, default: Any) -> Any:
+    if isinstance(value, (dict, list, int, float, bool)) or value is None:
+        return value
     try:
-        return json.loads(str(row["value_json"]))
-    except json.JSONDecodeError:
+        return json.loads(str(value))
+    except (TypeError, json.JSONDecodeError):
         return default
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def save_users(connection: sqlite3.Connection, users: list[dict[str, Any]]) -> None:
