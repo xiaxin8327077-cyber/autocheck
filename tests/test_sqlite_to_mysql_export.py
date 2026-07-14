@@ -8,7 +8,6 @@ import sqlite3
 from pathlib import Path
 
 from auto_check.app.app_database import CURRENT_APP_SCHEMA_VERSION, EXPECTED_APP_SCHEMA
-from auto_check.app.storage_schema import ensure_storage_schema
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,7 +136,7 @@ def _create_sqlite_fixture(path: Path) -> None:
     with sqlite3.connect(path) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        ensure_storage_schema(connection)
+        _ensure_sqlite_fixture_schema(connection)
         connection.execute(
             """
             INSERT INTO data_sources(
@@ -345,6 +344,247 @@ def _insert_run_header(connection: sqlite3.Connection, run_id: str, kind: str) -
             "f" * 64,
             json.dumps({"id": run_id, "kind": kind}, ensure_ascii=False),
         ),
+    )
+
+
+def _ensure_sqlite_fixture_schema(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE app_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE history_runs (
+            kind TEXT NOT NULL,
+            id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            run_date TEXT NOT NULL DEFAULT '',
+            run_at TEXT NOT NULL DEFAULT '',
+            config_fingerprint TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (kind, id)
+        );
+
+        CREATE TABLE schema_migrations (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        );
+
+        CREATE TABLE data_sources (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            db_type TEXT NOT NULL,
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            database_name TEXT NOT NULL,
+            schema_name TEXT NOT NULL,
+            username TEXT NOT NULL,
+            password_encrypted TEXT NOT NULL DEFAULT '',
+            is_default INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE app_settings (
+            key TEXT PRIMARY KEY,
+            value_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT '',
+            last_login_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE config_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fingerprint TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE run_headers (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            run_date TEXT NOT NULL DEFAULT '',
+            run_at TEXT NOT NULL DEFAULT '',
+            finished_at TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            executor_id TEXT NOT NULL DEFAULT '',
+            executor_username TEXT NOT NULL DEFAULT '',
+            executor_name TEXT NOT NULL DEFAULT '',
+            config_fingerprint TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE reconcile_runs (
+            id TEXT PRIMARY KEY,
+            config_name TEXT NOT NULL DEFAULT '',
+            dws_source_name TEXT NOT NULL DEFAULT '',
+            rule_version TEXT NOT NULL DEFAULT '',
+            baseline_id TEXT NOT NULL DEFAULT '',
+            baseline_run_at TEXT NOT NULL DEFAULT '',
+            baseline_count INTEGER,
+            total_count INTEGER NOT NULL DEFAULT 0,
+            added_count INTEGER,
+            removed_count INTEGER
+        );
+
+        CREATE TABLE reconcile_run_counts (
+            run_id TEXT NOT NULL,
+            count_type TEXT NOT NULL,
+            label TEXT NOT NULL,
+            count_value INTEGER NOT NULL,
+            PRIMARY KEY (run_id, count_type, label)
+        );
+
+        CREATE TABLE reconcile_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            result_order INTEGER NOT NULL,
+            project_code TEXT NOT NULL DEFAULT '',
+            project_name TEXT NOT NULL DEFAULT '',
+            asset_total TEXT NOT NULL DEFAULT '',
+            liability_equity_total TEXT NOT NULL DEFAULT '',
+            received_trust_balance TEXT NOT NULL DEFAULT '',
+            difference TEXT NOT NULL DEFAULT '',
+            direction TEXT NOT NULL DEFAULT '',
+            difference_reason TEXT NOT NULL DEFAULT '',
+            match_status TEXT NOT NULL DEFAULT '',
+            valuation_asset_total TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE reconcile_result_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            result_id INTEGER NOT NULL,
+            detail_order INTEGER NOT NULL,
+            kind TEXT NOT NULL DEFAULT '',
+            specific_reason TEXT NOT NULL DEFAULT '',
+            data_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE reconcile_delta_results (
+            run_id TEXT NOT NULL,
+            delta_type TEXT NOT NULL,
+            result_order INTEGER NOT NULL,
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (run_id, delta_type, result_order)
+        );
+
+        CREATE TABLE db_validation_runs (
+            id TEXT PRIMARY KEY,
+            report_date TEXT NOT NULL DEFAULT '',
+            result_count INTEGER NOT NULL DEFAULT 0,
+            warning_count INTEGER NOT NULL DEFAULT 0,
+            table_count INTEGER NOT NULL DEFAULT 0,
+            enable_public_info_check INTEGER NOT NULL DEFAULT 0,
+            enable_template_check INTEGER NOT NULL DEFAULT 0,
+            excel_filename TEXT NOT NULL DEFAULT '',
+            excel_path TEXT NOT NULL DEFAULT '',
+            download_url TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE db_validation_selected_tables (
+            run_id TEXT NOT NULL,
+            table_order INTEGER NOT NULL,
+            table_code TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (run_id, table_order)
+        );
+
+        CREATE TABLE db_validation_warnings (
+            run_id TEXT NOT NULL,
+            warning_order INTEGER NOT NULL,
+            message TEXT NOT NULL,
+            PRIMARY KEY (run_id, warning_order)
+        );
+
+        CREATE TABLE db_validation_result_rows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            row_order INTEGER NOT NULL,
+            table_code TEXT NOT NULL DEFAULT '',
+            rule_id TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE flow_chain_runs (
+            id TEXT PRIMARY KEY,
+            chain_id TEXT NOT NULL DEFAULT '',
+            chain_name TEXT NOT NULL DEFAULT '',
+            is_multi_chain INTEGER NOT NULL DEFAULT 0,
+            trigger_type TEXT NOT NULL DEFAULT '',
+            executor_name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            error TEXT NOT NULL DEFAULT '',
+            step_count INTEGER NOT NULL DEFAULT 0,
+            duration_seconds INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE flow_chain_run_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            step_order INTEGER NOT NULL,
+            flow_id TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            sp_task_id TEXT NOT NULL DEFAULT '',
+            start_time TEXT NOT NULL DEFAULT '',
+            end_time TEXT NOT NULL DEFAULT '',
+            duration_seconds INTEGER,
+            payload_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE flow_chain_run_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            log_order INTEGER NOT NULL,
+            log_time TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            progress INTEGER,
+            step TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE flow_chain_run_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            chain_order INTEGER NOT NULL,
+            chain_name TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT '',
+            step_count INTEGER NOT NULL DEFAULT 0,
+            duration_seconds INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE storage_migration_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT NOT NULL,
+            source_path TEXT NOT NULL DEFAULT '',
+            source_key TEXT NOT NULL DEFAULT '',
+            source_fingerprint TEXT NOT NULL DEFAULT '',
+            migrated_count INTEGER NOT NULL DEFAULT 0,
+            skipped_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL DEFAULT ''
+        );
+
+        INSERT INTO schema_migrations(version, applied_at) VALUES (2, '2026-07-14 00:00:00');
+        """
     )
 
 

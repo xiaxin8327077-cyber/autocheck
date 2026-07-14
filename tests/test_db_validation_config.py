@@ -8,6 +8,7 @@ from auto_check.app.config import (
     load_store,
     save_store,
 )
+from mysql_config_test_support import MemoryApplicationDatabase
 
 
 def test_store_persists_db_validation_settings(tmp_path):
@@ -48,8 +49,9 @@ def test_store_persists_db_validation_settings(tmp_path):
         )
     )
 
-    save_store(store, path)
-    loaded = load_store(path)
+    database = MemoryApplicationDatabase()
+    save_store(store, path, database=database)
+    loaded = load_store(path, database=database)
 
     assert loaded.db_validation == store.db_validation
 
@@ -89,9 +91,10 @@ def test_db_validation_settings_migrates_old_config_source_pair(tmp_path):
             field_mapping_source="dws",
         ),
     )
-    save_store(store, path)
+    database = MemoryApplicationDatabase()
+    save_store(store, path, database=database)
 
-    loaded = load_store(path)
+    loaded = load_store(path, database=database)
 
     assert loaded.db_validation.detail.source_id == "legacy:local:business"
     assert loaded.db_validation.public_info.source_id == "legacy:local:dws"

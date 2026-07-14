@@ -1,6 +1,5 @@
 import pytest
 
-from auto_check.app.local_store import db_path_for_config
 from auto_check.app.server import ApiRouter, STORAGE_ADMIN_DISABLED_ERROR
 from mysql_config_test_support import MemoryApplicationDatabase
 
@@ -11,6 +10,10 @@ NORMAL_USER = {"id": "u-user", "username": "user", "display_name": "User", "role
 
 def _router(config_path):
     return ApiRouter(config_path=config_path, application_database=MemoryApplicationDatabase())
+
+
+def _legacy_db_path(config_path):
+    return config_path.with_name("auto-check.db")
 
 
 def test_admin_storage_router_requires_login_and_admin_role(tmp_path):
@@ -24,7 +27,7 @@ def test_admin_storage_router_requires_login_and_admin_role(tmp_path):
 
     assert status == 410
     assert payload["error"] == STORAGE_ADMIN_DISABLED_ERROR
-    assert not db_path_for_config(config_path).exists()
+    assert not _legacy_db_path(config_path).exists()
 
 
 @pytest.mark.parametrize(
@@ -47,7 +50,7 @@ def test_admin_storage_runtime_routes_are_disabled(tmp_path, method, path):
 
     assert status == 410
     assert payload["error"] == STORAGE_ADMIN_DISABLED_ERROR
-    assert not db_path_for_config(config_path).exists()
+    assert not _legacy_db_path(config_path).exists()
 
 
 def test_admin_storage_exports_are_disabled(tmp_path):
@@ -59,4 +62,4 @@ def test_admin_storage_exports_are_disabled(tmp_path):
     with pytest.raises(RuntimeError, match=STORAGE_ADMIN_DISABLED_ERROR):
         router.get_storage_table_data_export("data_sources", current_user=ADMIN_USER)
 
-    assert not db_path_for_config(config_path).exists()
+    assert not _legacy_db_path(config_path).exists()

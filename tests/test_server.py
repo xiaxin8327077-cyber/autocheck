@@ -29,7 +29,6 @@ from auto_check.app.config import (
     load_store,
     save_store,
 )
-from auto_check.app.local_store import db_path_for_config
 from auto_check.app.flow_tool import FlowChainRunResult, FlowChainStepResult, FlowDefinition
 from auto_check.app.pbc_import import TableColumn
 from auto_check.app.repositories import DEFAULT_RECONCILE_TABLES
@@ -48,6 +47,10 @@ from auto_check.db_validation.models import DbValidationRunResult, ValidationRes
 from auto_check.engine.models import DifferenceDetail, ReconcileResult, ValuationMatch, ValuationRow
 from auto_check.engine.reconcile import NoSourceReportData
 from mysql_config_test_support import MemoryApplicationDatabase
+
+
+def db_path_for_config(config_path):
+    return Path(config_path).with_name("auto-check.db")
 
 
 @pytest.fixture(autouse=True)
