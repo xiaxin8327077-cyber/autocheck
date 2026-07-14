@@ -193,6 +193,18 @@ def test_from_config_path_requires_app_database_node(tmp_path):
         ApplicationDatabase.from_config_path(config_path)
 
 
+def test_from_config_path_accepts_utf8_bom_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    node = _write_config(config_path)
+    config_path.write_text(json.dumps({"app_database": node}), encoding="utf-8-sig")
+    monkeypatch.setattr("auto_check.app.app_database.create_engine", lambda *_args, **_kwargs: _FakeEngine())
+
+    database = ApplicationDatabase.from_config_path(config_path)
+
+    assert database.config.database == "auto_check"
+    assert database.config.username == "auto_check_app"
+
+
 def test_from_config_path_requires_mysql_backend(tmp_path):
     config_path = tmp_path / "config.json"
     _write_config(config_path, backend="postgresql")

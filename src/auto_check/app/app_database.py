@@ -275,7 +275,7 @@ class ApplicationDatabase:
 def _load_application_database_config(config_path: str | Path) -> ApplicationDatabaseConfig:
     path = Path(config_path)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"无法读取应用数据库配置：{path}") from exc
     if not isinstance(payload, Mapping):
