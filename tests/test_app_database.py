@@ -253,8 +253,8 @@ def test_url_create_preserves_special_password_without_interpolation_or_leak(tmp
     assert "***" in str(url)
 
 
-def test_expected_schema_is_immutable_and_contains_19_business_tables():
-    assert len(EXPECTED_APP_SCHEMA) == 20
+def test_expected_schema_is_immutable_and_contains_33_business_tables():
+    assert len(EXPECTED_APP_SCHEMA) == 34
     assert "app_schema_version" in EXPECTED_APP_SCHEMA
     assert "storage_migration_runs" in EXPECTED_APP_SCHEMA
     assert all(isinstance(columns, frozenset) for columns in EXPECTED_APP_SCHEMA.values())
