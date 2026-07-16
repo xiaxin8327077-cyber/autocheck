@@ -758,3 +758,139 @@ def test_scheduler_uses_initial_delay_then_configured_interval_without_parallel_
         scheduler.stop()
 
     assert service.calls >= 2
+
+
+def test_service_rejects_invalid_period_historical_schedule_and_non_current_manual_month():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+    )
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+
+    for invalid_period in ("", "day", "all"):
+        try:
+            service.dashboard(period=invalid_period, current_user=admin)
+        except ValueError as exc:
+            assert "period" in str(exc)
+        else:
+            raise AssertionError("invalid period should be rejected")
+
+    try:
+        service.set_manual_state(
+            "p1_s1", "manual-complete", "2026-06", admin, now=datetime(2026, 7, 16)
+        )
+    except ValueError as exc:
+        assert "当前月" in str(exc)
+    else:
+        raise AssertionError("historical manual month should be rejected")
+
+    try:
+        service.update_schedule(
+            "p1", "2026-06", "2026-06-20", admin, now=datetime(2026, 7, 16)
+        )
+    except ValueError as exc:
+        assert "历史月份" in str(exc)
+    else:
+        raise AssertionError("historical schedule should be rejected")
+
+
+def test_dashboard_returns_selected_period_snapshots_processes_and_latest_run():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    service.collect_once(now=current)
+
+    payload = service.dashboard(
+        period="quarter",
+        current_user={"username": "user", "role": "user"},
+        now=current,
+    )
+
+    assert payload["period"] == "quarter"
+    assert payload["report_month"] == "2026-07"
+    assert [card["card_code"] for card in payload["cards"]] == [
+        "report_forms",
+        "supplement_tasks",
+        "data_governance",
+        "special_governance",
+    ]
+    supplement = next(card for card in payload["cards"] if card["card_code"] == "supplement_tasks")
+    assert (supplement["total_count"], supplement["completed_count"], supplement["incomplete_count"]) == (12, 3, 9)
+    assert [process["process_code"] for process in payload["processes"]] == ["p1", "p2"]
+    assert payload["last_run"]["status"] == "completed"
+
+
+def test_manual_completion_recalculates_process_and_cancel_restores_automatic_state():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+
+    def evaluator(context):
+        status = "incomplete" if context.step.step_code == "p1_s2" else "completed"
+        return report_module.EvaluationResult(status, status)
+
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+    service.collect_once(now=current)
+    assert store.load_process_snapshot("2026-07", "p1").status == "incomplete"
+
+    service.set_manual_state(
+        "p1_s2", "manual-complete", "2026-07", admin, now=current + timedelta(minutes=1)
+    )
+    completed = store.load_process_snapshot("2026-07", "p1")
+    assert completed.status == "completed"
+    assert completed.completed_at == current + timedelta(minutes=1)
+
+    service.set_manual_state(
+        "p1_s2", "manual-cancel", "2026-07", admin, now=current + timedelta(minutes=2)
+    )
+    restored_step = store.load_step_snapshot("2026-07", "p1_s2")
+    restored_process = store.load_process_snapshot("2026-07", "p1")
+    assert restored_step.effective_status == "incomplete"
+    assert restored_step.completion_source == "auto"
+    assert restored_process.status == "incomplete"
+    assert restored_process.completed_at is None
+
+
+def test_schedule_update_accepts_current_or_future_month_and_rejects_cross_month_date():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+    current = datetime(2026, 7, 16, 9, 30)
+
+    service.update_schedule("p1", "2026-07", "2026-07-20", admin, now=current)
+    service.update_schedule("p1", "2026-08", "2026-08-21", admin, now=current)
+
+    assert store.load_schedules("2026-07")["p1"].report_date == date(2026, 7, 20)
+    assert store.load_schedules("2026-08")["p1"].report_date == date(2026, 8, 21)
+    try:
+        service.update_schedule("p1", "2026-08", "2026-09-01", admin, now=current)
+    except ValueError as exc:
+        assert "报送月份" in str(exc)
+    else:
+        raise AssertionError("cross-month schedule date should be rejected")

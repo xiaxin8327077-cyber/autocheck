@@ -666,6 +666,26 @@ class ReportNavigationStore:
             run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
         )
 
+    def load_step_snapshots(self, report_month: str) -> dict[str, StepSnapshot]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_STEP_SNAPSHOTS)
+        return {
+            str(row["step_code"]): StepSnapshot(
+                report_month=str(row["report_month"]),
+                step_code=str(row["step_code"]),
+                auto_status=str(row["auto_status"]),
+                effective_status=str(row["effective_status"]),
+                completion_source=str(row["completion_source"]),
+                status_message=str(row.get("status_message") or ""),
+                error_message=str(row.get("error_message") or ""),
+                auto_completed_at=_optional_datetime(row.get("auto_completed_at")),
+                evaluated_at=_as_datetime(row["evaluated_at"]),
+                run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
+            )
+            for row in rows
+            if str(row.get("report_month")) == report_month
+        }
+
     def save_card_snapshot(self, snapshot: CardSnapshot) -> None:
         values = {
             "stat_period": snapshot.stat_period,
@@ -688,6 +708,63 @@ class ReportNavigationStore:
         )
         with self.database.transaction() as connection:
             connection.execute(statement)
+
+    def load_card_snapshots(self, period: str) -> dict[str, CardSnapshot]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_CARD_SNAPSHOTS)
+        return {
+            str(row["card_code"]): CardSnapshot(
+                stat_period=str(row["stat_period"]),
+                card_code=str(row["card_code"]),
+                total_count=int(row["total_count"]),
+                completed_count=int(row["completed_count"]),
+                incomplete_count=int(row["incomplete_count"]),
+                completion_rate=Decimal(str(row["completion_rate"])),
+                evaluated_at=_as_datetime(row["evaluated_at"]),
+                run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
+            )
+            for row in rows
+            if str(row.get("stat_period")) == period
+        }
+
+    def load_process_snapshots(self, report_month: str) -> dict[str, ProcessSnapshot]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_PROCESS_SNAPSHOTS)
+        return {
+            str(row["process_code"]): ProcessSnapshot(
+                report_month=str(row["report_month"]),
+                process_code=str(row["process_code"]),
+                total_steps=int(row["total_steps"]),
+                completed_steps=int(row["completed_steps"]),
+                status=str(row["status"]),
+                completed_at=_optional_datetime(row.get("completed_at")),
+                evaluated_at=_as_datetime(row["evaluated_at"]),
+                run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
+            )
+            for row in rows
+            if str(row.get("report_month")) == report_month
+        }
+
+    def load_schedules(self, report_month: str) -> dict[str, ScheduleConfig]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_MONTHLY_SCHEDULES)
+        return {
+            str(row["process_code"]): _schedule_from_row(row)
+            for row in rows
+            if str(row.get("report_month")) == report_month
+        }
+
+    def process_exists(self, process_code: str) -> bool:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_PROCESSES)
+        return any(str(row.get("process_code")) == process_code for row in rows)
+
+    def load_latest_run(self) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_STAT_RUNS)
+        if not rows:
+            return None
+        return max(rows, key=lambda row: (_as_datetime(row["started_at"]), int(row["id"])))
 
     def start_run(
         self,

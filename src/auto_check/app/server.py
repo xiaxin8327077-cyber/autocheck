@@ -79,6 +79,7 @@ from auto_check.app.pbc_import import (
     projected_columns,
 )
 from auto_check.app.repositories import AutoCheckRepository, DEFAULT_RECONCILE_TABLES
+from auto_check.app.report_navigation import ReportNavigationScheduler, ReportNavigationService
 from auto_check.app.reconcile_schema import (
     ReconcileSchemaSettings,
     ReconcileTableSchema,
@@ -249,6 +250,7 @@ class ApiRouter:
         db_validation_executor: DbValidationExecutor | None = None,
         db_validation_field_mapping_loader: DbValidationFieldMappingLoader | None = None,
         flow_chain_executor: FlowChainExecutor | None = None,
+        report_navigation_service: ReportNavigationService | None = None,
         start_field_mapping_auto_refresh: bool = False,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         max_archive_member_bytes: int = MAX_ARCHIVE_MEMBER_BYTES,
@@ -270,6 +272,10 @@ class ApiRouter:
         self.db_validation_executor = db_validation_executor or execute_db_validation
         self.db_validation_field_mapping_loader = db_validation_field_mapping_loader or load_db_validation_field_mapping
         self.flow_chain_executor = flow_chain_executor or execute_flow_chain
+        self.report_navigation = report_navigation_service or ReportNavigationService(
+            self.application_database,
+            config_path=self.config_path,
+        )
         self._db_validation_field_mapping_cache = FieldMappingCache()
         self._field_mapping_auto_refresh_stop = threading.Event()
         self._field_mapping_auto_refresh_thread: threading.Thread | None = None
@@ -299,6 +305,50 @@ class ApiRouter:
         current_user: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         try:
+            if method == "GET" and path == "/api/report-navigation/dashboard":
+                query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
+                period = str(query.get("period", "month") or "month")
+                return 200, self.report_navigation.dashboard(
+                    period=period,
+                    current_user=current_user,
+                )
+
+            manual_match = re.fullmatch(
+                r"/api/report-navigation/steps/([^/]+)/(manual-complete|manual-cancel)",
+                path,
+            )
+            if method == "POST" and manual_match:
+                if str((current_user or {}).get("role", "")) != "admin":
+                    return 403, {"error": "admin role required"}
+                step_code, action = manual_match.groups()
+                report_month = str((body or {}).get("report_month", "")).strip()
+                if not report_month:
+                    return 400, {"error": "report_month is required"}
+                return 200, self.report_navigation.set_manual_state(
+                    step_code,
+                    action,
+                    report_month,
+                    current_user or {},
+                )
+
+            schedule_match = re.fullmatch(
+                r"/api/report-navigation/schedules/([^/]+)",
+                path,
+            )
+            if method == "POST" and schedule_match:
+                if str((current_user or {}).get("role", "")) != "admin":
+                    return 403, {"error": "admin role required"}
+                report_month = str((body or {}).get("report_month", "")).strip()
+                report_date = str((body or {}).get("report_date", "")).strip()
+                if not report_month or not report_date:
+                    return 400, {"error": "report_month and report_date are required"}
+                return 200, self.report_navigation.update_schedule(
+                    schedule_match.group(1),
+                    report_month,
+                    report_date,
+                    current_user or {},
+                )
+
             if path.startswith("/api/admin/storage"):
                 return self._handle_admin_storage(method, path, body, current_user=current_user)
 
@@ -3722,6 +3772,7 @@ def run_server(
 
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
     application_database = ApplicationDatabase.from_config_path(resolved_config_path)
+    report_navigation_scheduler: ReportNavigationScheduler | None = None
     try:
         application_database.test_connection()
         application_database.validate_schema()
@@ -3741,6 +3792,7 @@ def run_server(
             start_field_mapping_auto_refresh=True,
         )
         auth_manager = AuthManager(router.config_path, database=application_database)
+        report_navigation_scheduler = ReportNavigationScheduler(router.report_navigation)
 
         Handler.router = router
         Handler.auth_manager = auth_manager
@@ -3749,12 +3801,15 @@ def run_server(
         print(f"Auto Check running at {url}")
         if open_browser:
             webbrowser.open(url)
+        report_navigation_scheduler.start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:
             pass
         return server
     finally:
+        if report_navigation_scheduler is not None:
+            report_navigation_scheduler.stop()
         application_database.close()
 
 

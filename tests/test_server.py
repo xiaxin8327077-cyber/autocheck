@@ -462,10 +462,23 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         events.append("http_server")
         return FakeServer()
 
+    report_navigation_service = object()
+
     class FakeRouter:
         def __init__(self, *, config_path, application_database, **_kwargs):
             events.append(("router", application_database))
             self.config_path = Path(config_path)
+            self.report_navigation = report_navigation_service
+
+    class FakeReportNavigationScheduler:
+        def __init__(self, service):
+            events.append(("scheduler", service))
+
+        def start(self):
+            events.append("scheduler_start")
+
+        def stop(self):
+            events.append("scheduler_stop")
 
     class FakeAuthManager:
         def __init__(self, path, *, database):
@@ -474,6 +487,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
     monkeypatch.setattr(server_module, "ThreadingHTTPServer", build_http_server)
     monkeypatch.setattr(server_module, "ApiRouter", FakeRouter)
     monkeypatch.setattr(server_module, "AuthManager", FakeAuthManager)
+    monkeypatch.setattr(server_module, "ReportNavigationScheduler", FakeReportNavigationScheduler)
     monkeypatch.setattr(server_module, "_is_tcp_port_active", lambda _host, _port: False)
     monkeypatch.setattr(
         server_module.ApplicationDatabase,
@@ -496,7 +510,10 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "http_server",
         ("router", application_database),
         ("auth", config_path, application_database),
+        ("scheduler", report_navigation_service),
+        "scheduler_start",
         "serve_forever",
+        "scheduler_stop",
         "close",
     ]
 

@@ -23,6 +23,7 @@ from auto_check.app.storage_report_navigation import (
     StepSnapshot,
     StepSourceConfig,
 )
+from auto_check.app.time_utils import beijing_now
 
 
 COMPLETED = "completed"
@@ -505,7 +506,7 @@ class ReportNavigationService:
     def collect_once(
         self, *, trigger_type: str = "scheduled", now: datetime | None = None
     ) -> CollectionResult:
-        current = now or datetime.now()
+        current = now or beijing_now()
         report_month = current.strftime("%Y-%m")
         owner = uuid.uuid4().hex
         if not self.store.try_acquire_scheduler_lock(owner, current, timedelta(minutes=30)):
@@ -631,6 +632,225 @@ class ReportNavigationService:
                 error_message=release_error,
             )
 
+    def dashboard(
+        self,
+        *,
+        period: str,
+        current_user: Mapping[str, Any] | None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if period not in PERIODS:
+            raise ValueError("period must be week, month, quarter or year")
+        current = now or beijing_now()
+        report_month = current.strftime("%Y-%m")
+        processes = self.store.load_configuration(report_month)
+        process_snapshots = self.store.load_process_snapshots(report_month)
+        step_snapshots = self.store.load_step_snapshots(report_month)
+        overrides = self.store.load_overrides(report_month)
+        schedules = self.store.load_schedules(report_month)
+        cards = self.store.load_card_snapshots(period)
+        is_admin = str((current_user or {}).get("role") or "") == "admin"
+        last_run = self.store.load_latest_run()
+        card_order = (
+            ("report_forms", "报送报表"),
+            ("supplement_tasks", "补录任务"),
+            ("data_governance", "数据治理流程"),
+            ("special_governance", "报表特殊治理"),
+        )
+        card_payload = []
+        for card_code, name in card_order:
+            snapshot = cards.get(card_code)
+            card_payload.append(
+                {
+                    "card_code": card_code,
+                    "name": name,
+                    "total_count": snapshot.total_count if snapshot else 0,
+                    "completed_count": snapshot.completed_count if snapshot else 0,
+                    "incomplete_count": snapshot.incomplete_count if snapshot else 0,
+                    "completion_rate": float(snapshot.completion_rate) if snapshot else 0.0,
+                    "evaluated_at": _datetime_text(snapshot.evaluated_at) if snapshot else "",
+                }
+            )
+        process_payload = []
+        for process in processes:
+            process_snapshot = process_snapshots.get(process.process_code)
+            schedule = schedules.get(process.process_code)
+            steps = []
+            for step in process.steps:
+                snapshot = step_snapshots.get(step.step_code)
+                override = overrides.get(step.step_code)
+                steps.append(
+                    {
+                        "step_code": step.step_code,
+                        "step_name": step.step_name,
+                        "status": snapshot.effective_status if snapshot else "pending",
+                        "auto_status": snapshot.auto_status if snapshot else "pending",
+                        "completion_source": snapshot.completion_source if snapshot else "auto",
+                        "status_message": snapshot.status_message if snapshot else "等待首次统计",
+                        "error_message": snapshot.error_message if snapshot else "",
+                        "manual_completed": bool(override and override.completed),
+                        "manual_completion_allowed": bool(
+                            is_admin
+                            and process.allow_manual_step_completion
+                            and step.manual_completion_allowed
+                        ),
+                    }
+                )
+            process_payload.append(
+                {
+                    "process_code": process.process_code,
+                    "process_name": process.process_name,
+                    "status": process_snapshot.status if process_snapshot else "pending",
+                    "total_steps": process_snapshot.total_steps if process_snapshot else len(process.steps),
+                    "completed_steps": process_snapshot.completed_steps if process_snapshot else 0,
+                    "completed_at": _datetime_text(process_snapshot.completed_at) if process_snapshot else "",
+                    "report_date": schedule.report_date.isoformat() if schedule else "",
+                    "report_date_source": schedule.source_type if schedule else "",
+                    "schedule_editable": is_admin,
+                    "steps": steps,
+                }
+            )
+        business_report_date = latest_business_report_date(self.database)
+        return {
+            "period": period,
+            "report_month": report_month,
+            "business_report_date": business_report_date.isoformat() if business_report_date else "",
+            "cards": card_payload,
+            "processes": process_payload,
+            "last_run": _run_payload(last_run),
+        }
+
+    def set_manual_state(
+        self,
+        step_code: str,
+        action: str,
+        report_month: str,
+        current_user: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current = now or beijing_now()
+        if report_month != current.strftime("%Y-%m"):
+            raise ValueError("只允许维护当前月的步骤状态")
+        step = self.store.load_step_config(step_code)
+        if step is None or not step.manual_completion_allowed:
+            raise ValueError("步骤不存在或不允许手动完成")
+        if action == "manual-complete":
+            self.store.set_manual_complete(report_month, step_code, current_user, now=current)
+        elif action == "manual-cancel":
+            self.store.cancel_manual_complete(report_month, step_code)
+        else:
+            raise ValueError("无效的人工状态操作")
+        self._recalculate_manual_process(report_month, step, current)
+        return {"ok": True, "step_code": step_code, "action": action}
+
+    def update_schedule(
+        self,
+        process_code: str,
+        report_month: str,
+        report_date_text: str,
+        current_user: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current = now or beijing_now()
+        try:
+            report_date = date.fromisoformat(report_date_text)
+            month_start = date.fromisoformat(f"{report_month}-01")
+        except ValueError as exc:
+            raise ValueError("报送月份或日期格式不正确") from exc
+        current_month = current.date().replace(day=1)
+        if month_start < current_month:
+            raise ValueError("历史月份不允许修改")
+        if report_date.strftime("%Y-%m") != report_month:
+            raise ValueError("报送日期必须属于对应报送月份")
+        if not self.store.process_exists(process_code):
+            raise ValueError("报送节点不存在")
+        self.store.upsert_schedule(
+            report_month,
+            process_code,
+            report_date,
+            source_type="manual",
+            source_year=report_date.year,
+            updated_by=str(current_user.get("username") or ""),
+            now=current,
+        )
+        return {
+            "ok": True,
+            "process_code": process_code,
+            "report_month": report_month,
+            "report_date": report_date.isoformat(),
+        }
+
+    def _recalculate_manual_process(
+        self, report_month: str, changed_step: StepConfig, current: datetime
+    ) -> None:
+        snapshots = self.store.load_step_snapshots(report_month)
+        overrides = self.store.load_overrides(report_month)
+        existing = snapshots.get(changed_step.step_code)
+        if existing is None:
+            existing = StepSnapshot(
+                report_month,
+                changed_step.step_code,
+                INCOMPLETE,
+                INCOMPLETE,
+                "auto",
+                "等待首次统计",
+                "",
+                None,
+                current,
+                None,
+            )
+        manual = overrides.get(changed_step.step_code)
+        changed = StepSnapshot(
+            report_month=existing.report_month,
+            step_code=existing.step_code,
+            auto_status=existing.auto_status,
+            effective_status=COMPLETED if manual and manual.completed else existing.auto_status,
+            completion_source="manual" if manual and manual.completed else "auto",
+            status_message="管理员手动完成" if manual and manual.completed else existing.status_message,
+            error_message=existing.error_message,
+            auto_completed_at=existing.auto_completed_at,
+            evaluated_at=current,
+            run_id=existing.run_id,
+        )
+        self.store.save_step_snapshot(changed)
+        snapshots[changed.step_code] = changed
+        process = next(
+            (
+                item
+                for item in self.store.load_configuration(report_month)
+                if item.process_code == changed_step.process_code
+            ),
+            None,
+        )
+        if process is None:
+            raise ValueError("步骤所属节点在当前月份不可用")
+        completed_steps = sum(
+            1
+            for step in process.steps
+            if snapshots.get(step.step_code)
+            and snapshots[step.step_code].effective_status == COMPLETED
+        )
+        total_steps = len(process.steps)
+        status = COMPLETED if total_steps > 0 and completed_steps == total_steps else INCOMPLETE
+        run_id = max(
+            (snapshot.run_id or 0 for snapshot in snapshots.values()),
+            default=0,
+        ) or None
+        self.store.save_process_snapshot(
+            ProcessSnapshot(
+                report_month,
+                process.process_code,
+                total_steps,
+                completed_steps,
+                status,
+                current if status == COMPLETED else None,
+                current,
+                run_id,
+            )
+        )
+
     def _save_card_snapshots(
         self,
         *,
@@ -741,6 +961,39 @@ class ReportNavigationScheduler:
         self._stop.set()
         if self._thread is not None and self._thread.is_alive():
             self._thread.join(timeout=2.0)
+
+
+def _datetime_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def _date_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%Y-%m-%d")
+    return str(value)
+
+
+def _run_payload(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "id": int(row.get("id") or 0),
+        "trigger_type": str(row.get("trigger_type") or ""),
+        "report_month": str(row.get("report_month") or ""),
+        "business_report_date": _date_text(row.get("business_report_date")),
+        "started_at": _datetime_text(row.get("started_at")),
+        "finished_at": _datetime_text(row.get("finished_at")),
+        "status": str(row.get("status") or ""),
+        "completed_processes": int(row.get("completed_processes") or 0),
+        "failed_steps": int(row.get("failed_steps") or 0),
+        "error_message": str(row.get("error_message") or ""),
+    }
 
 
 def _card_snapshot(
