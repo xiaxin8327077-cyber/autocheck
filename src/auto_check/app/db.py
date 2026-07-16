@@ -33,6 +33,13 @@ def qualified_name(config: DataSourceConfig, table_name: str) -> str:
     raise ValueError(f"Unsupported database type: {config.db_type}")
 
 
+def quote_identifier(db_type: str, identifier: str) -> str:
+    value = str(identifier or "")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", value):
+        raise ValueError(f"非法标识符：{value}")
+    return _quote_identifier(db_type, value)
+
+
 def build_insert_sql(db_type: str, table: TableRef, columns: list[str]) -> str:
     if not columns:
         raise ValueError("at least one column is required")

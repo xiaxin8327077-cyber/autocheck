@@ -1,8 +1,15 @@
 import pytest
 from contextlib import contextmanager
 
+import auto_check.app.db as db_module
 from auto_check.app.config import DataSourceConfig
-from auto_check.app.db import DatabaseClient, build_clear_table_sql, build_insert_sql, ensure_select_only, qualified_name
+from auto_check.app.db import (
+    DatabaseClient,
+    build_clear_table_sql,
+    build_insert_sql,
+    ensure_select_only,
+    qualified_name,
+)
 from auto_check.app.pbc_import import parse_table_ref
 
 
@@ -36,6 +43,16 @@ def test_qualified_name_quotes_database_for_mysql():
     config = DataSourceConfig("mysql", "localhost", 3306, "biz", "", "u", "p")
 
     assert qualified_name(config, "currency_report_duration") == "`biz`.`currency_report_duration`"
+
+
+def test_quote_identifier_accepts_plain_configured_names_and_rejects_sql_fragments():
+    assert hasattr(db_module, "quote_identifier"), "quote_identifier is missing"
+    assert db_module.quote_identifier("mysql", "ck_result") == "`ck_result`"
+    assert db_module.quote_identifier("postgresql", "version_num") == '"version_num"'
+
+    for unsafe in ("ck_result; DROP TABLE users", "table name", "schema.table", "a`b"):
+        with pytest.raises(ValueError, match="非法标识符"):
+            db_module.quote_identifier("mysql", unsafe)
 
 
 def test_import_sql_quotes_table_and_column_identifiers():
