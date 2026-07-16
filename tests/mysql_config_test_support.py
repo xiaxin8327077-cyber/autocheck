@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from sqlalchemy.dialects import mysql
+from sqlalchemy.sql.elements import TextClause
 
 
 class MemoryResult:
@@ -74,6 +75,8 @@ class MySqlContractConnection:
         }
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> MemoryResult:
+        if isinstance(statement, TextClause):
+            return self._execute_text(statement.text, dict(parameters or {}))
         if isinstance(statement, str):
             raise AssertionError("configuration repository must use SQLAlchemy Core statements")
         compiled = statement.compile(dialect=mysql.dialect())
@@ -164,6 +167,37 @@ class MySqlContractConnection:
                 rows.sort(key=lambda row: row.get("warning_order", 0))
             return MemoryResult(rows=rows)
         raise AssertionError(f"unsupported SQLAlchemy statement: {statement!r}")
+
+    def _execute_text(self, sql: str, parameters: dict[str, Any]) -> MemoryResult:
+        normalized = " ".join(sql.split()).lower()
+        if normalized.startswith("update report_nav_scheduler_state"):
+            row = next((item for item in self.tables["report_nav_scheduler_state"] if item.get("id") == 1), None)
+            if row is None:
+                return MemoryResult(rowcount=0)
+            if "and (lock_until is null or lock_until < :now)" in normalized:
+                now = parameters["now"]
+                lock_until = row.get("lock_until")
+                if not bool(row.get("enabled")) or (lock_until is not None and lock_until >= now):
+                    return MemoryResult(rowcount=0)
+                row.update(
+                    lock_owner=parameters["owner"],
+                    lock_until=parameters["lock_until"],
+                    last_started_at=now,
+                    updated_at=now,
+                )
+                return MemoryResult(rowcount=1)
+            if row.get("lock_owner") != parameters.get("owner"):
+                return MemoryResult(rowcount=0)
+            row.update(
+                lock_owner=None,
+                lock_until=None,
+                last_finished_at=parameters["finished_at"],
+                last_status=parameters["status"],
+                last_error=parameters.get("error_message"),
+                updated_at=parameters["finished_at"],
+            )
+            return MemoryResult(rowcount=1)
+        raise AssertionError(f"unsupported textual SQL: {sql}")
 
     def _insert_row(self, table_name: str, table: Any, params: dict[str, Any]) -> Any:
         row = {column.name: params[column.name] for column in table.columns if column.name in params}

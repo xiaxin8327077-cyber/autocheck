@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     delete,
     select,
+    text,
 )
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
@@ -393,6 +394,60 @@ class ReportNavigationStore:
             if str(row.get("report_month")) == report_month
         }
 
+    def load_step_config(self, step_code: str) -> StepConfig | None:
+        with self.database.connect() as connection:
+            step_rows = _rows(connection, REPORT_NAV_STEPS)
+            dependency_rows = _rows(connection, REPORT_NAV_STEP_DEPENDENCIES)
+            source_rows = _rows(connection, REPORT_NAV_STEP_SOURCES)
+            field_rows = _rows(connection, REPORT_NAV_STEP_FIELDS)
+            value_rows = _rows(connection, REPORT_NAV_STEP_VALUES)
+        row = next((item for item in step_rows if str(item.get("step_code")) == step_code), None)
+        if row is None:
+            return None
+        fields_by_source: dict[int, dict[str, str]] = {}
+        for field_row in field_rows:
+            fields_by_source.setdefault(int(field_row["step_source_id"]), {})[
+                str(field_row["field_role"])
+            ] = str(field_row["column_name"])
+        sources = tuple(
+            StepSourceConfig(
+                id=int(source["id"]),
+                source_role=str(source["source_role"]),
+                data_source_name=str(source["data_source_name"]),
+                table_name=str(source["table_name"]),
+                display_order=int(source["display_order"]),
+                fields=dict(fields_by_source.get(int(source["id"]), {})),
+            )
+            for source in sorted(source_rows, key=lambda item: int(item.get("display_order") or 0))
+            if str(source.get("step_code")) == step_code and bool(source.get("enabled"))
+        )
+        grouped_values: dict[str, list[tuple[int, str]]] = {}
+        for value in value_rows:
+            if str(value.get("step_code")) != step_code:
+                continue
+            grouped_values.setdefault(str(value["value_role"]), []).append(
+                (int(value.get("display_order") or 0), str(value["value_text"]))
+            )
+        return StepConfig(
+            step_code=step_code,
+            process_code=str(row["process_code"]),
+            step_name=str(row["step_name"]),
+            display_order=int(row["display_order"]),
+            evaluator_key=str(row["evaluator_key"]),
+            default_completed=bool(row.get("default_completed")),
+            manual_completion_allowed=bool(row.get("manual_completion_allowed")),
+            dependencies=tuple(
+                str(item["depends_on_step_code"])
+                for item in dependency_rows
+                if str(item.get("step_code")) == step_code
+            ),
+            sources=sources,
+            values={
+                role: tuple(text_value for _, text_value in sorted(entries))
+                for role, entries in grouped_values.items()
+            },
+        )
+
     def set_manual_complete(
         self,
         report_month: str,
@@ -546,6 +601,202 @@ class ReportNavigationStore:
         )
         with self.database.transaction() as connection:
             connection.execute(statement)
+
+    def save_step_snapshot(self, snapshot: StepSnapshot) -> None:
+        existing = self.load_step_snapshot(snapshot.report_month, snapshot.step_code)
+        auto_completed_at = snapshot.auto_completed_at
+        if (
+            snapshot.auto_status == "completed"
+            and existing is not None
+            and existing.auto_status == "completed"
+        ):
+            auto_completed_at = existing.auto_completed_at
+        if snapshot.auto_status != "completed":
+            auto_completed_at = None
+        values = {
+            "report_month": snapshot.report_month,
+            "step_code": snapshot.step_code,
+            "auto_status": snapshot.auto_status,
+            "effective_status": snapshot.effective_status,
+            "completion_source": snapshot.completion_source,
+            "status_message": snapshot.status_message,
+            "error_message": snapshot.error_message or None,
+            "auto_completed_at": auto_completed_at,
+            "evaluated_at": snapshot.evaluated_at,
+            "run_id": snapshot.run_id,
+        }
+        statement = mysql_insert(REPORT_NAV_STEP_SNAPSHOTS).values(**values)
+        statement = statement.on_duplicate_key_update(
+            auto_status=statement.inserted.auto_status,
+            effective_status=statement.inserted.effective_status,
+            completion_source=statement.inserted.completion_source,
+            status_message=statement.inserted.status_message,
+            error_message=statement.inserted.error_message,
+            auto_completed_at=statement.inserted.auto_completed_at,
+            evaluated_at=statement.inserted.evaluated_at,
+            run_id=statement.inserted.run_id,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def load_step_snapshot(self, report_month: str, step_code: str) -> StepSnapshot | None:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_STEP_SNAPSHOTS)
+        row = next(
+            (
+                item
+                for item in rows
+                if str(item.get("report_month")) == report_month
+                and str(item.get("step_code")) == step_code
+            ),
+            None,
+        )
+        if row is None:
+            return None
+        return StepSnapshot(
+            report_month=str(row["report_month"]),
+            step_code=str(row["step_code"]),
+            auto_status=str(row["auto_status"]),
+            effective_status=str(row["effective_status"]),
+            completion_source=str(row["completion_source"]),
+            status_message=str(row.get("status_message") or ""),
+            error_message=str(row.get("error_message") or ""),
+            auto_completed_at=_optional_datetime(row.get("auto_completed_at")),
+            evaluated_at=_as_datetime(row["evaluated_at"]),
+            run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
+        )
+
+    def save_card_snapshot(self, snapshot: CardSnapshot) -> None:
+        values = {
+            "stat_period": snapshot.stat_period,
+            "card_code": snapshot.card_code,
+            "total_count": snapshot.total_count,
+            "completed_count": snapshot.completed_count,
+            "incomplete_count": snapshot.incomplete_count,
+            "completion_rate": snapshot.completion_rate,
+            "evaluated_at": snapshot.evaluated_at,
+            "run_id": snapshot.run_id,
+        }
+        statement = mysql_insert(REPORT_NAV_CARD_SNAPSHOTS).values(**values)
+        statement = statement.on_duplicate_key_update(
+            total_count=statement.inserted.total_count,
+            completed_count=statement.inserted.completed_count,
+            incomplete_count=statement.inserted.incomplete_count,
+            completion_rate=statement.inserted.completion_rate,
+            evaluated_at=statement.inserted.evaluated_at,
+            run_id=statement.inserted.run_id,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def start_run(
+        self,
+        trigger_type: str,
+        report_month: str,
+        business_report_date: date | None,
+        started_at: datetime,
+    ) -> int:
+        statement = mysql_insert(REPORT_NAV_STAT_RUNS).values(
+            trigger_type=trigger_type,
+            report_month=report_month,
+            business_report_date=business_report_date,
+            started_at=started_at,
+            finished_at=None,
+            status="running",
+            completed_processes=0,
+            failed_steps=0,
+            error_message=None,
+        )
+        with self.database.transaction() as connection:
+            result = connection.execute(statement)
+            return int(result.inserted_primary_key[0])
+
+    def finish_run(
+        self,
+        run_id: int,
+        *,
+        finished_at: datetime,
+        status: str,
+        completed_processes: int,
+        failed_steps: int,
+        error_message: str = "",
+    ) -> None:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_STAT_RUNS)
+        row = next((item for item in rows if int(item.get("id") or 0) == run_id), None)
+        if row is None:
+            raise ValueError(f"统计任务不存在：{run_id}")
+        values = dict(row)
+        values.update(
+            finished_at=finished_at,
+            status=status,
+            completed_processes=completed_processes,
+            failed_steps=failed_steps,
+            error_message=error_message or None,
+        )
+        statement = mysql_insert(REPORT_NAV_STAT_RUNS).values(**values)
+        statement = statement.on_duplicate_key_update(
+            finished_at=statement.inserted.finished_at,
+            status=statement.inserted.status,
+            completed_processes=statement.inserted.completed_processes,
+            failed_steps=statement.inserted.failed_steps,
+            error_message=statement.inserted.error_message,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def try_acquire_scheduler_lock(
+        self, owner: str, now: datetime, lease: Any
+    ) -> bool:
+        statement = text(
+            """
+            UPDATE report_nav_scheduler_state
+            SET lock_owner=:owner, lock_until=:lock_until,
+                last_started_at=:now, updated_at=:now
+            WHERE id=1 AND enabled=1
+              AND (lock_until IS NULL OR lock_until < :now)
+            """
+        )
+        with self.database.transaction() as connection:
+            result = connection.execute(
+                statement,
+                {"owner": owner, "lock_until": now + lease, "now": now},
+            )
+            return result.rowcount == 1
+
+    def release_scheduler_lock(
+        self,
+        owner: str,
+        finished_at: datetime,
+        *,
+        status: str,
+        error_message: str = "",
+    ) -> None:
+        statement = text(
+            """
+            UPDATE report_nav_scheduler_state
+            SET lock_owner=NULL, lock_until=NULL,
+                last_finished_at=:finished_at, last_status=:status,
+                last_error=:error_message, updated_at=:finished_at
+            WHERE id=1 AND lock_owner=:owner
+            """
+        )
+        with self.database.transaction() as connection:
+            connection.execute(
+                statement,
+                {
+                    "owner": owner,
+                    "finished_at": finished_at,
+                    "status": status,
+                    "error_message": error_message or None,
+                },
+            )
+
+    def scheduler_interval_minutes(self) -> int:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_SCHEDULER_STATE)
+        row = next((item for item in rows if int(item.get("id") or 0) == 1), None)
+        return max(1, int((row or {}).get("interval_minutes") or 10))
 
     def load_process_snapshot(
         self, report_month: str, process_code: str

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import importlib
 from pathlib import Path
 
@@ -540,3 +540,221 @@ def test_ck_min_time_month_dependency_quarterly_and_waiting_report_period_rules(
         )
     )
     assert (waiting.status, waiting.message) == ("waiting_report_period", "等待自动对数报告期")
+
+
+def test_period_bounds_cover_week_month_quarter_and_year():
+    module = _report_navigation()
+    today = date(2026, 7, 16)
+
+    assert module.period_bounds("week", today) == (datetime(2026, 7, 13), datetime(2026, 7, 20))
+    assert module.period_bounds("month", today) == (datetime(2026, 7, 1), datetime(2026, 8, 1))
+    assert module.period_bounds("quarter", today) == (datetime(2026, 7, 1), datetime(2026, 10, 1))
+    assert module.period_bounds("year", today) == (datetime(2026, 1, 1), datetime(2027, 1, 1))
+
+
+def test_scheduler_lock_skips_active_lease_and_recovers_after_expiry():
+    module = _storage()
+    database = _database()
+    database.connection.tables["report_nav_scheduler_state"].append(
+        {
+            "id": 1,
+            "enabled": 1,
+            "interval_minutes": 10,
+            "next_run_at": None,
+            "lock_owner": None,
+            "lock_until": None,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_error": None,
+            "updated_at": datetime(2026, 7, 16, 9, 0),
+        }
+    )
+    store = module.ReportNavigationStore(database)
+    now = datetime(2026, 7, 16, 9, 0)
+
+    assert store.try_acquire_scheduler_lock("worker-a", now, timedelta(minutes=30)) is True
+    assert store.try_acquire_scheduler_lock("worker-b", now, timedelta(minutes=30)) is False
+    assert store.try_acquire_scheduler_lock(
+        "worker-b", now + timedelta(minutes=31), timedelta(minutes=30)
+    ) is True
+
+
+class OrderedEvaluator:
+    def __init__(self, report_module):
+        self.report_module = report_module
+        self.calls = []
+
+    def __call__(self, context):
+        self.calls.append(context.step.step_code)
+        return self.report_module.EvaluationResult("completed", "完成")
+
+
+class SupplementQueryExecutor(QueueQueryExecutor):
+    def __init__(self):
+        super().__init__(
+            [
+                {"total_count": 4, "completed_count": 1, "incomplete_count": 3},
+                {"total_count": 8, "completed_count": 2, "incomplete_count": 6},
+                {"total_count": 12, "completed_count": 3, "incomplete_count": 9},
+                {"total_count": 16, "completed_count": 4, "incomplete_count": 12},
+            ]
+        )
+        self.active = 0
+        self.max_active = 0
+
+    def fetch_one(self, source, sql, params=()):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            return super().fetch_one(source, sql, params)
+        finally:
+            self.active -= 1
+
+
+def _seed_collection_configuration(database):
+    tables = database.connection.tables
+    tables["report_nav_scheduler_state"].append(
+        {
+            "id": 1,
+            "enabled": 1,
+            "interval_minutes": 10,
+            "next_run_at": None,
+            "lock_owner": None,
+            "lock_until": None,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_error": None,
+            "updated_at": datetime(2026, 7, 16, 9, 0),
+        }
+    )
+    tables["report_nav_processes"].extend(
+        [
+            {"process_code": "p1", "process_name": "节点1", "display_order": 1, "enabled": 1, "allow_manual_step_completion": 1},
+            {"process_code": "p2", "process_name": "节点2", "display_order": 2, "enabled": 1, "allow_manual_step_completion": 1},
+            {"process_code": "supplement_tasks", "process_name": "补录任务", "display_order": 1000, "enabled": 0, "allow_manual_step_completion": 0},
+        ]
+    )
+    tables["report_nav_process_months"].extend(
+        [{"process_code": "p1", "month_no": 7}, {"process_code": "p2", "month_no": 7}]
+    )
+    tables["report_nav_steps"].extend(
+        [
+            {"step_code": "p1_s1", "process_code": "p1", "step_name": "步骤1", "display_order": 1, "evaluator_key": "default_completed", "enabled": 1, "default_completed": 1, "manual_completion_allowed": 1},
+            {"step_code": "p1_s2", "process_code": "p1", "step_name": "步骤2", "display_order": 2, "evaluator_key": "default_completed", "enabled": 1, "default_completed": 1, "manual_completion_allowed": 1},
+            {"step_code": "p2_s1", "process_code": "p2", "step_name": "步骤1", "display_order": 1, "evaluator_key": "default_completed", "enabled": 1, "default_completed": 1, "manual_completion_allowed": 1},
+            {"step_code": "supplement_tasks_1", "process_code": "supplement_tasks", "step_name": "统计补录任务", "display_order": 1, "evaluator_key": "supplement_task_counts", "enabled": 0, "default_completed": 0, "manual_completion_allowed": 0},
+        ]
+    )
+    tables["report_nav_step_sources"].append(
+        {"id": 50, "step_code": "supplement_tasks_1", "source_role": "primary", "data_source_name": "bl", "table_name": "jsxt_console.rep_data_task_detail", "display_order": 1, "enabled": 1}
+    )
+    tables["report_nav_step_fields"].extend(
+        [
+            {"id": 51, "step_source_id": 50, "field_role": "date_field", "column_name": "create_date"},
+            {"id": 52, "step_source_id": 50, "field_role": "status_field", "column_name": "status"},
+            {"id": 53, "step_source_id": 50, "field_role": "deleted_field", "column_name": "del_flag"},
+        ]
+    )
+    tables["report_nav_step_values"].extend(
+        [
+            {"id": 51, "step_code": "supplement_tasks_1", "value_role": "completed_status", "value_text": "5", "value_type": "text", "display_order": 1},
+            {"id": 52, "step_code": "supplement_tasks_1", "value_role": "valid_deleted_value", "value_text": "0", "value_type": "text", "display_order": 1},
+        ]
+    )
+
+
+def test_collection_is_strictly_serial_and_writes_process_and_four_period_card_snapshots():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    evaluator = OrderedEvaluator(report_module)
+    query = SupplementQueryExecutor()
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=lambda: query,
+        evaluator=evaluator,
+    )
+
+    result = service.collect_once(now=datetime(2026, 7, 16, 9, 30))
+
+    assert result.status == "completed"
+    assert evaluator.calls == ["p1_s1", "p1_s2", "p2_s1"]
+    assert query.max_active == 1
+    assert len(query.calls) == 4
+    process_rows = database.connection.tables["report_nav_process_snapshots"]
+    assert [(row["process_code"], row["status"]) for row in process_rows] == [
+        ("p1", "completed"),
+        ("p2", "completed"),
+    ]
+    supplement_cards = [
+        row
+        for row in database.connection.tables["report_nav_card_snapshots"]
+        if row["card_code"] == "supplement_tasks"
+    ]
+    assert [row["stat_period"] for row in supplement_cards] == [
+        "week",
+        "month",
+        "quarter",
+        "year",
+    ]
+
+
+def test_collection_continues_after_one_step_error_and_marks_partial_run():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    calls = []
+
+    def evaluator(context):
+        calls.append(context.step.step_code)
+        if context.step.step_code == "p1_s1":
+            return report_module.EvaluationResult("error", "判断异常", "source unavailable")
+        return report_module.EvaluationResult("completed", "完成")
+
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+
+    result = service.collect_once(now=datetime(2026, 7, 16, 9, 30))
+
+    assert result.status == "partial"
+    assert result.failed_steps == 1
+    assert calls == ["p1_s1", "p1_s2", "p2_s1"]
+    assert database.connection.tables["report_nav_stat_runs"][0]["status"] == "partial"
+
+
+def test_scheduler_uses_initial_delay_then_configured_interval_without_parallel_runs():
+    module = _report_navigation()
+
+    class Service:
+        interval_minutes = 10
+
+        def __init__(self):
+            self.calls = 0
+
+        def collect_once(self):
+            self.calls += 1
+
+    service = Service()
+    scheduler = module.ReportNavigationScheduler(
+        service,
+        initial_delay_seconds=0.01,
+        interval_seconds=0.02,
+    )
+    scheduler.start()
+    try:
+        deadline = datetime.now() + timedelta(seconds=1)
+        while service.calls < 2 and datetime.now() < deadline:
+            scheduler.wait_for_activity(0.02)
+    finally:
+        scheduler.stop()
+
+    assert service.calls >= 2

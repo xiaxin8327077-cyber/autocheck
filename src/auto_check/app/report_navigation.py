@@ -1,12 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from pathlib import Path
+import threading
 from typing import Any, Callable, Mapping, Protocol, Sequence
+import uuid
 
-from auto_check.app.config import DataSourceEntry
+from sqlalchemy import select
+
+from auto_check.app.app_database import ApplicationDatabase
+from auto_check.app.config import DataSourceEntry, load_store
 from auto_check.app.db import DatabaseClient, qualified_name, quote_identifier
-from auto_check.app.storage_report_navigation import ScheduleConfig, StepConfig, StepSourceConfig
+from auto_check.app.storage_history import RUN_HEADERS
+from auto_check.app.storage_report_navigation import (
+    CardSnapshot,
+    ProcessSnapshot,
+    ReportNavigationStore,
+    ScheduleConfig,
+    StepConfig,
+    StepSnapshot,
+    StepSourceConfig,
+)
 
 
 COMPLETED = "completed"
@@ -40,6 +56,16 @@ class EvaluationContext:
     query: QueryExecutor
     dependency_statuses: Mapping[str, str]
     schedule: ScheduleConfig | None
+
+
+@dataclass(frozen=True)
+class CollectionResult:
+    status: str
+    report_month: str
+    run_id: int | None
+    completed_processes: int
+    failed_steps: int
+    error_message: str = ""
 
 
 class ConfiguredQueryExecutor:
@@ -414,3 +440,350 @@ EVALUATORS: dict[str, Callable[[EvaluationContext], EvaluationResult]] = {
     "current_month_rows_in_all_sources": evaluate_current_month_rows_in_all_sources,
     "version_present": _evaluate_with_report_period_status(evaluate_version_present),
 }
+
+
+PERIODS = ("week", "month", "quarter", "year")
+
+
+def period_bounds(period: str, today: date) -> tuple[datetime, datetime]:
+    if period == "week":
+        start_day = today - timedelta(days=today.weekday())
+        end_day = start_day + timedelta(days=7)
+    elif period == "month":
+        start_day = today.replace(day=1)
+        end_day = (start_day.replace(day=28) + timedelta(days=4)).replace(day=1)
+    elif period == "quarter":
+        start_month = ((today.month - 1) // 3) * 3 + 1
+        start_day = today.replace(month=start_month, day=1)
+        end_month = start_month + 3
+        end_year = today.year
+        if end_month > 12:
+            end_month -= 12
+            end_year += 1
+        end_day = date(end_year, end_month, 1)
+    elif period == "year":
+        start_day = date(today.year, 1, 1)
+        end_day = date(today.year + 1, 1, 1)
+    else:
+        raise ValueError("period must be week, month, quarter or year")
+    return datetime.combine(start_day, time.min), datetime.combine(end_day, time.min)
+
+
+def latest_business_report_date(database: ApplicationDatabase) -> date | None:
+    with database.connect() as connection:
+        rows = connection.execute(
+            select(RUN_HEADERS.c.run_date).where(RUN_HEADERS.c.kind == "reconcile")
+        ).mappings().all()
+    values = [_coerce_date(row.get("run_date")) for row in rows]
+    return max((value for value in values if value is not None), default=None)
+
+
+class ReportNavigationService:
+    def __init__(
+        self,
+        database: ApplicationDatabase,
+        *,
+        config_path: str | Path | None = None,
+        store: ReportNavigationStore | None = None,
+        query_executor_factory: Callable[[], QueryExecutor] | None = None,
+        evaluator: Callable[[EvaluationContext], EvaluationResult] = evaluate,
+    ):
+        self.database = database
+        self.config_path = Path(config_path) if config_path is not None else None
+        self.store = store or ReportNavigationStore(database)
+        self._query_executor_factory = query_executor_factory or self._default_query_executor
+        self._evaluator = evaluator
+
+    @property
+    def interval_minutes(self) -> int:
+        return self.store.scheduler_interval_minutes()
+
+    def _default_query_executor(self) -> QueryExecutor:
+        config_store = load_store(self.config_path, database=self.database)
+        return ConfiguredQueryExecutor(config_store.data_sources)
+
+    def collect_once(
+        self, *, trigger_type: str = "scheduled", now: datetime | None = None
+    ) -> CollectionResult:
+        current = now or datetime.now()
+        report_month = current.strftime("%Y-%m")
+        owner = uuid.uuid4().hex
+        if not self.store.try_acquire_scheduler_lock(owner, current, timedelta(minutes=30)):
+            return CollectionResult("skipped", report_month, None, 0, 0)
+        run_id: int | None = None
+        release_status = "failed"
+        release_error = ""
+        try:
+            business_report_date = latest_business_report_date(self.database)
+            run_id = self.store.start_run(
+                trigger_type, report_month, business_report_date, current
+            )
+            processes = self.store.load_configuration(report_month)
+            overrides = self.store.load_overrides(report_month)
+            query = self._query_executor_factory()
+            completed_processes = 0
+            failed_steps = 0
+            process_statuses: list[str] = []
+
+            for process in processes:
+                schedule = self.store.ensure_schedule(
+                    report_month, process.process_code, now=current
+                )
+                dependency_statuses: dict[str, str] = {}
+                completed_steps = 0
+                has_error = False
+                for step in process.steps:
+                    automatic = self._evaluator(
+                        EvaluationContext(
+                            step=step,
+                            business_report_date=business_report_date,
+                            current=current,
+                            query=query,
+                            dependency_statuses=dependency_statuses,
+                            schedule=schedule,
+                        )
+                    )
+                    override = overrides.get(step.step_code)
+                    is_manual = bool(override and override.completed)
+                    effective_status = COMPLETED if is_manual else automatic.status
+                    completion_source = "manual" if is_manual else "auto"
+                    if effective_status == COMPLETED:
+                        completed_steps += 1
+                    if automatic.status == ERROR:
+                        failed_steps += 1
+                        has_error = True
+                    dependency_statuses[step.step_code] = effective_status
+                    self.store.save_step_snapshot(
+                        StepSnapshot(
+                            report_month=report_month,
+                            step_code=step.step_code,
+                            auto_status=automatic.status,
+                            effective_status=effective_status,
+                            completion_source=completion_source,
+                            status_message="管理员手动完成" if is_manual else automatic.message,
+                            error_message=automatic.error,
+                            auto_completed_at=current if automatic.status == COMPLETED else None,
+                            evaluated_at=current,
+                            run_id=run_id,
+                        )
+                    )
+                total_steps = len(process.steps)
+                if total_steps > 0 and completed_steps == total_steps:
+                    process_status = COMPLETED
+                    completed_processes += 1
+                elif has_error:
+                    process_status = ERROR
+                else:
+                    process_status = INCOMPLETE
+                process_statuses.append(process_status)
+                self.store.save_process_snapshot(
+                    ProcessSnapshot(
+                        report_month=report_month,
+                        process_code=process.process_code,
+                        total_steps=total_steps,
+                        completed_steps=completed_steps,
+                        status=process_status,
+                        completed_at=current if process_status == COMPLETED else None,
+                        evaluated_at=current,
+                        run_id=run_id,
+                    )
+                )
+
+            self._save_card_snapshots(
+                query=query,
+                processes_total=len(processes),
+                processes_completed=completed_processes,
+                current=current,
+                run_id=run_id,
+            )
+            release_status = "partial" if failed_steps else "completed"
+            self.store.finish_run(
+                run_id,
+                finished_at=current,
+                status=release_status,
+                completed_processes=completed_processes,
+                failed_steps=failed_steps,
+            )
+            return CollectionResult(
+                release_status,
+                report_month,
+                run_id,
+                completed_processes,
+                failed_steps,
+            )
+        except Exception as exc:
+            release_error = str(exc)
+            if run_id is not None:
+                self.store.finish_run(
+                    run_id,
+                    finished_at=current,
+                    status="failed",
+                    completed_processes=0,
+                    failed_steps=0,
+                    error_message=release_error,
+                )
+            return CollectionResult("failed", report_month, run_id, 0, 0, release_error)
+        finally:
+            self.store.release_scheduler_lock(
+                owner,
+                current,
+                status=release_status,
+                error_message=release_error,
+            )
+
+    def _save_card_snapshots(
+        self,
+        *,
+        query: QueryExecutor,
+        processes_total: int,
+        processes_completed: int,
+        current: datetime,
+        run_id: int,
+    ) -> None:
+        supplement_step = self.store.load_step_config("supplement_tasks_1")
+        if supplement_step is None or len(supplement_step.sources) != 1:
+            raise ValueError("补录任务统计配置缺失")
+        source = supplement_step.sources[0]
+        date_field = query.quote_column(source, _required_field(source, "date_field"))
+        status_field = query.quote_column(source, _required_field(source, "status_field"))
+        deleted_field = query.quote_column(source, _required_field(source, "deleted_field"))
+        completed_status = _single_value(supplement_step, "completed_status")
+        valid_deleted = _single_value(supplement_step, "valid_deleted_value")
+        sql = (
+            f"SELECT COUNT(*) AS total_count, "
+            f"SUM(CASE WHEN {status_field} = %s THEN 1 ELSE 0 END) AS completed_count, "
+            f"SUM(CASE WHEN {status_field} IS NULL OR {status_field} <> %s THEN 1 ELSE 0 END) AS incomplete_count "
+            f"FROM {query.qualified_table(source)} "
+            f"WHERE {deleted_field} = %s AND {date_field} >= %s AND {date_field} < %s"
+        )
+        for period in PERIODS:
+            start, end = period_bounds(period, current.date())
+            row = query.fetch_one(
+                source,
+                sql,
+                (completed_status, completed_status, valid_deleted, start, end),
+            ) or {}
+            self.store.save_card_snapshot(
+                _card_snapshot(
+                    period,
+                    "supplement_tasks",
+                    _integer(row.get("total_count")),
+                    _integer(row.get("completed_count")),
+                    _integer(row.get("incomplete_count")),
+                    current,
+                    run_id,
+                )
+            )
+            self.store.save_card_snapshot(
+                _card_snapshot(
+                    period,
+                    "report_forms",
+                    processes_total,
+                    processes_completed,
+                    processes_total - processes_completed,
+                    current,
+                    run_id,
+                )
+            )
+            for card_code in ("data_governance", "special_governance"):
+                self.store.save_card_snapshot(
+                    _card_snapshot(period, card_code, 0, 0, 0, current, run_id)
+                )
+
+
+class ReportNavigationScheduler:
+    def __init__(
+        self,
+        service: Any,
+        *,
+        initial_delay_seconds: float = 30.0,
+        interval_seconds: float | None = None,
+    ):
+        self.service = service
+        self.initial_delay_seconds = initial_delay_seconds
+        self.interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._activity = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            name="report-navigation-scheduler",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run_loop(self) -> None:
+        if self._stop.wait(self.initial_delay_seconds):
+            return
+        while not self._stop.is_set():
+            self.service.collect_once()
+            self._activity.set()
+            interval = (
+                self.interval_seconds
+                if self.interval_seconds is not None
+                else max(1, int(self.service.interval_minutes)) * 60
+            )
+            if self._stop.wait(interval):
+                return
+
+    def wait_for_activity(self, timeout: float) -> bool:
+        active = self._activity.wait(timeout)
+        if active:
+            self._activity.clear()
+        return active
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+
+def _card_snapshot(
+    period: str,
+    card_code: str,
+    total: int,
+    completed: int,
+    incomplete: int,
+    evaluated_at: datetime,
+    run_id: int,
+) -> CardSnapshot:
+    rate = Decimal("0") if total <= 0 else (Decimal(completed) * Decimal("100") / Decimal(total))
+    return CardSnapshot(
+        period,
+        card_code,
+        total,
+        completed,
+        incomplete,
+        rate.quantize(Decimal("0.0001")),
+        evaluated_at,
+        run_id,
+    )
+
+
+def _required_field(source: StepSourceConfig, role: str) -> str:
+    value = source.fields.get(role)
+    if not value:
+        raise ValueError(f"未配置字段角色：{role}")
+    return value
+
+
+def _single_value(step: StepConfig, role: str) -> str:
+    values = step.values.get(role, ())
+    if len(values) != 1:
+        raise ValueError(f"必须配置一个业务值：{role}")
+    return values[0]
+
+
+def _coerce_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value in (None, ""):
+        return None
+    return date.fromisoformat(str(value))
