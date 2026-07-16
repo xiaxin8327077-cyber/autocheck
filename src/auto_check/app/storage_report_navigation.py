@@ -1,0 +1,622 @@
+from __future__ import annotations
+
+from calendar import monthrange
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Mapping, Sequence
+
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Integer,
+    MetaData,
+    Numeric,
+    SmallInteger,
+    String,
+    Table,
+    Text,
+    delete,
+    select,
+)
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+
+from auto_check.app.app_database import ApplicationDatabase
+
+
+METADATA = MetaData()
+
+REPORT_NAV_PROCESSES = Table(
+    "report_nav_processes",
+    METADATA,
+    Column("process_code", String(64), primary_key=True),
+    Column("process_name", String(128), nullable=False),
+    Column("display_order", Integer, nullable=False),
+    Column("enabled", Boolean, nullable=False),
+    Column("allow_manual_step_completion", Boolean, nullable=False),
+)
+REPORT_NAV_PROCESS_MONTHS = Table(
+    "report_nav_process_months",
+    METADATA,
+    Column("process_code", String(64), primary_key=True),
+    Column("month_no", SmallInteger, primary_key=True),
+)
+REPORT_NAV_STEPS = Table(
+    "report_nav_steps",
+    METADATA,
+    Column("step_code", String(64), primary_key=True),
+    Column("process_code", String(64), nullable=False),
+    Column("step_name", String(255), nullable=False),
+    Column("display_order", Integer, nullable=False),
+    Column("evaluator_key", String(64), nullable=False),
+    Column("enabled", Boolean, nullable=False),
+    Column("default_completed", Boolean, nullable=False),
+    Column("manual_completion_allowed", Boolean, nullable=False),
+)
+REPORT_NAV_STEP_DEPENDENCIES = Table(
+    "report_nav_step_dependencies",
+    METADATA,
+    Column("step_code", String(64), primary_key=True),
+    Column("depends_on_step_code", String(64), primary_key=True),
+)
+REPORT_NAV_STEP_SOURCES = Table(
+    "report_nav_step_sources",
+    METADATA,
+    Column("id", BigInteger, primary_key=True),
+    Column("step_code", String(64), nullable=False),
+    Column("source_role", String(64), nullable=False),
+    Column("data_source_name", String(128), nullable=False),
+    Column("table_name", String(255), nullable=False),
+    Column("display_order", Integer, nullable=False),
+    Column("enabled", Boolean, nullable=False),
+)
+REPORT_NAV_STEP_FIELDS = Table(
+    "report_nav_step_fields",
+    METADATA,
+    Column("id", BigInteger, primary_key=True),
+    Column("step_source_id", BigInteger, nullable=False),
+    Column("field_role", String(64), nullable=False),
+    Column("column_name", String(128), nullable=False),
+)
+REPORT_NAV_STEP_VALUES = Table(
+    "report_nav_step_values",
+    METADATA,
+    Column("id", BigInteger, primary_key=True),
+    Column("step_code", String(64), nullable=False),
+    Column("value_role", String(64), nullable=False),
+    Column("value_text", String(255), nullable=False),
+    Column("value_type", String(32), nullable=False),
+    Column("display_order", Integer, nullable=False),
+)
+REPORT_NAV_STEP_OVERRIDES = Table(
+    "report_nav_step_overrides",
+    METADATA,
+    Column("report_month", String(7), primary_key=True),
+    Column("step_code", String(64), primary_key=True),
+    Column("completed", Boolean, nullable=False),
+    Column("operator_id", String(64), nullable=False),
+    Column("operator_username", String(128), nullable=False),
+    Column("operator_name", String(128), nullable=False),
+    Column("created_at", DateTime, nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
+REPORT_NAV_STEP_SNAPSHOTS = Table(
+    "report_nav_step_snapshots",
+    METADATA,
+    Column("report_month", String(7), primary_key=True),
+    Column("step_code", String(64), primary_key=True),
+    Column("auto_status", String(32), nullable=False),
+    Column("effective_status", String(32), nullable=False),
+    Column("completion_source", String(32), nullable=False),
+    Column("status_message", String(255), nullable=False),
+    Column("error_message", Text),
+    Column("auto_completed_at", DateTime),
+    Column("evaluated_at", DateTime, nullable=False),
+    Column("run_id", BigInteger),
+)
+REPORT_NAV_PROCESS_SNAPSHOTS = Table(
+    "report_nav_process_snapshots",
+    METADATA,
+    Column("report_month", String(7), primary_key=True),
+    Column("process_code", String(64), primary_key=True),
+    Column("total_steps", Integer, nullable=False),
+    Column("completed_steps", Integer, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("completed_at", DateTime),
+    Column("evaluated_at", DateTime, nullable=False),
+    Column("run_id", BigInteger),
+)
+REPORT_NAV_CARD_SNAPSHOTS = Table(
+    "report_nav_card_snapshots",
+    METADATA,
+    Column("stat_period", String(16), primary_key=True),
+    Column("card_code", String(64), primary_key=True),
+    Column("total_count", Integer, nullable=False),
+    Column("completed_count", Integer, nullable=False),
+    Column("incomplete_count", Integer, nullable=False),
+    Column("completion_rate", Numeric(7, 4), nullable=False),
+    Column("evaluated_at", DateTime, nullable=False),
+    Column("run_id", BigInteger),
+)
+REPORT_NAV_MONTHLY_SCHEDULES = Table(
+    "report_nav_monthly_schedules",
+    METADATA,
+    Column("report_month", String(7), primary_key=True),
+    Column("process_code", String(64), primary_key=True),
+    Column("report_date", Date, nullable=False),
+    Column("source_type", String(32), nullable=False),
+    Column("source_year", SmallInteger),
+    Column("updated_by", String(128), nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
+REPORT_NAV_STAT_RUNS = Table(
+    "report_nav_stat_runs",
+    METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("trigger_type", String(32), nullable=False),
+    Column("report_month", String(7), nullable=False),
+    Column("business_report_date", Date),
+    Column("started_at", DateTime, nullable=False),
+    Column("finished_at", DateTime),
+    Column("status", String(32), nullable=False),
+    Column("completed_processes", Integer, nullable=False),
+    Column("failed_steps", Integer, nullable=False),
+    Column("error_message", Text),
+)
+REPORT_NAV_SCHEDULER_STATE = Table(
+    "report_nav_scheduler_state",
+    METADATA,
+    Column("id", SmallInteger, primary_key=True),
+    Column("enabled", Boolean, nullable=False),
+    Column("interval_minutes", Integer, nullable=False),
+    Column("next_run_at", DateTime),
+    Column("lock_owner", String(64)),
+    Column("lock_until", DateTime),
+    Column("last_started_at", DateTime),
+    Column("last_finished_at", DateTime),
+    Column("last_status", String(32)),
+    Column("last_error", Text),
+    Column("updated_at", DateTime, nullable=False),
+)
+
+
+@dataclass(frozen=True)
+class StepSourceConfig:
+    id: int
+    source_role: str
+    data_source_name: str
+    table_name: str
+    display_order: int
+    fields: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StepConfig:
+    step_code: str
+    process_code: str
+    step_name: str
+    display_order: int
+    evaluator_key: str
+    default_completed: bool
+    manual_completion_allowed: bool
+    dependencies: tuple[str, ...] = ()
+    sources: tuple[StepSourceConfig, ...] = ()
+    values: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ProcessConfig:
+    process_code: str
+    process_name: str
+    display_order: int
+    allow_manual_step_completion: bool
+    steps: tuple[StepConfig, ...] = ()
+
+
+@dataclass(frozen=True)
+class ManualOverride:
+    report_month: str
+    step_code: str
+    completed: bool
+    operator_id: str
+    operator_username: str
+    operator_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ScheduleConfig:
+    report_month: str
+    process_code: str
+    report_date: date
+    source_type: str
+    source_year: int | None
+    updated_by: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class StepSnapshot:
+    report_month: str
+    step_code: str
+    auto_status: str
+    effective_status: str
+    completion_source: str
+    status_message: str
+    error_message: str
+    auto_completed_at: datetime | None
+    evaluated_at: datetime
+    run_id: int | None
+
+
+@dataclass(frozen=True)
+class ProcessSnapshot:
+    report_month: str
+    process_code: str
+    total_steps: int
+    completed_steps: int
+    status: str
+    completed_at: datetime | None
+    evaluated_at: datetime
+    run_id: int | None
+
+
+@dataclass(frozen=True)
+class CardSnapshot:
+    stat_period: str
+    card_code: str
+    total_count: int
+    completed_count: int
+    incomplete_count: int
+    completion_rate: Decimal
+    evaluated_at: datetime
+    run_id: int | None
+
+
+class ReportNavigationStore:
+    def __init__(self, database: ApplicationDatabase):
+        self.database = database
+
+    def load_configuration(self, report_month: str) -> list[ProcessConfig]:
+        month_no = _parse_report_month(report_month)[1]
+        with self.database.connect() as connection:
+            process_rows = _rows(connection, REPORT_NAV_PROCESSES)
+            month_rows = _rows(connection, REPORT_NAV_PROCESS_MONTHS)
+            step_rows = _rows(connection, REPORT_NAV_STEPS)
+            dependency_rows = _rows(connection, REPORT_NAV_STEP_DEPENDENCIES)
+            source_rows = _rows(connection, REPORT_NAV_STEP_SOURCES)
+            field_rows = _rows(connection, REPORT_NAV_STEP_FIELDS)
+            value_rows = _rows(connection, REPORT_NAV_STEP_VALUES)
+
+        enabled_processes = {
+            str(row["process_code"]): row
+            for row in process_rows
+            if bool(row.get("enabled"))
+        }
+        active_process_codes = {
+            str(row["process_code"])
+            for row in month_rows
+            if int(row.get("month_no") or 0) == month_no
+            and str(row.get("process_code")) in enabled_processes
+        }
+        dependencies: dict[str, list[str]] = {}
+        for row in dependency_rows:
+            dependencies.setdefault(str(row["step_code"]), []).append(str(row["depends_on_step_code"]))
+        fields_by_source: dict[int, dict[str, str]] = {}
+        for row in field_rows:
+            fields_by_source.setdefault(int(row["step_source_id"]), {})[
+                str(row["field_role"])
+            ] = str(row["column_name"])
+        sources_by_step: dict[str, list[StepSourceConfig]] = {}
+        for row in sorted(source_rows, key=lambda item: int(item.get("display_order") or 0)):
+            if not bool(row.get("enabled")):
+                continue
+            source_id = int(row["id"])
+            sources_by_step.setdefault(str(row["step_code"]), []).append(
+                StepSourceConfig(
+                    id=source_id,
+                    source_role=str(row["source_role"]),
+                    data_source_name=str(row["data_source_name"]),
+                    table_name=str(row["table_name"]),
+                    display_order=int(row["display_order"]),
+                    fields=dict(fields_by_source.get(source_id, {})),
+                )
+            )
+        values_by_step: dict[str, dict[str, list[tuple[int, str]]]] = {}
+        for row in value_rows:
+            step_values = values_by_step.setdefault(str(row["step_code"]), {})
+            step_values.setdefault(str(row["value_role"]), []).append(
+                (int(row.get("display_order") or 0), str(row["value_text"]))
+            )
+
+        steps_by_process: dict[str, list[StepConfig]] = {}
+        for row in sorted(step_rows, key=lambda item: int(item.get("display_order") or 0)):
+            process_code = str(row["process_code"])
+            if process_code not in active_process_codes or not bool(row.get("enabled")):
+                continue
+            step_code = str(row["step_code"])
+            normalized_values = {
+                role: tuple(value for _, value in sorted(entries))
+                for role, entries in values_by_step.get(step_code, {}).items()
+            }
+            steps_by_process.setdefault(process_code, []).append(
+                StepConfig(
+                    step_code=step_code,
+                    process_code=process_code,
+                    step_name=str(row["step_name"]),
+                    display_order=int(row["display_order"]),
+                    evaluator_key=str(row["evaluator_key"]),
+                    default_completed=bool(row.get("default_completed")),
+                    manual_completion_allowed=bool(row.get("manual_completion_allowed")),
+                    dependencies=tuple(dependencies.get(step_code, ())),
+                    sources=tuple(sources_by_step.get(step_code, ())),
+                    values=normalized_values,
+                )
+            )
+
+        return [
+            ProcessConfig(
+                process_code=process_code,
+                process_name=str(enabled_processes[process_code]["process_name"]),
+                display_order=int(enabled_processes[process_code]["display_order"]),
+                allow_manual_step_completion=bool(
+                    enabled_processes[process_code].get("allow_manual_step_completion")
+                ),
+                steps=tuple(steps_by_process.get(process_code, ())),
+            )
+            for process_code in sorted(
+                active_process_codes,
+                key=lambda code: int(enabled_processes[code].get("display_order") or 0),
+            )
+        ]
+
+    def load_overrides(self, report_month: str) -> dict[str, ManualOverride]:
+        _parse_report_month(report_month)
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_STEP_OVERRIDES)
+        return {
+            str(row["step_code"]): ManualOverride(
+                report_month=str(row["report_month"]),
+                step_code=str(row["step_code"]),
+                completed=bool(row["completed"]),
+                operator_id=str(row.get("operator_id") or ""),
+                operator_username=str(row.get("operator_username") or ""),
+                operator_name=str(row.get("operator_name") or ""),
+                created_at=_as_datetime(row["created_at"]),
+                updated_at=_as_datetime(row["updated_at"]),
+            )
+            for row in rows
+            if str(row.get("report_month")) == report_month
+        }
+
+    def set_manual_complete(
+        self,
+        report_month: str,
+        step_code: str,
+        user: Mapping[str, Any],
+        *,
+        now: datetime,
+    ) -> None:
+        _parse_report_month(report_month)
+        step = self._load_step(step_code)
+        if not step or not bool(step.get("manual_completion_allowed")):
+            raise ValueError("该步骤不允许手动完成")
+        existing = self.load_overrides(report_month).get(step_code)
+        values = {
+            "report_month": report_month,
+            "step_code": step_code,
+            "completed": True,
+            "operator_id": str(user.get("id") or ""),
+            "operator_username": str(user.get("username") or ""),
+            "operator_name": str(user.get("display_name") or user.get("username") or ""),
+            "created_at": existing.created_at if existing else now,
+            "updated_at": now,
+        }
+        statement = mysql_insert(REPORT_NAV_STEP_OVERRIDES).values(**values)
+        statement = statement.on_duplicate_key_update(
+            completed=statement.inserted.completed,
+            operator_id=statement.inserted.operator_id,
+            operator_username=statement.inserted.operator_username,
+            operator_name=statement.inserted.operator_name,
+            updated_at=statement.inserted.updated_at,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def cancel_manual_complete(self, report_month: str, step_code: str) -> None:
+        _parse_report_month(report_month)
+        statement = delete(REPORT_NAV_STEP_OVERRIDES).where(
+            REPORT_NAV_STEP_OVERRIDES.c.report_month == report_month,
+            REPORT_NAV_STEP_OVERRIDES.c.step_code == step_code,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def upsert_schedule(
+        self,
+        report_month: str,
+        process_code: str,
+        report_date: date,
+        *,
+        source_type: str,
+        source_year: int | None,
+        updated_by: str,
+        now: datetime,
+    ) -> None:
+        year, month = _parse_report_month(report_month)
+        if (report_date.year, report_date.month) != (year, month):
+            raise ValueError("报送日期必须属于对应报送月份")
+        values = {
+            "report_month": report_month,
+            "process_code": process_code,
+            "report_date": report_date,
+            "source_type": source_type,
+            "source_year": source_year,
+            "updated_by": updated_by,
+            "updated_at": now,
+        }
+        statement = mysql_insert(REPORT_NAV_MONTHLY_SCHEDULES).values(**values)
+        statement = statement.on_duplicate_key_update(
+            report_date=statement.inserted.report_date,
+            source_type=statement.inserted.source_type,
+            source_year=statement.inserted.source_year,
+            updated_by=statement.inserted.updated_by,
+            updated_at=statement.inserted.updated_at,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def load_schedule(self, report_month: str, process_code: str) -> ScheduleConfig | None:
+        _parse_report_month(report_month)
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_MONTHLY_SCHEDULES)
+        row = next(
+            (
+                item
+                for item in rows
+                if str(item.get("report_month")) == report_month
+                and str(item.get("process_code")) == process_code
+            ),
+            None,
+        )
+        return _schedule_from_row(row) if row else None
+
+    def ensure_schedule(
+        self, report_month: str, process_code: str, *, now: datetime
+    ) -> ScheduleConfig | None:
+        current = self.load_schedule(report_month, process_code)
+        if current is not None:
+            return current
+        year, month = _parse_report_month(report_month)
+        previous = self.load_schedule(f"{year - 1:04d}-{month:02d}", process_code)
+        if previous is not None:
+            inherited_date = date(year, month, min(previous.report_date.day, monthrange(year, month)[1]))
+            self.upsert_schedule(
+                report_month,
+                process_code,
+                inherited_date,
+                source_type="inherited",
+                source_year=previous.report_date.year,
+                updated_by="system",
+                now=now,
+            )
+            return self.load_schedule(report_month, process_code)
+        if process_code == "pbc_central":
+            self.upsert_schedule(
+                report_month,
+                process_code,
+                date(year, month, 1),
+                source_type="default",
+                source_year=year,
+                updated_by="system",
+                now=now,
+            )
+            return self.load_schedule(report_month, process_code)
+        return None
+
+    def save_process_snapshot(self, snapshot: ProcessSnapshot) -> None:
+        existing = self.load_process_snapshot(snapshot.report_month, snapshot.process_code)
+        completed_at = snapshot.completed_at
+        if snapshot.status == "completed" and existing and existing.status == "completed":
+            completed_at = existing.completed_at
+        if snapshot.status != "completed":
+            completed_at = None
+        values = {
+            "report_month": snapshot.report_month,
+            "process_code": snapshot.process_code,
+            "total_steps": snapshot.total_steps,
+            "completed_steps": snapshot.completed_steps,
+            "status": snapshot.status,
+            "completed_at": completed_at,
+            "evaluated_at": snapshot.evaluated_at,
+            "run_id": snapshot.run_id,
+        }
+        statement = mysql_insert(REPORT_NAV_PROCESS_SNAPSHOTS).values(**values)
+        statement = statement.on_duplicate_key_update(
+            total_steps=statement.inserted.total_steps,
+            completed_steps=statement.inserted.completed_steps,
+            status=statement.inserted.status,
+            completed_at=statement.inserted.completed_at,
+            evaluated_at=statement.inserted.evaluated_at,
+            run_id=statement.inserted.run_id,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def load_process_snapshot(
+        self, report_month: str, process_code: str
+    ) -> ProcessSnapshot | None:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_PROCESS_SNAPSHOTS)
+        row = next(
+            (
+                item
+                for item in rows
+                if str(item.get("report_month")) == report_month
+                and str(item.get("process_code")) == process_code
+            ),
+            None,
+        )
+        if row is None:
+            return None
+        return ProcessSnapshot(
+            report_month=str(row["report_month"]),
+            process_code=str(row["process_code"]),
+            total_steps=int(row["total_steps"]),
+            completed_steps=int(row["completed_steps"]),
+            status=str(row["status"]),
+            completed_at=_optional_datetime(row.get("completed_at")),
+            evaluated_at=_as_datetime(row["evaluated_at"]),
+            run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
+        )
+
+    def _load_step(self, step_code: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_STEPS)
+        return next((row for row in rows if str(row.get("step_code")) == step_code), None)
+
+
+def _rows(connection: Any, table: Table) -> list[dict[str, Any]]:
+    return [dict(row) for row in connection.execute(select(table)).mappings().all()]
+
+
+def _parse_report_month(value: str) -> tuple[int, int]:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("report_month 必须使用 YYYY-MM 格式") from exc
+    return parsed.year, parsed.month
+
+
+def _as_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    return None if value in (None, "") else _as_datetime(value)
+
+
+def _as_date(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _schedule_from_row(row: Mapping[str, Any]) -> ScheduleConfig:
+    return ScheduleConfig(
+        report_month=str(row["report_month"]),
+        process_code=str(row["process_code"]),
+        report_date=_as_date(row["report_date"]),
+        source_type=str(row["source_type"]),
+        source_year=int(row["source_year"]) if row.get("source_year") is not None else None,
+        updated_by=str(row.get("updated_by") or ""),
+        updated_at=_as_datetime(row["updated_at"]),
+    )

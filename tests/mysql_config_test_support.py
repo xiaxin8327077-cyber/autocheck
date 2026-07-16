@@ -57,6 +57,20 @@ class MySqlContractConnection:
             "flow_chain_run_steps": [],
             "flow_chain_run_logs": [],
             "flow_chain_run_details": [],
+            "report_nav_processes": [],
+            "report_nav_process_months": [],
+            "report_nav_steps": [],
+            "report_nav_step_dependencies": [],
+            "report_nav_step_sources": [],
+            "report_nav_step_fields": [],
+            "report_nav_step_values": [],
+            "report_nav_step_overrides": [],
+            "report_nav_step_snapshots": [],
+            "report_nav_process_snapshots": [],
+            "report_nav_card_snapshots": [],
+            "report_nav_monthly_schedules": [],
+            "report_nav_stat_runs": [],
+            "report_nav_scheduler_state": [],
         }
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> MemoryResult:
@@ -83,7 +97,21 @@ class MySqlContractConnection:
                     row for row in self.tables[table_name] if str(row.get(column)) not in delete_ids
                 ]
             else:
-                filters = self._filters_from_params(params, ("kind", "id", "run_id", "result_id", "key"))
+                filters = self._filters_from_params(
+                    params,
+                    (
+                        "kind",
+                        "id",
+                        "run_id",
+                        "result_id",
+                        "key",
+                        "report_month",
+                        "step_code",
+                        "process_code",
+                        "stat_period",
+                        "card_code",
+                    ),
+                )
                 self.tables[table_name] = [
                     row for row in self.tables[table_name] if not self._matches_filters(row, filters)
                 ]
@@ -97,7 +125,21 @@ class MySqlContractConnection:
             return MemoryResult(rowcount=1, inserted_primary_key=[primary_key] if primary_key is not None else [])
         if getattr(statement, "is_select", False):
             rows = [dict(row) for row in self.tables[table_name]]
-            filters = self._filters_from_params(params, ("kind", "id", "run_id", "result_id", "key"))
+            filters = self._filters_from_params(
+                params,
+                (
+                    "kind",
+                    "id",
+                    "run_id",
+                    "result_id",
+                    "key",
+                    "report_month",
+                    "step_code",
+                    "process_code",
+                    "stat_period",
+                    "card_code",
+                ),
+            )
             if filters:
                 rows = [row for row in rows if self._matches_filters(row, filters)]
             if "count(" in sql.lower():
@@ -128,23 +170,47 @@ class MySqlContractConnection:
         has_id_column = any(column.name == "id" for column in table.columns)
         if has_id_column and "id" not in row:
             row["id"] = len(self.tables[table_name]) + 1
-        key_name = "key" if table_name == "app_settings" else ("id" if "id" in row else "")
-        if not key_name:
+        key_names = self._key_names(table_name, row)
+        if not key_names:
             self.tables[table_name].append(row)
             return None
         existing = next(
-            (item for item in self.tables[table_name] if item.get(key_name) == row.get(key_name)),
+            (
+                item
+                for item in self.tables[table_name]
+                if all(item.get(key) == row.get(key) for key in key_names)
+            ),
             None,
         )
         if existing is None:
             self.tables[table_name].append(row)
-            return row.get(key_name)
+            return row.get(key_names[0])
         else:
             created_at = existing.get("created_at")
             existing.update(row)
             if created_at is not None:
                 existing["created_at"] = created_at
-            return existing.get(key_name)
+            return existing.get(key_names[0])
+
+    def _key_names(self, table_name: str, row: dict[str, Any]) -> tuple[str, ...]:
+        composite_keys = {
+            "report_nav_process_months": ("process_code", "month_no"),
+            "report_nav_step_dependencies": ("step_code", "depends_on_step_code"),
+            "report_nav_step_overrides": ("report_month", "step_code"),
+            "report_nav_step_snapshots": ("report_month", "step_code"),
+            "report_nav_process_snapshots": ("report_month", "process_code"),
+            "report_nav_card_snapshots": ("stat_period", "card_code"),
+            "report_nav_monthly_schedules": ("report_month", "process_code"),
+        }
+        if table_name in composite_keys:
+            return composite_keys[table_name]
+        if table_name == "app_settings":
+            return ("key",)
+        if table_name in {"report_nav_processes"}:
+            return ("process_code",)
+        if table_name in {"report_nav_steps"}:
+            return ("step_code",)
+        return ("id",) if "id" in row else ()
 
     def _filters_from_params(self, params: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
         filters = {}
