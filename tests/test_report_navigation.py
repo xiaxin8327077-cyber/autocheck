@@ -861,6 +861,7 @@ def test_manual_completion_recalculates_process_and_cancel_restores_automatic_st
     completed = store.load_process_snapshot("2026-07", "p1")
     assert completed.status == "completed"
     assert completed.completed_at == current + timedelta(minutes=1)
+    assert store.load_card_snapshots("month")["report_forms"].completed_count == 2
 
     service.set_manual_state(
         "p1_s2", "manual-cancel", "2026-07", admin, now=current + timedelta(minutes=2)
@@ -871,6 +872,7 @@ def test_manual_completion_recalculates_process_and_cancel_restores_automatic_st
     assert restored_step.completion_source == "auto"
     assert restored_process.status == "incomplete"
     assert restored_process.completed_at is None
+    assert store.load_card_snapshots("month")["report_forms"].completed_count == 1
 
 
 def test_schedule_update_accepts_current_or_future_month_and_rejects_cross_month_date():

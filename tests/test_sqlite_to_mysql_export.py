@@ -24,8 +24,13 @@ def _load_exporter():
     return module
 
 
-def test_mysql_schema_asset_is_generic_safe_and_complete():
+def test_mysql_schema_asset_is_generic_safe_and_complete_for_legacy_migration_boundary():
     assert SCHEMA_SQL.exists(), "MySQL application schema SQL is required"
+    exporter = _load_exporter()
+    migration_schema = {
+        table_name: EXPECTED_APP_SCHEMA[table_name]
+        for table_name in exporter.MIGRATION_TARGET_TABLE_ORDER
+    }
 
     text = SCHEMA_SQL.read_text(encoding="utf-8")
     upper = text.upper()
@@ -34,17 +39,19 @@ def test_mysql_schema_asset_is_generic_safe_and_complete():
     assert "CREATE DATABASE" not in upper
     assert re.search(r"\bDROP\b", upper) is None
     assert re.search(r"\bTRUNCATE\b", upper) is None
-    assert len(re.findall(r"(?im)^CREATE TABLE `", text)) == len(EXPECTED_APP_SCHEMA)
-    assert len(re.findall(r"\) ENGINE=.* COMMENT='", text)) == len(EXPECTED_APP_SCHEMA)
+    assert len(exporter.MIGRATION_TARGET_TABLE_ORDER) == 20
+    assert set(exporter.MIGRATION_TARGET_TABLE_ORDER) < set(EXPECTED_APP_SCHEMA)
+    assert len(re.findall(r"(?im)^CREATE TABLE `", text)) == len(migration_schema)
+    assert len(re.findall(r"\) ENGINE=.* COMMENT='", text)) == len(migration_schema)
     assert len(re.findall(r" COMMENT '", text)) >= 155
     assert "DATE" in text
     assert "DATETIME(6)" in text
     assert "TIME(6)" in text
     assert "DECIMAL(38,12)" in text
 
-    for table_name in EXPECTED_APP_SCHEMA:
+    for table_name in migration_schema:
         assert f"CREATE TABLE `{table_name}`" in text
-        for column_name in EXPECTED_APP_SCHEMA[table_name]:
+        for column_name in migration_schema[table_name]:
             assert f"`{column_name}`" in text
 
 
@@ -72,7 +79,7 @@ def test_exporter_generates_mysql_sql_report_and_keeps_console_sanitized(tmp_pat
     assert "hash-secret-not-stdout" not in captured.err
     assert before_hash == _sha256(source)
 
-    assert result["target_tables"] == len(EXPECTED_APP_SCHEMA)
+    assert result["target_tables"] == len(exporter.MIGRATION_TARGET_TABLE_ORDER)
     assert result["target_schema_version"] == CURRENT_APP_SCHEMA_VERSION
     assert result["total_exported_rows"] >= 20
     assert schema_output.read_text(encoding="utf-8") == SCHEMA_SQL.read_text(encoding="utf-8")
@@ -105,6 +112,10 @@ def test_exporter_generates_mysql_sql_report_and_keeps_console_sanitized(tmp_pat
     assert report["tables"]["data_sources"]["exported_rows"] == 1
     assert report["tables"]["run_headers"]["exported_rows"] == 3
     assert report["tables"]["flow_chain_run_logs"]["exported_rows"] == 1
+    assert report["post_migration_schema_scripts"] == [
+        "sql/app_storage/mysql/002_report_navigation.sql",
+        "sql/app_storage/mysql/003_report_navigation_seed.sql",
+    ]
 
 
 def test_exporter_opens_sqlite_source_read_only(tmp_path, monkeypatch):

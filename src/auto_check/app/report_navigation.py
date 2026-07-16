@@ -816,10 +816,11 @@ class ReportNavigationService:
         )
         self.store.save_step_snapshot(changed)
         snapshots[changed.step_code] = changed
+        configurations = self.store.load_configuration(report_month)
         process = next(
             (
                 item
-                for item in self.store.load_configuration(report_month)
+                for item in configurations
                 if item.process_code == changed_step.process_code
             ),
             None,
@@ -850,6 +851,25 @@ class ReportNavigationService:
                 run_id,
             )
         )
+        process_snapshots = self.store.load_process_snapshots(report_month)
+        completed_processes = sum(
+            1
+            for item in configurations
+            if process_snapshots.get(item.process_code)
+            and process_snapshots[item.process_code].status == COMPLETED
+        )
+        for period in PERIODS:
+            self.store.save_card_snapshot(
+                _card_snapshot(
+                    period,
+                    "report_forms",
+                    len(configurations),
+                    completed_processes,
+                    len(configurations) - completed_processes,
+                    current,
+                    run_id,
+                )
+            )
 
     def _save_card_snapshots(
         self,

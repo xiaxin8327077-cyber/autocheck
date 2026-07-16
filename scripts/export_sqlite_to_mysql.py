@@ -16,7 +16,10 @@ CURRENT_APP_SCHEMA_VERSION = 1
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCHEMA_SQL = ROOT / "sql" / "app_storage" / "mysql" / "001_init_schema.sql"
 
-TARGET_TABLE_ORDER = [
+# The SQLite exporter deliberately covers only the original normalized storage
+# boundary. Report-navigation tables have no SQLite source equivalent and are
+# created and seeded by the follow-up MySQL scripts listed below.
+MIGRATION_TARGET_TABLE_ORDER = [
     "app_schema_version",
     "data_sources",
     "app_settings",
@@ -38,7 +41,13 @@ TARGET_TABLE_ORDER = [
     "flow_chain_run_details",
     "storage_migration_runs",
 ]
-EXPORT_TABLE_ORDER = [table for table in TARGET_TABLE_ORDER if table != "app_schema_version"]
+EXPORT_TABLE_ORDER = [
+    table for table in MIGRATION_TARGET_TABLE_ORDER if table != "app_schema_version"
+]
+POST_MIGRATION_SCHEMA_SCRIPTS = [
+    "sql/app_storage/mysql/002_report_navigation.sql",
+    "sql/app_storage/mysql/003_report_navigation_seed.sql",
+]
 EXCLUDED_TABLES = {
     "app_kv": "legacy configuration/auth snapshot; normalized rows are exported from data_sources, app_settings, and users",
     "history_runs": "legacy history snapshot; normalized history rows are exported from run tables",
@@ -215,8 +224,9 @@ def export_sqlite_to_mysql(
         "source_foreign_key_issue_count": len(foreign_key_rows),
         "target_database": database_name,
         "target_schema_version": CURRENT_APP_SCHEMA_VERSION,
-        "target_tables": len(TARGET_TABLE_ORDER),
+        "target_tables": len(MIGRATION_TARGET_TABLE_ORDER),
         "exported_source_tables": len(EXPORT_TABLE_ORDER),
+        "post_migration_schema_scripts": POST_MIGRATION_SCHEMA_SCRIPTS,
         "total_exported_rows": total_exported_rows,
         "excluded_tables": EXCLUDED_TABLES,
         "tables": table_reports,
@@ -231,6 +241,7 @@ def export_sqlite_to_mysql(
             "The data script records app_schema_version only at the end of the transaction.",
             "Date, datetime, time, and monetary values are written for native MySQL column types.",
             "Generated SQL may contain encrypted credentials and password hashes; handle it as sensitive data.",
+            "Apply the listed post-migration schema scripts after importing this legacy migration export.",
         ],
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
