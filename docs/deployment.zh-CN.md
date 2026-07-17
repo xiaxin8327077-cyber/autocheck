@@ -15,7 +15,7 @@
 7. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
 8. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
 9. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
-10. 上线验收需确认 MySQL 36 张目标表和迁移行数齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+10. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 36 张应用存储表结构（含 `004_user_interface_preferences.sql`）齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
 
 `user_interface_preferences` 按每个用户独立保存界面圆角偏好，不设置外键，删除用户后的孤儿偏好由应用清理。从已执行 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前执行随发布提供的 `004_user_interface_preferences.sql`，再替换应用。该脚本采用 `CREATE TABLE IF NOT EXISTS`，可重复执行且不会重复建表或删除现有数据；表已存在时仍需人工核对结构。本文仅描述运维步骤，不代表已在任何线上环境执行。
 

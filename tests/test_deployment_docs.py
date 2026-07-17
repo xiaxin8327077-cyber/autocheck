@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -16,6 +17,23 @@ def _read(path: Path) -> str:
 
 def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
     readme = _read(README)
+    current_features = readme.split("## 当前功能", 1)[1].split(
+        "## MySQL 应用库上线准备", 1
+    )[0]
+    system_settings = next(
+        line for line in current_features.splitlines() if line.startswith("- 系统设置：")
+    )
+    latest_changes = readme.split("## 最新变更说明", 1)[1]
+    v21_changes = next(
+        section
+        for section in re.split(r"(?m)(?=^`v\d+\.\d+`)", latest_changes)
+        if section.startswith("`v2.1`")
+    )
+    v21_radius_change = next(
+        line
+        for line in v21_changes.splitlines()
+        if line.startswith("- 新增用户级界面圆角个性化设置：")
+    )
 
     for expected in [
         "每个用户独立",
@@ -33,18 +51,46 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         "弹窗及弹窗内控件",
         "特殊形状",
     ]:
-        assert expected in readme
+        assert expected in system_settings
+
+    for expected in [
+        "系统设置→界面设置",
+        "1–15px",
+        "默认 4px",
+        "拖动即时预览并显式保存",
+        "弹窗及弹窗内控件",
+        "仅影响显示、不改变系统功能",
+        "特殊形状保持原样",
+    ]:
+        assert expected in v21_radius_change
 
 
-def test_readme_distinguishes_migrated_rows_from_complete_mysql_schema() -> None:
-    verification_line = next(
-        line for line in _read(README).splitlines() if "上线核验" in line
-    )
+def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> None:
+    acceptance_sections = {
+        README: next(
+            line for line in _read(README).splitlines() if "上线核验" in line
+        ),
+        DEPLOYMENT_DOC: next(
+            line
+            for line in _read(DEPLOYMENT_DOC).splitlines()
+            if "上线验收" in line
+        ),
+        INTRANET_DEPLOYMENT_DOC: next(
+            line
+            for line in _read(INTRANET_DEPLOYMENT_DOC).splitlines()
+            if "上线验收" in line
+        ),
+        MYSQL_STORAGE_DOC: _read(MYSQL_STORAGE_DOC)
+        .split("## 五、验收口径", 1)[1]
+        .split("## 六、回滚", 1)[0],
+    }
 
-    assert "原 20 张迁移目标表的数据行数" in verification_line
-    assert "当前完整 36 张应用存储表结构" in verification_line
-    assert "004_user_interface_preferences.sql" in verification_line
-    assert "MySQL 20 张表和迁移行数齐全" not in verification_line
+    for acceptance in acceptance_sections.values():
+        assert "原 20 张迁移目标表的数据行数" in acceptance
+        assert "与迁移报告一致" in acceptance
+        assert "当前完整 36 张应用存储表结构" in acceptance
+        assert "004_user_interface_preferences.sql" in acceptance
+        assert "36 张目标表和迁移行数齐全" not in acceptance
 
 
 def test_mysql_rollout_docs_require_004_and_36_table_sequence() -> None:

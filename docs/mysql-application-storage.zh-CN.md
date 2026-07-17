@@ -66,12 +66,12 @@ python scripts\export_sqlite_to_mysql.py `
 
 ## 五、验收口径
 
-上线链接 MySQL 后，MySQL 目标表数据必须齐全。至少确认：
+上线连接 MySQL 后，需要分别确认旧数据迁移结果和当前完整表结构。至少确认：
 
 - `app_schema_version` 当前版本为 `1`。
-- 36 张目标表存在，关键字段齐全，且 `user_interface_preferences` 的主键、默认值和范围约束符合 `004_user_interface_preferences.sql`。
+- 当前完整 36 张应用存储表结构（含 `004_user_interface_preferences.sql`）齐全，关键字段完整，且 `user_interface_preferences` 的主键、默认值和范围约束符合脚本定义。
 - 迁移报告中 SQLite `integrity_check` 为 `ok`，外键异常数为 `0`。
-- 迁移报告的 `total_exported_rows` 与运维执行后的 MySQL 行数抽查一致。
+- 原 20 张迁移目标表的数据行数与迁移报告一致，并确认 `total_exported_rows` 与运维执行后的 MySQL 行数抽查结果相符。
 - 数据源、用户、自动对数历史、人行逐笔校验历史和流程链历史都能从 MySQL 正常读取。
 - 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
 
