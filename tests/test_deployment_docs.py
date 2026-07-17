@@ -15,6 +15,28 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _changelog_version_block(markdown: str, version: str) -> str:
+    return next(
+        section
+        for section in re.split(r"(?m)(?=^`v\d+(?:\.\d+)+`)", markdown)
+        if section.startswith(f"`{version}`")
+    )
+
+
+def test_changelog_version_block_stops_at_multi_segment_version() -> None:
+    changelog = """`v2.1` (2026-07-02)
+- 系统优化及BUG修复。
+
+`v2.0.8` (2026-06-12)
+- 新增用户级界面圆角个性化设置：旧版本内容。
+"""
+
+    v21_changes = _changelog_version_block(changelog, "v2.1")
+
+    assert "`v2.0.8`" not in v21_changes
+    assert "旧版本内容" not in v21_changes
+
+
 def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
     readme = _read(README)
     current_features = readme.split("## 当前功能", 1)[1].split(
@@ -24,11 +46,7 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         line for line in current_features.splitlines() if line.startswith("- 系统设置：")
     )
     latest_changes = readme.split("## 最新变更说明", 1)[1]
-    v21_changes = next(
-        section
-        for section in re.split(r"(?m)(?=^`v\d+\.\d+`)", latest_changes)
-        if section.startswith("`v2.1`")
-    )
+    v21_changes = _changelog_version_block(latest_changes, "v2.1")
     v21_radius_change = next(
         line
         for line in v21_changes.splitlines()
