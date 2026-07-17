@@ -313,6 +313,17 @@ class ApiRouter:
                     current_user=current_user,
                 )
 
+            if method == "POST" and path == "/api/report-navigation/refresh":
+                payload = self.report_navigation.manual_refresh(current_user=current_user)
+                status = str(payload.get("status") or "")
+                if status == "cooldown":
+                    return 429, {"error": payload.get("error_message") or "刷新过于频繁", **payload}
+                if status == "skipped":
+                    return 409, {"error": payload.get("error_message") or "统计任务正在执行", **payload}
+                if status == "failed":
+                    return 500, {"error": payload.get("error_message") or "报送导航刷新失败", **payload}
+                return 200, payload
+
             manual_match = re.fullmatch(
                 r"/api/report-navigation/steps/([^/]+)/(manual-complete|manual-cancel)",
                 path,
@@ -346,6 +357,22 @@ class ApiRouter:
                     schedule_match.group(1),
                     report_month,
                     report_date,
+                    current_user or {},
+                )
+
+            card_values_match = re.fullmatch(
+                r"/api/report-navigation/cards/([^/]+)",
+                path,
+            )
+            if method == "POST" and card_values_match:
+                if str((current_user or {}).get("role", "")) != "admin":
+                    return 403, {"error": "admin role required"}
+                values = (body or {}).get("values")
+                if not isinstance(values, dict):
+                    return 400, {"error": "values is required"}
+                return 200, self.report_navigation.update_card_manual_values(
+                    card_values_match.group(1),
+                    values,
                     current_user or {},
                 )
 

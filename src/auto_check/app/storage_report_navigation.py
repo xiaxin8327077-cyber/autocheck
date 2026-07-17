@@ -142,6 +142,18 @@ REPORT_NAV_CARD_SNAPSHOTS = Table(
     Column("evaluated_at", DateTime, nullable=False),
     Column("run_id", BigInteger),
 )
+REPORT_NAV_CARD_MANUAL_VALUES = Table(
+    "report_nav_card_manual_values",
+    METADATA,
+    Column("stat_period", String(16), primary_key=True),
+    Column("card_code", String(64), primary_key=True),
+    Column("completed_count", Integer, nullable=False),
+    Column("incomplete_count", Integer, nullable=False),
+    Column("operator_id", String(64), nullable=False),
+    Column("operator_username", String(128), nullable=False),
+    Column("operator_name", String(128), nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
 REPORT_NAV_MONTHLY_SCHEDULES = Table(
     "report_nav_monthly_schedules",
     METADATA,
@@ -276,6 +288,18 @@ class CardSnapshot:
     completion_rate: Decimal
     evaluated_at: datetime
     run_id: int | None
+
+
+@dataclass(frozen=True)
+class ManualCardValue:
+    stat_period: str
+    card_code: str
+    completed_count: int
+    incomplete_count: int
+    operator_id: str
+    operator_username: str
+    operator_name: str
+    updated_at: datetime
 
 
 class ReportNavigationStore:
@@ -573,10 +597,20 @@ class ReportNavigationStore:
             return self.load_schedule(report_month, process_code)
         return None
 
-    def save_process_snapshot(self, snapshot: ProcessSnapshot) -> None:
+    def save_process_snapshot(
+        self,
+        snapshot: ProcessSnapshot,
+        *,
+        preserve_completed_at: bool = True,
+    ) -> None:
         existing = self.load_process_snapshot(snapshot.report_month, snapshot.process_code)
         completed_at = snapshot.completed_at
-        if snapshot.status == "completed" and existing and existing.status == "completed":
+        if (
+            preserve_completed_at
+            and snapshot.status == "completed"
+            and existing
+            and existing.status == "completed"
+        ):
             completed_at = existing.completed_at
         if snapshot.status != "completed":
             completed_at = None
@@ -602,10 +636,17 @@ class ReportNavigationStore:
         with self.database.transaction() as connection:
             connection.execute(statement)
 
-    def save_step_snapshot(self, snapshot: StepSnapshot) -> None:
+    def save_step_snapshot(
+        self,
+        snapshot: StepSnapshot,
+        *,
+        preserve_auto_completed_at: bool = True,
+    ) -> None:
         existing = self.load_step_snapshot(snapshot.report_month, snapshot.step_code)
         auto_completed_at = snapshot.auto_completed_at
         if (
+            preserve_auto_completed_at
+            and
             snapshot.auto_status == "completed"
             and existing is not None
             and existing.auto_status == "completed"
@@ -727,6 +768,55 @@ class ReportNavigationStore:
             if str(row.get("stat_period")) == period
         }
 
+    def save_manual_card_values(
+        self,
+        card_code: str,
+        values: Mapping[str, Mapping[str, int]],
+        current_user: Mapping[str, Any],
+        *,
+        now: datetime,
+    ) -> None:
+        with self.database.transaction() as connection:
+            for stat_period, counts in values.items():
+                row = {
+                    "stat_period": stat_period,
+                    "card_code": card_code,
+                    "completed_count": int(counts["completed_count"]),
+                    "incomplete_count": int(counts["incomplete_count"]),
+                    "operator_id": str(current_user.get("id") or ""),
+                    "operator_username": str(current_user.get("username") or ""),
+                    "operator_name": str(current_user.get("display_name") or ""),
+                    "updated_at": now,
+                }
+                statement = mysql_insert(REPORT_NAV_CARD_MANUAL_VALUES).values(**row)
+                statement = statement.on_duplicate_key_update(
+                    completed_count=statement.inserted.completed_count,
+                    incomplete_count=statement.inserted.incomplete_count,
+                    operator_id=statement.inserted.operator_id,
+                    operator_username=statement.inserted.operator_username,
+                    operator_name=statement.inserted.operator_name,
+                    updated_at=statement.inserted.updated_at,
+                )
+                connection.execute(statement)
+
+    def load_manual_card_values(self, card_code: str) -> dict[str, ManualCardValue]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_CARD_MANUAL_VALUES)
+        return {
+            str(row["stat_period"]): ManualCardValue(
+                stat_period=str(row["stat_period"]),
+                card_code=str(row["card_code"]),
+                completed_count=int(row["completed_count"]),
+                incomplete_count=int(row["incomplete_count"]),
+                operator_id=str(row.get("operator_id") or ""),
+                operator_username=str(row.get("operator_username") or ""),
+                operator_name=str(row.get("operator_name") or ""),
+                updated_at=_as_datetime(row["updated_at"]),
+            )
+            for row in rows
+            if str(row.get("card_code")) == card_code
+        }
+
     def load_process_snapshots(self, report_month: str) -> dict[str, ProcessSnapshot]:
         with self.database.connect() as connection:
             rows = _rows(connection, REPORT_NAV_PROCESS_SNAPSHOTS)
@@ -759,9 +849,11 @@ class ReportNavigationStore:
             rows = _rows(connection, REPORT_NAV_PROCESSES)
         return any(str(row.get("process_code")) == process_code for row in rows)
 
-    def load_latest_run(self) -> dict[str, Any] | None:
+    def load_latest_run(self, *, trigger_type: str | None = None) -> dict[str, Any] | None:
         with self.database.connect() as connection:
             rows = _rows(connection, REPORT_NAV_STAT_RUNS)
+        if trigger_type is not None:
+            rows = [row for row in rows if str(row.get("trigger_type") or "") == trigger_type]
         if not rows:
             return None
         return max(rows, key=lambda row: (_as_datetime(row["started_at"]), int(row["id"])))

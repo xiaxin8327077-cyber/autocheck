@@ -60,7 +60,10 @@
 ### 节点完成时间
 
 - “完成于 2026-06-01 10:24”表示鱼骨节点整体完成时间，不是单个步骤时间。
-- 定时任务首次检测到节点全部有效步骤完成时，记录当前检测完成时间。
+- 报送日期当天仍执行真实逻辑且不兜底；从次日起，每次统计先执行真实逻辑，仍未完成时才按最新报送日期兜底，完成时间取报送日期当天 `20:00:00`。
+- 报送日期修改后立即串行重新计算：保存当前月日期后，接口使用统计任务的同一数据库租约锁触发一次 `schedule-update` 统计；新日期尚未逾期且真实逻辑未完成时撤销原兜底；新日期已逾期且真实逻辑仍未完成时更新为新日期当天 `20:00:00`；真实逻辑已完成时不受报送日期修改影响。
+- 当流程最后一步使用 `xt_reg_version` 归档记录完成时，完成时间取匹配记录的 `MAX(COALESCE(update_date, create_date))`；归档时间变化后，下次统计覆盖更新。
+- 不属于以上两类权威业务时间时，定时任务首次检测到节点全部有效步骤完成后记录当前检测完成时间并保持。
 - 管理员操作使最后一个未完成步骤变为完成时，立即记录当前操作时间。
 - 节点重新变为未完成或判断异常时清除当前完成时间；再次全部完成时重新记录。
 
@@ -121,7 +124,7 @@
 - `step_code`
 - `depends_on_step_code`
 
-1104 步骤 2、步骤 3 依赖步骤 4；人行模板步骤 5 依赖步骤 6。
+1104 步骤 2、步骤 3 依赖步骤 4；人行模板步骤 2、步骤 5 依赖步骤 6。依赖属于兜底完成条件：步骤自身条件已满足时直接完成，自身条件未满足时由后置依赖步骤完成状态补足。
 
 #### `report_nav_step_sources`
 
@@ -286,7 +289,7 @@
 
 ## 步骤判断逻辑
 
-### 人行大集中
+### 人行大集中报送
 
 #### 步骤 1：导入并生成存续回购业务明细
 
@@ -336,12 +339,12 @@
 
 - 数据源：`ass_man_reg_24`
 - 表：`zgxgzh_spvdetail_zg08`
-- 时间字段：`tbtime`
-- 完成条件：表中存在数据，且最小 `tbtime` 位于系统当前月份。
+- 报告期字段：`caldate`
+- 完成条件：表中存在数据，且所有记录的 `caldate` 都等于当前业务报告期。
 
 规则 A、B 同时满足才完成。
 
-### 人行模板、逐笔报送
+### 资管产品模板、逐笔
 
 #### 步骤 1：债券发行人和交易对手信息确认
 
@@ -406,9 +409,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`
+- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
 - 固定业务值：`manage_code = system1104`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
+- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
 
 ### 21、23 版全要素报送
 
@@ -416,9 +420,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`
+- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
 - 固定业务值：`manage_code = qysnew`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
+- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
 
 ### 中信登定期报送
 
@@ -429,9 +434,9 @@
 #### 步骤 2：导入报送外部数据
 
 - 数据源：`zxd`
-- 表：`zxd_asset_credit_info`、`result14_xtbzjj_external_data`、`jsxt_basic_info`
+- 表：`zxd_asset_credit_info`
 - 日期字段：`createdate`
-- 完成条件：三张表均存在数据，且各表都存在 `createdate` 位于系统当前月份的记录。
+- 完成条件：表中存在数据，且存在 `createdate` 位于系统当前月份的记录。
 
 #### 步骤 3、步骤 4
 
@@ -441,9 +446,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`
+- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
 - 固定业务值：`manage_code = zxdreport`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
+- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
 
 ### East5 报送
 
@@ -451,9 +457,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`
+- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
 - 固定业务值：`manage_code = east5`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
+- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
 
 ### 五篇大文章报送
 
@@ -461,9 +468,10 @@
 - 该节点使用一个内部判断步骤。
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`
+- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
 - 固定业务值：`manage_code = dwz5`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
+- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
 
 ## 补录任务统计
 

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 恢复执行趋势日期框的主干自适应宽度，将对数质量和差异类型分布改为每期首次执行口径，并删除质量分展示。
+**Goal:** 将执行趋势日期框固定为 150px，将对数质量和差异类型分布改为当前报告期首次执行口径并移除范围文字，同时删除质量分展示。
 
-**Architecture:** 保留现有单页应用和自定义下拉框结构，在进入对数总览后对隐藏初始化的日期框做组件级重新测量。新增独立的“每期首次执行”选择函数和通用汇总函数，仅供两块分布统计使用；高频差异项目继续消费全部近期执行记录。
+**Architecture:** 保留现有单页应用和自定义下拉框结构，同时固定原生日期框与增强外壳的宽度和弹性布局基准。复用“每期首次执行”选择函数，从当前报告期选出最早一次执行供两块分布统计使用；高频差异项目继续消费全部近期执行记录。
 
 **Tech Stack:** 原生 HTML/CSS/JavaScript、Python pytest 静态结构测试、PowerShell Windows 打包脚本。
 
@@ -15,70 +15,73 @@
 - `src/auto_check/web/app.js`：页面切换、下拉框测量、历史记录筛选和首页统计渲染。
 - `src/auto_check/web/index.html`：删除质量分圆环与评价标签节点。
 - `src/auto_check/web/styles.css`：让状态分布占满质量卡，并删除质量分专用样式。
-- `tests/test_web_static.py`：覆盖宽度重测、每期首次执行口径、质量分移除和文档更新。
+- `tests/test_web_static.py`：覆盖固定宽度、当前报告期首次执行口径、范围文字移除、质量分移除和文档更新。
 - `README.md`：详细记录首页统计口径和展示变化。
 
-### Task 1: 恢复日期下拉框的主干自适应宽度
+### Task 1: 固定日期下拉框宽度
 
 **Files:**
 - Modify: `tests/test_web_static.py:1801`
-- Modify: `src/auto_check/web/app.js:1588,729`
+- Modify: `src/auto_check/web/styles.css:4165,10342`
 
 - [ ] **Step 1: 写入失败测试**
 
 ```python
-def test_home_chart_date_select_remeasures_after_hidden_default_page_becomes_visible():
+def test_home_chart_date_select_keeps_fixed_width_after_custom_select_enhancement():
     app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
 
-    assert "function scheduleHomeChartDateSelectMeasure()" in app_js
-    assert "const state = customSelectStates.get(chartDateSelect);" in app_js
-    assert "customSelectMeasure(chartDateSelect, state.shell);" in app_js
-    assert 'if (name === "home") scheduleHomeChartDateSelectMeasure();' in app_js
+    chart_select_rule = re.search(r"(?m)^\.chart-date-select\s*\{(?P<body>.*?)\}", css, re.S)
+    chart_shell_rule = re.search(r"(?m)^\.custom-select-shell\.chart-date-select\s*\{(?P<body>.*?)\}", css, re.S)
+    assert chart_select_rule is not None
+    assert chart_shell_rule is not None
+    assert "width: 150px;" in chart_select_rule.group("body")
+    assert "width: 150px;" in chart_shell_rule.group("body")
+    assert "flex: 0 0 150px;" in chart_shell_rule.group("body")
+    assert "function scheduleHomeChartDateSelectMeasure()" not in app_js
 ```
 
 - [ ] **Step 2: 运行测试并确认失败**
 
-Run: `python -m pytest tests/test_web_static.py::test_home_chart_date_select_remeasures_after_hidden_default_page_becomes_visible -q`
+Run: `python -m pytest tests/test_web_static.py::test_home_chart_date_select_keeps_fixed_width_after_custom_select_enhancement -q`
 
-Expected: FAIL，提示 `scheduleHomeChartDateSelectMeasure` 不存在。
+Expected: FAIL，提示自定义下拉框外壳固定宽度规则不存在。
 
-- [ ] **Step 3: 实现显示后重新测量**
+- [ ] **Step 3: 固定原生控件和增强外壳宽度**
 
-在自定义下拉框测量函数附近增加：
+将原生控件宽度改为：
 
-```javascript
-function scheduleHomeChartDateSelectMeasure() {
-  window.requestAnimationFrame(() => {
-    if (document.documentElement.getAttribute("data-page") !== "home" || !chartDateSelect) return;
-    const state = customSelectStates.get(chartDateSelect);
-    if (!state) return;
-    customSelectMeasure(chartDateSelect, state.shell);
-  });
+```css
+.chart-date-select {
+  width: 150px;
+  min-width: 150px;
 }
 ```
 
-在 `switchPage()` 设置 `data-page` 后增加：
+在 `.custom-select-shell` 通用规则后增加：
 
-```javascript
-if (name === "home") scheduleHomeChartDateSelectMeasure();
+```css
+.custom-select-shell.chart-date-select {
+  width: 150px;
+  min-width: 150px;
+  flex: 0 0 150px;
+}
 ```
-
-不修改主干已有的 `.chart-date-select { width: auto; min-width: 150px; }`。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
-Run: `python -m pytest tests/test_web_static.py::test_home_chart_date_select_remeasures_after_hidden_default_page_becomes_visible tests/test_web_static.py::test_home_chart_date_select_keeps_scrollable_wider_dropdown -q`
+Run: `python -m pytest tests/test_web_static.py::test_home_chart_date_select_keeps_fixed_width_after_custom_select_enhancement tests/test_web_static.py::test_home_chart_date_select_keeps_scrollable_wider_dropdown -q`
 
 Expected: `2 passed`。
 
 - [ ] **Step 5: 提交本任务**
 
 ```powershell
-git add src/auto_check/web/app.js tests/test_web_static.py
-git commit -m "fix: restore home chart date select width"
+git add src/auto_check/web/styles.css tests/test_web_static.py
+git commit -m "fix: keep home chart date select width fixed"
 ```
 
-### Task 2: 两块分布统计改取每期第一次执行
+### Task 2: 两块分布统计改取当前报告期第一次执行
 
 **Files:**
 - Modify: `tests/test_web_static.py:913`
@@ -91,9 +94,10 @@ git commit -m "fix: restore home chart date select width"
 ```python
 assert "function firstHomeRunsForPeriodDates(runs = [], dates = [])" in app_js
 assert "compareHomeRunTimeAsc(run, current) < 0" in app_js
-assert "function aggregateHomeSummaryForRuns(runs = [], summaryBuilder = () => ({}))" in app_js
-assert "aggregateHomeSummaryForRuns(recentFirstPeriodRuns, homeStatusCountsForRun)" in app_js
-assert "aggregateHomeSummaryForRuns(recentFirstPeriodRuns, homeDifferenceTypeSummaryForRun)" in app_js
+assert "function aggregateHomeSummaryForRuns(runs = [], summaryBuilder = () => ({}))" not in app_js
+assert "const currentReportFirstRun = firstHomeRunsForPeriodDates(recentPeriodRuns, [latestRun.run_date])[0] || latestRun;" in app_js
+assert "const currentReportStatusCounts = homeStatusCountsForRun(currentReportFirstRun);" in app_js
+assert "const currentReportTypeSummary = homeDifferenceTypeSummaryForRun(currentReportFirstRun);" in app_js
 assert "averageHomeSummaryByPeriod" not in app_js
 assert "buildHomeFrequencyItems(recentPeriodRuns, recentPeriodDates)" in app_js
 ```
@@ -102,9 +106,9 @@ assert "buildHomeFrequencyItems(recentPeriodRuns, recentPeriodDates)" in app_js
 
 Run: `python -m pytest tests/test_web_static.py::test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts -q`
 
-Expected: FAIL，提示首次执行选择函数不存在或旧平均函数仍存在。
+Expected: FAIL，提示两块统计仍在汇总近 12 期首次执行。
 
-- [ ] **Step 3: 增加首次执行选择与汇总函数**
+- [ ] **Step 3: 选择当前报告期首次执行**
 
 在 `homeRunsForPeriodDates()` 后增加：
 
@@ -119,26 +123,12 @@ function firstHomeRunsForPeriodDates(runs = [], dates = []) {
 }
 ```
 
-用通用求和替换旧的每期平均函数：
-
-```javascript
-function aggregateHomeSummaryForRuns(runs = [], summaryBuilder = () => ({})) {
-  const summary = {};
-  runs.forEach((run) => {
-    Object.entries(summaryBuilder(run) || {}).forEach(([key, value]) => {
-      summary[key] = (summary[key] || 0) + Number(value || 0);
-    });
-  });
-  return summary;
-}
-```
-
 在 `renderHomeStats()` 加入并替换两处统计：
 
 ```javascript
-const recentFirstPeriodRuns = firstHomeRunsForPeriodDates(recentPeriodRuns, recentPeriodDates);
-const periodStatusCounts = aggregateHomeSummaryForRuns(recentFirstPeriodRuns, homeStatusCountsForRun);
-const periodTypeSummary = aggregateHomeSummaryForRuns(recentFirstPeriodRuns, homeDifferenceTypeSummaryForRun);
+const currentReportFirstRun = firstHomeRunsForPeriodDates(recentPeriodRuns, [latestRun.run_date])[0] || latestRun;
+const currentReportStatusCounts = homeStatusCountsForRun(currentReportFirstRun);
+const currentReportTypeSummary = homeDifferenceTypeSummaryForRun(currentReportFirstRun);
 ```
 
 保留：
@@ -250,7 +240,9 @@ git commit -m "refactor: simplify home quality card"
 - [ ] **Step 1: 更新文档测试**
 
 ```python
-assert "对数质量和差异类型分布按每期第一次执行汇总" in readme
+assert "对数质量和差异类型分布只统计当前报告期第一次执行" in readme
+assert "高频差异项目仍最多统计近 12 个报告期" in readme
+assert "对数质量和差异类型分布不再展示统计期数" in readme
 assert "对数质量移除质量分" in readme
 assert "每期全部执行次数先取平均后汇总" not in readme
 assert "系统优化及BUG修复。" in app_js
@@ -264,7 +256,7 @@ Expected: FAIL，提示 README 仍为旧口径。
 
 - [ ] **Step 3: 更新 README 与应用内日志**
 
-将 README 首页说明中的“每期全部执行次数先取平均后汇总”改为“每期第一次执行汇总”，删除旧的平均值和同期前序执行纳入口径描述，并补充“对数质量移除质量分、圆环和评价标签”。应用内 `v2.1` 日志保持精简，仅保留或复用：
+将 README 首页说明改为“对数质量和差异类型分布只统计当前报告期第一次执行”，注明两块卡片不再展示统计期数、高频差异项目仍最多统计近 12 期，并补充“对数质量移除质量分、圆环和评价标签”。应用内 `v2.1` 日志保持精简，仅保留或复用：
 
 ```html
 <li>系统优化及BUG修复。</li>

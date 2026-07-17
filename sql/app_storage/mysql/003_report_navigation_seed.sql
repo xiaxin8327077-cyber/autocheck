@@ -1,6 +1,6 @@
 INSERT INTO `report_nav_processes` (`process_code`, `process_name`, `display_order`, `enabled`, `allow_manual_step_completion`) VALUES
-  ('pbc_central', '人行大集中', 10, 1, 1),
-  ('pbc_template', '人行模板、逐笔报送', 20, 1, 1),
+  ('pbc_central', '人行大集中报送', 10, 1, 1),
+  ('pbc_template', '资管产品模板、逐笔', 20, 1, 1),
   ('jr_1104', '1104报送', 30, 1, 1),
   ('full_elements', '21、23版全要素报送', 40, 1, 1),
   ('citic_registration', '中信登定期报送', 50, 1, 1),
@@ -92,7 +92,7 @@ INSERT INTO `report_nav_steps` (`step_code`, `process_code`, `step_name`, `displ
   ('pbc_central_1', 'pbc_central', '导入并生成存续回购业务明细信息', 1, 'all_rows_match_report_date', 1, 0, 1),
   ('pbc_central_2', 'pbc_central', '资产负债表的资产合计与负债及权益合计一致', 2, 'amounts_equal', 1, 0, 1),
   ('pbc_central_3', 'pbc_central', '募集信息表中的地区与客户类型不为空，且份额满足跨期校验', 3, 'no_blank_fields_and_no_ck', 1, 0, 1),
-  ('pbc_central_4', 'pbc_central', '内部产品资金端客户与资产端交易对手校验一致', 4, 'no_ck_and_min_time', 1, 0, 1),
+  ('pbc_central_4', 'pbc_central', '内部产品资金端客户与资产端交易对手校验一致', 4, 'no_ck_and_report_period', 1, 0, 1),
   ('pbc_template_1', 'pbc_template', '确认新增债券发行人、交易对手行业规模信息', 1, 'no_pending_status', 1, 0, 1),
   ('pbc_template_2', 'pbc_template', '确认各维度数据是否有变化需要报备', 2, 'month_rows_or_dependency', 1, 0, 1),
   ('pbc_template_3', 'pbc_template', '补录底表正常更新、补录任务正常触发', 3, 'default_completed', 1, 1, 1),
@@ -124,6 +124,18 @@ INSERT INTO `report_nav_step_dependencies` (`step_code`, `depends_on_step_code`)
   ('citic_registration_4', 'citic_registration_5')
 ON DUPLICATE KEY UPDATE `depends_on_step_code`=VALUES(`depends_on_step_code`);
 
+DELETE FROM `report_nav_step_fields`
+WHERE `step_source_id` IN (
+  SELECT `id`
+  FROM `report_nav_step_sources`
+  WHERE `step_code` = 'citic_registration_2'
+    AND `source_role` IN ('external_data', 'basic_info')
+);
+
+DELETE FROM `report_nav_step_sources`
+WHERE `step_code` = 'citic_registration_2'
+  AND `source_role` IN ('external_data', 'basic_info');
+
 INSERT INTO `report_nav_step_sources` (`id`, `step_code`, `source_role`, `data_source_name`, `table_name`, `display_order`, `enabled`) VALUES
   (1, 'pbc_central_1', 'primary', 'ass_man_reg', 'ex_pledge_back', 1, 1),
   (2, 'pbc_central_2', 'primary', 'reg-report-analysis', 'zf_detail_2024', 1, 1),
@@ -140,8 +152,6 @@ INSERT INTO `report_nav_step_sources` (`id`, `step_code`, `source_role`, `data_s
   (13, 'jr_1104_4', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
   (14, 'full_elements_1', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
   (15, 'citic_registration_2', 'asset_credit', 'zxd', 'zxd_asset_credit_info', 1, 1),
-  (16, 'citic_registration_2', 'external_data', 'zxd', 'result14_xtbzjj_external_data', 2, 1),
-  (17, 'citic_registration_2', 'basic_info', 'zxd', 'jsxt_basic_info', 3, 1),
   (18, 'citic_registration_5', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
   (19, 'east5_1', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
   (20, 'five_articles_1', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
@@ -160,7 +170,7 @@ INSERT INTO `report_nav_step_fields` (`id`, `step_source_id`, `field_role`, `col
   (9, 4, 'check_id_field', 'ck_id'),
   (10, 5, 'period_field', 'period'),
   (11, 5, 'check_id_field', 'ck_id'),
-  (12, 6, 'time_field', 'tbtime'),
+  (12, 6, 'period_field', 'caldate'),
   (13, 7, 'period_field', 'caldate'),
   (14, 7, 'status_field', 'status'),
   (15, 8, 'period_field', 'caldate'),
@@ -175,8 +185,6 @@ INSERT INTO `report_nav_step_fields` (`id`, `step_source_id`, `field_role`, `col
   (24, 14, 'manage_code_field', 'manage_code'),
   (25, 14, 'version_field', 'version_num'),
   (26, 15, 'date_field', 'createdate'),
-  (27, 16, 'date_field', 'createdate'),
-  (28, 17, 'date_field', 'createdate'),
   (29, 18, 'manage_code_field', 'manage_code'),
   (30, 18, 'version_field', 'version_num'),
   (31, 19, 'manage_code_field', 'manage_code'),
@@ -186,7 +194,17 @@ INSERT INTO `report_nav_step_fields` (`id`, `step_source_id`, `field_role`, `col
   (35, 21, 'id_field', 'id'),
   (36, 21, 'date_field', 'create_date'),
   (37, 21, 'status_field', 'status'),
-  (38, 21, 'deleted_field', 'del_flag')
+  (38, 21, 'deleted_field', 'del_flag'),
+  (39, 13, 'update_date_field', 'update_date'),
+  (40, 13, 'create_date_field', 'create_date'),
+  (41, 14, 'update_date_field', 'update_date'),
+  (42, 14, 'create_date_field', 'create_date'),
+  (43, 18, 'update_date_field', 'update_date'),
+  (44, 18, 'create_date_field', 'create_date'),
+  (45, 19, 'update_date_field', 'update_date'),
+  (46, 19, 'create_date_field', 'create_date'),
+  (47, 20, 'update_date_field', 'update_date'),
+  (48, 20, 'create_date_field', 'create_date')
 ON DUPLICATE KEY UPDATE `step_source_id`=VALUES(`step_source_id`), `field_role`=VALUES(`field_role`), `column_name`=VALUES(`column_name`);
 
 INSERT INTO `report_nav_step_values` (`id`, `step_code`, `value_role`, `value_text`, `value_type`, `display_order`) VALUES

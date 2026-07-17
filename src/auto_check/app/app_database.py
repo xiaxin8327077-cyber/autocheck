@@ -247,6 +247,16 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "evaluated_at",
             "run_id",
         ),
+        "report_nav_card_manual_values": _columns(
+            "stat_period",
+            "card_code",
+            "completed_count",
+            "incomplete_count",
+            "operator_id",
+            "operator_username",
+            "operator_name",
+            "updated_at",
+        ),
         "report_nav_monthly_schedules": _columns(
             "report_month",
             "process_code",

@@ -1,7 +1,8 @@
 /* ===== Dom refs ===== */
-const navItems = document.querySelectorAll(".nav-item");
+const navItems = document.querySelectorAll(".nav-item[data-page]");
 const topNav = document.querySelector(".top-nav");
-const topNavItems = document.querySelectorAll(".top-nav-item");
+const topNavItems = document.querySelectorAll(".top-nav-item[data-page]");
+const navGroupToggles = document.querySelectorAll("[data-nav-group-toggle]");
 const mainContent = document.querySelector(".main-content");
 const pages = document.querySelectorAll(".page");
 const runBtn = document.getElementById("runBtn");
@@ -12,6 +13,21 @@ const topNavStatus = document.getElementById("topNavStatus");
 const topDarkModeToggle = document.getElementById("topDarkModeToggle");
 const sidebarDarkModeToggle = document.getElementById("sidebarDarkModeToggle");
 const logoutButtons = document.querySelectorAll("[data-logout-btn]");
+const reportNavPeriodSelect = document.getElementById("reportNavPeriodSelect");
+const reportNavStatus = document.getElementById("reportNavStatus");
+const reportNavStats = document.getElementById("reportNavStats");
+const reportNavSchedules = document.getElementById("reportNavSchedules");
+const reportNavBranches = document.getElementById("reportNavBranches");
+const reportNavLastRun = document.getElementById("reportNavLastRun");
+const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine");
+const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
+const reportNavRefreshCountdown = document.getElementById("reportNavRefreshCountdown");
+const reportNavCardMaintenanceModal = document.getElementById("reportNavCardMaintenanceModal");
+const reportNavCardMaintenanceTitle = document.getElementById("reportNavCardMaintenanceTitle");
+const reportNavCardMaintenanceGrid = document.getElementById("reportNavCardMaintenanceGrid");
+const reportNavCardMaintenanceClose = document.getElementById("reportNavCardMaintenanceClose");
+const reportNavCardMaintenanceCancel = document.getElementById("reportNavCardMaintenanceCancel");
+const reportNavCardMaintenanceSave = document.getElementById("reportNavCardMaintenanceSave");
 
 const DEFAULT_VERSION = "v2.1";
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
@@ -354,6 +370,13 @@ let usersLoaded = false;
 let usersLoading = false;
 const USER_PAGE_SIZE = 10;
 const authState = { csrfToken: "", user: null };
+let reportNavigationPayload = null;
+let reportNavigationLoading = false;
+const REPORT_NAV_REFRESH_COOLDOWN_SECONDS = 300;
+let reportNavigationRefreshCooldownUntil = 0;
+let reportNavigationRefreshTimer = null;
+let reportNavigationRefreshBusy = false;
+let reportNavigationRefreshRemoteRunning = false;
 const THEME_ACTIVE_USER_KEY = "autoCheckThemeUserKey";
 const THEME_KEY_BASE = "autoCheckTheme";
 const DARK_MODE_KEY_BASE = "autoCheckDarkMode";
@@ -506,10 +529,14 @@ function applySavedUserTheme() {
 
 function updateSpaceTopNavFrost() {
   if (!topNav) return;
-  const navBottom = topNav.offsetTop + topNav.offsetHeight;
   const scrollOffset = Math.max(window.scrollY, mainContent?.scrollTop || 0);
-  // The class drives both the nav glass and the content blur mask around it.
-  const shouldFrost = scrollOffset > Math.max(12, navBottom * 0.25);
+  const activePage = Array.from(pages).find(
+    (page) => window.getComputedStyle(page).display !== "none"
+  );
+  const navBottom = topNav.getBoundingClientRect().bottom;
+  const contentTop = activePage?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
+  // Only frost the nav once scrolled content actually reaches the nav edge.
+  const shouldFrost = scrollOffset > 1 && contentTop < navBottom;
   document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);
 }
 
@@ -609,10 +636,27 @@ function applyVisualEffectsSetting() {
 }
 
 /* ===== Navigation ===== */
+const smartReconcilePages = new Set(["home", "auto-check", "history"]);
+
+function setNavGroupOpen(group, open) {
+  if (!group) return;
+  group.classList.toggle("open", open);
+  group.querySelector("[data-nav-group-toggle]")?.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function syncNavGroupState(name) {
+  const active = smartReconcilePages.has(name);
+  document.querySelectorAll('[data-nav-group="smart-reconcile"]').forEach((group) => {
+    group.classList.toggle("active", active);
+    group.querySelector("[data-nav-group-toggle]")?.classList.toggle("active", active);
+  });
+}
+
 function syncNavState(name) {
   [...navItems, ...topNavItems].forEach((item) => {
     item.classList.toggle("active", item.dataset.page === name);
   });
+  syncNavGroupState(name);
 }
 
 function applySettingsRoleAccess() {
@@ -632,7 +676,7 @@ function applyRoleAccess() {
   applySettingsRoleAccess();
   const currentPageName = document.documentElement.getAttribute("data-page") || location.hash.slice(1);
   if (!isAdmin && currentPageName === "users") {
-    switchPage("home", { forceHomeRefresh: true });
+    switchPage("report-navigation");
   }
 }
 
@@ -665,15 +709,54 @@ async function loadSettingsPageData() {
 }
 
 [...navItems, ...topNavItems].forEach((item) => {
-  item.addEventListener("click", (e) => { e.preventDefault(); switchPage(item.dataset.page); });
+  item.addEventListener("click", (e) => {
+    e.preventDefault();
+    document.querySelectorAll(".top-nav-group.open").forEach((group) => setNavGroupOpen(group, false));
+    switchPage(item.dataset.page);
+    if (item.classList.contains("top-nav-subitem") && e.detail > 0) item.blur();
+  });
+});
+
+navGroupToggles.forEach((toggle) => {
+  toggle.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const group = toggle.closest("[data-nav-group]");
+    if (!group) return;
+    if (group.classList.contains("nav-group")) {
+      setNavGroupOpen(group, !group.classList.contains("open"));
+      return;
+    }
+    if (group.classList.contains("top-nav-group")) {
+      document.querySelectorAll(".top-nav-group.open").forEach((item) => setNavGroupOpen(item, false));
+      switchPage("home");
+      if (event.detail > 0) toggle.blur();
+    }
+  });
+});
+
+document.addEventListener("click", (event) => {
+  document.querySelectorAll(".top-nav-group").forEach((group) => {
+    if (!group.contains(event.target)) {
+      setNavGroupOpen(group, false);
+      if (group.contains(document.activeElement)) document.activeElement.blur();
+    }
+  });
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  document.querySelectorAll(".top-nav-group").forEach((group) => {
+    setNavGroupOpen(group, false);
+    if (group.contains(document.activeElement)) document.activeElement.blur();
+  });
 });
 
 async function switchPage(name, options = {}) {
   const previousPage = document.documentElement.getAttribute("data-page") || "";
   if (name === "users" && authState.user?.role !== "admin") {
     showToast("普通用户无权访问用户管理", "error");
-    name = "home";
-    options = { ...options, forceHomeRefresh: true };
+    name = "report-navigation";
   }
   document.documentElement.setAttribute('data-page', name);
   syncNavState(name);
@@ -683,6 +766,7 @@ async function switchPage(name, options = {}) {
   if (name === "tools") loadToolsPageData();
   if (name === "settings") loadSettingsPageData();
   if (name === "users") await loadUsers();
+  if (name === "report-navigation") await loadReportNavigation();
   if (name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)) {
     homeChartsNeedThemeRefresh = false;
     renderHomeStats(); renderChart(); renderTrendChart();
@@ -736,6 +820,474 @@ async function api(path, options = {}) {
   }
   return p;
 }
+
+const REPORT_NAV_CARD_STYLES = {
+  report_forms: { color: "blue", icon: "▣", unit: "套" },
+  supplement_tasks: { color: "green", icon: "✓", unit: "个" },
+  data_governance: { color: "orange", icon: "!", unit: "个" },
+  special_governance: { color: "red", icon: "◎", unit: "个" },
+};
+const REPORT_NAV_MAINTENANCE_PERIODS = [
+  ["week", "本周"],
+  ["month", "本月"],
+  ["quarter", "本季度"],
+  ["year", "本年"],
+];
+const REPORT_NAV_MAINTAINABLE_CARDS = new Set(["data_governance", "special_governance"]);
+
+function reportNavigationDateText(value) {
+  const match = String(value || "").match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (!match) return "待配置";
+  return `${Number(match[1])}月${Number(match[2])}日`;
+}
+
+function reportNavigationRate(card) {
+  const value = Number(card?.completion_rate || 0);
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+}
+
+function renderReportNavigationCards(cards) {
+  if (!reportNavStats) return;
+  reportNavStats.innerHTML = (cards || []).map((card) => {
+    const style = REPORT_NAV_CARD_STYLES[card.card_code] || REPORT_NAV_CARD_STYLES.report_forms;
+    const rate = reportNavigationRate(card);
+    const maintainable = authState.user?.role === "admin" && REPORT_NAV_MAINTAINABLE_CARDS.has(card.card_code);
+    const interaction = maintainable
+      ? ` data-maintenance-card="${escapeHtml(card.card_code || "")}" role="button" tabindex="0"`
+      : "";
+    return `
+      <article class="report-nav-stat-card ${style.color}${maintainable ? " maintainable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
+        <div class="report-nav-stat-top">
+          <div class="report-nav-stat-icon" aria-hidden="true">${style.icon}</div>
+          <div class="report-nav-stat-heading">
+            <span>${escapeHtml(card.name || "")}</span>
+            <strong>${Number(card.total_count || 0)}<small>${style.unit}</small></strong>
+          </div>
+        </div>
+        <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${rate}%"></b></i><em>${rate.toFixed(rate % 1 ? 1 : 0)}%</em></div>
+        <div class="report-nav-stat-tags"><span class="up">已完成 ${Number(card.completed_count || 0)}</span><span class="warn">未完成 ${Number(card.incomplete_count || 0)}</span></div>
+      </article>`;
+  }).join("");
+}
+
+function closeReportNavigationCardMaintenance() {
+  if (!reportNavCardMaintenanceModal || reportNavCardMaintenanceModal.hidden) return;
+  reportNavCardMaintenanceModal.classList.add("closing");
+  setTimeout(() => {
+    reportNavCardMaintenanceModal.hidden = true;
+    reportNavCardMaintenanceModal.classList.remove("closing");
+    reportNavCardMaintenanceModal.dataset.cardCode = "";
+  }, 200);
+}
+
+function openReportNavigationCardMaintenance(cardCode) {
+  if (
+    authState.user?.role !== "admin"
+    || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)
+    || !reportNavCardMaintenanceModal
+    || !reportNavCardMaintenanceGrid
+  ) return;
+  const card = (reportNavigationPayload?.cards || []).find((item) => item.card_code === cardCode);
+  const values = reportNavigationPayload?.card_maintenance?.[cardCode] || {};
+  reportNavCardMaintenanceTitle.textContent = `维护${card?.name || "治理统计"}`;
+  reportNavCardMaintenanceGrid.innerHTML = `
+    <span class="report-nav-card-maintenance-header">统计周期</span>
+    <span class="report-nav-card-maintenance-header">已完成</span>
+    <span class="report-nav-card-maintenance-header">未完成</span>
+    ${REPORT_NAV_MAINTENANCE_PERIODS.map(([period, label]) => {
+      const row = values[period] || {};
+      return `<strong>${label}</strong>
+        <input class="prompt-input" type="number" min="0" step="1" inputmode="numeric" data-maintenance-period="${period}" data-maintenance-count="completed_count" value="${Number(row.completed_count || 0)}" aria-label="${label}已完成数量" />
+        <input class="prompt-input" type="number" min="0" step="1" inputmode="numeric" data-maintenance-period="${period}" data-maintenance-count="incomplete_count" value="${Number(row.incomplete_count || 0)}" aria-label="${label}未完成数量" />`;
+    }).join("")}`;
+  reportNavCardMaintenanceModal.dataset.cardCode = cardCode;
+  reportNavCardMaintenanceModal.hidden = false;
+  setTimeout(() => reportNavCardMaintenanceGrid.querySelector("input")?.focus(), 0);
+}
+
+reportNavCardMaintenanceClose?.addEventListener("click", closeReportNavigationCardMaintenance);
+reportNavCardMaintenanceCancel?.addEventListener("click", closeReportNavigationCardMaintenance);
+reportNavCardMaintenanceModal?.addEventListener("click", (event) => {
+  if (event.target === reportNavCardMaintenanceModal) closeReportNavigationCardMaintenance();
+});
+
+reportNavCardMaintenanceSave?.addEventListener("click", async () => {
+  const cardCode = reportNavCardMaintenanceModal?.dataset.cardCode || "";
+  if (!REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode) || reportNavCardMaintenanceSave.disabled) return;
+  const values = {};
+  for (const [period] of REPORT_NAV_MAINTENANCE_PERIODS) {
+    const completedInput = reportNavCardMaintenanceGrid.querySelector(`[data-maintenance-period="${period}"][data-maintenance-count="completed_count"]`);
+    const incompleteInput = reportNavCardMaintenanceGrid.querySelector(`[data-maintenance-period="${period}"][data-maintenance-count="incomplete_count"]`);
+    const completedCount = Number(completedInput?.value);
+    const incompleteCount = Number(incompleteInput?.value);
+    if (
+      !Number.isInteger(completedCount)
+      || !Number.isInteger(incompleteCount)
+      || completedCount < 0
+      || incompleteCount < 0
+    ) {
+      showToast("已完成和未完成数量必须为不小于 0 的整数", "error");
+      return;
+    }
+    values[period] = {
+      completed_count: completedCount,
+      incomplete_count: incompleteCount,
+    };
+  }
+  reportNavCardMaintenanceSave.disabled = true;
+  try {
+    await api(`/api/report-navigation/cards/${encodeURIComponent(cardCode)}`, {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    });
+    closeReportNavigationCardMaintenance();
+    await loadReportNavigation();
+    showToast("治理统计已保存", "success");
+  } catch (error) {
+    showToast(`治理统计保存失败：${error.message}`, "error");
+  } finally {
+    reportNavCardMaintenanceSave.disabled = false;
+  }
+});
+
+reportNavStats?.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-maintenance-card]");
+  if (card) openReportNavigationCardMaintenance(card.dataset.maintenanceCard);
+});
+
+reportNavStats?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const card = event.target.closest("[data-maintenance-card]");
+  if (!card) return;
+  event.preventDefault();
+  openReportNavigationCardMaintenance(card.dataset.maintenanceCard);
+});
+
+function reportNavigationScheduleName(process) {
+  const labels = {
+    pbc_central: "人行大集中报送",
+    pbc_template: "资管产品模板、逐笔",
+    jr_1104: "1104",
+    full_elements: "全要素",
+    citic_registration: "中信登",
+    east5: "East5",
+    five_articles: "五篇大文章",
+  };
+  return labels[process.process_code] || process.process_name || process.process_code;
+}
+
+function renderReportNavigationSchedules(processes, reportMonth) {
+  if (!reportNavSchedules) return;
+  const groups = [
+    ["人行", new Set(["pbc_central", "pbc_template"])],
+    ["金监", new Set(["jr_1104", "full_elements", "citic_registration", "east5", "five_articles"])],
+  ];
+  reportNavSchedules.innerHTML = groups.map(([groupName, codes]) => {
+    const items = processes.filter((process) => codes.has(process.process_code));
+    if (!items.length) return "";
+    const itemByCode = new Map(items.map((process) => [process.process_code, process]));
+    const groupRows = groupName === "金监"
+      ? [["jr_1104", "full_elements"], ["citic_registration", "east5", "five_articles"]]
+      : [["pbc_central"], ["pbc_template"]];
+    const renderItem = (process) => {
+      const editable = process.schedule_editable && process.report_date;
+      const title = editable ? "双击修改报送日期" : "";
+      return `<span class="report-nav-schedule-item"><b>${escapeHtml(reportNavigationScheduleName(process))}</b><span class="report-nav-schedule-separator">：</span><time data-schedule-process="${escapeHtml(process.process_code)}" data-report-month="${escapeHtml(reportMonth)}" data-report-date="${escapeHtml(process.report_date || "")}" class="${editable ? "editable" : ""}" title="${title}">${escapeHtml(reportNavigationDateText(process.report_date))}</time></span>`;
+    };
+    const rows = groupRows.map((rowCodes) => rowCodes
+      .map((code) => itemByCode.get(code))
+      .filter(Boolean)
+      .map(renderItem)
+      .join(""))
+      .filter(Boolean)
+      .map((row) => `<span class="report-nav-schedule-row">${row}</span>`)
+      .join("");
+    const rowsClass = groupName === "金监" ? "regulator" : "pbc";
+    return `<div class="report-nav-batch"><strong>${groupName}</strong><p class="report-nav-schedule-rows ${rowsClass}">${rows}</p></div>`;
+  }).join("");
+}
+
+function updateReportNavigationRefreshButton() {
+  if (!reportNavRefreshButton) return;
+  const remainingSeconds = Math.max(0, Math.ceil((reportNavigationRefreshCooldownUntil - Date.now()) / 1000));
+  const disabled = reportNavigationRefreshBusy || reportNavigationRefreshRemoteRunning || remainingSeconds > 0;
+  reportNavRefreshButton.disabled = disabled;
+  if (reportNavigationRefreshBusy || reportNavigationRefreshRemoteRunning) {
+    reportNavRefreshButton.title = "统计刷新中";
+  } else if (remainingSeconds > 0) {
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    reportNavRefreshButton.title = `请等待 ${minutes}:${String(seconds).padStart(2, "0")} 后再次刷新`;
+  } else {
+    reportNavRefreshButton.title = "立即刷新";
+  }
+  if (reportNavRefreshCountdown) {
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    reportNavRefreshCountdown.textContent = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    reportNavRefreshCountdown.hidden = remainingSeconds <= 0;
+  }
+  if (remainingSeconds === 0 && reportNavigationRefreshTimer) {
+    clearInterval(reportNavigationRefreshTimer);
+    reportNavigationRefreshTimer = null;
+  }
+}
+
+function renderReportNavigationRefreshIssues(issues = []) {
+  const rows = issues.map((issue) => {
+    const location = [issue.process_name, issue.step_name].filter(Boolean).join(" / ") || issue.step_code || "未知步骤";
+    const reason = issue.error_message || "未返回具体错误原因";
+    return `<li><strong>${escapeHtml(location)}</strong><span>${escapeHtml(reason)}</span></li>`;
+  }).join("");
+  return `<div class="report-nav-refresh-issues">
+    <p>本次刷新有 ${issues.length} 个步骤统计异常，请根据以下信息检查数据源、表和字段配置。</p>
+    <ul class="report-nav-refresh-issue-list">${rows}</ul>
+  </div>`;
+}
+
+function setReportNavigationRefreshCooldown(seconds) {
+  const cooldownSeconds = Math.max(0, Number(seconds) || 0);
+  reportNavigationRefreshCooldownUntil = Date.now() + cooldownSeconds * 1000;
+  if (reportNavigationRefreshTimer) clearInterval(reportNavigationRefreshTimer);
+  reportNavigationRefreshTimer = cooldownSeconds > 0
+    ? setInterval(updateReportNavigationRefreshButton, 1000)
+    : null;
+  updateReportNavigationRefreshButton();
+}
+
+function renderReportNavigationStep(step, reportMonth) {
+  const completed = step.status === "completed";
+  const stateClass = completed ? "completed" : (step.status === "error" ? "error" : "pending");
+  const actionable = step.manual_completion_allowed && (step.manual_completed || !completed);
+  const actionClass = actionable ? " interactive" : "";
+  let actionAttributes = "";
+  if (actionable) {
+    const manualAction = step.manual_completed ? "manual-cancel" : "manual-complete";
+    const label = step.manual_completed ? "撤销手工完成" : "标记完成";
+    actionAttributes = ` data-step-code="${escapeHtml(step.step_code)}" data-manual-action="${manualAction}" data-report-month="${escapeHtml(reportMonth)}" role="button" tabindex="0" aria-label="${label}：${escapeHtml(step.step_name || "")}"`;
+  }
+  const message = step.error_message || step.status_message || "";
+  return `<p class="report-nav-step ${stateClass}${actionClass}"${actionAttributes} title="${escapeHtml(message)}"><span>${escapeHtml(step.step_name || "")}</span></p>`;
+}
+
+function reportNavigationPanelWidth(steps = []) {
+  const longestStepLength = steps.reduce(
+    (longest, step) => Math.max(longest, Array.from(String(step.step_name || "")).length),
+    0,
+  );
+  return Math.min(340, Math.max(250, longestStepLength * 12 + 56));
+}
+
+function reportNavigationSpineProgress(processes = []) {
+  if (!processes.length) return 0;
+  let completedPrefixCount = 0;
+  for (const process of processes) {
+    if (process.status !== "completed") break;
+    completedPrefixCount += 1;
+  }
+  if (completedPrefixCount === 0) return 0;
+  if (completedPrefixCount === processes.length) return 100;
+  return ((completedPrefixCount - 0.5) / processes.length) * 100;
+}
+
+function renderReportNavigationProcesses(payload) {
+  if (!reportNavBranches) return;
+  const month = Number(String(payload.report_month || "").slice(5, 7));
+  const processes = (payload.processes || []).filter((process) => {
+    if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
+    return true;
+  });
+  const panelHiddenProcessCodes = new Set(["full_elements", "east5", "five_articles"]);
+  const spineProgress = reportNavigationSpineProgress(processes);
+  const allProcessesCompleted = processes.length > 0
+    && processes.every((process) => process.status === "completed");
+  reportNavBranches.closest(".report-nav-fishbone")?.classList.toggle("all-done", allProcessesCompleted);
+  reportNavFishboneSpine?.style.setProperty("--report-nav-spine-progress", `${spineProgress}%`);
+  reportNavBranches.style.setProperty("--report-nav-branch-count", String(Math.max(processes.length, 1)));
+  reportNavBranches.innerHTML = processes.map((process, index) => {
+    const done = process.status === "completed";
+    const side = index % 2 === 0 ? "top" : "bottom";
+    const steps = process.steps || [];
+    const showPanel = steps.length > 0 && !panelHiddenProcessCodes.has(process.process_code);
+    const panelClass = showPanel ? "" : " no-panel";
+    const panelWidth = reportNavigationPanelWidth(steps);
+    const panel = showPanel ? `
+      <div class="report-nav-branch-panel" style="--report-nav-panel-width: ${panelWidth}px">
+        <div class="report-nav-panel-status">${done ? "DONE · " : "进度 · "}${Number(process.completed_steps || 0)}/${Number(process.total_steps || steps.length)}</div>
+        ${steps.map((step) => renderReportNavigationStep(step, payload.report_month)).join("")}
+        ${done && process.completed_at ? `<div class="report-nav-done-meta">✓ 完成于 ${escapeHtml(process.completed_at)}</div>` : ""}
+      </div>` : "";
+    const noPanelCompletion = !showPanel && done && process.completed_at
+      ? `<div class="report-nav-no-panel-done-meta">完成于 ${escapeHtml(process.completed_at)}</div>`
+      : "";
+    return `<div class="report-nav-branch ${side}${done ? " done" : ""}${panelClass}">
+      <div class="report-nav-branch-line"></div><div class="report-nav-branch-node"></div>
+      <div class="report-nav-branch-label">${done ? "<span>✓</span>" : ""}${escapeHtml(process.process_name || "")}</div>
+      ${noPanelCompletion}
+      ${panel}
+    </div>`;
+  }).join("");
+}
+
+function renderReportNavigation(payload) {
+  reportNavigationPayload = payload;
+  renderReportNavigationCards(payload.cards || []);
+  const month = Number(String(payload.report_month || "").slice(5, 7));
+  const processes = (payload.processes || []).filter((process) => {
+    if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
+    return true;
+  });
+  renderReportNavigationSchedules(processes, payload.report_month || "");
+  renderReportNavigationProcesses({ ...payload, processes });
+  const refreshState = payload.manual_refresh || {};
+  reportNavigationRefreshRemoteRunning = Boolean(refreshState.running);
+  setReportNavigationRefreshCooldown(Number(refreshState.retry_after_seconds || 0));
+  if (reportNavLastRun) {
+    const run = payload.last_run;
+    reportNavLastRun.textContent = run
+      ? `最近更新：${run.finished_at || run.started_at || "--"}${run.status === "failed" ? "（失败）" : ""}`
+      : "等待定时任务首次统计";
+  }
+  if (reportNavStatus) {
+    const failed = payload.last_run?.status === "failed";
+    reportNavStatus.classList.toggle("error", failed);
+    reportNavStatus.classList.toggle("ready", Boolean(payload.last_run) && !failed);
+    reportNavStatus.textContent = failed
+      ? "最近一次统计失败，当前保留显示上次成功快照，请检查任务日志。"
+      : (payload.last_run ? "" : "尚无统计快照，页面将在定时任务完成后自动显示结果。");
+  }
+}
+
+async function loadReportNavigation() {
+  if (reportNavigationLoading) return;
+  reportNavigationLoading = true;
+  const period = reportNavPeriodSelect?.value || "month";
+  if (reportNavStatus) {
+    reportNavStatus.classList.remove("ready", "error");
+    reportNavStatus.textContent = "正在读取最新统计结果…";
+  }
+  try {
+    const payload = await api(`/api/report-navigation/dashboard?period=${encodeURIComponent(period)}`);
+    renderReportNavigation(payload);
+  } catch (error) {
+    if (reportNavStatus) {
+      reportNavStatus.classList.add("error");
+      reportNavStatus.textContent = `统计结果读取失败：${error.message}`;
+    }
+  } finally {
+    reportNavigationLoading = false;
+  }
+}
+
+reportNavPeriodSelect?.addEventListener("change", () => loadReportNavigation());
+
+reportNavRefreshButton?.addEventListener("click", async () => {
+  if (reportNavRefreshButton.disabled || reportNavigationRefreshBusy) return;
+  reportNavigationRefreshBusy = true;
+  reportNavigationRefreshRemoteRunning = false;
+  reportNavRefreshButton.classList.add("refreshing");
+  updateReportNavigationRefreshButton();
+  try {
+    const result = await api("/api/report-navigation/refresh", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    setReportNavigationRefreshCooldown(
+      Number(result.retry_after_seconds ?? result.cooldown_seconds ?? REPORT_NAV_REFRESH_COOLDOWN_SECONDS),
+    );
+    await loadReportNavigation();
+    if (result.status === "partial") {
+      const issues = result.issues || [];
+      if (issues.length) {
+        showInfo("报送导航统计异常", renderReportNavigationRefreshIssues(issues), { closeOnBackdrop: false });
+      } else {
+        showToast(result.error_message || "刷新完成，但部分步骤统计异常", "error");
+      }
+    } else {
+      showToast("报送导航统计已刷新", "success");
+    }
+  } catch (error) {
+    const retryAfterSeconds = Number(error.payload?.retry_after_seconds || 0);
+    if (retryAfterSeconds > 0) setReportNavigationRefreshCooldown(retryAfterSeconds);
+    showToast(`报送导航刷新失败：${error.message}`, "error");
+    await loadReportNavigation();
+  } finally {
+    reportNavigationRefreshBusy = false;
+    reportNavRefreshButton.classList.remove("refreshing");
+    updateReportNavigationRefreshButton();
+  }
+});
+
+reportNavSchedules?.addEventListener("dblclick", async (event) => {
+  const target = event.target.closest("time[data-schedule-process]");
+  if (!target?.classList.contains("editable") || authState.user?.role !== "admin") return;
+  const nextDate = await showPrompt("修改报送日期", "请选择新的报送日期", {
+    type: "date",
+    defaultValue: target.dataset.reportDate || "",
+    placeholder: "YYYY-MM-DD",
+  });
+  if (!nextDate || nextDate === target.dataset.reportDate) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+    showToast("请输入 YYYY-MM-DD 格式的日期", "error");
+    return;
+  }
+  const confirmed = await showConfirm("修改报送日期", `确认将报送日期修改为 ${nextDate} 吗？`);
+  if (!confirmed) return;
+  try {
+    const result = await api(`/api/report-navigation/schedules/${encodeURIComponent(target.dataset.scheduleProcess)}`, {
+      method: "POST",
+      body: JSON.stringify({ report_month: target.dataset.reportMonth, report_date: nextDate }),
+    });
+    if (result.statistics_status === "failed") {
+      showToast(`报送日期已更新，但状态重算失败：${result.statistics_error || "未知错误"}`, "error");
+    } else if (result.statistics_status === "skipped") {
+      showToast("报送日期已更新，当前已有统计任务执行中，请稍后刷新查看最新状态", "warning");
+    } else {
+      showToast("报送日期已更新，流程状态已重新统计", "success");
+    }
+    await loadReportNavigation();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+});
+
+async function handleReportNavigationManualAction(stepRow) {
+  if (!stepRow || stepRow.classList.contains("busy") || authState.user?.role !== "admin") return;
+  const isCancel = stepRow.dataset.manualAction === "manual-cancel";
+  const confirmed = await showConfirm(
+    isCancel ? "撤销手工完成" : "标记步骤完成",
+    isCancel ? "撤销后将恢复该步骤最近一次自动统计状态，确认继续吗？" : "确认将该步骤手工标记为已完成吗？",
+  );
+  if (!confirmed) return;
+  stepRow.classList.add("busy");
+  stepRow.setAttribute("aria-disabled", "true");
+  try {
+    await api(`/api/report-navigation/steps/${encodeURIComponent(stepRow.dataset.stepCode)}/${stepRow.dataset.manualAction}`, {
+      method: "POST",
+      body: JSON.stringify({ report_month: stepRow.dataset.reportMonth }),
+    });
+    showToast(isCancel ? "已恢复自动统计状态" : "已标记完成", "success");
+    await loadReportNavigation();
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    stepRow.classList.remove("busy");
+    stepRow.removeAttribute("aria-disabled");
+  }
+}
+
+reportNavBranches?.addEventListener("click", (event) => {
+  const stepRow = event.target.closest(".report-nav-step[data-manual-action]");
+  handleReportNavigationManualAction(stepRow);
+});
+
+reportNavBranches?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const stepRow = event.target.closest(".report-nav-step[data-manual-action]");
+  if (!stepRow) return;
+  event.preventDefault();
+  handleReportNavigationManualAction(stepRow);
+});
 
 async function encryptPasswordForTransport(password) {
   return window.autoCheckCrypto.encryptPasswordForTransport(password, () => api("/api/auth/key"));
@@ -1789,6 +2341,13 @@ function openCustomDatePicker(input) {
   state.shell.classList.add("custom-date-open");
 }
 
+function toggleCustomDatePicker(input) {
+  const state = customDateStates.get(input);
+  if (!state) return;
+  if (state.dropdown.hidden) openCustomDatePicker(input);
+  else closeCustomDatePicker(input);
+}
+
 function enhanceCustomDateInput(input, shell) {
   input.type = "text";
   input.inputMode = "none";
@@ -1803,8 +2362,7 @@ function enhanceCustomDateInput(input, shell) {
   document.body.appendChild(dropdown);
   customDateStates.set(input, { shell, dropdown, viewYear: null, viewMonth: null });
 
-  input.addEventListener("click", () => openCustomDatePicker(input));
-  input.addEventListener("focus", () => openCustomDatePicker(input));
+  input.addEventListener("click", () => toggleCustomDatePicker(input));
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeCustomDatePicker(input);
@@ -5024,6 +5582,15 @@ function homeRunsForPeriodDates(runs = [], dates = []) {
     });
 }
 
+function firstHomeRunsForPeriodDates(runs = [], dates = []) {
+  const firstByDate = new Map();
+  homeRunsForPeriodDates(runs, dates).forEach((run) => {
+    const current = firstByDate.get(run.run_date);
+    if (!current || compareHomeRunTimeAsc(run, current) < 0) firstByDate.set(run.run_date, run);
+  });
+  return dates.map((date) => firstByDate.get(date)).filter(Boolean);
+}
+
 async function loadHomeRunDetail(summary = {}) {
   if (!summary?.id) return summary;
   try {
@@ -5352,30 +5919,6 @@ function homeDifferenceTypeSummaryForRun(run = {}) {
   return summary;
 }
 
-function averageHomeSummaryByPeriod(runs = [], summaryBuilder = () => ({})) {
-  const byDate = new Map();
-  runs.forEach((run) => {
-    if (!run.run_date) return;
-    if (!byDate.has(run.run_date)) byDate.set(run.run_date, []);
-    byDate.get(run.run_date).push(run);
-  });
-
-  const summary = {};
-  byDate.forEach((periodRuns) => {
-    const periodSummary = {};
-    periodRuns.forEach((run) => {
-      Object.entries(summaryBuilder(run) || {}).forEach(([key, value]) => {
-        periodSummary[key] = (periodSummary[key] || 0) + Number(value || 0);
-      });
-    });
-    const divisor = Math.max(periodRuns.length, 1);
-    Object.entries(periodSummary).forEach(([key, value]) => {
-      summary[key] = (summary[key] || 0) + Number(value || 0) / divisor;
-    });
-  });
-  return summary;
-}
-
 function homeSummaryTotal(summary = {}) {
   return Object.values(summary).reduce((sum, count) => sum + Number(count || 0), 0);
 }
@@ -5431,17 +5974,8 @@ function setHomeEmptyState() {
     "homeStatExplainedDelta",
     "homeStatPaidInDelta",
     "homeStatTargetCodeDelta",
-    "homeQualityScore",
   ].forEach((id) => setHomeStatText(id, "--"));
   renderHomeStatDeltas({}, null, "较上期");
-  const qualityRing = document.querySelector(".home-quality-ring");
-  if (qualityRing) qualityRing.style.setProperty("--quality-progress", "0");
-  const qualityTag = document.getElementById("homeQualityTag");
-  if (qualityTag) qualityTag.textContent = "暂无数据";
-  const qualityScope = document.getElementById("homeQualityScope");
-  if (qualityScope) qualityScope.textContent = "暂无历史";
-  const reasonScope = document.getElementById("homeReasonScope");
-  if (reasonScope) reasonScope.textContent = "暂无历史";
   const focusScope = document.getElementById("homeFocusScope");
   if (focusScope) focusScope.textContent = "暂无历史";
   const qualityRows = document.getElementById("homeQualityRows");
@@ -5957,6 +6491,7 @@ async function renderHomeStats() {
     const recentPeriodRuns = await Promise.all(recentPeriodSummaries.map((run) => loadHomeRunDetail(run)));
     const latestSummary = latestHomeRun(runs);
     const latestRun = recentPeriodRuns.find((run) => String(run.id || "") === String(latestSummary?.id || "")) || await loadHomeRunDetail(latestSummary);
+    const currentReportFirstRun = firstHomeRunsForPeriodDates(recentPeriodRuns, [latestRun.run_date])[0] || latestRun;
     const reportPeriodSummaries = runs
       .filter((run) => run.run_date === latestRun.run_date)
       .sort((left, right) => {
@@ -5978,12 +6513,10 @@ async function renderHomeStats() {
       : Number(statusCounts["未解释"] || 0) + Number(statusCounts["候选不唯一"] || 0);
     const reasonSummary = buildHomeReasonSummary(latestRun);
 
-    const periodStatusCounts = averageHomeSummaryByPeriod(recentPeriodRuns, homeStatusCountsForRun);
-    const periodTotal = homeSummaryTotal(periodStatusCounts);
-    const periodExplained = Number(periodStatusCounts["已解释"] || 0);
-    const periodTypeSummary = averageHomeSummaryByPeriod(recentPeriodRuns, homeDifferenceTypeSummaryForRun);
-    const periodTypeTotal = homeSummaryTotal(periodTypeSummary);
-    const periodExplainedPct = periodTotal > 0 ? (periodExplained / periodTotal) * 100 : 0;
+    const currentReportStatusCounts = homeStatusCountsForRun(currentReportFirstRun);
+    const currentReportTotal = homeSummaryTotal(currentReportStatusCounts);
+    const currentReportTypeSummary = homeDifferenceTypeSummaryForRun(currentReportFirstRun);
+    const currentReportTypeTotal = homeSummaryTotal(currentReportTypeSummary);
     const frequencyItems = buildHomeFrequencyItems(recentPeriodRuns, recentPeriodDates);
 
     setHomeStatText("homeStatTotalDiff", total);
@@ -6029,34 +6562,20 @@ async function renderHomeStats() {
       scopes,
     };
 
-    const qualityScore = periodTotal > 0 ? periodExplainedPct.toFixed(1) : "--";
-    setHomeStatText("homeQualityScore", qualityScore);
-
-    const qualityRing = document.querySelector(".home-quality-ring");
-    if (qualityRing) qualityRing.style.setProperty("--quality-progress", periodTotal > 0 ? periodExplainedPct.toFixed(1) : "0");
-    const qualityTag = document.getElementById("homeQualityTag");
-    if (qualityTag) qualityTag.textContent = periodTotal > 0 && periodExplainedPct >= 90 ? "优秀" : periodTotal > 0 && periodExplainedPct >= 75 ? "稳定" : periodTotal > 0 ? "需关注" : "暂无数据";
-
-    const periodScopeText = `近${recentPeriodDates.length}期`;
-    const qualityScope = document.getElementById("homeQualityScope");
-    if (qualityScope) qualityScope.textContent = periodScopeText;
-
     renderHomeQualityRows(
-      periodStatusCounts,
-      periodTotal,
-      recentPeriodDates.length ? `${periodScopeText}未发现需统计的匹配状态` : "等待首次核对后生成质量分布"
+      currentReportStatusCounts,
+      currentReportTotal,
+      "当前报告期第一次执行未发现需统计的匹配状态"
     );
-
-    const reasonScope = document.getElementById("homeReasonScope");
-    if (reasonScope) reasonScope.textContent = periodScopeText;
 
     renderHomeReasonList(
-      periodTypeSummary,
-      periodTypeTotal,
-      recentPeriodDates.length ? `${periodScopeText}暂无差异类型` : "等待首次核对后统计差异类型"
+      currentReportTypeSummary,
+      currentReportTypeTotal,
+      "当前报告期第一次执行暂无差异类型"
     );
+    const focusScopeText = `近${recentPeriodDates.length}期`;
     const focusScope = document.getElementById("homeFocusScope");
-    if (focusScope) focusScope.textContent = periodScopeText;
+    if (focusScope) focusScope.textContent = focusScopeText;
     renderHomeFrequencyList(frequencyItems, recentPeriodDates.length);
 
   } catch {
@@ -6623,38 +7142,56 @@ function showPrompt(title, message, options = {}) {
     const titleEl = document.getElementById("promptTitle");
     const messageEl = document.getElementById("promptMessage");
     const inputEl = document.getElementById("promptInput");
+    const dateInputEl = document.getElementById("promptDateInput");
+    const dateControlEl = document.getElementById("promptDateControl");
     const okBtn = document.getElementById("promptOk");
     const cancelBtn = document.getElementById("promptCancel");
+    const isDate = options.type === "date";
+    const inputControlEl = inputEl.closest(".custom-input-shell") || inputEl;
+    const activeInputEl = isDate ? dateInputEl : inputEl;
+    const dialogEl = modal.querySelector(".modal-prompt");
+    const focusTargetEl = isDate ? dialogEl : activeInputEl;
 
     titleEl.textContent = title;
     messageEl.textContent = message;
-    inputEl.type = options.type || "text";
-    inputEl.value = options.defaultValue || "";
-    inputEl.placeholder = options.placeholder || "";
-    inputEl.autocomplete = options.autocomplete || "off";
+    inputControlEl.hidden = isDate;
+    dateControlEl.hidden = !isDate;
+    if (isDate) {
+      dateInputEl.value = options.defaultValue || "";
+      dateInputEl.placeholder = options.placeholder || "";
+    } else {
+      inputEl.type = options.type || "text";
+      inputEl.value = options.defaultValue || "";
+      inputEl.placeholder = options.placeholder || "";
+      inputEl.autocomplete = options.autocomplete || "off";
+    }
     modal.hidden = false;
-    setTimeout(() => inputEl.focus(), 0);
+    setTimeout(() => focusTargetEl?.focus(), 0);
 
     const cleanup = (value) => {
       okBtn.onclick = null;
       cancelBtn.onclick = null;
-      inputEl.onkeydown = null;
+      activeInputEl.onkeydown = null;
+      closeCustomDatePicker(dateInputEl);
       modal.classList.add("closing");
       setTimeout(() => {
         modal.hidden = true;
         modal.classList.remove("closing");
         inputEl.value = "";
         inputEl.type = "text";
+        dateInputEl.value = "";
+        inputControlEl.hidden = false;
+        dateControlEl.hidden = true;
       }, 200);
       resolve(value);
     };
 
-    okBtn.onclick = () => cleanup(inputEl.value);
+    okBtn.onclick = () => cleanup(activeInputEl.value);
     cancelBtn.onclick = () => cleanup(null);
-    inputEl.onkeydown = (event) => {
-      if (event.key === "Enter") {
+    activeInputEl.onkeydown = (event) => {
+      if (event.key === "Enter" && !isDate) {
         event.preventDefault();
-        cleanup(inputEl.value);
+        cleanup(activeInputEl.value);
       }
       if (event.key === "Escape") {
         event.preventDefault();
@@ -9423,16 +9960,17 @@ document.getElementById("aboutHelp")?.addEventListener("click", (e) => {
     <h4>快速开始</h4>
     <ul>
       <li>在系统设置中配置数据源（DWS 和报表库）</li>
-      <li>在自动对数页面选择日期并运行</li>
+      <li>在对数执行页面选择日期并运行</li>
       <li>查看核对结果和差异分析</li>
-      <li>历史记录页面可查看过往核对记录</li>
+      <li>对数历史页面可查看过往核对记录</li>
     </ul>
 
     <h4>功能说明</h4>
     <ul>
-      <li><strong>首页</strong>：查看核对趋势和统计图表</li>
-      <li><strong>自动对数</strong>：执行余额核对，查看差异详情</li>
-      <li><strong>核对历史</strong>：查看历史核对记录，并可在详情中恢复到结果页</li>
+      <li><strong>报送导航</strong>：查看监管报送统计、流程进度和注意事项</li>
+      <li><strong>智能核数 / 对数总览</strong>：查看核对趋势和统计图表</li>
+      <li><strong>智能核数 / 对数执行</strong>：执行余额核对，查看差异详情</li>
+      <li><strong>智能核数 / 对数历史</strong>：查看历史核对记录，并可在详情中恢复到结果页</li>
       <li><strong>系统设置</strong>：配置数据源、默认选项、业务字段清单、主题等</li>
     </ul>
 
@@ -9457,7 +9995,7 @@ document.getElementById("aboutHelp")?.addEventListener("click", (e) => {
     <p>A: 检查数据库地址、端口、用户名和密码是否正确。</p>
 
     <p><strong>Q: 如何导出核对结果？</strong></p>
-    <p>A: 在自动对数页面点击"导出"按钮，可导出 Excel 文件。</p>
+    <p>A: 在对数执行页面点击"导出"按钮，可导出 Excel 文件。</p>
   `);
 });
 
@@ -9470,6 +10008,9 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-07-02</span>
       </div>
               <ul>
+        <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
+        <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
+        <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
     </div>
@@ -9705,8 +10246,8 @@ window.addEventListener("resize", scheduleHomeChartsResize);
   if (savedPage && document.getElementById("page-" + savedPage)) {
     await switchPage(savedPage, { forceHomeRefresh: savedPage === "home" });
   } else {
-    // 默认显示首页
-    await switchPage("home", { forceHomeRefresh: true });
+    // 默认显示报送导航
+    await switchPage("report-navigation");
   }
   try { const d = await api("/api/config"); if (!runDate.value) runDate.value = d.default_run_date || settingsPayload?.api_default_run_date || ""; } catch (_) { if (!runDate.value) runDate.value = settingsPayload?.api_default_run_date || ""; }
   restoreLatestResultsSnapshot();

@@ -121,6 +121,32 @@ def test_store_sets_and_cancels_manual_completion_for_only_requested_month():
     assert store.load_overrides("2026-07") == {}
 
 
+def test_store_saves_governance_card_values_independently_for_all_four_periods():
+    module = _storage()
+    database = _database()
+    store = module.ReportNavigationStore(database)
+    user = {"id": "u1", "username": "admin", "display_name": "管理员"}
+    current = datetime(2026, 7, 16, 9, 30)
+
+    store.save_manual_card_values(
+        "data_governance",
+        {
+            "week": {"completed_count": 1, "incomplete_count": 2},
+            "month": {"completed_count": 3, "incomplete_count": 4},
+            "quarter": {"completed_count": 5, "incomplete_count": 6},
+            "year": {"completed_count": 7, "incomplete_count": 8},
+        },
+        user,
+        now=current,
+    )
+
+    values = store.load_manual_card_values("data_governance")
+    assert set(values) == {"week", "month", "quarter", "year"}
+    assert (values["quarter"].completed_count, values["quarter"].incomplete_count) == (5, 6)
+    assert values["year"].operator_username == "admin"
+    assert store.load_manual_card_values("special_governance") == {}
+
+
 def test_schedule_inherits_previous_year_and_clamps_leap_day():
     module = _storage()
     database = _database()
@@ -267,7 +293,7 @@ def test_all_rows_match_report_date_requires_data_and_no_mismatches():
     assert executor.calls[0][2] == ("2026-06-30",)
 
 
-def test_no_ck_rule_requires_current_period_rows_and_maps_query_error():
+def test_no_ck_rule_accepts_empty_result_scope_and_maps_query_error():
     report_module = _report_navigation()
     storage_module = _storage()
     duration = _source(
@@ -301,7 +327,8 @@ def test_no_ck_rule_requires_current_period_rows_and_maps_query_error():
     )
     failed = QueueQueryExecutor([RuntimeError("table missing")])
 
-    assert report_module.evaluate(_context(report_module, step, empty_ck)).status == "incomplete"
+    result = report_module.evaluate(_context(report_module, step, empty_ck))
+    assert (result.status, result.message) == ("completed", "报告期内无目标校验异常")
     error = report_module.evaluate(_context(report_module, step, failed))
     assert error.status == "error"
     assert "table missing" in error.error
@@ -330,6 +357,39 @@ def test_version_evaluator_requires_every_configured_manage_code():
 
     assert complete.status == "completed"
     assert incomplete.status == "incomplete"
+
+
+def test_version_evaluator_returns_latest_update_or_create_time():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    source = _source(
+        storage_module,
+        fields={
+            "manage_code_field": "manage_code",
+            "version_field": "version_num",
+            "update_date_field": "update_date",
+            "create_date_field": "create_date",
+        },
+    )
+    step = _step(
+        storage_module,
+        "version_present",
+        sources=(source,),
+        values={"manage_code": ("system1104",)},
+    )
+    completion_time = datetime(2026, 7, 15, 18, 20, 30)
+    executor = QueueQueryExecutor(
+        [{"matched_count": 1, "completion_time": completion_time}]
+    )
+
+    result = report_module.evaluate(_context(report_module, step, executor))
+
+    assert result.status == "completed"
+    assert result.completed_at == completion_time
+    assert (
+        "MAX(COALESCE(`update_date`, `create_date`)) AS completion_time"
+        in executor.calls[0][1]
+    )
 
 
 def test_dependency_default_and_date_evaluators_use_fixed_rules():
@@ -460,22 +520,22 @@ def test_amount_pending_minimum_time_and_multi_source_rules_cover_empty_and_comp
     ).status == "completed"
 
 
-def test_ck_min_time_month_dependency_quarterly_and_waiting_report_period_rules():
+def test_ck_report_period_dependency_quarterly_and_waiting_report_period_rules():
     report_module = _report_navigation()
     storage_module = _storage()
     ck_source = _source(storage_module, role="ck_result")
-    time_source = storage_module.StepSourceConfig(
+    period_source = storage_module.StepSourceConfig(
         id=2,
         source_role="spv_detail",
         data_source_name="ass_man_reg_24",
         table_name="zgxgzh_spvdetail_zg08",
         display_order=2,
-        fields={"time_field": "tbtime"},
+        fields={"period_field": "caldate"},
     )
     ck_step = _step(
         storage_module,
-        "no_ck_and_min_time",
-        sources=(ck_source, time_source),
+        "no_ck_and_report_period",
+        sources=(ck_source, period_source),
         values={"target_ck_id": ("7118",)},
     )
     assert report_module.evaluate(
@@ -484,12 +544,24 @@ def test_ck_min_time_month_dependency_quarterly_and_waiting_report_period_rules(
             ck_step,
             QueueQueryExecutor(
                 [
-                    {"scope_count": 4, "exception_count": 0},
-                    {"row_count": 2, "minimum_time": datetime(2026, 7, 1)},
+                    {"scope_count": 0, "exception_count": None},
+                    {"scope_count": 6409, "exception_count": 0},
                 ]
             ),
         )
     ).status == "completed"
+    assert report_module.evaluate(
+        _context(
+            report_module,
+            ck_step,
+            QueueQueryExecutor(
+                [
+                    {"scope_count": 0, "exception_count": None},
+                    {"scope_count": 6409, "exception_count": 1},
+                ]
+            ),
+        )
+    ).status == "incomplete"
 
     month_source = _source(storage_module, fields={"date_field": "chdate"})
     month_step = _step(
@@ -703,6 +775,93 @@ def test_collection_is_strictly_serial_and_writes_process_and_four_period_card_s
     ]
 
 
+def test_collection_evaluates_forward_dependencies_before_dependent_steps():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    database.connection.tables["report_nav_step_dependencies"].append(
+        {"step_code": "p1_s1", "depends_on_step_code": "p1_s2"}
+    )
+    calls = []
+
+    def evaluator(context):
+        calls.append(context.step.step_code)
+        if context.step.step_code == "p1_s1":
+            return report_module.evaluate_dependency_completed(context)
+        return report_module.EvaluationResult("completed", "完成")
+
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+
+    result = service.collect_once(now=datetime(2026, 7, 16, 9, 30))
+
+    assert result.status == "completed"
+    assert calls == ["p1_s2", "p1_s1", "p2_s1"]
+    assert store.load_step_snapshot("2026-07", "p1_s1").effective_status == "completed"
+    assert store.load_process_snapshot("2026-07", "p1").status == "completed"
+    configured = store.load_configuration("2026-07")
+    assert [step.step_code for step in configured[0].steps] == ["p1_s1", "p1_s2"]
+
+
+def test_collection_uses_and_refreshes_final_archive_step_completion_time():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    database.connection.tables["report_nav_monthly_schedules"].append(
+        {
+            "report_month": "2026-07",
+            "process_code": "p1",
+            "report_date": date(2026, 7, 10),
+            "source_type": "manual",
+            "source_year": 2026,
+            "updated_by": "admin",
+            "updated_at": datetime(2026, 7, 10, 9, 0),
+        }
+    )
+    archive_times = [
+        datetime(2026, 7, 15, 18, 20, 30),
+        datetime(2026, 7, 15, 18, 25, 40),
+    ]
+
+    def evaluator(context):
+        completed_at = archive_times[0] if context.step.step_code == "p1_s2" else None
+        return report_module.EvaluationResult(
+            "completed",
+            "完成",
+            completed_at=completed_at,
+        )
+
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+
+    service.collect_once(now=datetime(2026, 7, 16, 9, 30))
+    first_step = store.load_step_snapshot("2026-07", "p1_s2")
+    first_process = store.load_process_snapshot("2026-07", "p1")
+
+    assert first_step.auto_completed_at == archive_times[0]
+    assert first_process.completed_at == archive_times[0]
+
+    archive_times.pop(0)
+    service.collect_once(now=datetime(2026, 7, 16, 9, 40))
+    refreshed_step = store.load_step_snapshot("2026-07", "p1_s2")
+    refreshed_process = store.load_process_snapshot("2026-07", "p1")
+
+    assert refreshed_step.auto_completed_at == archive_times[0]
+    assert refreshed_process.completed_at == archive_times[0]
+
+
 def test_collection_continues_after_one_step_error_and_marks_partial_run():
     report_module = _report_navigation()
     storage_module = _storage()
@@ -729,6 +888,88 @@ def test_collection_continues_after_one_step_error_and_marks_partial_run():
     assert result.failed_steps == 1
     assert calls == ["p1_s1", "p1_s2", "p2_s1"]
     assert database.connection.tables["report_nav_stat_runs"][0]["status"] == "partial"
+
+
+def test_collection_uses_reached_report_date_as_completion_fallback_without_querying_steps():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    report_day = datetime(2026, 7, 16, 21, 0)
+    database.connection.tables["report_nav_monthly_schedules"].append(
+        {
+            "report_month": "2026-07",
+            "process_code": "p1",
+            "report_date": date(2026, 7, 16),
+            "source_type": "manual",
+            "source_year": 2026,
+            "updated_by": "admin",
+            "updated_at": report_day,
+        }
+    )
+    calls = []
+
+    def evaluator(context):
+        calls.append(context.step.step_code)
+        return report_module.EvaluationResult("incomplete", "未完成")
+
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+
+    same_day = service.collect_once(now=report_day)
+
+    assert same_day.status == "completed"
+    assert calls == ["p1_s1", "p1_s2", "p2_s1"]
+    assert store.load_process_snapshot("2026-07", "p1").status == "incomplete"
+
+    calls.clear()
+    next_day = report_day + timedelta(days=1)
+    result = service.collect_once(now=next_day)
+
+    assert result.status == "completed"
+    assert calls == ["p1_s1", "p1_s2", "p2_s1"]
+    p1 = store.load_process_snapshot("2026-07", "p1")
+    assert (p1.status, p1.completed_steps, p1.total_steps) == ("completed", 2, 2)
+    assert p1.completed_at == datetime(2026, 7, 16, 20, 0)
+    for step_code in ("p1_s1", "p1_s2"):
+        step = store.load_step_snapshot("2026-07", step_code)
+        assert step.auto_status == "completed"
+        assert step.effective_status == "completed"
+        assert step.completion_source == "schedule"
+        assert step.auto_completed_at == datetime(2026, 7, 16, 20, 0)
+        assert "报送日期" in step.status_message
+
+    service.update_schedule(
+        "p1",
+        "2026-07",
+        "2026-07-18",
+        admin,
+        now=next_day + timedelta(minutes=1),
+    )
+
+    rescheduled = store.load_process_snapshot("2026-07", "p1")
+    assert rescheduled.status == "incomplete"
+    assert rescheduled.completed_at is None
+
+    service.update_schedule(
+        "p1",
+        "2026-07",
+        "2026-07-15",
+        admin,
+        now=next_day + timedelta(minutes=3),
+    )
+
+    refreshed = store.load_process_snapshot("2026-07", "p1")
+    assert refreshed.completed_at == datetime(2026, 7, 15, 20, 0)
+    assert store.load_step_snapshot(
+        "2026-07", "p1_s2"
+    ).auto_completed_at == datetime(2026, 7, 15, 20, 0)
 
 
 def test_scheduler_uses_initial_delay_then_configured_interval_without_parallel_runs():
@@ -831,6 +1072,227 @@ def test_dashboard_returns_selected_period_snapshots_processes_and_latest_run():
     assert (supplement["total_count"], supplement["completed_count"], supplement["incomplete_count"]) == (12, 3, 9)
     assert [process["process_code"] for process in payload["processes"]] == ["p1", "p2"]
     assert payload["last_run"]["status"] == "completed"
+    assert payload["manual_refresh"]["allowed"] is True
+    assert payload["manual_refresh"]["retry_after_seconds"] == 0
+
+
+def test_governance_card_admin_maintenance_updates_all_periods_and_dashboard_uses_selected_value():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+    values = {
+        "week": {"completed_count": 1, "incomplete_count": 2},
+        "month": {"completed_count": 3, "incomplete_count": 4},
+        "quarter": {"completed_count": 5, "incomplete_count": 6},
+        "year": {"completed_count": 7, "incomplete_count": 8},
+    }
+
+    result = service.update_card_manual_values(
+        "special_governance", values, admin, now=datetime(2026, 7, 16, 9, 30)
+    )
+    payload = service.dashboard(
+        period="quarter", current_user=admin, now=datetime(2026, 7, 16, 9, 31)
+    )
+
+    assert result == {"ok": True, "card_code": "special_governance"}
+    card = next(item for item in payload["cards"] if item["card_code"] == "special_governance")
+    assert (card["total_count"], card["completed_count"], card["incomplete_count"]) == (11, 5, 6)
+    assert round(card["completion_rate"], 2) == 45.45
+    assert payload["card_maintenance"]["special_governance"]["year"] == {
+        "completed_count": 7,
+        "incomplete_count": 8,
+    }
+
+
+def test_governance_card_maintenance_rejects_non_admin_invalid_card_and_missing_period():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    service = report_module.ReportNavigationService(
+        _database(), store=storage_module.ReportNavigationStore(_database())
+    )
+    values = {
+        period: {"completed_count": 0, "incomplete_count": 0}
+        for period in ("week", "month", "quarter", "year")
+    }
+    fractional_values = {period: dict(row) for period, row in values.items()}
+    fractional_values["week"]["completed_count"] = 1.5
+
+    for card_code, user, payload in [
+        ("data_governance", {"role": "user"}, values),
+        ("report_forms", {"role": "admin"}, values),
+        ("data_governance", {"role": "admin"}, {"month": values["month"]}),
+        ("data_governance", {"role": "admin"}, fractional_values),
+    ]:
+        try:
+            service.update_card_manual_values(card_code, payload, user)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid governance maintenance should be rejected")
+
+
+def test_manual_refresh_uses_database_cooldown_for_five_minutes_after_completion():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+
+    first = service.manual_refresh(now=current)
+    blocked = service.manual_refresh(now=current + timedelta(minutes=4, seconds=59))
+    second = service.manual_refresh(now=current + timedelta(minutes=5))
+
+    assert first["status"] == "completed"
+    assert first["cooldown_seconds"] == 300
+    assert blocked["status"] == "cooldown"
+    assert blocked["retry_after_seconds"] == 1
+    assert second["status"] == "completed"
+    manual_runs = [
+        row
+        for row in database.connection.tables["report_nav_stat_runs"]
+        if row["trigger_type"] == "manual"
+    ]
+    assert len(manual_runs) == 2
+
+
+def test_admin_manual_refresh_bypasses_cooldown_but_keeps_refresh_available():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    admin = {"role": "admin"}
+
+    first = service.manual_refresh(now=current, current_user=admin)
+    second = service.manual_refresh(now=current + timedelta(seconds=1), current_user=admin)
+
+    assert first["status"] == "completed"
+    assert first["cooldown_seconds"] == 0
+    assert first["retry_after_seconds"] == 0
+    assert first["allowed"] is True
+    assert second["status"] == "completed"
+    manual_runs = [
+        row
+        for row in database.connection.tables["report_nav_stat_runs"]
+        if row["trigger_type"] == "manual"
+    ]
+    assert len(manual_runs) == 2
+
+
+def test_dashboard_manual_refresh_state_applies_cooldown_only_to_non_admin():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    service.manual_refresh(now=current, current_user={"role": "user"})
+
+    user_payload = service.dashboard(
+        period="month",
+        current_user={"role": "user"},
+        now=current + timedelta(seconds=1),
+    )
+    admin_payload = service.dashboard(
+        period="month",
+        current_user={"role": "admin"},
+        now=current + timedelta(seconds=1),
+    )
+
+    assert user_payload["manual_refresh"]["allowed"] is False
+    assert user_payload["manual_refresh"]["retry_after_seconds"] == 299
+    assert admin_payload["manual_refresh"]["allowed"] is True
+    assert admin_payload["manual_refresh"]["retry_after_seconds"] == 0
+
+
+def test_manual_refresh_returns_collection_error_for_frontend_prompt():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+
+    def failing_query_factory():
+        raise RuntimeError("业务数据源连接失败")
+
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=failing_query_factory,
+    )
+
+    payload = service.manual_refresh(now=datetime(2026, 7, 16, 9, 30))
+
+    assert payload["status"] == "failed"
+    assert payload["error_message"] == "业务数据源连接失败"
+    assert payload["cooldown_seconds"] == 300
+
+
+def test_manual_refresh_partial_returns_step_issue_details_for_troubleshooting():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+
+    def evaluator(context):
+        if context.step.step_code == "p1_s1":
+            return report_module.EvaluationResult("error", "判断异常", "数据源 source_a 连接失败")
+        if context.step.step_code == "p2_s1":
+            return report_module.EvaluationResult("error", "判断异常", "表 result_b 不存在")
+        return report_module.EvaluationResult("completed", "完成")
+
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+
+    payload = service.manual_refresh(now=datetime(2026, 7, 16, 9, 30))
+
+    assert payload["status"] == "partial"
+    assert payload["failed_steps"] == 2
+    assert payload["error_message"] == "刷新完成，但有 2 个步骤统计异常，请查看具体问题"
+    assert payload["issues"] == [
+        {
+            "process_code": "p1",
+            "process_name": "节点1",
+            "step_code": "p1_s1",
+            "step_name": "步骤1",
+            "error_message": "数据源 source_a 连接失败",
+        },
+        {
+            "process_code": "p2",
+            "process_name": "节点2",
+            "step_code": "p2_s1",
+            "step_name": "步骤1",
+            "error_message": "表 result_b 不存在",
+        },
+    ]
 
 
 def test_manual_completion_recalculates_process_and_cancel_restores_automatic_state():

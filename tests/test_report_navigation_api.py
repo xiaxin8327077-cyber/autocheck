@@ -7,6 +7,12 @@ from mysql_config_test_support import MemoryApplicationDatabase
 class FakeReportNavigationService:
     def __init__(self):
         self.calls = []
+        self.refresh_result = {
+            "status": "completed",
+            "cooldown_seconds": 300,
+            "retry_after_seconds": 300,
+            "error_message": "",
+        }
 
     def dashboard(self, *, period, current_user):
         self.calls.append(("dashboard", period, current_user))
@@ -19,6 +25,14 @@ class FakeReportNavigationService:
     def update_schedule(self, process_code, report_month, report_date, current_user):
         self.calls.append(("schedule", process_code, report_month, report_date, current_user))
         return {"ok": True, "report_date": report_date}
+
+    def update_card_manual_values(self, card_code, values, current_user):
+        self.calls.append(("card-values", card_code, values, current_user))
+        return {"ok": True, "card_code": card_code}
+
+    def manual_refresh(self, *, current_user):
+        self.calls.append(("refresh", current_user))
+        return dict(self.refresh_result)
 
 
 def _admin():
@@ -106,3 +120,63 @@ def test_schedule_update_requires_admin_and_passes_month_and_date(tmp_path):
     assert payload["report_date"] == "2026-07-20"
     assert service.calls == [("schedule", "east5", "2026-07", "2026-07-20", _admin())]
 
+
+def test_governance_card_values_require_admin_and_pass_all_four_periods(tmp_path):
+    router, service = _router(tmp_path)
+    values = {
+        period: {"completed_count": index, "incomplete_count": index + 1}
+        for index, period in enumerate(("week", "month", "quarter", "year"), start=1)
+    }
+    body = {"values": values}
+
+    denied, _ = router.handle(
+        "POST", "/api/report-navigation/cards/data_governance", body, current_user=_user()
+    )
+    allowed, payload = router.handle(
+        "POST", "/api/report-navigation/cards/data_governance", body, current_user=_admin()
+    )
+
+    assert denied == 403
+    assert allowed == 200
+    assert payload == {"ok": True, "card_code": "data_governance"}
+    assert service.calls == [("card-values", "data_governance", values, _admin())]
+
+
+def test_manual_refresh_route_maps_success_cooldown_busy_and_failure_statuses(tmp_path):
+    router, service = _router(tmp_path)
+
+    success, success_payload = router.handle(
+        "POST", "/api/report-navigation/refresh", {}, current_user=_user()
+    )
+    service.refresh_result = {
+        "status": "cooldown",
+        "retry_after_seconds": 120,
+        "error_message": "请等待 2 分钟后再刷新",
+    }
+    cooldown, cooldown_payload = router.handle(
+        "POST", "/api/report-navigation/refresh", {}, current_user=_user()
+    )
+    service.refresh_result = {
+        "status": "skipped",
+        "retry_after_seconds": 0,
+        "error_message": "统计任务正在执行",
+    }
+    busy, busy_payload = router.handle(
+        "POST", "/api/report-navigation/refresh", {}, current_user=_user()
+    )
+    service.refresh_result = {
+        "status": "failed",
+        "cooldown_seconds": 300,
+        "retry_after_seconds": 300,
+        "error_message": "业务数据源连接失败",
+    }
+    failed, failed_payload = router.handle(
+        "POST", "/api/report-navigation/refresh", {}, current_user=_user()
+    )
+
+    assert (success, success_payload["status"]) == (200, "completed")
+    assert (cooldown, cooldown_payload["retry_after_seconds"]) == (429, 120)
+    assert cooldown_payload["error"] == "请等待 2 分钟后再刷新"
+    assert (busy, busy_payload["error"]) == (409, "统计任务正在执行")
+    assert (failed, failed_payload["error"]) == (500, "业务数据源连接失败")
+    assert service.calls == [("refresh", _user())] * 4

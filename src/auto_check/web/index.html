@@ -33,18 +33,22 @@
         </h1>
       </div>
       <nav class="sidebar-nav">
-        <a class="nav-item" data-page="home" href="#">
+        <a class="nav-item" data-page="report-navigation" href="#report-navigation">
           <span class="nav-icon">&#9673;</span>
-          <span>首页</span>
+          <span>报送导航</span>
         </a>
-        <a class="nav-item" data-page="auto-check" href="#">
-          <span class="nav-icon">&#9743;</span>
-          <span>自动对数</span>
-        </a>
-        <a class="nav-item" data-page="history" href="#">
-          <span class="nav-icon">&#9716;</span>
-          <span>核对历史</span>
-        </a>
+        <div class="nav-group" data-nav-group="smart-reconcile">
+          <button class="nav-group-toggle" type="button" data-nav-group-toggle="smart-reconcile" aria-expanded="false">
+            <span class="nav-icon">&#9743;</span>
+            <span>智能核数</span>
+            <span class="nav-group-chevron" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="nav-submenu">
+            <a class="nav-item nav-subitem" data-page="home" href="#home"><span>对数总览</span></a>
+            <a class="nav-item nav-subitem" data-page="auto-check" href="#auto-check"><span>对数执行</span></a>
+            <a class="nav-item nav-subitem" data-page="history" href="#history"><span>对数历史</span></a>
+          </div>
+        </div>
         <a class="nav-item" data-page="tools" href="#">
           <span class="nav-icon">&#9881;</span>
           <span>工具</span>
@@ -89,15 +93,26 @@
         <span class="top-nav-status" id="topNavStatus" title="v2.1">v2.1</span>
       </div>
       <nav class="top-nav-tabs">
-        <button id="topDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
-          <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
-        </button>
-        <a class="top-nav-item" data-page="home" href="#">首页</a>
-        <a class="top-nav-item" data-page="auto-check" href="#">自动对数</a>
-        <a class="top-nav-item" data-page="history" href="#">核对历史</a>
+        <a class="top-nav-item" data-page="report-navigation" href="#report-navigation">报送导航</a>
+        <div class="top-nav-group" data-nav-group="smart-reconcile">
+          <button class="top-nav-item top-nav-group-toggle" type="button" data-nav-group-toggle="smart-reconcile" aria-expanded="false">
+            <span>智能核数</span>
+            <span class="top-nav-group-chevron" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="top-nav-submenu">
+            <a class="top-nav-item top-nav-subitem" data-page="home" href="#home">对数总览</a>
+            <a class="top-nav-item top-nav-subitem" data-page="auto-check" href="#auto-check">对数执行</a>
+            <a class="top-nav-item top-nav-subitem" data-page="history" href="#history">对数历史</a>
+          </div>
+        </div>
         <a class="top-nav-item" data-page="tools" href="#">工具</a>
         <a class="top-nav-item" data-page="settings" href="#">系统设置</a>
         <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
+      </nav>
+      <div class="top-nav-actions">
+        <button id="topDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
+          <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
+        </button>
         <div class="user-menu user-menu--top" id="topUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
             <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
@@ -107,14 +122,98 @@
             <button class="user-menu-logout" type="button" data-logout-btn>退出登录</button>
           </div>
         </div>
-      </nav>
-      </header>
+      </div>
+    </header>
 
     <main class="main-content">
+      <!-- 报送导航 -->
+      <section class="page" id="page-report-navigation">
+        <div class="report-nav-period-bar">
+          <h2 class="report-nav-page-title">报送导航</h2>
+          <div class="report-nav-last-run-group">
+            <span class="report-nav-last-run" id="reportNavLastRun"></span>
+            <button type="button" class="report-nav-refresh-button" id="reportNavRefreshButton" aria-label="立即刷新报送导航统计" title="立即刷新">
+              <svg class="report-nav-refresh-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"></path>
+                <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path>
+              </svg>
+              <span class="report-nav-refresh-countdown" id="reportNavRefreshCountdown" hidden></span>
+            </button>
+          </div>
+          <label class="report-nav-period-label" for="reportNavPeriodSelect">统计周期</label>
+          <div class="report-nav-period-select">
+            <select id="reportNavPeriodSelect">
+              <option value="week">本周</option>
+              <option value="month" selected>本月</option>
+              <option value="quarter">本季度</option>
+              <option value="year">本年</option>
+            </select>
+            <svg class="report-nav-period-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </div>
+        </div>
+
+        <div class="report-nav-load-state" id="reportNavStatus" aria-live="polite">正在读取最新统计结果…</div>
+        <div class="report-nav-stats-grid" id="reportNavStats"></div>
+
+        <section class="report-nav-card report-nav-flow-card">
+          <div class="report-nav-card-head">
+            <h2><span></span>报送流程进度</h2>
+            <div class="report-nav-batches" id="reportNavSchedules"></div>
+          </div>
+          <div class="report-nav-fishbone-scroll">
+            <div class="report-nav-fishbone">
+              <div class="report-nav-fishbone-head"><span>监管报送开始</span></div>
+              <div class="report-nav-fishbone-spine" id="reportNavFishboneSpine"></div>
+              <div class="report-nav-fishbone-tail"><span>监管报送结束</span></div>
+              <div class="report-nav-branches" id="reportNavBranches"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="report-nav-card report-nav-attention-card">
+          <div class="report-nav-card-head">
+            <h2><span></span>注意事项</h2>
+            <div class="report-nav-filter-chips" aria-label="注意事项分类">
+              <span class="active">全部 3</span>
+              <span>紧急 2</span>
+              <span>常规 1</span>
+            </div>
+          </div>
+          <div class="report-nav-todo-list">
+            <article class="report-nav-todo">
+              <i aria-hidden="true"></i>
+              <div>
+                <h3>数据治理流程 <span>紧急</span></h3>
+                <p>截止：2026-06-15　负责人：张智核　关联：人行大集中</p>
+              </div>
+              <button type="button" class="report-nav-action-button">立即处理</button>
+            </article>
+            <article class="report-nav-todo">
+              <i aria-hidden="true"></i>
+              <div>
+                <h3>报表特殊治理 <span>紧急</span></h3>
+                <p>截止：2026-06-16　负责人：李核对　关联：1104 报送</p>
+              </div>
+              <button type="button" class="report-nav-action-button">立即处理</button>
+            </article>
+            <article class="report-nav-todo mid">
+              <i aria-hidden="true"></i>
+              <div>
+                <h3>源系统输出确认 <span>关注</span></h3>
+                <p>截止：2026-06-18　负责人：王核验　关联：全要素报送</p>
+              </div>
+              <button type="button" class="report-nav-action-button">查看</button>
+            </article>
+          </div>
+        </section>
+      </section>
+
       <!-- 首页 -->
       <section class="page" id="page-home">
         <div class="page-header">
-          <h2>首页</h2>
+          <h2>对数总览</h2>
         </div>
         <div class="home-grid">
           <!-- 统计卡片行 -->
@@ -224,18 +323,10 @@
               <div class="card-title">
                 <span class="card-title-icon">&#9679;</span>
                 <span>对数质量</span>
-                <span class="card-subtitle" id="homeQualityScope">近12期</span>
               </div>
               <div class="home-quality-body">
-                <div class="home-quality-ring" style="--quality-progress: 0">
-                  <span id="homeQualityScore">--</span>
-                  <small>质量分</small>
-                </div>
-                <div class="home-quality-info">
-                  <span class="home-quality-tag" id="homeQualityTag">暂无数据</span>
-                  <div class="home-quality-bars" id="homeQualityRows">
-                    <p class="home-analysis-empty">暂无核对数据</p>
-                  </div>
+                <div class="home-quality-bars" id="homeQualityRows">
+                  <p class="home-analysis-empty">暂无核对数据</p>
                 </div>
               </div>
             </div>
@@ -243,7 +334,6 @@
               <div class="card-title">
                 <span class="card-title-icon">&#9679;</span>
                 <span>差异类型分布</span>
-                <span class="card-subtitle" id="homeReasonScope">近12期</span>
               </div>
               <div class="home-reason-list" id="homeReasonList">
                 <p class="home-analysis-empty">暂无核对数据</p>
@@ -266,7 +356,7 @@
       <!-- 自动对数 -->
       <section class="page" id="page-auto-check">
         <div class="page-header">
-          <h2>工作台</h2>
+          <h2>对数执行</h2>
         </div>
 
         <!-- 执行对数 -->
@@ -395,7 +485,7 @@
       <!-- 核对历史 -->
       <section class="page" id="page-history">
         <div class="page-header">
-          <h2>核对历史</h2>
+          <h2>对数历史</h2>
         </div>
 
         <section class="card result-card">
@@ -1085,7 +1175,7 @@
                     <span class="metric-value" id="loginUserInfo">-</span>
                   </div>
                   <div class="metric-item">
-                    <span class="metric-label">首页自动刷新</span>
+                    <span class="metric-label">对数总览自动刷新</span>
                     <span class="metric-value" id="autoRefreshInfo">-</span>
                   </div>
                   <div class="metric-item">
@@ -1168,12 +1258,12 @@
                     <span class="setting-hint">估值科目组合匹配的最大候选行数，默认 50</span>
                   </label>
                   <label class="setting-item">
-                    <span class="setting-label">自动刷新首页</span>
+                    <span class="setting-label">自动刷新对数总览</span>
                     <select id="autoRefreshHome" class="setting-input">
                       <option value="false">关闭</option>
                       <option value="true">开启</option>
                     </select>
-                    <span class="setting-hint">进入首页时自动刷新图表数据</span>
+                    <span class="setting-hint">进入对数总览时自动刷新图表数据</span>
                   </label>
                 </div>
                 <div class="settings-actions">
@@ -1432,13 +1522,16 @@
 
       <!-- 输入弹窗 -->
       <div class="modal-overlay" id="promptModal" hidden>
-        <div class="modal modal-confirm modal-prompt">
+        <div class="modal modal-confirm modal-prompt" tabindex="-1">
           <div class="modal-header">
             <h3 id="promptTitle">请输入</h3>
           </div>
           <div class="modal-body">
             <p id="promptMessage">请输入内容</p>
             <input id="promptInput" class="prompt-input" autocomplete="off" />
+            <div id="promptDateControl" hidden class="prompt-date-control">
+              <input id="promptDateInput" class="prompt-input" type="date" autocomplete="off" />
+            </div>
           </div>
           <div class="modal-footer">
             <button class="btn-outline" id="promptCancel">取消</button>
@@ -1458,6 +1551,24 @@
             <button class="btn-close" id="infoClose">&times;</button>
           </div>
           <div class="modal-body" id="infoBody">
+          </div>
+        </div>
+      </div>
+
+      <!-- 报送导航治理统计维护弹窗 -->
+      <div class="modal-overlay" id="reportNavCardMaintenanceModal" hidden>
+        <div class="modal modal-confirm report-nav-card-maintenance-modal">
+          <div class="modal-header">
+            <h3 id="reportNavCardMaintenanceTitle">维护治理统计</h3>
+            <button class="btn-close" id="reportNavCardMaintenanceClose" type="button">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="report-nav-card-maintenance-help">请一次填写四个统计周期的已完成和未完成数量。</p>
+            <div class="report-nav-card-maintenance-grid" id="reportNavCardMaintenanceGrid"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-outline" id="reportNavCardMaintenanceCancel" type="button">取消</button>
+            <button class="btn-confirm-primary" id="reportNavCardMaintenanceSave" type="button">保存</button>
           </div>
         </div>
       </div>

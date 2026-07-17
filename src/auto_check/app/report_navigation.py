@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from math import ceil
 from pathlib import Path
 import threading
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -30,6 +31,7 @@ COMPLETED = "completed"
 INCOMPLETE = "incomplete"
 WAITING_REPORT_PERIOD = "waiting_report_period"
 ERROR = "error"
+MANUAL_REFRESH_COOLDOWN_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class EvaluationResult:
     status: str
     message: str
     error: str = ""
+    completed_at: datetime | None = None
 
 
 class QueryExecutor(Protocol):
@@ -67,6 +70,7 @@ class CollectionResult:
     completed_processes: int
     failed_steps: int
     error_message: str = ""
+    issues: tuple[dict[str, str], ...] = ()
 
 
 class ConfiguredQueryExecutor:
@@ -162,8 +166,13 @@ def evaluate_date_reached(context: EvaluationContext) -> EvaluationResult:
 
 
 def evaluate_all_rows_match_report_date(context: EvaluationContext) -> EvaluationResult:
+    return _evaluate_all_rows_match_report_date(context, _source(context, "primary"))
+
+
+def _evaluate_all_rows_match_report_date(
+    context: EvaluationContext, source: StepSourceConfig
+) -> EvaluationResult:
     report_date = _require_report_date(context)
-    source = _source(context, "primary")
     period = _column(context, source, "period_field")
     sql = (
         f"SELECT COUNT(*) AS scope_count, "
@@ -205,15 +214,25 @@ def evaluate_no_blank_fields_and_no_ck(context: EvaluationContext) -> Evaluation
     )
     if duration_result.status != COMPLETED:
         return duration_result
-    return _evaluate_no_ck(context, _source(context, "ck_result"), report_date)
+    return _evaluate_no_ck(
+        context,
+        _source(context, "ck_result"),
+        report_date,
+        require_scope=False,
+    )
 
 
-def evaluate_no_ck_and_min_time(context: EvaluationContext) -> EvaluationResult:
+def evaluate_no_ck_and_report_period(context: EvaluationContext) -> EvaluationResult:
     report_date = _require_report_date(context)
-    ck_result = _evaluate_no_ck(context, _source(context, "ck_result"), report_date)
+    ck_result = _evaluate_no_ck(
+        context,
+        _source(context, "ck_result"),
+        report_date,
+        require_scope=False,
+    )
     if ck_result.status != COMPLETED:
         return ck_result
-    return _evaluate_min_time_current_month(context, _source(context, "spv_detail"))
+    return _evaluate_all_rows_match_report_date(context, _source(context, "spv_detail"))
 
 
 def evaluate_no_pending_status(context: EvaluationContext) -> EvaluationResult:
@@ -297,7 +316,11 @@ def evaluate_current_month_rows_in_all_sources(context: EvaluationContext) -> Ev
 
 
 def _evaluate_no_ck(
-    context: EvaluationContext, source: StepSourceConfig, report_date: date
+    context: EvaluationContext,
+    source: StepSourceConfig,
+    report_date: date,
+    *,
+    require_scope: bool = True,
 ) -> EvaluationResult:
     period = _column(context, source, "period_field")
     check_id = _column(context, source, "check_id_field")
@@ -309,13 +332,17 @@ def _evaluate_no_ck(
         f"SUM(CASE WHEN {check_id} = %s THEN 1 ELSE 0 END) AS exception_count "
         f"FROM {_table(context, source)} WHERE {period} = %s"
     )
-    return scope_without_exceptions(
-        context.query.fetch_one(
-            source,
-            sql,
-            (target_values[0], format_business_report_date(report_date, "underscore")),
-        )
+    row = context.query.fetch_one(
+        source,
+        sql,
+        (target_values[0], format_business_report_date(report_date, "underscore")),
     )
+    if require_scope and _integer((row or {}).get("scope_count")) <= 0:
+        return EvaluationResult(INCOMPLETE, "当前范围无数据")
+    exception_count = _integer((row or {}).get("exception_count"))
+    if exception_count > 0:
+        return EvaluationResult(INCOMPLETE, f"存在 {exception_count} 条目标校验异常")
+    return EvaluationResult(COMPLETED, "报告期内无目标校验异常")
 
 
 def _evaluate_min_time_current_month(
@@ -343,8 +370,18 @@ def _evaluate_versions(context: EvaluationContext, *, require_all: bool) -> Eval
     if not codes:
         raise ValueError("未配置 manage_code")
     placeholders = ", ".join(["%s"] * len(codes))
+    completion_projection = ""
+    update_date_field = source.fields.get("update_date_field")
+    create_date_field = source.fields.get("create_date_field")
+    if update_date_field and create_date_field:
+        update_date = context.query.quote_column(source, update_date_field)
+        create_date = context.query.quote_column(source, create_date_field)
+        completion_projection = (
+            f", MAX(COALESCE({update_date}, {create_date})) AS completion_time"
+        )
     sql = (
-        f"SELECT COUNT(DISTINCT {manage_code}) AS matched_count FROM {_table(context, source)} "
+        f"SELECT COUNT(DISTINCT {manage_code}) AS matched_count{completion_projection} "
+        f"FROM {_table(context, source)} "
         f"WHERE {manage_code} IN ({placeholders}) AND {version} = %s"
     )
     row = context.query.fetch_one(
@@ -355,7 +392,11 @@ def _evaluate_versions(context: EvaluationContext, *, require_all: bool) -> Eval
     matched = _integer((row or {}).get("matched_count"))
     required = len(codes) if require_all else 1
     if matched >= required:
-        return EvaluationResult(COMPLETED, "报送版本已归档")
+        return EvaluationResult(
+            COMPLETED,
+            "报送版本已归档",
+            completed_at=_coerce_datetime((row or {}).get("completion_time")),
+        )
     return EvaluationResult(INCOMPLETE, "报送版本尚未全部归档")
 
 
@@ -429,7 +470,7 @@ EVALUATORS: dict[str, Callable[[EvaluationContext], EvaluationResult]] = {
     "all_rows_match_report_date": _evaluate_with_report_period_status(evaluate_all_rows_match_report_date),
     "amounts_equal": _evaluate_with_report_period_status(evaluate_amounts_equal),
     "no_blank_fields_and_no_ck": _evaluate_with_report_period_status(evaluate_no_blank_fields_and_no_ck),
-    "no_ck_and_min_time": _evaluate_with_report_period_status(evaluate_no_ck_and_min_time),
+    "no_ck_and_report_period": _evaluate_with_report_period_status(evaluate_no_ck_and_report_period),
     "no_pending_status": _evaluate_with_report_period_status(evaluate_no_pending_status),
     "month_rows_or_dependency": _evaluate_with_report_period_status(evaluate_month_rows_or_dependency),
     "default_completed": evaluate_default_completed,
@@ -444,6 +485,7 @@ EVALUATORS: dict[str, Callable[[EvaluationContext], EvaluationResult]] = {
 
 
 PERIODS = ("week", "month", "quarter", "year")
+GOVERNANCE_CARD_CODES = ("data_governance", "special_governance")
 
 
 def period_bounds(period: str, today: date) -> tuple[datetime, datetime]:
@@ -477,6 +519,30 @@ def latest_business_report_date(database: ApplicationDatabase) -> date | None:
         ).mappings().all()
     values = [_coerce_date(row.get("run_date")) for row in rows]
     return max((value for value in values if value is not None), default=None)
+
+
+def _steps_in_dependency_order(steps: Sequence[StepConfig]) -> tuple[StepConfig, ...]:
+    pending = list(steps)
+    step_codes = {step.step_code for step in pending}
+    resolved: set[str] = set()
+    ordered: list[StepConfig] = []
+    while pending:
+        ready = [
+            step
+            for step in pending
+            if all(
+                dependency not in step_codes or dependency in resolved
+                for dependency in step.dependencies
+            )
+        ]
+        if not ready:
+            ordered.extend(pending)
+            break
+        for step in ready:
+            ordered.append(step)
+            resolved.add(step.step_code)
+            pending.remove(step)
+    return tuple(ordered)
 
 
 class ReportNavigationService:
@@ -514,6 +580,7 @@ class ReportNavigationService:
         run_id: int | None = None
         release_status = "failed"
         release_error = ""
+        finished_at = current
         try:
             business_report_date = latest_business_report_date(self.database)
             run_id = self.store.start_run(
@@ -524,17 +591,28 @@ class ReportNavigationService:
             query = self._query_executor_factory()
             completed_processes = 0
             failed_steps = 0
+            issues: list[dict[str, str]] = []
             process_statuses: list[str] = []
 
             for process in processes:
                 schedule = self.store.ensure_schedule(
                     report_month, process.process_code, now=current
                 )
+                schedule_overdue = bool(
+                    schedule is not None and current.date() > schedule.report_date
+                )
+                schedule_completed_at = (
+                    datetime.combine(schedule.report_date, time(20, 0))
+                    if schedule is not None
+                    else None
+                )
                 dependency_statuses: dict[str, str] = {}
+                automatic_completion_times: dict[str, datetime] = {}
+                schedule_fallback_used = False
                 completed_steps = 0
                 has_error = False
-                for step in process.steps:
-                    automatic = self._evaluator(
+                for step in _steps_in_dependency_order(process.steps):
+                    logic_result = self._evaluator(
                         EvaluationContext(
                             step=step,
                             business_report_date=business_report_date,
@@ -546,14 +624,40 @@ class ReportNavigationService:
                     )
                     override = overrides.get(step.step_code)
                     is_manual = bool(override and override.completed)
-                    effective_status = COMPLETED if is_manual else automatic.status
-                    completion_source = "manual" if is_manual else "auto"
+                    if (
+                        schedule_overdue
+                        and logic_result.status != COMPLETED
+                        and not is_manual
+                    ):
+                        automatic = EvaluationResult(
+                            COMPLETED,
+                            f"已到报送日期 {schedule.report_date.isoformat()}，按报送时间兜底完成",
+                            completed_at=schedule_completed_at,
+                        )
+                        effective_status = COMPLETED
+                        completion_source = "schedule"
+                        schedule_fallback_used = True
+                    else:
+                        automatic = logic_result
+                        effective_status = COMPLETED if is_manual else automatic.status
+                        completion_source = "manual" if is_manual else "auto"
                     if effective_status == COMPLETED:
                         completed_steps += 1
                     if automatic.status == ERROR:
                         failed_steps += 1
                         has_error = True
+                        issues.append(
+                            {
+                                "process_code": process.process_code,
+                                "process_name": process.process_name,
+                                "step_code": step.step_code,
+                                "step_name": step.step_name,
+                                "error_message": automatic.error or automatic.message or "未知异常",
+                            }
+                        )
                     dependency_statuses[step.step_code] = effective_status
+                    if automatic.completed_at is not None:
+                        automatic_completion_times[step.step_code] = automatic.completed_at
                     self.store.save_step_snapshot(
                         StepSnapshot(
                             report_month=report_month,
@@ -563,10 +667,15 @@ class ReportNavigationService:
                             completion_source=completion_source,
                             status_message="管理员手动完成" if is_manual else automatic.message,
                             error_message=automatic.error,
-                            auto_completed_at=current if automatic.status == COMPLETED else None,
+                            auto_completed_at=(
+                                automatic.completed_at or current
+                                if automatic.status == COMPLETED
+                                else None
+                            ),
                             evaluated_at=current,
                             run_id=run_id,
-                        )
+                        ),
+                        preserve_auto_completed_at=automatic.completed_at is None,
                     )
                 total_steps = len(process.steps)
                 if total_steps > 0 and completed_steps == total_steps:
@@ -577,6 +686,21 @@ class ReportNavigationService:
                 else:
                     process_status = INCOMPLETE
                 process_statuses.append(process_status)
+                final_step = (
+                    max(process.steps, key=lambda item: item.display_order)
+                    if process.steps
+                    else None
+                )
+                archive_completed_at = (
+                    automatic_completion_times.get(final_step.step_code)
+                    if final_step is not None
+                    else None
+                )
+                authoritative_completed_at = (
+                    schedule_completed_at
+                    if schedule_fallback_used
+                    else archive_completed_at
+                )
                 self.store.save_process_snapshot(
                     ProcessSnapshot(
                         report_month=report_month,
@@ -584,10 +708,15 @@ class ReportNavigationService:
                         total_steps=total_steps,
                         completed_steps=completed_steps,
                         status=process_status,
-                        completed_at=current if process_status == COMPLETED else None,
+                        completed_at=(
+                            authoritative_completed_at or current
+                            if process_status == COMPLETED
+                            else None
+                        ),
                         evaluated_at=current,
                         run_id=run_id,
-                    )
+                    ),
+                    preserve_completed_at=authoritative_completed_at is None,
                 )
 
             self._save_card_snapshots(
@@ -598,9 +727,10 @@ class ReportNavigationService:
                 run_id=run_id,
             )
             release_status = "partial" if failed_steps else "completed"
+            finished_at = current if now is not None else beijing_now()
             self.store.finish_run(
                 run_id,
-                finished_at=current,
+                finished_at=finished_at,
                 status=release_status,
                 completed_processes=completed_processes,
                 failed_steps=failed_steps,
@@ -611,13 +741,15 @@ class ReportNavigationService:
                 run_id,
                 completed_processes,
                 failed_steps,
+                issues=tuple(issues),
             )
         except Exception as exc:
             release_error = str(exc)
+            finished_at = current if now is not None else beijing_now()
             if run_id is not None:
                 self.store.finish_run(
                     run_id,
-                    finished_at=current,
+                    finished_at=finished_at,
                     status="failed",
                     completed_processes=0,
                     failed_steps=0,
@@ -627,10 +759,113 @@ class ReportNavigationService:
         finally:
             self.store.release_scheduler_lock(
                 owner,
-                current,
+                finished_at,
                 status=release_status,
                 error_message=release_error,
             )
+
+    def manual_refresh_state(
+        self,
+        *,
+        current_user: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current = now or beijing_now()
+        is_admin = str((current_user or {}).get("role") or "") == "admin"
+        last_run = self.store.load_latest_run(trigger_type="manual")
+        if not last_run:
+            return {
+                "allowed": True,
+                "running": False,
+                "retry_after_seconds": 0,
+                "last_finished_at": "",
+            }
+        started_at = _coerce_datetime(last_run.get("started_at"))
+        finished_at = _coerce_datetime(last_run.get("finished_at"))
+        running = (
+            str(last_run.get("status") or "") == "running"
+            and started_at is not None
+            and current < started_at + timedelta(minutes=30)
+        )
+        if running:
+            return {
+                "allowed": False,
+                "running": True,
+                "retry_after_seconds": 0,
+                "last_finished_at": "",
+            }
+        retry_after_seconds = 0
+        if finished_at is not None and not is_admin:
+            retry_after_seconds = max(
+                0,
+                ceil(
+                    (
+                        finished_at
+                        + timedelta(seconds=MANUAL_REFRESH_COOLDOWN_SECONDS)
+                        - current
+                    ).total_seconds()
+                ),
+            )
+        return {
+            "allowed": retry_after_seconds == 0,
+            "running": False,
+            "retry_after_seconds": retry_after_seconds,
+            "last_finished_at": _datetime_text(finished_at),
+        }
+
+    def manual_refresh(
+        self,
+        *,
+        current_user: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        state = self.manual_refresh_state(current_user=current_user, now=now)
+        if not state["allowed"]:
+            if state["running"]:
+                return {
+                    "status": "skipped",
+                    **state,
+                    "issues": [],
+                    "error_message": "统计任务正在执行，请等待完成后再刷新",
+                }
+            wait_minutes = max(1, ceil(int(state["retry_after_seconds"]) / 60))
+            return {
+                "status": "cooldown",
+                **state,
+                "issues": [],
+                "error_message": f"刷新间隔为 5 分钟，请等待约 {wait_minutes} 分钟后再试",
+            }
+
+        result = self.collect_once(trigger_type="manual", now=now)
+        if result.status == "skipped":
+            return {
+                "status": "skipped",
+                "allowed": False,
+                "running": True,
+                "retry_after_seconds": 0,
+                "issues": [],
+                "error_message": "统计任务正在执行，请等待完成后再刷新",
+            }
+        refreshed_state = self.manual_refresh_state(current_user=current_user, now=now)
+        error_message = result.error_message
+        if result.status == "partial" and not error_message:
+            error_message = f"刷新完成，但有 {result.failed_steps} 个步骤统计异常，请查看具体问题"
+        return {
+            "status": result.status,
+            "run_id": result.run_id,
+            "completed_processes": result.completed_processes,
+            "failed_steps": result.failed_steps,
+            "error_message": error_message,
+            "issues": [dict(issue) for issue in result.issues],
+            "cooldown_seconds": (
+                0
+                if str((current_user or {}).get("role") or "") == "admin"
+                else MANUAL_REFRESH_COOLDOWN_SECONDS
+            ),
+            "retry_after_seconds": int(refreshed_state["retry_after_seconds"]),
+            "allowed": bool(refreshed_state["allowed"]),
+            "running": False,
+        }
 
     def dashboard(
         self,
@@ -660,17 +895,53 @@ class ReportNavigationService:
         card_payload = []
         for card_code, name in card_order:
             snapshot = cards.get(card_code)
+            manual_value = (
+                self.store.load_manual_card_values(card_code).get(period)
+                if card_code in GOVERNANCE_CARD_CODES
+                else None
+            )
+            if manual_value is not None:
+                completed_count = manual_value.completed_count
+                incomplete_count = manual_value.incomplete_count
+                total_count = completed_count + incomplete_count
+                completion_rate = (
+                    float(Decimal(completed_count * 100) / Decimal(total_count))
+                    if total_count
+                    else 0.0
+                )
+                evaluated_at = _datetime_text(manual_value.updated_at)
+            else:
+                total_count = snapshot.total_count if snapshot else 0
+                completed_count = snapshot.completed_count if snapshot else 0
+                incomplete_count = snapshot.incomplete_count if snapshot else 0
+                completion_rate = float(snapshot.completion_rate) if snapshot else 0.0
+                evaluated_at = _datetime_text(snapshot.evaluated_at) if snapshot else ""
             card_payload.append(
                 {
                     "card_code": card_code,
                     "name": name,
-                    "total_count": snapshot.total_count if snapshot else 0,
-                    "completed_count": snapshot.completed_count if snapshot else 0,
-                    "incomplete_count": snapshot.incomplete_count if snapshot else 0,
-                    "completion_rate": float(snapshot.completion_rate) if snapshot else 0.0,
-                    "evaluated_at": _datetime_text(snapshot.evaluated_at) if snapshot else "",
+                    "total_count": total_count,
+                    "completed_count": completed_count,
+                    "incomplete_count": incomplete_count,
+                    "completion_rate": completion_rate,
+                    "evaluated_at": evaluated_at,
                 }
             )
+        card_maintenance = {}
+        if is_admin:
+            for card_code in GOVERNANCE_CARD_CODES:
+                saved_values = self.store.load_manual_card_values(card_code)
+                card_maintenance[card_code] = {
+                    stat_period: {
+                        "completed_count": saved_values.get(stat_period).completed_count
+                        if saved_values.get(stat_period)
+                        else 0,
+                        "incomplete_count": saved_values.get(stat_period).incomplete_count
+                        if saved_values.get(stat_period)
+                        else 0,
+                    }
+                    for stat_period in PERIODS
+                }
         process_payload = []
         for process in processes:
             process_snapshot = process_snapshots.get(process.process_code)
@@ -716,9 +987,58 @@ class ReportNavigationService:
             "report_month": report_month,
             "business_report_date": business_report_date.isoformat() if business_report_date else "",
             "cards": card_payload,
+            "card_maintenance": card_maintenance,
             "processes": process_payload,
             "last_run": _run_payload(last_run),
+            "manual_refresh": self.manual_refresh_state(
+                current_user=current_user,
+                now=current,
+            ),
         }
+
+    def update_card_manual_values(
+        self,
+        card_code: str,
+        values: Mapping[str, Mapping[str, Any]],
+        current_user: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if str(current_user.get("role") or "") != "admin":
+            raise ValueError("仅管理员可以维护治理统计")
+        if card_code not in GOVERNANCE_CARD_CODES:
+            raise ValueError("仅支持维护数据治理流程和报表特殊治理")
+        if not isinstance(values, Mapping) or set(values) != set(PERIODS):
+            raise ValueError("必须同时提供本周、本月、本季度和本年数据")
+        normalized: dict[str, dict[str, int]] = {}
+        for stat_period in PERIODS:
+            row = values.get(stat_period)
+            if not isinstance(row, Mapping):
+                raise ValueError("统计周期数据格式不正确")
+            raw_completed = row.get("completed_count")
+            raw_incomplete = row.get("incomplete_count")
+            if (
+                isinstance(raw_completed, bool)
+                or isinstance(raw_incomplete, bool)
+                or not isinstance(raw_completed, int)
+                or not isinstance(raw_incomplete, int)
+            ):
+                raise ValueError("已完成和未完成数量必须为整数")
+            completed_count = raw_completed
+            incomplete_count = raw_incomplete
+            if completed_count < 0 or incomplete_count < 0:
+                raise ValueError("已完成和未完成数量不能小于 0")
+            normalized[stat_period] = {
+                "completed_count": completed_count,
+                "incomplete_count": incomplete_count,
+            }
+        self.store.save_manual_card_values(
+            card_code,
+            normalized,
+            current_user,
+            now=now or beijing_now(),
+        )
+        return {"ok": True, "card_code": card_code}
 
     def set_manual_state(
         self,
@@ -775,12 +1095,25 @@ class ReportNavigationService:
             updated_by=str(current_user.get("username") or ""),
             now=current,
         )
-        return {
+        collection_result = None
+        if report_month == current.strftime("%Y-%m"):
+            collection_result = self.collect_once(
+                trigger_type="schedule-update",
+                now=current,
+            )
+        payload = {
             "ok": True,
             "process_code": process_code,
             "report_month": report_month,
             "report_date": report_date.isoformat(),
         }
+        if collection_result is not None:
+            payload.update(
+                statistics_status=collection_result.status,
+                statistics_error=collection_result.error_message,
+                failed_steps=collection_result.failed_steps,
+            )
+        return payload
 
     def _recalculate_manual_process(
         self, report_month: str, changed_step: StepConfig, current: datetime
@@ -1060,3 +1393,13 @@ def _coerce_date(value: Any) -> date | None:
     if value in (None, ""):
         return None
     return date.fromisoformat(str(value))
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, date):
+        return datetime.combine(value, time.min)
+    if value in (None, ""):
+        return None
+    return datetime.fromisoformat(str(value))

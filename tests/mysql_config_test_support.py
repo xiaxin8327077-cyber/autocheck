@@ -69,6 +69,7 @@ class MySqlContractConnection:
             "report_nav_step_snapshots": [],
             "report_nav_process_snapshots": [],
             "report_nav_card_snapshots": [],
+            "report_nav_card_manual_values": [],
             "report_nav_monthly_schedules": [],
             "report_nav_stat_runs": [],
             "report_nav_scheduler_state": [],
@@ -234,6 +235,7 @@ class MySqlContractConnection:
             "report_nav_step_snapshots": ("report_month", "step_code"),
             "report_nav_process_snapshots": ("report_month", "process_code"),
             "report_nav_card_snapshots": ("stat_period", "card_code"),
+            "report_nav_card_manual_values": ("stat_period", "card_code"),
             "report_nav_monthly_schedules": ("report_month", "process_code"),
         }
         if table_name in composite_keys:
