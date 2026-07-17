@@ -31,6 +31,18 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         re.S,
     )
     assert block is not None
+    ensure_authenticated = re.search(
+        r"async function ensureAuthenticated\(\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    logout = re.search(
+        r"async function logout\(\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    assert ensure_authenticated is not None
+    assert logout is not None
 
     script = textwrap.dedent(
         """
@@ -71,6 +83,7 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         globalThis.document = {
           getElementById: (id) => elements[id] || null,
           documentElement: {
+            dataset: {},
             style: {
               setProperty: (name, value) => cssVariables.set(name, value),
               getPropertyValue: (name) => cssVariables.get(name) || "",
@@ -94,13 +107,45 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
 
         const apiCalls = [];
         const toasts = [];
+        const sessionStorageRemovals = [];
+        const authState = { csrfToken: "old-token", user: { id: "old-user", role: "admin" } };
+        const USER_AVATAR_SESSION_KEY = "avatar-key";
+        globalThis.window = {
+          location: { href: "/" },
+        };
+        globalThis.sessionStorage = {
+          removeItem: (key) => sessionStorageRemovals.push(key),
+        };
         let apiImpl = async () => ({ settings: { radius_px: 4 } });
+        let fetchImpl = async () => ({
+          ok: true,
+          json: async () => ({
+            authenticated: true,
+            csrf_token: "new-token",
+            user: { id: "new-user", role: "user" },
+          }),
+        });
+        let confirmResult = true;
+        let revealCount = 0;
         async function api(path, options = {}) {
           apiCalls.push({ path, options });
           return apiImpl(path, options);
         }
+        async function fetch(path, options = {}) {
+          return fetchImpl(path, options);
+        }
         function showToast(message, type = "info") {
           toasts.push({ message, type });
+        }
+        async function showConfirm() {
+          return confirmResult;
+        }
+        function activateThemeUserStorage() {}
+        function applySavedUserTheme() {}
+        function updateCurrentUsername() {}
+        function applyRoleAccess() {}
+        function revealAuthenticatedApp() {
+          revealCount += 1;
         }
         function deferred() {
           let resolve;
@@ -116,18 +161,24 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         }
 
         __INTERFACE_RADIUS_BLOCK__
+        __ENSURE_AUTHENTICATED__
+        __LOGOUT__
 
         const radiusHarness = {
           state: interfaceRadiusState,
           load: loadInterfaceRadiusPreference,
           save: saveInterfaceRadiusPreference,
           discard: discardUnsavedInterfaceRadius,
+          ensureAuthenticated,
+          logout,
+          authState,
           elements,
           cssVariables,
           apiCalls,
           toasts,
           runAllTimers,
           timerCount: () => timers.size,
+          revealCount: () => revealCount,
         };
 
         (async () => {
@@ -138,6 +189,12 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         });
         """
     ).replace("__INTERFACE_RADIUS_BLOCK__", block.group(0)).replace(
+        "__ENSURE_AUTHENTICATED__",
+        ensure_authenticated.group(0),
+    ).replace(
+        "__LOGOUT__",
+        logout.group(0),
+    ).replace(
         "__SCENARIO__",
         textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
     )
@@ -2806,8 +2863,12 @@ def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallb
     )
     assert ensure_auth is not None
     auth_body = ensure_auth.group("body")
+    reset_call = "resetInterfaceRadiusForAuthChange();"
     load_call = "await loadInterfaceRadiusPreference({ silent: true });"
+    assert reset_call in auth_body
     assert load_call in auth_body
+    assert auth_body.index(reset_call) < auth_body.index('authState.csrfToken = payload.csrf_token || "";')
+    assert auth_body.index(reset_call) < auth_body.index("authState.user = payload.user || null;")
     assert auth_body.index("authState.user = payload.user || null;") < auth_body.index(load_call)
     assert auth_body.index("document.documentElement.dataset.role") < auth_body.index(load_call)
     assert auth_body.index(load_call) < auth_body.index("activateThemeUserStorage();")
@@ -3265,6 +3326,93 @@ def test_interface_radius_node_rejects_invalid_post_without_losing_draft(tmp_pat
         assert.equal(h.state.statusText, "保存失败");
         assert.equal(h.elements.interfaceSettingsStatus.textContent, "保存失败");
         assert.equal(h.toasts.length, 1);
+        """,
+    )
+
+
+def test_interface_radius_auth_boundary_logout_resets_immediately_and_invalidates_get(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "8px");
+
+        const oldGet = deferred();
+        const logoutRequest = deferred();
+        apiImpl = async (path) => {
+          if (path === "/api/settings/interface") return oldGet.promise;
+          if (path === "/api/auth/logout") return logoutRequest.promise;
+          throw new Error(`unexpected API path: ${path}`);
+        };
+        const oldLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        const loggingOut = h.logout();
+        await flushMicrotasks();
+
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.saving, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        oldGet.resolve({ settings: { radius_px: 12 } });
+        assert.equal(await oldLoading, false);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        logoutRequest.resolve({});
+        await loggingOut;
+        assert.equal(h.authState.csrfToken, "");
+        assert.equal(window.location.href, "/login.html");
+        """,
+    )
+
+
+def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "8px");
+
+        const oldGet = deferred();
+        const newGet = deferred();
+        let preferenceRequestCount = 0;
+        apiImpl = async (path) => {
+          assert.equal(path, "/api/settings/interface");
+          preferenceRequestCount += 1;
+          return preferenceRequestCount === 1 ? oldGet.promise : newGet.promise;
+        };
+        const oldLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        const authenticating = h.ensureAuthenticated();
+        await flushMicrotasks();
+
+        assert.equal(h.authState.user.id, "new-user");
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.revealCount(), 0);
+
+        oldGet.resolve({ settings: { radius_px: 12 } });
+        assert.equal(await oldLoading, false);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        newGet.resolve({ settings: { radius_px: 6 } });
+        await authenticating;
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.revealCount(), 1);
         """,
     )
 
@@ -4077,6 +4225,8 @@ def test_logout_controls_exist_for_space_and_light_themes():
     assert 'await showConfirm(' in app_js
     logout_body = app_js[app_js.index("async function logout()"):app_js.index("function userDisplayRole")]
     assert "window.confirm" not in logout_body
+    assert "resetInterfaceRadiusForAuthChange();" in logout_body
+    assert logout_body.index("resetInterfaceRadiusForAuthChange();") < logout_body.index('api("/api/auth/logout"')
     assert 'window.location.href = "/login.html";' in app_js
     assert 'document.querySelectorAll("[data-logout-btn]")' in app_js
     assert ".sidebar-footer-main" in css

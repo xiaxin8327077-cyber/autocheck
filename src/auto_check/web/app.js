@@ -410,6 +410,7 @@ async function ensureAuthenticated() {
     window.location.href = "/login.html";
     throw new Error("login required");
   }
+  resetInterfaceRadiusForAuthChange();
   authState.csrfToken = payload.csrf_token || "";
   authState.user = payload.user || null;
   document.documentElement.dataset.role = authState.user?.role === "admin" ? "admin" : "user";
@@ -607,6 +608,20 @@ function renderInterfaceRadiusPreference() {
   if (resetInterfaceSettingsBtn) {
     resetInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;
   }
+}
+
+function resetInterfaceRadiusForAuthChange() {
+  interfaceRadiusState.loadRequestId += 1;
+  interfaceRadiusState.editRevision += 1;
+  interfaceRadiusState.serverMutationRevision += 1;
+  interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+  interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+  interfaceRadiusState.loaded = false;
+  interfaceRadiusState.loadFailed = false;
+  interfaceRadiusState.saving = false;
+  interfaceRadiusState.statusText = "已保存";
+  applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
+  renderInterfaceRadiusPreference();
 }
 
 async function loadInterfaceRadiusPreference({ silent = false } = {}) {
@@ -1494,6 +1509,7 @@ async function encryptPasswordForTransport(password) {
 async function logout() {
   const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？");
   if (!confirmed) return;
+  resetInterfaceRadiusForAuthChange();
   try {
     await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   } catch (error) {
