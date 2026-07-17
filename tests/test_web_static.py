@@ -3398,6 +3398,78 @@ def test_interface_radius_node_keeps_new_draft_when_older_get_finishes(tmp_path)
     )
 
 
+def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const oldSuccess = deferred();
+        const oldFailure = deferred();
+        let requestCount = 0;
+        apiImpl = async () => {
+          requestCount += 1;
+          if (requestCount === 1) return oldSuccess.promise;
+          if (requestCount === 2) return { settings: { radius_px: 6 } };
+          if (requestCount === 3) return oldFailure.promise;
+          return { settings: { radius_px: 7 } };
+        };
+
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        const staleSuccessLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.discard(), true);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        oldSuccess.resolve({ settings: { radius_px: 6 } });
+        assert.equal(await staleSuccessLoading, false);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.toasts.length, 0);
+
+        assert.equal(await h.load({ silent: false }), true);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+
+        const staleFailureLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.discard(), true);
+        oldFailure.reject(new Error("stale load failed"));
+        assert.equal(await staleFailureLoading, false);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.toasts.length, 0);
+
+        assert.equal(await h.load({ silent: false }), true);
+        assert.equal(h.state.savedRadiusPx, 7);
+        assert.equal(h.state.draftRadiusPx, 7);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "7px");
+        assert.equal(h.toasts.length, 0);
+        """,
+    )
+
+
 def test_interface_radius_node_ignores_get_that_predates_successful_save(tmp_path):
     _run_interface_radius_node_scenario(
         tmp_path,

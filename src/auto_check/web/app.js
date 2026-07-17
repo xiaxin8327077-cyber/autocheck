@@ -759,6 +759,7 @@ async function saveInterfaceRadiusPreference() {
 }
 
 function discardUnsavedInterfaceRadius() {
+  interfaceRadiusState.loadRequestId += 1;
   const changed = interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx;
   interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;
   applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);
