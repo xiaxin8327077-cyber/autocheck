@@ -2461,6 +2461,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
         'class="page-header settings-page-header"',
         'class="dashboard-grid settings-dashboard-grid"',
         'class="card settings-dashboard-card card-system-info"',
+        'class="card settings-dashboard-card card-interface"',
         'class="card settings-dashboard-card card-default"',
         'class="card settings-dashboard-card card-db-validation admin-only"',
         'class="card settings-dashboard-card card-flow admin-only"',
@@ -2480,6 +2481,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert "主题设置" not in settings_html
     assert 'id="themeBody"' not in settings_html
     system_info_pos = settings_html.index('class="card settings-dashboard-card card-system-info"')
+    interface_pos = settings_html.index('class="card settings-dashboard-card card-interface"')
     data_pos = settings_html.index('class="card settings-dashboard-card card-data admin-only"')
     default_pos = settings_html.index('class="card settings-dashboard-card card-default admin-only"')
     db_validation_pos = settings_html.index('class="card settings-dashboard-card card-db-validation admin-only"')
@@ -2487,7 +2489,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     datasource_pos = settings_html.index('class="card settings-dashboard-card card-datasource admin-only"')
     business_pos = settings_html.index('class="card settings-dashboard-card card-business admin-only"')
     about_pos = settings_html.index('class="card settings-dashboard-card card-about"')
-    assert system_info_pos < data_pos < default_pos < db_validation_pos < flow_pos < datasource_pos < business_pos < about_pos
+    assert system_info_pos < interface_pos < data_pos < default_pos < db_validation_pos < flow_pos < datasource_pos < business_pos < about_pos
     assert 'id="businessSettingsBody" class="card-body settings-business-scroll"' in settings_html
     assert "settings-collapsed-card" not in settings_html
     assert "settings-collapsible-body" not in settings_html
@@ -2634,6 +2636,259 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert ".settings-header" not in css
     assert 'if (!toggle.classList.contains("collapsible")) return;' in app_js
     assert 'if (!configToggle.classList.contains("collapsible")) return;' in app_js
+
+
+def test_interface_settings_card_is_shared_and_has_one_exact_radius_slider():
+    html = _read(INDEX_HTML)
+    settings_section = re.search(
+        r'<section class="page" id="page-settings">(?P<body>.*?)\n      </section>\n\n      <!-- 确认弹窗 -->',
+        html,
+        re.S,
+    )
+    assert settings_section is not None
+    settings_html = settings_section.group("body")
+
+    interface_card = re.search(
+        r'<section class="card settings-dashboard-card card-interface">(?P<body>.*?)</section>',
+        settings_html,
+        re.S,
+    )
+    assert interface_card is not None
+    card_html = interface_card.group("body")
+    assert "admin-only" not in interface_card.group(0)
+    assert "<h3>界面设置</h3>" in card_html
+    assert "<p>自定义当前账号的系统圆角</p>" in card_html
+    assert '<input id="interfaceRadiusSlider" type="range" min="1" max="15" step="1" value="4" />' in card_html
+    assert '<output id="interfaceRadiusValue">4px</output>' in card_html
+    assert '<span id="interfaceSettingsStatus" role="status">已保存</span>' in card_html
+    assert '<button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm">保存界面设置</button>' in card_html
+    assert '<button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>' in card_html
+    assert "导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角" in card_html
+    assert html.count('id="interfaceRadiusSlider"') == 1
+    assert len(re.findall(r'<input[^>]+id="interfaceRadiusSlider"[^>]*>', html)) == 1
+
+    system_info_pos = settings_html.index('class="card settings-dashboard-card card-system-info"')
+    interface_pos = settings_html.index('class="card settings-dashboard-card card-interface"')
+    data_pos = settings_html.index('class="card settings-dashboard-card card-data admin-only"')
+    assert system_info_pos < interface_pos < data_pos
+
+
+def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallback():
+    app_js = _read(APP_JS)
+
+    ensure_auth = re.search(
+        r"async function ensureAuthenticated\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert ensure_auth is not None
+    auth_body = ensure_auth.group("body")
+    load_call = "await loadInterfaceRadiusPreference({ silent: true });"
+    assert load_call in auth_body
+    assert auth_body.index("authState.user = payload.user || null;") < auth_body.index(load_call)
+    assert auth_body.index("document.documentElement.dataset.role") < auth_body.index(load_call)
+    assert auth_body.index(load_call) < auth_body.index("activateThemeUserStorage();")
+    assert auth_body.index(load_call) < auth_body.index("applySavedUserTheme();")
+    assert auth_body.index(load_call) < auth_body.index("revealAuthenticatedApp();")
+
+    loader = re.search(
+        r"async function loadInterfaceRadiusPreference\(\{ silent = false \} = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert loader is not None
+    load_body = loader.group("body")
+    assert 'api("/api/settings/interface")' in load_body
+    assert "} catch (error) {" in load_body
+    assert "if (!interfaceRadiusState.loaded)" in load_body
+    assert "interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in load_body
+    assert "interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in load_body
+    assert "applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);" in load_body
+    assert "interfaceRadiusState.loadFailed = true;" in load_body
+    assert 'interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";' in load_body
+    assert "if (!silent)" in load_body
+    assert "showToast(" in load_body
+    assert "return false;" in load_body
+
+
+def test_interface_radius_state_normalization_rendering_and_api_boundary():
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    assert "const DEFAULT_INTERFACE_RADIUS_PX = 4;" in body
+    assert "const MIN_INTERFACE_RADIUS_PX = 1;" in body
+    assert "const MAX_INTERFACE_RADIUS_PX = 15;" in body
+    for state_line in [
+        "savedRadiusPx: DEFAULT_INTERFACE_RADIUS_PX",
+        "draftRadiusPx: DEFAULT_INTERFACE_RADIUS_PX",
+        "loaded: false",
+        "loadFailed: false",
+        "saving: false",
+        'statusText: "已保存"',
+    ]:
+        assert state_line in body
+
+    normalize = re.search(
+        r"function normalizeInterfaceRadius\(radiusPx\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert normalize is not None
+    normalize_body = normalize.group("body")
+    assert "Number.isInteger(radiusPx)" in normalize_body
+    assert "radiusPx >= MIN_INTERFACE_RADIUS_PX" in normalize_body
+    assert "radiusPx <= MAX_INTERFACE_RADIUS_PX" in normalize_body
+    assert "return DEFAULT_INTERFACE_RADIUS_PX;" in normalize_body
+
+    apply_radius = re.search(
+        r"function applyInterfaceRadius\(radiusPx\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert apply_radius is not None
+    apply_body = apply_radius.group("body")
+    assert 'document.documentElement.style.setProperty("--ui-radius", `${normalizedRadiusPx}px`);' in apply_body
+    assert "return normalizedRadiusPx;" in apply_body
+    assert apply_body.count("setProperty(") == 1
+    assert "api(" not in apply_body
+    assert "localStorage" not in apply_body
+
+    render = re.search(
+        r"function renderInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert render is not None
+    render_body = render.group("body")
+    assert "interfaceRadiusSlider.value = String(interfaceRadiusState.draftRadiusPx);" in render_body
+    assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftRadiusPx}px`;" in render_body
+    assert "interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;" in render_body
+    assert "saveInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;" in render_body
+    assert 'saveInterfaceSettingsBtn.classList.toggle("loading", interfaceRadiusState.saving);' in render_body
+    assert "interfaceRadiusState.statusText =" not in render_body
+
+    api_paths = set(re.findall(r'["\'](/api/[^"\']+)["\']', body))
+    assert api_paths == {"/api/settings/interface"}
+    assert body.count('api("/api/settings/interface"') == 2
+
+    assert "已保存" in body
+    assert "正在预览，尚未保存" in body
+    assert "保存成功" in body
+    assert "保存失败" in body
+    assert "加载失败，当前使用默认 4px" in body
+
+
+def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    slider_handler = re.search(
+        r'interfaceRadiusSlider\?\.addEventListener\("input", \(\) => \{(?P<body>.*?)\n\}\);',
+        body,
+        re.S,
+    )
+    assert slider_handler is not None
+    slider_body = slider_handler.group("body")
+    assert "normalizeInterfaceRadius(Number(interfaceRadiusSlider.value))" in slider_body
+    assert "interfaceRadiusState.draftRadiusPx =" in slider_body
+    assert "applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);" in slider_body
+    assert 'interfaceRadiusState.statusText = "正在预览，尚未保存";' in slider_body
+    assert "api(" not in slider_body
+    assert "POST" not in slider_body
+
+    reset_handler = re.search(
+        r'resetInterfaceSettingsBtn\?\.addEventListener\("click", \(\) => \{(?P<body>.*?)\n\}\);',
+        body,
+        re.S,
+    )
+    assert reset_handler is not None
+    reset_body = reset_handler.group("body")
+    assert "interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in reset_body
+    assert "applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);" in reset_body
+    assert "interfaceRadiusState.savedRadiusPx" not in reset_body
+    assert "api(" not in reset_body
+    assert "POST" not in reset_body
+
+    save = re.search(
+        r"async function saveInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert save is not None
+    save_body = save.group("body")
+    assert "if (interfaceRadiusState.saving) return false;" in save_body
+    assert "interfaceRadiusState.saving = true;" in save_body
+    assert 'api("/api/settings/interface", {' in save_body
+    assert 'method: "POST"' in save_body
+    assert "body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx })" in save_body
+    assert "const savedRadiusPx = normalizeInterfaceRadius(payload.settings?.radius_px);" in save_body
+    assert "interfaceRadiusState.savedRadiusPx = savedRadiusPx;" in save_body
+    assert "interfaceRadiusState.draftRadiusPx = savedRadiusPx;" in save_body
+    assert 'interfaceRadiusState.statusText = "保存成功";' in save_body
+    assert "applyInterfaceRadius(savedRadiusPx);" in save_body
+    assert "} catch (error) {" in save_body
+    assert "} finally {" in save_body
+    catch_body = save_body.split("} catch (error) {", 1)[1].split("} finally {", 1)[0]
+    assert 'interfaceRadiusState.statusText = "保存失败";' in catch_body
+    assert "interfaceRadiusState.savedRadiusPx =" not in catch_body
+    assert "interfaceRadiusState.draftRadiusPx =" not in catch_body
+    assert "applyInterfaceRadius(" not in catch_body
+    finally_body = save_body.split("} finally {", 1)[1]
+    assert "interfaceRadiusState.saving = false;" in finally_body
+    assert "renderInterfaceRadiusPreference();" in finally_body
+
+    discard = re.search(
+        r"function discardUnsavedInterfaceRadius\(\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert discard is not None
+    discard_body = discard.group("body")
+    assert "interfaceRadiusState.draftRadiusPx === interfaceRadiusState.savedRadiusPx" in discard_body
+    assert "interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;" in discard_body
+    assert "applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);" in discard_body
+    assert 'interfaceRadiusState.statusText = "已保存";' in discard_body
+    assert "api(" not in discard_body
+
+    switch_page = re.search(
+        r"async function switchPage\(name, options = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert switch_page is not None
+    switch_body = switch_page.group("body")
+    discard_call = 'if (previousPage === "settings" && name !== "settings") discardUnsavedInterfaceRadius();'
+    assert discard_call in switch_body
+    assert switch_body.index(discard_call) < switch_body.index("document.documentElement.setAttribute('data-page', name);")
+
+
+def test_interface_radius_settings_refresh_on_each_entry_without_local_storage():
+    app_js = _read(APP_JS)
+
+    settings_loader = re.search(
+        r"async function loadSettingsPageData\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert settings_loader is not None
+    settings_body = settings_loader.group("body")
+    assert "Promise.all" in settings_body
+    assert 'loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false }))' in settings_body
+
+    assert "autoCheckRadius" not in app_js
+    assert not re.search(r"localStorage\.(?:getItem|setItem|removeItem)\([^\n]*(?:radius|Radius)", app_js)
 
 
 def test_settings_dark_mode_keeps_business_codes_and_about_links_readable():
@@ -4601,6 +4856,8 @@ def test_regular_user_settings_are_limited_and_readonly_for_system_actions():
 
     for card in ["card-default", "card-db-validation", "card-data", "card-datasource", "card-business"]:
         assert f'class="card settings-dashboard-card {card} admin-only"' in html
+    assert 'class="card settings-dashboard-card card-interface"' in html
+    assert 'class="card settings-dashboard-card card-interface admin-only"' not in html
     assert 'id="testAllConnBtn"' not in html
     assert 'id="refreshInfoBtn" type="button" class="btn-outline btn-sm admin-action"' in html
     assert "function applySettingsRoleAccess" in app_js

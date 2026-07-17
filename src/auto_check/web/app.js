@@ -413,6 +413,7 @@ async function ensureAuthenticated() {
   authState.csrfToken = payload.csrf_token || "";
   authState.user = payload.user || null;
   document.documentElement.dataset.role = authState.user?.role === "admin" ? "admin" : "user";
+  await loadInterfaceRadiusPreference({ silent: true });
   activateThemeUserStorage();
   applySavedUserTheme();
   updateCurrentUsername();
@@ -526,6 +527,139 @@ function applySavedUserTheme() {
     applyDarkMode(defaultSettings.darkMode);
   }
 }
+
+// Interface radius start
+const DEFAULT_INTERFACE_RADIUS_PX = 4;
+const MIN_INTERFACE_RADIUS_PX = 1;
+const MAX_INTERFACE_RADIUS_PX = 15;
+const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
+const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
+const interfaceSettingsStatus = document.getElementById("interfaceSettingsStatus");
+const saveInterfaceSettingsBtn = document.getElementById("saveInterfaceSettingsBtn");
+const resetInterfaceSettingsBtn = document.getElementById("resetInterfaceSettingsBtn");
+const interfaceRadiusState = {
+  savedRadiusPx: DEFAULT_INTERFACE_RADIUS_PX,
+  draftRadiusPx: DEFAULT_INTERFACE_RADIUS_PX,
+  loaded: false,
+  loadFailed: false,
+  saving: false,
+  statusText: "已保存",
+};
+
+function normalizeInterfaceRadius(radiusPx) {
+  if (
+    Number.isInteger(radiusPx)
+    && radiusPx >= MIN_INTERFACE_RADIUS_PX
+    && radiusPx <= MAX_INTERFACE_RADIUS_PX
+  ) {
+    return radiusPx;
+  }
+  return DEFAULT_INTERFACE_RADIUS_PX;
+}
+
+function applyInterfaceRadius(radiusPx) {
+  const normalizedRadiusPx = normalizeInterfaceRadius(radiusPx);
+  document.documentElement.style.setProperty("--ui-radius", `${normalizedRadiusPx}px`);
+  return normalizedRadiusPx;
+}
+
+function renderInterfaceRadiusPreference() {
+  if (interfaceRadiusSlider) {
+    interfaceRadiusSlider.value = String(interfaceRadiusState.draftRadiusPx);
+  }
+  if (interfaceRadiusValue) {
+    interfaceRadiusValue.textContent = `${interfaceRadiusState.draftRadiusPx}px`;
+  }
+  if (interfaceSettingsStatus) {
+    interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;
+  }
+  if (saveInterfaceSettingsBtn) {
+    saveInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;
+    saveInterfaceSettingsBtn.classList.toggle("loading", interfaceRadiusState.saving);
+    saveInterfaceSettingsBtn.textContent = interfaceRadiusState.saving ? "保存中..." : "保存界面设置";
+  }
+}
+
+async function loadInterfaceRadiusPreference({ silent = false } = {}) {
+  try {
+    const payload = await api("/api/settings/interface");
+    const radiusPx = normalizeInterfaceRadius(payload.settings?.radius_px);
+    interfaceRadiusState.savedRadiusPx = radiusPx;
+    interfaceRadiusState.draftRadiusPx = radiusPx;
+    interfaceRadiusState.loaded = true;
+    interfaceRadiusState.loadFailed = false;
+    interfaceRadiusState.statusText = "已保存";
+    applyInterfaceRadius(radiusPx);
+    renderInterfaceRadiusPreference();
+    return true;
+  } catch (error) {
+    if (!interfaceRadiusState.loaded) {
+      interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+      interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+      applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
+      interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";
+    } else {
+      interfaceRadiusState.statusText = `加载失败，继续使用 ${interfaceRadiusState.draftRadiusPx}px`;
+    }
+    interfaceRadiusState.loadFailed = true;
+    renderInterfaceRadiusPreference();
+    if (!silent) showToast(`界面设置加载失败: ${error.message}`, "error");
+    return false;
+  }
+}
+
+async function saveInterfaceRadiusPreference() {
+  if (interfaceRadiusState.saving) return false;
+  interfaceRadiusState.saving = true;
+  renderInterfaceRadiusPreference();
+  try {
+    const payload = await api("/api/settings/interface", {
+      method: "POST",
+      body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx }),
+    });
+    const savedRadiusPx = normalizeInterfaceRadius(payload.settings?.radius_px);
+    interfaceRadiusState.savedRadiusPx = savedRadiusPx;
+    interfaceRadiusState.draftRadiusPx = savedRadiusPx;
+    interfaceRadiusState.loaded = true;
+    interfaceRadiusState.loadFailed = false;
+    interfaceRadiusState.statusText = "保存成功";
+    applyInterfaceRadius(savedRadiusPx);
+    return true;
+  } catch (error) {
+    interfaceRadiusState.statusText = "保存失败";
+    showToast(`界面设置保存失败: ${error.message}`, "error");
+    return false;
+  } finally {
+    interfaceRadiusState.saving = false;
+    renderInterfaceRadiusPreference();
+  }
+}
+
+function discardUnsavedInterfaceRadius() {
+  if (interfaceRadiusState.draftRadiusPx === interfaceRadiusState.savedRadiusPx) return false;
+  interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;
+  applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);
+  interfaceRadiusState.statusText = "已保存";
+  renderInterfaceRadiusPreference();
+  return true;
+}
+
+interfaceRadiusSlider?.addEventListener("input", () => {
+  interfaceRadiusState.draftRadiusPx = normalizeInterfaceRadius(Number(interfaceRadiusSlider.value));
+  applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);
+  interfaceRadiusState.statusText = "正在预览，尚未保存";
+  renderInterfaceRadiusPreference();
+});
+
+resetInterfaceSettingsBtn?.addEventListener("click", () => {
+  interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+  applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);
+  interfaceRadiusState.statusText = "正在预览，尚未保存";
+  renderInterfaceRadiusPreference();
+});
+
+saveInterfaceSettingsBtn?.addEventListener("click", saveInterfaceRadiusPreference);
+// Interface radius end
 
 function updateSpaceTopNavFrost() {
   if (!topNav) return;
@@ -700,6 +834,7 @@ async function loadToolsPageData() {
 async function loadSettingsPageData() {
   await Promise.all([
     loadPageSection("系统信息", loadSystemInfo),
+    loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false })),
     loadPageSection("数据源配置", loadConfigList),
     loadPageSection("逐笔校验配置", loadDbValidationSettings),
     loadPageSection("流程执行配置", loadFlowSettings),
@@ -758,6 +893,7 @@ async function switchPage(name, options = {}) {
     showToast("普通用户无权访问用户管理", "error");
     name = "report-navigation";
   }
+  if (previousPage === "settings" && name !== "settings") discardUnsavedInterfaceRadius();
   document.documentElement.setAttribute('data-page', name);
   syncNavState(name);
   const nextHash = `#${name}`;

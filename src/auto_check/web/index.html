@@ -1190,6 +1190,30 @@
               </div>
             </section>
 
+            <!-- 界面设置 -->
+            <section class="card settings-dashboard-card card-interface">
+              <div class="card-header">
+                <div class="card-icon card-icon-purple">&#9698;</div>
+                <div class="card-title">
+                  <h3>界面设置</h3>
+                  <p>自定义当前账号的系统圆角</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <label class="setting-item">
+                  <span class="setting-label">系统圆角</span>
+                  <input id="interfaceRadiusSlider" type="range" min="1" max="15" step="1" value="4" />
+                  <output id="interfaceRadiusValue">4px</output>
+                  <span class="setting-hint">导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角</span>
+                </label>
+                <div class="settings-actions">
+                  <button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm">保存界面设置</button>
+                  <button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
+                  <span id="interfaceSettingsStatus" role="status">已保存</span>
+                </div>
+              </div>
+            </section>
+
             <!-- 数据管理 -->
             <section class="card settings-dashboard-card card-data admin-only">
               <div class="card-header" id="dataManageToggle">
