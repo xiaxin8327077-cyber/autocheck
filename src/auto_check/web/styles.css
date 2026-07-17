@@ -30,6 +30,7 @@
   --card-hover-shadow: rgba(22, 101, 52, 0.10);
   --card-hover-shadow-soft: rgba(22, 101, 52, 0.07);
   --card-hover-shadow-strong: rgba(22, 101, 52, 0.12);
+  --ui-radius: 4px;
   background: var(--surface);
   font-size: 14px;
   line-height: 1.5;
@@ -8951,6 +8952,55 @@ input:focus, select:focus {
   padding: 20px 22px;
 }
 
+#page-settings .card-interface .card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+}
+
+#page-settings .card-interface .setting-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  min-width: 0;
+}
+
+#page-settings .card-interface .setting-label,
+#page-settings .card-interface .setting-hint {
+  grid-column: 1 / -1;
+}
+
+#page-settings #interfaceRadiusSlider {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--secondary);
+}
+
+#page-settings #interfaceRadiusValue {
+  min-width: 48px;
+  color: var(--on-surface);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: right;
+}
+
+#page-settings .card-interface .settings-actions {
+  margin-top: auto;
+}
+
+#page-settings #interfaceSettingsStatus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin-left: auto;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 #page-settings .card-system-info,
 #page-settings .card-data,
 #page-settings .card-default,
@@ -9471,11 +9521,14 @@ input:focus, select:focus {
 }
 
 [data-role="user"] #page-settings .settings-dashboard-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
 }
 
 [data-role="user"] #page-settings .card-system-info,
+[data-role="user"] #page-settings .card-interface,
 [data-role="user"] #page-settings .card-about {
+  grid-column: span 1;
   height: 100%;
   align-self: stretch;
 }
@@ -10298,6 +10351,10 @@ input:focus, select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  [data-role="user"] #page-settings .settings-dashboard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   #page-settings .db-validation-source-row,
   #page-settings .db-validation-source-row--meta {
     grid-template-columns: minmax(140px, 180px) minmax(220px, 280px) minmax(240px, 1fr);
@@ -10420,6 +10477,10 @@ input:focus, select:focus {
   #page-settings .db-validation-source-row,
   #page-settings .db-validation-source-row--meta,
   #page-settings .theme-grid {
+    grid-template-columns: 1fr;
+  }
+
+  [data-role="user"] #page-settings .settings-dashboard-grid {
     grid-template-columns: 1fr;
   }
 
@@ -12018,3 +12079,72 @@ input.custom-input-native:disabled {
 [data-theme="space-tech"] #page-home .glass-stat-card:hover {
   box-shadow: var(--space-panel-hover-shadow) !important;
 }
+
+/* User interface radius preference: start */
+.nav-item,
+.nav-group-toggle,
+.nav-submenu,
+[data-theme="space-tech"] .top-nav,
+[data-theme="space-tech"] .top-nav-item,
+[data-theme="space-tech"] .top-nav-group-toggle,
+[data-theme="space-tech"] .top-nav-submenu,
+[data-theme="space-tech"] .top-nav-subitem,
+.card,
+.home-stat-card,
+.home-analysis-card,
+#page-home .glass-card,
+#page-home .glass-stat-card,
+.tool-card,
+.run-log-panel,
+#page-report-navigation .report-nav-stat-card,
+#page-report-navigation .report-nav-card,
+#page-settings .settings-dashboard-card,
+#page-users .user-stat-card,
+#page-users .user-filter-bar,
+#page-users .user-table-card,
+.reconcile-settings-panel,
+.db-validation-panel,
+.flow-run-panel,
+.flow-step-builder-panel,
+#page-local-storage .local-storage-metric,
+#page-local-storage .local-storage-table-panel,
+#page-local-storage .local-storage-detail-panel,
+.modal,
+.pbc-modal,
+.user-modal,
+.btn-primary,
+.btn-outline,
+.btn-danger,
+.btn-stop,
+.btn-confirm-primary,
+.btn-close,
+.page-btn,
+.trend-quick-btn,
+.pbc-btn,
+.user-menu-trigger,
+.user-menu-panel,
+.user-menu-logout,
+.pbc-modal-close,
+.filter-input,
+.filter-select,
+.chart-date-select,
+.setting-input,
+.prompt-input,
+.user-form-control,
+.main-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+.main-content select,
+.main-content textarea,
+.modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+.modal-field select,
+.modal input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+.modal select,
+.modal textarea,
+.custom-input-shell,
+.custom-select-shell,
+.custom-select-trigger,
+.custom-select-dropdown,
+.custom-date-shell,
+.custom-date-dropdown {
+  border-radius: var(--ui-radius) !important;
+}
+/* User interface radius preference: end */

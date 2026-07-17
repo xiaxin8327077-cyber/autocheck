@@ -2853,6 +2853,221 @@ def test_interface_settings_card_is_shared_and_has_one_exact_radius_slider():
     assert system_info_pos < interface_pos < data_pos
 
 
+def test_user_radius_override_is_semantic_and_border_radius_only():
+    css = _read(STYLES_CSS)
+    start_marker = "/* User interface radius preference: start */"
+    end_marker = "/* User interface radius preference: end */"
+
+    assert css.count(start_marker) == 1
+    assert css.count(end_marker) == 1
+    override = css.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    blocks = re.findall(r"(?P<selectors>[^{}]+)\{(?P<body>[^{}]+)\}", override, re.S)
+    assert blocks
+    selectors = {
+        selector.strip()
+        for selector_group, _body in blocks
+        for selector in selector_group.split(",")
+        if selector.strip()
+    }
+
+    for selector in (
+        ".nav-item",
+        ".nav-group-toggle",
+        ".nav-submenu",
+        '[data-theme="space-tech"] .top-nav',
+        '[data-theme="space-tech"] .top-nav-item',
+        '[data-theme="space-tech"] .top-nav-group-toggle',
+        '[data-theme="space-tech"] .top-nav-submenu',
+        '[data-theme="space-tech"] .top-nav-subitem',
+        ".card",
+        ".home-stat-card",
+        ".home-analysis-card",
+        "#page-home .glass-card",
+        "#page-home .glass-stat-card",
+        ".tool-card",
+        ".run-log-panel",
+        "#page-report-navigation .report-nav-stat-card",
+        "#page-report-navigation .report-nav-card",
+        "#page-settings .settings-dashboard-card",
+        "#page-users .user-stat-card",
+        "#page-users .user-filter-bar",
+        "#page-users .user-table-card",
+        ".reconcile-settings-panel",
+        ".db-validation-panel",
+        ".flow-run-panel",
+        ".flow-step-builder-panel",
+        "#page-local-storage .local-storage-metric",
+        "#page-local-storage .local-storage-table-panel",
+        "#page-local-storage .local-storage-detail-panel",
+        ".modal",
+        ".pbc-modal",
+        ".user-modal",
+        ".btn-primary",
+        ".btn-outline",
+        ".btn-danger",
+        ".btn-stop",
+        ".btn-confirm-primary",
+        ".btn-close",
+        ".page-btn",
+        ".trend-quick-btn",
+        ".pbc-btn",
+        ".user-menu-trigger",
+        ".user-menu-panel",
+        ".user-menu-logout",
+        ".pbc-modal-close",
+        ".filter-input",
+        ".filter-select",
+        ".chart-date-select",
+        ".setting-input",
+        ".prompt-input",
+        ".user-form-control",
+        '.main-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"])',
+        ".main-content select",
+        ".main-content textarea",
+        '.modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"])',
+        ".modal-field select",
+        '.modal input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"])',
+        ".modal select",
+        ".modal textarea",
+        ".custom-input-shell",
+        ".custom-select-shell",
+        ".custom-select-trigger",
+        ".custom-select-dropdown",
+        ".custom-date-shell",
+        ".custom-date-dropdown",
+    ):
+        assert selector in selectors
+
+    for forbidden_selector in (
+        ".login-card",
+        ".login-form",
+        ".login-input",
+        ".user-initial-avatar",
+        ".user-menu-icon",
+        ".status-dot",
+        ".report-nav-refresh-button",
+        ".tool-card-badge",
+        ".badge",
+        ".tag",
+        ".progress-bar",
+        ".progress-fill",
+        ".checkbox",
+        ".radio",
+        ".range-track",
+        ".range-thumb",
+        "svg",
+        "overlay",
+        "[class*=card]",
+    ):
+        assert forbidden_selector not in override
+
+    for selector in selectors:
+        assert "*" not in selector
+        assert re.match(r"^(?:button|input|select|textarea)(?:$|[.#:\[])", selector) is None
+
+    for _selector_group, body in blocks:
+        declarations = [item.strip() for item in body.split(";") if item.strip()]
+        assert declarations == ["border-radius: var(--ui-radius) !important"]
+
+
+def test_interface_radius_has_default_and_regular_user_three_card_responsive_layout():
+    css = _read(STYLES_CSS)
+
+    root = re.search(r"(?m)^:root\s*\{(?P<body>.*?)\n\}", css, re.S)
+    assert root is not None
+    assert "--ui-radius: 4px;" in root.group("body")
+
+    interface_body = re.search(
+        r"(?m)^#page-settings \.card-interface \.card-body\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert interface_body is not None
+    assert "display: flex" in interface_body.group("body")
+    assert "flex-direction: column" in interface_body.group("body")
+    assert "flex: 1" in interface_body.group("body")
+
+    interface_control = re.search(
+        r"(?m)^#page-settings \.card-interface \.setting-item\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert interface_control is not None
+    assert "display: grid" in interface_control.group("body")
+    assert "grid-template-columns:" in interface_control.group("body")
+
+    slider = re.search(
+        r"(?m)^#page-settings #interfaceRadiusSlider\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert slider is not None
+    assert "width: 100%" in slider.group("body")
+    assert "accent-color: var(--secondary)" in slider.group("body")
+
+    value = re.search(
+        r"(?m)^#page-settings #interfaceRadiusValue\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert value is not None
+    assert "color: var(--on-surface)" in value.group("body")
+
+    status = re.search(
+        r"(?m)^#page-settings #interfaceSettingsStatus\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert status is not None
+    assert "color: var(--on-surface-variant)" in status.group("body")
+
+    desktop_user_grid = re.search(
+        r'(?m)^\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert desktop_user_grid is not None
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in desktop_user_grid.group("body")
+    assert "align-items: stretch" in desktop_user_grid.group("body")
+
+    user_cards = re.search(
+        r'\[data-role="user"\] #page-settings \.card-system-info,\s*'
+        r'\[data-role="user"\] #page-settings \.card-interface,\s*'
+        r'\[data-role="user"\] #page-settings \.card-about\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert user_cards is not None
+    assert "grid-column: span 1" in user_cards.group("body")
+    assert "height: 100%" in user_cards.group("body")
+
+    tablet_css = css[css.index("@media (max-width: 1200px)") :]
+    tablet_user_grid = re.search(
+        r'\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}',
+        tablet_css,
+        re.S,
+    )
+    assert tablet_user_grid is not None
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in tablet_user_grid.group("body")
+
+    mobile_css = css[css.index("@media (max-width: 760px)") :]
+    mobile_user_grid = re.search(
+        r'\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}',
+        mobile_css,
+        re.S,
+    )
+    assert mobile_user_grid is not None
+    assert "grid-template-columns: 1fr" in mobile_user_grid.group("body")
+
+    admin_grid = re.search(
+        r"(?m)^#page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert admin_grid is not None
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in admin_grid.group("body")
+
+
 def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallback():
     app_js = _read(APP_JS)
 
@@ -4658,11 +4873,13 @@ def test_regular_user_settings_are_compact_without_changing_admin_about_details(
     assert "[data-role=\"user\"] #page-settings .about-admin-detail" in css
     assert "[data-role=\"user\"] #page-settings .card-about" in css
     assert "[data-role=\"user\"] #page-settings .card-system-info" in css
+    assert "[data-role=\"user\"] #page-settings .card-interface" in css
     user_grid = re.search(r'\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}', css, re.S)
     assert user_grid is not None
     assert "align-items: stretch" in user_grid.group("body")
     user_cards = re.search(
         r'\[data-role="user"\] #page-settings \.card-system-info,\s*'
+        r'\[data-role="user"\] #page-settings \.card-interface,\s*'
         r'\[data-role="user"\] #page-settings \.card-about\s*\{(?P<body>.*?)\}',
         css,
         re.S,
