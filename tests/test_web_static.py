@@ -23,6 +23,129 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) -> None:
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Interface radius start.*?// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+
+        class FakeElement {
+          constructor(value = "") {
+            this.value = value;
+            this.textContent = "";
+            this.disabled = false;
+            this.listeners = new Map();
+            this.classList = {
+              values: new Set(),
+              toggle: (name, enabled) => {
+                if (enabled) this.classList.values.add(name);
+                else this.classList.values.delete(name);
+              },
+            };
+          }
+
+          addEventListener(type, listener) {
+            this.listeners.set(type, listener);
+          }
+
+          dispatch(type) {
+            return this.listeners.get(type)?.({ target: this });
+          }
+        }
+
+        const elements = {
+          interfaceRadiusSlider: new FakeElement("4"),
+          interfaceRadiusValue: new FakeElement(),
+          interfaceSettingsStatus: new FakeElement(),
+          saveInterfaceSettingsBtn: new FakeElement(),
+          resetInterfaceSettingsBtn: new FakeElement(),
+        };
+        const cssVariables = new Map();
+        globalThis.document = {
+          getElementById: (id) => elements[id] || null,
+          documentElement: {
+            style: {
+              setProperty: (name, value) => cssVariables.set(name, value),
+              getPropertyValue: (name) => cssVariables.get(name) || "",
+            },
+          },
+        };
+
+        let nextTimerId = 1;
+        const timers = new Map();
+        globalThis.setTimeout = (callback, delay) => {
+          const id = nextTimerId++;
+          timers.set(id, { callback, delay });
+          return id;
+        };
+        globalThis.clearTimeout = (id) => timers.delete(id);
+        const runAllTimers = () => {
+          const pending = [...timers.values()];
+          timers.clear();
+          pending.forEach(({ callback }) => callback());
+        };
+
+        const apiCalls = [];
+        const toasts = [];
+        let apiImpl = async () => ({ settings: { radius_px: 4 } });
+        async function api(path, options = {}) {
+          apiCalls.push({ path, options });
+          return apiImpl(path, options);
+        }
+        function showToast(message, type = "info") {
+          toasts.push({ message, type });
+        }
+        function deferred() {
+          let resolve;
+          let reject;
+          const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+          });
+          return { promise, resolve, reject };
+        }
+        async function flushMicrotasks() {
+          for (let index = 0; index < 6; index += 1) await Promise.resolve();
+        }
+
+        __INTERFACE_RADIUS_BLOCK__
+
+        const radiusHarness = {
+          state: interfaceRadiusState,
+          load: loadInterfaceRadiusPreference,
+          save: saveInterfaceRadiusPreference,
+          discard: discardUnsavedInterfaceRadius,
+          elements,
+          cssVariables,
+          apiCalls,
+          toasts,
+          runAllTimers,
+          timerCount: () => timers.size,
+        };
+
+        (async () => {
+        __SCENARIO__
+        })().catch((error) => {
+          console.error(error.stack || error);
+          process.exitCode = 1;
+        });
+        """
+    ).replace("__INTERFACE_RADIUS_BLOCK__", block.group(0)).replace(
+        "__SCENARIO__",
+        textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
+    )
+    script_path = tmp_path / "interface_radius_state_machine.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
 def test_reason_filter_contains_all_current_reasons():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -2698,7 +2821,17 @@ def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallb
     )
     assert loader is not None
     load_body = loader.group("body")
-    assert 'api("/api/settings/interface")' in load_body
+    assert 'api("/api/settings/interface", { signal: abortController.signal })' in load_body
+    assert "const requestId = ++interfaceRadiusState.loadRequestId;" in load_body
+    assert "const editRevision = interfaceRadiusState.editRevision;" in load_body
+    assert "const mutationRevision = interfaceRadiusState.serverMutationRevision;" in load_body
+    assert "const abortController = new AbortController();" in load_body
+    assert "setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS)" in load_body
+    assert "clearTimeout(timeoutId);" in load_body
+    assert "requestId !== interfaceRadiusState.loadRequestId" in load_body
+    assert "mutationRevision !== interfaceRadiusState.serverMutationRevision" in load_body
+    assert "editRevision === interfaceRadiusState.editRevision" in load_body
+    assert "const radiusPx = readInterfaceRadiusPayload(payload);" in load_body
     assert "} catch (error) {" in load_body
     assert "if (!interfaceRadiusState.loaded)" in load_body
     assert "interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in load_body
@@ -2724,6 +2857,7 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "const DEFAULT_INTERFACE_RADIUS_PX = 4;" in body
     assert "const MIN_INTERFACE_RADIUS_PX = 1;" in body
     assert "const MAX_INTERFACE_RADIUS_PX = 15;" in body
+    assert "const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;" in body
     for state_line in [
         "savedRadiusPx: DEFAULT_INTERFACE_RADIUS_PX",
         "draftRadiusPx: DEFAULT_INTERFACE_RADIUS_PX",
@@ -2731,6 +2865,9 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
         "loadFailed: false",
         "saving: false",
         'statusText: "已保存"',
+        "loadRequestId: 0",
+        "editRevision: 0",
+        "serverMutationRevision: 0",
     ]:
         assert state_line in body
 
@@ -2759,6 +2896,19 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "api(" not in apply_body
     assert "localStorage" not in apply_body
 
+    strict_payload = re.search(
+        r"function readInterfaceRadiusPayload\(payload\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert strict_payload is not None
+    strict_body = strict_payload.group("body")
+    assert "payload?.settings?.radius_px" in strict_body
+    assert "!Number.isInteger(radiusPx)" in strict_body
+    assert "radiusPx < MIN_INTERFACE_RADIUS_PX" in strict_body
+    assert "radiusPx > MAX_INTERFACE_RADIUS_PX" in strict_body
+    assert "throw new Error(" in strict_body
+
     render = re.search(
         r"function renderInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
         body,
@@ -2769,8 +2919,10 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "interfaceRadiusSlider.value = String(interfaceRadiusState.draftRadiusPx);" in render_body
     assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftRadiusPx}px`;" in render_body
     assert "interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;" in render_body
+    assert "interfaceRadiusSlider.disabled = interfaceRadiusState.saving;" in render_body
     assert "saveInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;" in render_body
     assert 'saveInterfaceSettingsBtn.classList.toggle("loading", interfaceRadiusState.saving);' in render_body
+    assert "resetInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;" in render_body
     assert "interfaceRadiusState.statusText =" not in render_body
 
     api_paths = set(re.findall(r'["\'](/api/[^"\']+)["\']', body))
@@ -2801,10 +2953,12 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     )
     assert slider_handler is not None
     slider_body = slider_handler.group("body")
+    assert "if (interfaceRadiusState.saving) return;" in slider_body
+    assert "interfaceRadiusState.editRevision += 1;" in slider_body
     assert "normalizeInterfaceRadius(Number(interfaceRadiusSlider.value))" in slider_body
     assert "interfaceRadiusState.draftRadiusPx =" in slider_body
     assert "applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);" in slider_body
-    assert 'interfaceRadiusState.statusText = "正在预览，尚未保存";' in slider_body
+    assert "syncInterfaceRadiusDirtyStatus();" in slider_body
     assert "api(" not in slider_body
     assert "POST" not in slider_body
 
@@ -2815,8 +2969,11 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     )
     assert reset_handler is not None
     reset_body = reset_handler.group("body")
+    assert "if (interfaceRadiusState.saving) return;" in reset_body
+    assert "interfaceRadiusState.editRevision += 1;" in reset_body
     assert "interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in reset_body
     assert "applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);" in reset_body
+    assert "syncInterfaceRadiusDirtyStatus();" in reset_body
     assert "interfaceRadiusState.savedRadiusPx" not in reset_body
     assert "api(" not in reset_body
     assert "POST" not in reset_body
@@ -2829,11 +2986,12 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert save is not None
     save_body = save.group("body")
     assert "if (interfaceRadiusState.saving) return false;" in save_body
+    assert "interfaceRadiusState.serverMutationRevision += 1;" in save_body
     assert "interfaceRadiusState.saving = true;" in save_body
     assert 'api("/api/settings/interface", {' in save_body
     assert 'method: "POST"' in save_body
     assert "body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx })" in save_body
-    assert "const savedRadiusPx = normalizeInterfaceRadius(payload.settings?.radius_px);" in save_body
+    assert "const savedRadiusPx = readInterfaceRadiusPayload(payload);" in save_body
     assert "interfaceRadiusState.savedRadiusPx = savedRadiusPx;" in save_body
     assert "interfaceRadiusState.draftRadiusPx = savedRadiusPx;" in save_body
     assert 'interfaceRadiusState.statusText = "保存成功";' in save_body
@@ -2856,10 +3014,11 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     )
     assert discard is not None
     discard_body = discard.group("body")
-    assert "interfaceRadiusState.draftRadiusPx === interfaceRadiusState.savedRadiusPx" in discard_body
+    assert "interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx" in discard_body
     assert "interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;" in discard_body
     assert "applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);" in discard_body
-    assert 'interfaceRadiusState.statusText = "已保存";' in discard_body
+    assert "syncInterfaceRadiusDirtyStatus();" in discard_body
+    assert "renderInterfaceRadiusPreference();" in discard_body
     assert "api(" not in discard_body
 
     switch_page = re.search(
@@ -2889,6 +3048,225 @@ def test_interface_radius_settings_refresh_on_each_entry_without_local_storage()
 
     assert "autoCheckRadius" not in app_js
     assert not re.search(r"localStorage\.(?:getItem|setItem|removeItem)\([^\n]*(?:radius|Radius)", app_js)
+
+
+def test_interface_radius_node_keeps_new_draft_when_older_get_finishes(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const getRequest = deferred();
+        apiImpl = async () => getRequest.promise;
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+
+        getRequest.resolve({ settings: { radius_px: 4 } });
+        assert.equal(await loading, true);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "正在预览，尚未保存");
+        """,
+    )
+
+
+def test_interface_radius_node_ignores_get_that_predates_successful_save(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const getRequest = deferred();
+        const postRequest = deferred();
+        apiImpl = async (_path, options) => (
+          options.method === "POST" ? postRequest.promise : getRequest.promise
+        );
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        const saving = h.save();
+        postRequest.resolve({ settings: { radius_px: 9 } });
+        assert.equal(await saving, true);
+
+        getRequest.resolve({ settings: { radius_px: 4 } });
+        await loading;
+        assert.equal(h.state.savedRadiusPx, 9);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "保存成功");
+        """,
+    )
+
+
+def test_interface_radius_node_disables_and_guards_draft_controls_while_saving(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const postRequest = deferred();
+        apiImpl = async () => postRequest.promise;
+
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        const saving = h.save();
+        assert.equal(h.elements.interfaceRadiusSlider.disabled, true);
+        assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, true);
+
+        h.elements.interfaceRadiusSlider.value = "8";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        h.elements.resetInterfaceSettingsBtn.dispatch("click");
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+
+        postRequest.resolve({ settings: { radius_px: 9 } });
+        assert.equal(await saving, true);
+        assert.equal(h.state.savedRadiusPx, 9);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.elements.interfaceRadiusSlider.disabled, false);
+        assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, false);
+        """,
+    )
+
+
+def test_interface_radius_node_derives_saved_status_when_draft_returns_to_baseline(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+
+        h.elements.resetInterfaceSettingsBtn.dispatch("click");
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "已保存");
+
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        h.elements.interfaceRadiusSlider.value = "4";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "已保存");
+        """,
+    )
+
+
+def test_interface_radius_node_times_out_get_without_real_waiting(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        let capturedOptions = null;
+        apiImpl = async (_path, options) => {
+          capturedOptions = options;
+          return new Promise((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            }, { once: true });
+          });
+        };
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        assert.ok(capturedOptions.signal);
+        assert.equal(h.timerCount(), 1);
+        let settled = false;
+        let result = null;
+        loading.then((value) => {
+          settled = true;
+          result = value;
+        });
+        h.runAllTimers();
+        await flushMicrotasks();
+
+        assert.equal(settled, true);
+        assert.equal(result, false);
+        assert.equal(h.timerCount(), 0);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.state.statusText, "加载失败，当前使用默认 4px");
+        assert.equal(h.toasts.length, 1);
+        """,
+    )
+
+
+def test_interface_radius_node_preserves_new_draft_when_current_get_fails(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const getRequest = deferred();
+        apiImpl = async () => getRequest.promise;
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        getRequest.reject(new Error("network failed"));
+
+        assert.equal(await loading, false);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, true);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        assert.equal(h.toasts.length, 1);
+        """,
+    )
+
+
+def test_interface_radius_node_rejects_invalid_get_payload_as_load_failure(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: {} });
+
+        const result = await h.load({ silent: true });
+        assert.equal(result, false);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, true);
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.state.statusText, "加载失败，当前使用默认 4px");
+        assert.equal(h.toasts.length, 0);
+        """,
+    )
+
+
+def test_interface_radius_node_rejects_invalid_post_without_losing_draft(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 6 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        apiImpl = async () => ({ settings: {} });
+
+        const result = await h.save();
+        assert.equal(result, false);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "保存失败");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "保存失败");
+        assert.equal(h.toasts.length, 1);
+        """,
+    )
 
 
 def test_settings_dark_mode_keeps_business_codes_and_about_links_readable():

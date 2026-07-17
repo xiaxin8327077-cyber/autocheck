@@ -532,6 +532,7 @@ function applySavedUserTheme() {
 const DEFAULT_INTERFACE_RADIUS_PX = 4;
 const MIN_INTERFACE_RADIUS_PX = 1;
 const MAX_INTERFACE_RADIUS_PX = 15;
+const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;
 const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
 const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
 const interfaceSettingsStatus = document.getElementById("interfaceSettingsStatus");
@@ -544,6 +545,9 @@ const interfaceRadiusState = {
   loadFailed: false,
   saving: false,
   statusText: "已保存",
+  loadRequestId: 0,
+  editRevision: 0,
+  serverMutationRevision: 0,
 };
 
 function normalizeInterfaceRadius(radiusPx) {
@@ -563,9 +567,31 @@ function applyInterfaceRadius(radiusPx) {
   return normalizedRadiusPx;
 }
 
+function readInterfaceRadiusPayload(payload) {
+  const radiusPx = payload?.settings?.radius_px;
+  if (
+    !Number.isInteger(radiusPx)
+    || radiusPx < MIN_INTERFACE_RADIUS_PX
+    || radiusPx > MAX_INTERFACE_RADIUS_PX
+  ) {
+    throw new Error("界面圆角响应无效");
+  }
+  return radiusPx;
+}
+
+function syncInterfaceRadiusDirtyStatus() {
+  interfaceRadiusState.statusText = (
+    interfaceRadiusState.draftRadiusPx === interfaceRadiusState.savedRadiusPx
+      ? "已保存"
+      : "正在预览，尚未保存"
+  );
+  return interfaceRadiusState.statusText;
+}
+
 function renderInterfaceRadiusPreference() {
   if (interfaceRadiusSlider) {
     interfaceRadiusSlider.value = String(interfaceRadiusState.draftRadiusPx);
+    interfaceRadiusSlider.disabled = interfaceRadiusState.saving;
   }
   if (interfaceRadiusValue) {
     interfaceRadiusValue.textContent = `${interfaceRadiusState.draftRadiusPx}px`;
@@ -578,26 +604,55 @@ function renderInterfaceRadiusPreference() {
     saveInterfaceSettingsBtn.classList.toggle("loading", interfaceRadiusState.saving);
     saveInterfaceSettingsBtn.textContent = interfaceRadiusState.saving ? "保存中..." : "保存界面设置";
   }
+  if (resetInterfaceSettingsBtn) {
+    resetInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;
+  }
 }
 
 async function loadInterfaceRadiusPreference({ silent = false } = {}) {
+  const requestId = ++interfaceRadiusState.loadRequestId;
+  const editRevision = interfaceRadiusState.editRevision;
+  const mutationRevision = interfaceRadiusState.serverMutationRevision;
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS);
   try {
-    const payload = await api("/api/settings/interface");
-    const radiusPx = normalizeInterfaceRadius(payload.settings?.radius_px);
+    const payload = await api("/api/settings/interface", { signal: abortController.signal });
+    if (
+      requestId !== interfaceRadiusState.loadRequestId
+      || mutationRevision !== interfaceRadiusState.serverMutationRevision
+    ) {
+      return false;
+    }
+    const radiusPx = readInterfaceRadiusPayload(payload);
     interfaceRadiusState.savedRadiusPx = radiusPx;
-    interfaceRadiusState.draftRadiusPx = radiusPx;
     interfaceRadiusState.loaded = true;
     interfaceRadiusState.loadFailed = false;
-    interfaceRadiusState.statusText = "已保存";
-    applyInterfaceRadius(radiusPx);
+    if (editRevision === interfaceRadiusState.editRevision) {
+      interfaceRadiusState.draftRadiusPx = radiusPx;
+      applyInterfaceRadius(radiusPx);
+    }
+    syncInterfaceRadiusDirtyStatus();
     renderInterfaceRadiusPreference();
     return true;
   } catch (error) {
+    if (
+      requestId !== interfaceRadiusState.loadRequestId
+      || mutationRevision !== interfaceRadiusState.serverMutationRevision
+    ) {
+      return false;
+    }
+    const editedDuringRequest = editRevision !== interfaceRadiusState.editRevision;
     if (!interfaceRadiusState.loaded) {
       interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
-      interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
-      applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
-      interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";
+      if (editedDuringRequest) {
+        syncInterfaceRadiusDirtyStatus();
+      } else {
+        interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+        applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
+        interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";
+      }
+    } else if (editedDuringRequest) {
+      syncInterfaceRadiusDirtyStatus();
     } else {
       interfaceRadiusState.statusText = `加载失败，继续使用 ${interfaceRadiusState.draftRadiusPx}px`;
     }
@@ -605,11 +660,14 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     renderInterfaceRadiusPreference();
     if (!silent) showToast(`界面设置加载失败: ${error.message}`, "error");
     return false;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
 async function saveInterfaceRadiusPreference() {
   if (interfaceRadiusState.saving) return false;
+  interfaceRadiusState.serverMutationRevision += 1;
   interfaceRadiusState.saving = true;
   renderInterfaceRadiusPreference();
   try {
@@ -617,7 +675,7 @@ async function saveInterfaceRadiusPreference() {
       method: "POST",
       body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx }),
     });
-    const savedRadiusPx = normalizeInterfaceRadius(payload.settings?.radius_px);
+    const savedRadiusPx = readInterfaceRadiusPayload(payload);
     interfaceRadiusState.savedRadiusPx = savedRadiusPx;
     interfaceRadiusState.draftRadiusPx = savedRadiusPx;
     interfaceRadiusState.loaded = true;
@@ -636,25 +694,29 @@ async function saveInterfaceRadiusPreference() {
 }
 
 function discardUnsavedInterfaceRadius() {
-  if (interfaceRadiusState.draftRadiusPx === interfaceRadiusState.savedRadiusPx) return false;
+  const changed = interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx;
   interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;
   applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);
-  interfaceRadiusState.statusText = "已保存";
+  syncInterfaceRadiusDirtyStatus();
   renderInterfaceRadiusPreference();
-  return true;
+  return changed;
 }
 
 interfaceRadiusSlider?.addEventListener("input", () => {
+  if (interfaceRadiusState.saving) return;
+  interfaceRadiusState.editRevision += 1;
   interfaceRadiusState.draftRadiusPx = normalizeInterfaceRadius(Number(interfaceRadiusSlider.value));
   applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);
-  interfaceRadiusState.statusText = "正在预览，尚未保存";
+  syncInterfaceRadiusDirtyStatus();
   renderInterfaceRadiusPreference();
 });
 
 resetInterfaceSettingsBtn?.addEventListener("click", () => {
+  if (interfaceRadiusState.saving) return;
+  interfaceRadiusState.editRevision += 1;
   interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
   applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);
-  interfaceRadiusState.statusText = "正在预览，尚未保存";
+  syncInterfaceRadiusDirtyStatus();
   renderInterfaceRadiusPreference();
 });
 
