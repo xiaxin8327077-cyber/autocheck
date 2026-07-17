@@ -47,6 +47,7 @@ EXPORT_TABLE_ORDER = [
 POST_MIGRATION_SCHEMA_SCRIPTS = [
     "sql/app_storage/mysql/002_report_navigation.sql",
     "sql/app_storage/mysql/003_report_navigation_seed.sql",
+    "sql/app_storage/mysql/004_user_interface_preferences.sql",
 ]
 EXCLUDED_TABLES = {
     "app_kv": "legacy configuration/auth snapshot; normalized rows are exported from data_sources, app_settings, and users",

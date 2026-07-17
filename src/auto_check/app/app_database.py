@@ -49,6 +49,7 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "updated_at",
             "last_login_at",
         ),
+        "user_interface_preferences": _columns("user_id", "radius_px", "updated_at"),
         "config_snapshots": _columns("id", "fingerprint", "payload_json", "created_at"),
         "run_headers": _columns(
             "id",
