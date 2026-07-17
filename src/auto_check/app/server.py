@@ -63,6 +63,12 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
+from auto_check.app.storage_user_interface_preferences import (
+    MAX_INTERFACE_RADIUS_PX,
+    MIN_INTERFACE_RADIUS_PX,
+    load_user_interface_preferences,
+    save_user_interface_preferences,
+)
 from auto_check.app.time_utils import beijing_now, beijing_time_text, beijing_timestamp, beijing_today
 from auto_check.app.pbc_import import (
     ColumnMapping,
@@ -305,6 +311,27 @@ class ApiRouter:
         current_user: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         try:
+            if path == "/api/settings/interface":
+                user_id = str((current_user or {}).get("id") or "").strip()
+                if not user_id:
+                    return 401, {"error": "login required"}
+                if method == "GET":
+                    with self.application_database.connect() as connection:
+                        radius_px = load_user_interface_preferences(connection, user_id)
+                    return 200, {"settings": {"radius_px": radius_px}}
+                if method == "POST":
+                    if not isinstance(body, dict):
+                        raise ValueError("radius_px must be an integer between 1 and 15")
+                    radius_px = body.get("radius_px")
+                    if (
+                        type(radius_px) is not int
+                        or not MIN_INTERFACE_RADIUS_PX <= radius_px <= MAX_INTERFACE_RADIUS_PX
+                    ):
+                        raise ValueError("radius_px must be an integer between 1 and 15")
+                    with self.application_database.transaction() as connection:
+                        radius_px = save_user_interface_preferences(connection, user_id, radius_px)
+                    return 200, {"settings": {"radius_px": radius_px}}
+
             if method == "GET" and path == "/api/report-navigation/dashboard":
                 query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
                 period = str(query.get("period", "month") or "month")

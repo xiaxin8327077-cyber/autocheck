@@ -669,6 +669,102 @@ def test_default_settings_api_persists_across_router_instances(tmp_path):
     }
 
 
+def test_interface_settings_api_defaults_upserts_and_isolates_current_users(
+    tmp_path, shared_application_database
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    first_user = {"id": "user-1", "role": "user"}
+    second_user = {"id": "user-2", "role": "admin"}
+
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=first_user
+    ) == (200, {"settings": {"radius_px": 4}})
+
+    assert router.handle(
+        "POST",
+        "/api/settings/interface",
+        {"radius_px": 7, "user_id": "user-2"},
+        current_user=first_user,
+    ) == (200, {"settings": {"radius_px": 7}})
+    assert router.handle(
+        "POST",
+        "/api/settings/interface",
+        {"radius_px": 9},
+        current_user=first_user,
+    ) == (200, {"settings": {"radius_px": 9}})
+
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=first_user
+    ) == (200, {"settings": {"radius_px": 9}})
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=second_user
+    ) == (200, {"settings": {"radius_px": 4}})
+    assert [
+        (row["user_id"], row["radius_px"])
+        for row in shared_application_database.connection.tables["user_interface_preferences"]
+    ] == [("user-1", 9)]
+
+
+@pytest.mark.parametrize("radius_px", [1, 15])
+def test_interface_settings_api_accepts_boundary_values(tmp_path, radius_px):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    current_user = {"id": "user-1", "role": "user"}
+
+    assert router.handle(
+        "POST",
+        "/api/settings/interface",
+        {"radius_px": radius_px},
+        current_user=current_user,
+    ) == (200, {"settings": {"radius_px": radius_px}})
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=current_user
+    ) == (200, {"settings": {"radius_px": radius_px}})
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"radius_px": 0}, id="below-minimum"),
+        pytest.param({"radius_px": 16}, id="above-maximum"),
+        pytest.param({"radius_px": 1.5}, id="float"),
+        pytest.param({"radius_px": True}, id="true"),
+        pytest.param({"radius_px": False}, id="false"),
+        pytest.param({"radius_px": None}, id="null"),
+        pytest.param({}, id="missing"),
+        pytest.param({"radius_px": "4"}, id="numeric-string"),
+        pytest.param({"radius_px": "bad"}, id="string"),
+        pytest.param([1], id="body-list"),
+        pytest.param("bad", id="body-string"),
+        pytest.param(1, id="body-integer"),
+        pytest.param(True, id="body-boolean"),
+    ],
+)
+def test_interface_settings_api_rejects_invalid_values_without_writing(
+    tmp_path, shared_application_database, body
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/interface",
+        body,
+        current_user={"id": "user-1", "role": "user"},
+    )
+
+    assert status == 400
+    assert payload == {"error": "radius_px must be an integer between 1 and 15"}
+    assert shared_application_database.connection.tables["user_interface_preferences"] == []
+
+
+@pytest.mark.parametrize("current_user", [None, {}, {"id": ""}])
+def test_interface_settings_api_requires_current_user_id(tmp_path, current_user):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=current_user
+    ) == (401, {"error": "login required"})
+
+
 def test_reconcile_schema_settings_api_saves_and_initializes_from_yaml_template(tmp_path):
     config_path = tmp_path / "config.json"
     save_store(
