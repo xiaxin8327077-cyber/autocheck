@@ -341,7 +341,7 @@ config/                   本地测试配置样例
 - 新增通用建表脚本 `sql/app_storage/mysql/001_init_schema.sql`，包含 20 张应用存储表、索引、外键和中文注释，不包含生产数据、建库、删库或清表语句。
 - 新增离线只读导出脚本 `scripts/export_sqlite_to_mysql.py`，用于从旧 SQLite 生成 MySQL 数据 SQL 和迁移报告；生产数据 SQL、真实数据库文件和凭据不得提交 Git。
 - 本地数据查询页面及入口已隐藏，SQLite 查询、导出、备份和旧历史迁移接口停用，不提供新的 MySQL 管理查询页面。
-- 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行；上线核验需确认 MySQL 20 张表和迁移行数齐全。
+- 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行；上线核验需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 36 张应用存储表结构（含 `004_user_interface_preferences.sql`）齐全。
 - 重复启动本地服务时检测默认端口占用，端口已被现有实例使用时打开已有服务地址并避免继续初始化数据库。
 - 本地 SQLite 旧库结构迁移前自动生成 `backup-before-storage-v2-*` 备份目录，降低生产库迁移风险。
 - 结构化历史迁移支持旧 SQLite 与同目录旧历史 JSON 同时导入并按记录 ID 去重；旧 `history.json` 或 `db-validation-history.json` 损坏时写入失败迁移记录，不再静默标记为完成。

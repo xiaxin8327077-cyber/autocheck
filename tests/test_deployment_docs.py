@@ -36,6 +36,17 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         assert expected in readme
 
 
+def test_readme_distinguishes_migrated_rows_from_complete_mysql_schema() -> None:
+    verification_line = next(
+        line for line in _read(README).splitlines() if "上线核验" in line
+    )
+
+    assert "原 20 张迁移目标表的数据行数" in verification_line
+    assert "当前完整 36 张应用存储表结构" in verification_line
+    assert "004_user_interface_preferences.sql" in verification_line
+    assert "MySQL 20 张表和迁移行数齐全" not in verification_line
+
+
 def test_mysql_rollout_docs_require_004_and_36_table_sequence() -> None:
     for path in [README, MYSQL_STORAGE_DOC, DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
