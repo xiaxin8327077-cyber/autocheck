@@ -5794,11 +5794,6 @@ input:focus, select:focus {
   position: relative;
   background: var(--surface-container-lowest);
   border: 1px solid var(--outline-variant);
-  clip-path: polygon(
-    0 12px, 12px 0, calc(100% - 12px) 0, 100% 12px,
-    100% calc(100% - 12px), calc(100% - 12px) 100%,
-    12px 100%, 0 calc(100% - 12px)
-  );
   cursor: pointer;
   transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
   overflow: hidden;
@@ -5933,11 +5928,6 @@ input:focus, select:focus {
   max-width: 96vw;
   max-height: 90vh;
   background: var(--surface-container-lowest);
-  clip-path: polygon(
-    0 16px, 16px 0, calc(100% - 16px) 0, 100% 16px,
-    100% calc(100% - 16px), calc(100% - 16px) 100%,
-    16px 100%, 0 calc(100% - 16px)
-  );
   border: 1px solid var(--outline-variant);
   padding: 32px 32px 24px;
   overflow-y: auto;
@@ -12124,7 +12114,6 @@ input.custom-input-native:disabled {
 .user-menu-trigger,
 .user-menu-panel,
 .user-menu-logout,
-.pbc-modal-close,
 .filter-input,
 .filter-select,
 .chart-date-select,

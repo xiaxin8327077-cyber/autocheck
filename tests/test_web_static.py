@@ -2914,7 +2914,6 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".user-menu-trigger",
         ".user-menu-panel",
         ".user-menu-logout",
-        ".pbc-modal-close",
         ".filter-input",
         ".filter-select",
         ".chart-date-select",
@@ -2946,6 +2945,7 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".user-menu-icon",
         ".status-dot",
         ".report-nav-refresh-button",
+        ".pbc-modal-close",
         ".tool-card-badge",
         ".badge",
         ".tag",
@@ -2968,6 +2968,34 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
     for _selector_group, body in blocks:
         declarations = [item.strip() for item in body.split(";") if item.strip()]
         assert declarations == ["border-radius: var(--ui-radius) !important"]
+
+
+def test_radius_surfaces_drop_fixed_polygon_clipping_but_pbc_close_stays_diamond():
+    css = _read(STYLES_CSS)
+
+    for selector in ("tool-card", "pbc-modal"):
+        rule = re.search(
+            rf"(?m)^\.{selector}\s*\{{(?P<body>.*?)\}}",
+            css,
+            re.S,
+        )
+        assert rule is not None
+        assert re.search(r"clip-path\s*:\s*polygon\(", rule.group("body")) is None
+
+    close_rule = re.search(
+        r"(?m)^\.pbc-modal-close\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert close_rule is not None
+    close_body = " ".join(close_rule.group("body").split())
+    assert "clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);" in close_body
+
+    override = css.split("/* User interface radius preference: start */", 1)[1].split(
+        "/* User interface radius preference: end */",
+        1,
+    )[0]
+    assert ".pbc-modal-close" not in override
 
 
 def test_interface_radius_has_default_and_regular_user_three_card_responsive_layout():
