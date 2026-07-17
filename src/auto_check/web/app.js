@@ -10279,6 +10279,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
         <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
+        <li>新增界面圆角个性化设置。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
     </div>

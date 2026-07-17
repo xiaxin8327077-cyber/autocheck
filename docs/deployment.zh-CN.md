@@ -9,10 +9,15 @@
 1. 手工创建空库 `auto_check`，并为应用账号授予必要读写权限。
 2. 执行 `sql/app_storage/mysql/001_init_schema.sql` 创建 20 张应用存储表；该脚本不包含生产数据，也不包含 `CREATE DATABASE`、`DROP` 或 `TRUNCATE`。
 3. 如需迁移旧 SQLite `auto-check.db`，停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读生成数据 SQL 和迁移报告，再由运维人员人工执行数据 SQL。
-4. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
-5. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
-6. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
-7. 上线验收需确认 MySQL 20 张目标表和迁移行数齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 15 张报送导航表。
+5. 执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入报送导航种子配置。
+6. 执行 `sql/app_storage/mysql/004_user_interface_preferences.sql` 新增第 36 张用户界面偏好表；完整应用结构共 36 张表，`app_schema_version` 仍为 `1`。
+7. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
+8. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
+9. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
+10. 上线验收需确认 MySQL 36 张目标表和迁移行数齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+
+`user_interface_preferences` 按每个用户独立保存界面圆角偏好，不设置外键，删除用户后的孤儿偏好由应用清理。从已执行 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前执行随发布提供的 `004_user_interface_preferences.sql`，再替换应用。该脚本采用 `CREATE TABLE IF NOT EXISTS`，可重复执行且不会重复建表或删除现有数据；表已存在时仍需人工核对结构。本文仅描述运维步骤，不代表已在任何线上环境执行。
 
 `app_database` 示例：
 

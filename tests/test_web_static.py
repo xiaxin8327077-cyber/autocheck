@@ -1991,6 +1991,24 @@ def test_changelog_documents_latest_setting_and_cleanup_changes():
         assert verbose_text not in app_js
 
 
+def test_v21_changelog_documents_interface_radius_concisely():
+    app_js = _read(APP_JS)
+    changelog = re.search(
+        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)<div class="changelog-item">',
+        app_js,
+        re.S,
+    )
+
+    assert changelog is not None
+    body = changelog.group("body")
+    assert "<li>新增界面圆角个性化设置。</li>" in body
+    assert "<li>系统优化及BUG修复。</li>" in body
+    assert body.count("新增界面圆角个性化设置") == 1
+    assert "1–15px" not in body
+    assert "导航、卡片、按钮" not in body
+    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+
+
 def test_changelog_and_readme_document_pbc_import_and_space_nav_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
