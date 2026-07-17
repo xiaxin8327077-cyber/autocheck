@@ -15,8 +15,8 @@ def test_user_interface_preferences_schema_is_safe_incremental_ddl():
 
     assert "CREATE TABLE IF NOT EXISTS `user_interface_preferences`" in sql
     assert "`user_id` VARCHAR(64) NOT NULL COMMENT '用户 ID'" in sql
-    assert "`radius_px` TINYINT UNSIGNED NOT NULL DEFAULT 4" in sql
-    assert "`updated_at` DATETIME(6) NOT NULL" in sql
+    assert "`radius_px` TINYINT UNSIGNED NOT NULL DEFAULT 4 COMMENT '界面圆角像素值，范围 1 至 15'" in sql
+    assert "`updated_at` DATETIME(6) NOT NULL COMMENT '更新时间'" in sql
     assert "PRIMARY KEY (`user_id`)" in sql
     assert "CHECK (`radius_px` BETWEEN 1 AND 15)" in sql
     assert "COMMENT='用户界面偏好表：保存每个用户的界面圆角设置。'" in sql
