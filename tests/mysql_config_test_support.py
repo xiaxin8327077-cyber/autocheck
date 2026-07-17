@@ -44,6 +44,7 @@ class MySqlContractConnection:
             "app_settings": [],
             "config_snapshots": [],
             "users": [],
+            "user_interface_preferences": [],
             "run_headers": [],
             "reconcile_runs": [],
             "reconcile_run_counts": [],
@@ -93,8 +94,43 @@ class MySqlContractConnection:
             before = len(self.tables[table_name])
             if not params:
                 self.tables[table_name] = []
+            elif " NOT IN " in sql.upper():
+                normalized_sql = sql.upper()
+                column = next(
+                    (
+                        item.name
+                        for item in table.columns
+                        if f".{item.name.upper()} NOT IN " in normalized_sql
+                    ),
+                    None,
+                )
+                if column is None:
+                    raise AssertionError(f"unsupported NOT IN statement: {sql}")
+                active_ids = {
+                    str(value)
+                    for value in next(
+                        (
+                            value
+                            for value in params.values()
+                            if isinstance(value, (list, tuple, set))
+                        ),
+                        [],
+                    )
+                }
+                self.tables[table_name] = [
+                    row
+                    for row in self.tables[table_name]
+                    if str(row.get(column)) in active_ids
+                ]
             elif " IN " in sql.upper():
-                ids = next((value for value in params.values() if isinstance(value, list)), [])
+                ids = next(
+                    (
+                        value
+                        for value in params.values()
+                        if isinstance(value, (list, tuple, set))
+                    ),
+                    [],
+                )
                 delete_ids = {str(value) for value in ids}
                 column = "result_id" if "result_id" in sql else "id"
                 self.tables[table_name] = [
@@ -114,6 +150,7 @@ class MySqlContractConnection:
                         "process_code",
                         "stat_period",
                         "card_code",
+                        "user_id",
                     ),
                 )
                 self.tables[table_name] = [
@@ -142,6 +179,7 @@ class MySqlContractConnection:
                     "process_code",
                     "stat_period",
                     "card_code",
+                    "user_id",
                 ),
             )
             if filters:
@@ -242,6 +280,8 @@ class MySqlContractConnection:
             return composite_keys[table_name]
         if table_name == "app_settings":
             return ("key",)
+        if table_name == "user_interface_preferences":
+            return ("user_id",)
         if table_name in {"report_nav_processes"}:
             return ("process_code",)
         if table_name in {"report_nav_steps"}:

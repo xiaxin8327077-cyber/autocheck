@@ -176,6 +176,66 @@ def test_auth_manager_persists_native_mysql_user_fields(tmp_path, shared_applica
     assert all(row["updated_at"].__class__.__name__ == "datetime" for row in rows)
 
 
+def test_deleting_user_prunes_interface_preferences_in_same_user_transaction(
+    tmp_path, shared_application_database
+):
+    from auto_check.app.storage_user_interface_preferences import save_user_interface_preferences
+
+    manager = AuthManager(tmp_path / "config.json")
+    manager.set_admin_password("Admin123")
+    admin = manager.list_users()[0]
+    operator = manager.create_user(
+        username="operator",
+        password="Operator123",
+        role="user",
+    )
+
+    with shared_application_database.transaction() as connection:
+        save_user_interface_preferences(connection, admin["id"], 4)
+        save_user_interface_preferences(connection, operator["id"], 12)
+
+    transaction_count = shared_application_database.transaction_count
+    manager.delete_user(operator["id"], current_user_id=admin["id"])
+
+    assert shared_application_database.transaction_count == transaction_count + 1
+    rows = shared_application_database.connection.tables["user_interface_preferences"]
+    assert [(row["user_id"], row["radius_px"]) for row in rows] == [(admin["id"], 4)]
+
+
+def test_user_replacement_rolls_back_when_interface_preferences_prune_fails(
+    tmp_path, shared_application_database, monkeypatch
+):
+    import auto_check.app.storage_user_interface_preferences as preference_storage
+
+    manager = AuthManager(tmp_path / "config.json")
+    manager.set_admin_password("Admin123")
+    admin = manager.list_users()[0]
+    operator = manager.create_user(
+        username="operator",
+        password="Operator123",
+        role="user",
+    )
+    original_user_ids = {
+        row["id"] for row in shared_application_database.connection.tables["users"]
+    }
+
+    def fail_prune(connection, active_user_ids):
+        raise RuntimeError("prune failed")
+
+    monkeypatch.setattr(
+        preference_storage,
+        "prune_user_interface_preferences",
+        fail_prune,
+    )
+
+    with pytest.raises(RuntimeError, match="prune failed"):
+        manager.delete_user(operator["id"], current_user_id=admin["id"])
+
+    assert {
+        row["id"] for row in shared_application_database.connection.tables["users"]
+    } == original_user_ids
+
+
 def test_auth_manager_user_writes_hold_lock(tmp_path):
     manager = AuthManager(tmp_path / "config.json")
     original_save_users = manager._save_users
