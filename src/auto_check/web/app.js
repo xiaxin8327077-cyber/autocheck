@@ -547,6 +547,8 @@ const interfaceRadiusState = {
   saving: false,
   statusText: "已保存",
   loadRequestId: 0,
+  saveRequestId: 0,
+  authRevision: 0,
   editRevision: 0,
   serverMutationRevision: 0,
 };
@@ -612,6 +614,8 @@ function renderInterfaceRadiusPreference() {
 
 function resetInterfaceRadiusForAuthChange() {
   interfaceRadiusState.loadRequestId += 1;
+  interfaceRadiusState.saveRequestId += 1;
+  interfaceRadiusState.authRevision += 1;
   interfaceRadiusState.editRevision += 1;
   interfaceRadiusState.serverMutationRevision += 1;
   interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
@@ -622,12 +626,45 @@ function resetInterfaceRadiusForAuthChange() {
   interfaceRadiusState.statusText = "已保存";
   applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
   renderInterfaceRadiusPreference();
+  return interfaceRadiusState.authRevision;
+}
+
+function captureInterfaceRadiusPreference() {
+  return {
+    savedRadiusPx: interfaceRadiusState.savedRadiusPx,
+    draftRadiusPx: interfaceRadiusState.draftRadiusPx,
+    loaded: interfaceRadiusState.loaded,
+    loadFailed: interfaceRadiusState.loadFailed,
+    statusText: interfaceRadiusState.statusText,
+  };
+}
+
+function restoreInterfaceRadiusPreference(snapshot, expectedAuthRevision) {
+  if (expectedAuthRevision !== interfaceRadiusState.authRevision) return false;
+  interfaceRadiusState.loadRequestId += 1;
+  interfaceRadiusState.saveRequestId += 1;
+  interfaceRadiusState.authRevision += 1;
+  interfaceRadiusState.editRevision += 1;
+  interfaceRadiusState.serverMutationRevision += 1;
+  interfaceRadiusState.savedRadiusPx = snapshot.savedRadiusPx;
+  interfaceRadiusState.draftRadiusPx = snapshot.draftRadiusPx;
+  interfaceRadiusState.loaded = snapshot.loaded;
+  interfaceRadiusState.loadFailed = snapshot.loadFailed;
+  interfaceRadiusState.saving = false;
+  interfaceRadiusState.statusText = snapshot.statusText;
+  applyInterfaceRadius(snapshot.draftRadiusPx);
+  renderInterfaceRadiusPreference();
+  return true;
 }
 
 async function loadInterfaceRadiusPreference({ silent = false } = {}) {
+  if (interfaceRadiusState.saving) return false;
   const requestId = ++interfaceRadiusState.loadRequestId;
   const editRevision = interfaceRadiusState.editRevision;
   const mutationRevision = interfaceRadiusState.serverMutationRevision;
+  const hadUnsavedDraft = (
+    interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx
+  );
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS);
   try {
@@ -642,7 +679,7 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     interfaceRadiusState.savedRadiusPx = radiusPx;
     interfaceRadiusState.loaded = true;
     interfaceRadiusState.loadFailed = false;
-    if (editRevision === interfaceRadiusState.editRevision) {
+    if (!hadUnsavedDraft && editRevision === interfaceRadiusState.editRevision) {
       interfaceRadiusState.draftRadiusPx = radiusPx;
       applyInterfaceRadius(radiusPx);
     }
@@ -657,9 +694,10 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
       return false;
     }
     const editedDuringRequest = editRevision !== interfaceRadiusState.editRevision;
+    const preserveDraft = hadUnsavedDraft || editedDuringRequest;
     if (!interfaceRadiusState.loaded) {
       interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
-      if (editedDuringRequest) {
+      if (preserveDraft) {
         syncInterfaceRadiusDirtyStatus();
       } else {
         interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
@@ -682,7 +720,15 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
 
 async function saveInterfaceRadiusPreference() {
   if (interfaceRadiusState.saving) return false;
+  const requestId = ++interfaceRadiusState.saveRequestId;
+  const authRevision = interfaceRadiusState.authRevision;
   interfaceRadiusState.serverMutationRevision += 1;
+  const mutationRevision = interfaceRadiusState.serverMutationRevision;
+  const isCurrentRequest = () => (
+    requestId === interfaceRadiusState.saveRequestId
+    && authRevision === interfaceRadiusState.authRevision
+    && mutationRevision === interfaceRadiusState.serverMutationRevision
+  );
   interfaceRadiusState.saving = true;
   renderInterfaceRadiusPreference();
   try {
@@ -690,6 +736,7 @@ async function saveInterfaceRadiusPreference() {
       method: "POST",
       body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx }),
     });
+    if (!isCurrentRequest()) return false;
     const savedRadiusPx = readInterfaceRadiusPayload(payload);
     interfaceRadiusState.savedRadiusPx = savedRadiusPx;
     interfaceRadiusState.draftRadiusPx = savedRadiusPx;
@@ -699,12 +746,15 @@ async function saveInterfaceRadiusPreference() {
     applyInterfaceRadius(savedRadiusPx);
     return true;
   } catch (error) {
+    if (!isCurrentRequest()) return false;
     interfaceRadiusState.statusText = "保存失败";
     showToast(`界面设置保存失败: ${error.message}`, "error");
     return false;
   } finally {
-    interfaceRadiusState.saving = false;
-    renderInterfaceRadiusPreference();
+    if (isCurrentRequest()) {
+      interfaceRadiusState.saving = false;
+      renderInterfaceRadiusPreference();
+    }
   }
 }
 
@@ -1509,13 +1559,17 @@ async function encryptPasswordForTransport(password) {
 async function logout() {
   const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？");
   if (!confirmed) return;
-  resetInterfaceRadiusForAuthChange();
+  const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
+  const logoutAuthRevision = resetInterfaceRadiusForAuthChange();
   try {
     await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   } catch (error) {
-    showToast(error.message, "error");
+    if (restoreInterfaceRadiusPreference(interfaceRadiusSnapshot, logoutAuthRevision)) {
+      showToast(error.message, "error");
+    }
     return;
   }
+  if (logoutAuthRevision !== interfaceRadiusState.authRevision) return;
   authState.csrfToken = "";
   try { sessionStorage.removeItem(USER_AVATAR_SESSION_KEY); } catch (_) {}
   window.location.href = "/login.html";

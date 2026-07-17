@@ -3417,6 +3417,183 @@ def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path)
     )
 
 
+def test_interface_radius_node_keeps_dirty_draft_when_get_starts_after_edit(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 9);
+
+        apiImpl = async () => ({ settings: { radius_px: 6 } });
+        assert.equal(await h.load({ silent: false }), true);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        """,
+    )
+
+
+def test_interface_radius_node_rejects_get_started_while_post_is_pending(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 6 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const postRequest = deferred();
+        const getRequest = deferred();
+        let getRequestCount = 0;
+        apiImpl = async (_path, options) => {
+          if (options.method === "POST") return postRequest.promise;
+          getRequestCount += 1;
+          return getRequest.promise;
+        };
+        const saving = h.save();
+        await flushMicrotasks();
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        getRequest.resolve({ settings: { radius_px: 4 } });
+        assert.equal(await loading, false);
+        assert.equal(getRequestCount, 0);
+
+        postRequest.reject(new Error("save failed"));
+        assert.equal(await saving, false);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "保存失败");
+        """,
+    )
+
+
+def test_interface_radius_auth_reset_invalidates_old_post_success_and_finally(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const oldPost = deferred();
+        const newGet = deferred();
+        const newPost = deferred();
+        let postRequestCount = 0;
+        apiImpl = async (_path, options) => {
+          if (options.method === "POST") {
+            postRequestCount += 1;
+            return postRequestCount === 1 ? oldPost.promise : newPost.promise;
+          }
+          return newGet.promise;
+        };
+        const oldSaving = h.save();
+        await flushMicrotasks();
+        const authenticating = h.ensureAuthenticated();
+        await flushMicrotasks();
+        newGet.resolve({ settings: { radius_px: 6 } });
+        await authenticating;
+
+        h.elements.interfaceRadiusSlider.value = "7";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        const newSaving = h.save();
+        await flushMicrotasks();
+        assert.equal(h.state.saving, true);
+
+        oldPost.resolve({ settings: { radius_px: 9 } });
+        assert.equal(await oldSaving, false);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 7);
+        assert.equal(h.cssVariables.get("--ui-radius"), "7px");
+        assert.equal(h.state.saving, true);
+        assert.equal(h.toasts.length, 0);
+
+        newPost.resolve({ settings: { radius_px: 7 } });
+        assert.equal(await newSaving, true);
+        assert.equal(h.state.savedRadiusPx, 7);
+        assert.equal(h.state.draftRadiusPx, 7);
+        assert.equal(h.state.saving, false);
+        """,
+    )
+
+
+def test_interface_radius_auth_reset_invalidates_old_post_failure(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const oldPost = deferred();
+        const newGet = deferred();
+        apiImpl = async (_path, options) => (
+          options.method === "POST" ? oldPost.promise : newGet.promise
+        );
+        const oldSaving = h.save();
+        await flushMicrotasks();
+        const authenticating = h.ensureAuthenticated();
+        await flushMicrotasks();
+        newGet.resolve({ settings: { radius_px: 6 } });
+        await authenticating;
+
+        oldPost.reject(new Error("old user save failed"));
+        assert.equal(await oldSaving, false);
+        assert.equal(h.state.savedRadiusPx, 6);
+        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.state.saving, false);
+        assert.equal(h.toasts.length, 0);
+        """,
+    )
+
+
+def test_interface_radius_logout_failure_restores_dirty_snapshot(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const logoutRequest = deferred();
+        apiImpl = async (path) => {
+          assert.equal(path, "/api/auth/logout");
+          return logoutRequest.promise;
+        };
+        const loggingOut = h.logout();
+        await flushMicrotasks();
+        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        logoutRequest.reject(new Error("logout failed"));
+        await loggingOut;
+        assert.equal(h.state.savedRadiusPx, 8);
+        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.saving, false);
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.toasts.length, 1);
+        assert.equal(window.location.href, "/");
+        """,
+    )
+
+
 def test_settings_dark_mode_keeps_business_codes_and_about_links_readable():
     css = _read(STYLES_CSS)
 
