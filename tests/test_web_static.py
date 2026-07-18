@@ -3227,6 +3227,49 @@ def test_all_modal_footers_use_the_neutral_shared_surface():
     assert "background: #0f172a" in dark_footer.group("body")
 
 
+def test_modal_surfaces_are_solid_and_tool_gray_is_limited_to_progress_tracks():
+    css = _read(STYLES_CSS)
+
+    start = css.index(
+        "/* Modal surfaces stay solid; neutral gray is reserved for tool progress tracks. */"
+    )
+    end = css.index("/* User interface radius preference: start */", start)
+    surface_contract = css[start:end]
+
+    for selector in (
+        ".app-modal-shell > .app-modal-header",
+        ".app-modal-shell > .app-modal-body",
+        ".app-modal-shell > .app-modal-footer",
+        "#pbcModal :is(",
+        "#dbValidationModal :is(",
+        "#flowModal :is(",
+        ".db-validation-panel",
+        ".db-validation-table-item",
+        ".flow-run-panel",
+        ".flow-chain-list",
+        ".pbc-import-log",
+        "#flowLog",
+    ):
+        assert selector in surface_contract
+
+    assert surface_contract.count(
+        "background: var(--surface-container-lowest);"
+    ) >= 2
+    assert surface_contract.count("background: var(--surface-container);") == 1
+    for progress_selector in (
+        ".pbc-upload-progress-track",
+        ".pbc-progress-bar-track",
+    ):
+        assert progress_selector in surface_contract
+    assert ".pbc-step-num" not in surface_contract
+    step_state = re.search(
+        r"(?m)^\.pbc-step--active \.pbc-step-num,\s*\n"
+        r"\.pbc-step--done \.pbc-step-num\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert step_state is not None
+    assert "background: var(--primary)" in step_state.group("body")
 def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)

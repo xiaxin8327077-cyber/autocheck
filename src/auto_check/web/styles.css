@@ -12208,6 +12208,64 @@ input.custom-input-native:disabled {
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
+/* Modal surfaces stay solid; neutral gray is reserved for tool progress tracks. */
+.app-modal-shell,
+.app-modal-shell > .app-modal-header,
+.app-modal-shell > .app-modal-body,
+.app-modal-shell > .app-modal-footer,
+.app-modal-shell .modal-body {
+  background: var(--surface-container-lowest);
+}
+
+#pbcModal :is(
+  .pbc-upload-progress,
+  .pbc-file-list-header,
+  .pbc-mapping-count,
+  .pbc-mapping-form select,
+  .pbc-mapping-form input,
+  .pbc-mapping-item,
+  .pbc-mapping-item select,
+  .pbc-import-log,
+  .pbc-btn--secondary,
+  .pbc-btn--ghost,
+  .pbc-btn--outline
+),
+#dbValidationModal :is(
+  .db-validation-panel,
+  .db-validation-form input[type="date"],
+  .db-validation-table-header,
+  .db-validation-table-item,
+  .pbc-import-log,
+  .pbc-btn--secondary,
+  .pbc-btn--ghost,
+  .pbc-btn--outline
+),
+#flowModal :is(
+  .flow-run-panel,
+  .flow-chain-selected-count,
+  .flow-chain-list,
+  .flow-chain-item,
+  .flow-chain-selection-summary,
+  .flow-chain-order-item,
+  .flow-def-header,
+  .pbc-import-log,
+  #flowLog,
+  .pbc-btn--secondary,
+  .pbc-btn--ghost,
+  .pbc-btn--outline
+) {
+  background: var(--surface-container-lowest);
+}
+
+#flowModal .flow-chain-item:hover {
+  background: color-mix(in srgb, var(--secondary) 5%, var(--surface-container-lowest));
+}
+
+#pbcModal :is(.pbc-upload-progress-track, .pbc-progress-bar-track),
+#dbValidationModal .pbc-progress-bar-track,
+#flowModal .pbc-progress-bar-track {
+  background: var(--surface-container);
+}
 /* User interface radius preference: start */
 .nav-item,
 .nav-group-toggle,
