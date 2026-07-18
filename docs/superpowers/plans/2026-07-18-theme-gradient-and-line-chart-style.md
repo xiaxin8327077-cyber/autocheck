@@ -345,10 +345,10 @@ Add separate page-background tokens instead of reusing the full button fill:
 
 ```css
 --theme-page-background-solid: #edf3fc;
---theme-page-background-gradient: /* approved low-opacity blue/cyan/purple layers */;
+--theme-page-background-gradient: /* vitality blue/cyan/purple layers at 8%–12% */;
 ```
 
-The calm theme overrides the solid value with `#EBF1F3` and uses low-opacity teal layers. Dark solid content backgrounds are vitality `#121D36` and calm `#101C2E`; dark gradient mode uses the same theme stops at lower opacity over those bases.
+The vitality login background uses the same stops at `11%–17%`, with purple at the lower end of the range. The calm theme overrides the solid value with `#EBF1F3` and uses the approved low-opacity teal layers. Dark solid content backgrounds are vitality `#121D36` and calm `#101C2E`; dark gradient mode uses the same theme stops at lower opacity over those bases.
 
 ### Step 3: Migrate only approved high-emphasis surfaces
 
