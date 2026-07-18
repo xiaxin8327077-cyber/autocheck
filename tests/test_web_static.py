@@ -3185,7 +3185,7 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
     assert 'class="brand-wordmark-main">监管智核</span>' in html
     assert 'class="brand-wordmark-sub">监管报送核验平台</span>' in html
     assert 'src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
-    assert 'src="/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
+    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' in login_html
     assert 'alt="监管智核 Logo"' in html
     assert "准星" not in html
     assert "准星" not in login_html
@@ -4913,11 +4913,8 @@ def test_login_uses_last_authenticated_interface_radius_display_cache():
 
     for selector in (
         ".right-panel",
-        ':root[data-login-theme="dark"] .login-container',
         ".form-input",
-        ':root[data-login-theme="dark"] .form-input',
         ".login-btn",
-        ':root[data-login-theme="dark"] .login-btn',
     ):
         assert selector in login_html
 
@@ -6252,12 +6249,12 @@ def test_toast_deduplicates_same_message_and_type():
     assert "messageEl.textContent = message;" in body
 
 
-def test_login_page_uses_gradient_glass_light_default_and_dark_toggle():
+def test_login_page_uses_one_solid_centered_layout_in_light_and_dark_modes():
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
 
     assert "<title>监管智核</title>" in login_html
     assert 'class="login-container"' in login_html
-    assert 'class="left-panel"' in login_html
+    assert 'class="left-panel"' not in login_html
     assert 'class="right-panel"' in login_html
     assert 'class="light-brand"' in login_html
     assert '<img class="login-brand-logo" src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />' in login_html
@@ -6270,11 +6267,10 @@ def test_login_page_uses_gradient_glass_light_default_and_dark_toggle():
     assert 'document.querySelector(".light-brand p")' not in login_html
     assert 'document.getElementById("loginTitle").textContent = titleText;' in login_html
     assert 'document.getElementById("loginSubtitle").textContent = subtitleText;' in login_html
-    assert 'class="deco deco-1"' in login_html
-    assert "linear-gradient(135deg, #f0fdf4 0%, #ecfeff 30%, #fdf2f8 60%, #fefce8 100%)" in login_html
-    assert "backdrop-filter: blur(20px);" in login_html
-    assert "border-radius: 24px;" in login_html
-    assert "overflow: hidden;" in login_html
+    assert 'class="deco deco-1"' not in login_html
+    assert "linear-gradient" not in login_html
+    assert "radial-gradient" not in login_html
+    assert "background: var(--theme-page-background);" in login_html
     assert "max-width: 440px;" in login_html
     assert "padding: 34px 32px 34px;" in login_html
     assert "text-align: left;" in login_html
@@ -6283,38 +6279,25 @@ def test_login_page_uses_gradient_glass_light_default_and_dark_toggle():
     assert "margin: 0;" in login_html
     assert "还没有账户？" in login_html
     assert "去联系管理员" in login_html
-    assert 'class="feature-card"' in login_html
-    assert 'class="social-login"' in login_html
     assert 'class="forgot-password"' in login_html
     assert 'id="loginThemeToggle"' in login_html
-    assert "max-width: 860px;" in login_html
-    assert "min-height: 500px;" in login_html
-    assert "padding: 52px 44px;" in login_html
-    assert '<img class="login-brand-logo login-brand-logo--dark" src="/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />' in login_html
-    assert "width: min(300px, 88%);" in login_html
-    assert ':root[data-login-theme="dark"] .welcome-title,' in login_html
-    assert ':root[data-login-theme="dark"] .welcome-subtitle {' in login_html
+    assert "max-width: 860px;" not in login_html
+    assert "min-height: 500px;" not in login_html
+    assert "grid-template-columns" not in login_html
+    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' in login_html
     assert 'class="title brand-wordmark' not in login_html
-    assert '<div class="feature-icon">\U0001f4ca</div>' in login_html
-    assert '<div class="feature-icon">\u2713</div>' in login_html
-    assert '<div class="feature-icon">\U0001f512</div>' in login_html
-    assert '<button class="social-btn" type="button" title="\u5fae\u4fe1" data-provider="\u5fae\u4fe1">\U0001f4ac</button>' in login_html
-    assert '<button class="social-btn" type="button" title="\u9489\u9489" data-provider="\u9489\u9489">\U0001f4f1</button>' in login_html
-    assert '<button class="social-btn" type="button" title="LDAP" data-provider="LDAP">\U0001f510</button>' in login_html
     assert '<html lang="zh-CN" data-login-theme="light">' in login_html
-    assert ':root[data-login-theme="dark"] .login-container' in login_html
     assert ':root[data-login-theme="dark"] .form-input:-webkit-autofill' in login_html
     assert "-webkit-text-fill-color: var(--text-primary)" in login_html
-    assert "0 0 0 1000px #20242d inset" in login_html
+    assert "var(--field-surface) inset" in login_html
     assert '"/api/auth/login"' in login_html
     assert '"/api/auth/setup"' in login_html
     assert "暂不支持" in login_html
 
 
-def test_login_page_light_brand_reuses_dark_mode_floating_circle():
+def test_login_page_brand_uses_one_solid_theme_bubble_and_equal_logo_geometry():
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
     light_brand = re.search(r"\.light-brand\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
-    light_brand_layers = re.search(r"\.light-brand::before,\s*\n      \.light-brand::after\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
     light_brand_circle = re.search(r"\.light-brand::before\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
     login_logo = re.search(r"\.login-brand-logo\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
 
@@ -6323,34 +6306,13 @@ def test_login_page_light_brand_reuses_dark_mode_floating_circle():
     assert "min-height: 128px;" in light_brand_body
     assert "display: flex;" in light_brand_body
     assert "align-items: center;" in light_brand_body
-    assert light_brand_layers is not None
-    layer_body = light_brand_layers.group("body")
-    assert 'content: "";' in layer_body
-    assert "top: 6px;" in layer_body
-    assert "left: 12px;" in layer_body
-    assert "border-radius: 50%;" in layer_body
-    assert "transform-origin: center;" in layer_body
-    assert "will-change: transform, opacity;" in layer_body
-    assert "animation: lightBrandBubbleFloat 14s linear infinite alternate;" in layer_body
     assert light_brand_circle is not None
     circle_body = light_brand_circle.group("body")
-    assert "background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(6, 182, 212, 0.12), rgba(124, 58, 237, 0.16));" in circle_body
-    assert "@keyframes lightBrandBubbleFloat" in login_html
-    assert "0%, 10% { transform: translate3d(-28px, 7px, 0)" in login_html
-    assert "translate3d(-8px, -22px, 0)" in login_html
-    assert "translate3d(22px, 7px, 0)" in login_html
-    assert "translate3d(52px, -22px, 0)" in login_html
-    assert "translate3d(58px, -16px, 0)" in login_html
-    assert "translate3d(63px, -5px, 0)" in login_html
-    assert "96%, 100% { transform: translate3d(68px, 7px, 0)" in login_html
-    assert "@keyframes lightBrandBubbleWarmth" in login_html
-    assert "rgba(37, 99, 235, 0.18)" in login_html
-    assert "96%, 100% { opacity: 0.46;" in login_html
-    assert "rgba(245, 158, 11, 0.34)" in login_html
-    assert "lightBrandBubbleWarmth 14s linear infinite alternate" in login_html
+    assert "background: var(--theme-accent-soft);" in circle_body
+    assert "linear-gradient" not in login_html
     assert login_logo is not None
     assert "z-index: 1;" in login_logo.group("body")
-    assert ":root[data-login-theme=\"dark\"] .light-brand {" in login_html
+    assert 'loginBrandLogo.src = normalized === "dark"' in login_html
 
 
 def test_login_page_light_default_password_copy_and_eye_toggle_are_stable():
