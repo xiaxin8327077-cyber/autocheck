@@ -17,7 +17,8 @@ def test_history_detail_uses_info_modal_and_shared_close_button():
     assert 'id="infoModal"' in html
     assert "function showHistoryDetailModal(id)" in js
     assert 'modalClass: "modal-info--history-detail"' in js
-    assert 'document.querySelector("#infoBody .restore-history-detail")' in js
+    assert 'id="infoFooter"' in html
+    assert 'document.querySelector("#infoFooter .restore-history-detail")' in js
     assert "selectedHistoryId = \"\"" in js
 
     start = js.index("function renderHistoryDetailContent(run)")
