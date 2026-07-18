@@ -3228,6 +3228,8 @@ def test_all_modal_footers_use_the_neutral_shared_surface():
 
 
 def test_modal_table_headers_match_history_tokens_without_layout_overrides():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
     global_headers = re.search(r"(?m)^th\s*\{(?P<body>.*?)\}", css, re.S)
@@ -3243,7 +3245,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     for visual_declaration in (
         "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
         "font-weight: 500",
-        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
+        "background: var(--surface-container-low)",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert visual_declaration in global_body
@@ -3255,7 +3257,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     )
     assert global_dark_headers is not None
     assert "color: #cbd5e1" in global_dark_headers.group("body")
-    assert "background: rgba(30, 41, 59, 0.94)" in global_dark_headers.group("body")
+    assert "background: var(--surface-container-low)" in global_dark_headers.group("body")
 
     shared_headers = re.search(
         r"(?m)^\.app-modal-shell table th,\s*\n"
@@ -3270,7 +3272,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     for declaration in (
         "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
         "font-weight: 500",
-        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
+        "background: var(--surface-container-low)",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert declaration in shared_body
@@ -3289,8 +3291,11 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
         assert layout_property not in shared_body
 
     shared_rule_start = css.index(".app-modal-shell table th,")
+    assert '<div class="app-modal-shell modal modal-info">' in html
+    assert 'class="home-stat-modal-table"' in app_js
+    assert ".app-modal-shell table th" in shared_headers.group(0)
+    assert css.index(".home-stat-modal-table th") < shared_rule_start
     for modal_specific_selector in (
-        ".home-stat-modal-table th",
         ".db-validation-history-table th",
         ".flow-def-header th",
     ):
@@ -3308,7 +3313,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     assert dark_headers is not None
     dark_body = dark_headers.group("body")
     assert "color: #cbd5e1" in dark_body
-    assert "background: rgba(30, 41, 59, 0.94)" in dark_body
+    assert "background: var(--surface-container-low)" in dark_body
     assert (
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, "
         "var(--surface-container-lowest))"
@@ -5881,7 +5886,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "position: static" in result_header.group("body")
     assert "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))" in result_header.group("body")
     assert "font-weight: 500" in result_header.group("body")
-    assert "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))" in result_header.group("body")
+    assert "background: var(--surface-container-low)" in result_header.group("body")
     assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
 
     cells = re.search(
@@ -5915,7 +5920,14 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "font-weight: 400" in section_count.group("body")
     assert '[data-color-mode="dark"] .history-summary-item' in css
     assert '[data-color-mode="dark"] .history-result-table td' in css
-    assert '[data-color-mode="dark"] .history-result-table th' in css
+    dark_result_header = re.search(
+        r'(?m)^\[data-color-mode="dark"\] \.history-result-table th\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert dark_result_header is not None
+    assert "color: #cbd5e1" in dark_result_header.group("body")
+    assert "background: var(--surface-container-low)" in dark_result_header.group("body")
     for status_tone in ("done", "pending"):
         status = re.search(rf"(?m)^\.history-status--{status_tone}\s*\{{(?P<body>.*?)\}}", css, re.S)
         assert status is not None

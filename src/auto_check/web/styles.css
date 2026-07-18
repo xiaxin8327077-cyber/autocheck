@@ -3343,13 +3343,13 @@ th {
   font-size: 12px;
   font-weight: 500;
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
-  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
 [data-color-mode="dark"] th {
   color: #cbd5e1;
-  background: rgba(30, 41, 59, 0.94);
+  background: var(--surface-container-low);
 }
 
 .result-table tbody tr:hover { background: rgb(235 238 240 / 0.5); }
@@ -4057,7 +4057,7 @@ th {
   z-index: auto;
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
-  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -4114,7 +4114,7 @@ th {
 
 [data-color-mode="dark"] .history-result-table th {
   color: #cbd5e1;
-  background: rgba(30, 41, 59, 0.94);
+  background: var(--surface-container-low);
 }
 
 [data-color-mode="dark"] .history-result-table td {
@@ -12184,7 +12184,7 @@ input.custom-input-native:disabled {
 .app-modal-shell .flow-def-header {
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
-  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -12193,7 +12193,7 @@ input.custom-input-native:disabled {
 [data-color-mode="dark"] .app-modal-shell .db-validation-table-header,
 [data-color-mode="dark"] .app-modal-shell .flow-def-header {
   color: #cbd5e1;
-  background: rgba(30, 41, 59, 0.94);
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
