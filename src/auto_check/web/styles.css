@@ -3777,6 +3777,11 @@ th {
   font-size: 12px;
 }
 
+.result-card > .table-wrap > .result-table > thead > tr > th {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
 .history-added {
   color: var(--error);
   font-weight: 700;

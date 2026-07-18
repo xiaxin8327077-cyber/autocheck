@@ -3326,6 +3326,21 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
         assert duplicate_visual not in user_header.group("body")
 
 
+def test_main_result_and_history_headers_match_user_table_height_only():
+    css = _read(STYLES_CSS)
+    main_headers = re.search(
+        r"(?m)^\.result-card > \.table-wrap > \.result-table > thead > tr > th\s*"
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert main_headers is not None
+    assert "padding-top: 14px" in main_headers.group("body")
+    assert "padding-bottom: 14px" in main_headers.group("body")
+    assert "height:" not in main_headers.group("body")
+    assert ".app-modal-shell" not in main_headers.group(0)
+
+
 def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
