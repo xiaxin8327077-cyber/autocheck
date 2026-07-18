@@ -12495,7 +12495,23 @@ input.custom-input-native:disabled {
 .custom-select-dropdown,
 .custom-date-shell,
 .custom-date-dropdown,
-#page-report-navigation .report-nav-filter-chips span {
+#page-report-navigation .report-nav-filter-chips span,
+#page-users .user-filter-pill,
+#page-users .user-avatar,
+#page-users .role-badge,
+#page-users .user-status-badge,
+.user-modal .user-role-card,
+.user-modal .user-role-card-icon,
+.user-modal .user-enable-row,
+#configModal .modal-section,
+#infoModal .home-stat-modal-table-wrap,
+#dbValidationModal .db-validation-table-item,
+#dbValidationModal #dbValidationLog,
+.flow-chain-editor-overlay .flow-definition-table,
+.flow-chain-editor-overlay .flow-selected-step,
+.flow-chain-editor-overlay .flow-selected-step-actions .btn-icon,
+#page-report-navigation .report-nav-done-meta,
+#page-report-navigation .report-nav-no-panel-done-meta {
   border-radius: var(--ui-radius) !important;
 }
 /* User interface radius preference: end */

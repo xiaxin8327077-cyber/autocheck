@@ -4048,7 +4048,7 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         "overlay",
         "[class*=card]",
     ):
-        assert forbidden_selector not in override
+        assert forbidden_selector not in selectors
 
     for selector in selectors:
         assert "*" not in selector
@@ -4057,6 +4057,51 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
     for _selector_group, body in blocks:
         declarations = [item.strip() for item in body.split(";") if item.strip()]
         assert declarations == ["border-radius: var(--ui-radius) !important"]
+
+
+def test_remaining_user_modal_home_stat_validation_flow_and_report_radius_overrides_are_scoped():
+    css = _read(STYLES_CSS)
+    start_marker = "/* User interface radius preference: start */"
+    end_marker = "/* User interface radius preference: end */"
+    override = css.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    blocks = re.findall(r"(?P<selectors>[^{}]+)\{(?P<body>[^{}]+)\}", override, re.S)
+    selectors = {
+        selector.strip()
+        for selector_group, _body in blocks
+        for selector in selector_group.split(",")
+        if selector.strip()
+    }
+
+    required_selectors = {
+        "#page-users .user-filter-pill",
+        "#page-users .user-avatar",
+        "#page-users .role-badge",
+        "#page-users .user-status-badge",
+        ".user-modal .user-role-card",
+        ".user-modal .user-role-card-icon",
+        ".user-modal .user-enable-row",
+        "#configModal .modal-section",
+        "#infoModal .home-stat-modal-table-wrap",
+        "#dbValidationModal .db-validation-table-item",
+        "#dbValidationModal #dbValidationLog",
+        ".flow-chain-editor-overlay .flow-definition-table",
+        ".flow-chain-editor-overlay .flow-selected-step",
+        ".flow-chain-editor-overlay .flow-selected-step-actions .btn-icon",
+        "#page-report-navigation .report-nav-done-meta",
+        "#page-report-navigation .report-nav-no-panel-done-meta",
+    }
+    assert len(required_selectors) == 16
+    assert required_selectors <= selectors
+
+    for excluded_selector in (
+        ".user-avatar-status",
+        ".current-user-badge",
+        ".user-enable-switch",
+        ".user-enable-switch .switch-track",
+        ".user-enable-switch .switch-thumb",
+        ".flow-selected-step-actions .btn-icon",
+    ):
+        assert excluded_selector not in selectors
 
 
 def test_readme_documents_expanded_interface_radius_surface_coverage():
