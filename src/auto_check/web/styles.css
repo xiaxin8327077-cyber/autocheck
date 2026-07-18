@@ -4048,11 +4048,18 @@ th {
 .history-result-table th {
   position: static;
   z-index: auto;
+  color: color-mix(in srgb, var(--on-surface-variant) 45%, var(--surface-container-lowest));
+  font-weight: 500;
+  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
 .history-result-table th,
 .history-result-table td {
   text-align: center;
+}
+
+.history-result-table td {
   border-bottom: 1px solid var(--surface-variant);
 }
 
@@ -8269,7 +8276,7 @@ input:focus, select:focus {
     padding: 78px 0 18px;
   }
 
-  .ds-grid, .config-grid, .field-grid, .history-summary-grid, .history-detail-counts {
+  .ds-grid, .config-grid, .field-grid, .history-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -12039,6 +12046,19 @@ input.custom-input-native:disabled {
   border: 1px solid var(--outline-variant);
   background: var(--surface-container-lowest);
   box-shadow: 0 12px 36px rgba(15, 23, 42, 0.16);
+}
+
+.app-modal-shell,
+.app-modal-shell * {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.app-modal-shell::-webkit-scrollbar,
+.app-modal-shell *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .app-modal-header {

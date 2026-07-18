@@ -5570,6 +5570,10 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     result_header = re.search(r"(?m)^\.history-result-table th\s*\{(?P<body>.*?)\}", css, re.S)
     assert result_header is not None
     assert "position: static" in result_header.group("body")
+    assert "color: color-mix(in srgb, var(--on-surface-variant) 45%, var(--surface-container-lowest))" in result_header.group("body")
+    assert "font-weight: 500" in result_header.group("body")
+    assert "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))" in result_header.group("body")
+    assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
 
     cells = re.search(
         r"(?m)^\.history-result-table th,\s*\n\.history-result-table td\s*\{(?P<body>.*?)\}",
@@ -5589,6 +5593,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert '[data-color-mode="dark"] .history-result-table th' in css
     assert ".history-status--done" in css
     assert ".history-status--pending" in css
+    assert ".history-detail-counts" not in css
 
 
 def test_history_detail_uses_inline_metadata_and_colored_sections():
@@ -5625,6 +5630,31 @@ def test_history_detail_uses_inline_metadata_and_colored_sections():
     assert cells is not None
     assert "text-align: center" in cells.group("body")
     assert ".history-result-table td.money-cell" in css
+
+
+def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
+    css = _read(STYLES_CSS)
+
+    scrollbar_scope = re.search(
+        r"(?m)^\.app-modal-shell,\s*\n\.app-modal-shell \*\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert scrollbar_scope is not None
+    assert "scrollbar-width: none" in scrollbar_scope.group("body")
+    assert "-ms-overflow-style: none" in scrollbar_scope.group("body")
+
+    webkit_scrollbar = re.search(
+        r"(?m)^\.app-modal-shell::\-webkit-scrollbar,\s*\n\.app-modal-shell \*::\-webkit-scrollbar\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert webkit_scrollbar is not None
+    assert "display: none" in webkit_scrollbar.group("body")
+
+    modal_body = re.search(r"(?m)^\.app-modal-shell > \.app-modal-body\s*\{(?P<body>.*?)\}", css, re.S)
+    assert modal_body is not None
+    assert "overflow: auto" in modal_body.group("body")
 
 
 def test_history_list_shows_loading_animation_while_fetching():
