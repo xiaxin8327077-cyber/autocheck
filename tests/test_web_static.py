@@ -518,6 +518,107 @@ def test_theme_and_dark_mode_switches_reapply_effective_solid_colors():
         assert "applyEffectiveThemeColors(effectiveThemeColors);" in body
 
 
+def test_solid_theme_runtime_derives_one_page_background_for_each_mode(tmp_path):
+    _run_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const light = applyEffectiveThemeColors({
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.match(light.palette.pageBackground, /^#[0-9A-F]{6}$/);
+        assert.equal(cssVariables.get("--theme-page-background"), light.palette.pageBackground);
+        assert.notEqual(light.palette.pageBackground, light.palette.accent);
+
+        attributes.set("data-color-mode", "dark");
+        const dark = applyEffectiveThemeColors(light.colors);
+        assert.match(dark.palette.pageBackground, /^#[0-9A-F]{6}$/);
+        assert.equal(cssVariables.get("--theme-page-background"), dark.palette.pageBackground);
+        assert.notEqual(dark.palette.pageBackground, light.palette.pageBackground);
+        """,
+    )
+
+
+def test_theme_emphasis_surfaces_use_solid_tokens_without_header_leakage():
+    css = _read(STYLES_CSS)
+
+    for selector in (
+        ".top-nav-item.active,",
+        ".top-nav-group.active > .top-nav-group-toggle",
+        ".nav-item.active",
+        ".btn-primary",
+        ".trend-quick-btn.active",
+        "#page-local-storage .local-storage-tab.active,",
+        "#page-settings .card-icon-blue,",
+    ):
+        assert selector in css
+
+    solid_contract_start = css.index("/* Solid theme emphasis surfaces: start */")
+    solid_contract_end = css.index("/* Solid theme emphasis surfaces: end */", solid_contract_start)
+    solid_contract = css[solid_contract_start:solid_contract_end]
+    assert "background: var(--theme-accent);" in solid_contract
+    assert "color: var(--theme-on-accent);" in solid_contract
+    assert "linear-gradient" not in solid_contract
+    assert "radial-gradient" not in solid_contract
+    for protected_selector in (" th,", " th {", "\nth {", "thead", ".table-header", ".app-modal-shell"):
+        assert protected_selector not in solid_contract
+
+
+def test_theme_forms_and_calendar_use_solid_tokens_and_neutral_surfaces():
+    css = _read(STYLES_CSS)
+    contract_start = css.index("/* Solid theme form and calendar controls: start */")
+    contract_end = css.index("/* Solid theme form and calendar controls: end */", contract_start)
+    contract = css[contract_start:contract_end]
+
+    for selector in (
+        ".main-content input:not([type=\"checkbox\"])",
+        ".app-modal-shell input:not([type=\"checkbox\"])",
+        ".custom-input-shell:focus-within input.custom-input-native",
+        ".custom-select-trigger::after",
+        ".custom-select-option.active",
+        ".custom-date-shell::after",
+        ".custom-date-head strong",
+        ".custom-date-day.active",
+        ".custom-date-actions button",
+    ):
+        assert selector in contract
+
+    for token in (
+        "caret-color: var(--theme-accent-readable)",
+        "border-color: var(--theme-accent-readable)",
+        "box-shadow: 0 0 0 3px var(--theme-focus-ring)",
+        "background: var(--surface-container-lowest)",
+        "background: var(--theme-accent)",
+        "color: var(--theme-on-accent)",
+    ):
+        assert token in contract
+    assert "linear-gradient" not in contract
+    assert "radial-gradient" not in contract
+    for protected_selector in (" th,", " th {", "\nth {", "thead", ".table-header"):
+        assert protected_selector not in contract
+
+
+def test_theme_surface_contract_does_not_change_protected_header_or_modal_rules():
+    css = _read(STYLES_CSS)
+    theme_contract = css[
+        css.index("/* Solid theme emphasis surfaces: start */"):
+        css.index("/* Solid theme form and calendar controls: end */")
+    ]
+    for protected_surface in (
+        ".app-modal-shell > .app-modal-header",
+        ".app-modal-shell > .app-modal-body",
+        ".app-modal-shell > .app-modal-footer",
+        ".modal-info",
+        ".pbc-modal",
+        ".user-modal",
+    ):
+        assert protected_surface not in theme_contract
+    assert " th," not in theme_contract
+    assert " th {" not in theme_contract
+    assert "\nth {" not in theme_contract
+    assert "thead" not in theme_contract
+
+
 def test_system_theme_color_controls_are_capability_driven_text_inputs():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
@@ -1501,15 +1602,16 @@ def test_result_detail_uses_report_asset_total_label_everywhere():
     assert "结果列表支持点击项目所在行展开或收回详情" in readme
 
 
-def test_space_tech_result_detail_title_icon_uses_gradient_theme_color():
+def test_space_tech_result_detail_title_icon_uses_solid_theme_color():
     css = _read(STYLES_CSS)
 
     result_icon = re.search(r'(?m)^\[data-theme="space-tech"\] \.result-card \.card-title-icon\s*\{(?P<body>.*?)\}', css, re.S)
     assert result_icon is not None
     body = result_icon.group("body")
-    assert "linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6)" in body
-    assert "background-clip: text" in body
-    assert "-webkit-text-fill-color: transparent" in body
+    assert "color: var(--theme-accent-readable)" in body
+    assert "background: none" in body
+    assert "background-clip: text" not in body
+    assert "-webkit-text-fill-color: currentColor" in body
     assert "drop-shadow" in body
 
 
@@ -5574,9 +5676,10 @@ def test_space_tech_theme_uses_reference_light_palette():
         "--surface-container-lowest: #ffffff",
         "--on-surface: #0f172a",
         "--secondary: #3b82f6",
-        "--space-gradient-primary: linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6)",
+        "background: var(--theme-page-background)",
     ]:
         assert text in body
+    assert "--space-gradient-primary" not in body
     assert '[data-theme="space-tech"] body' in css
     assert "rgba(255, 255, 255, 0.72)" in css
 
@@ -7175,7 +7278,9 @@ def test_selects_use_scheme_5_glass_style_without_particles():
     for text in [
         "padding-right: 40px",
         "border-radius: 8px",
-        "radial-gradient(circle at 12% 28%",
+        "background-color: var(--surface-container-lowest)",
+        "background-image: none",
+        "caret-color: var(--theme-accent-readable)",
         "backdrop",
         "-webkit-appearance: none",
         "appearance: none",
@@ -7188,7 +7293,7 @@ def test_selects_use_scheme_5_glass_style_without_particles():
     assert "select option:checked" in css
     assert '[data-color-mode="dark"] select' in css
     assert '[data-color-mode="dark"] select option:checked' in css
-    assert "rgba(129, 140, 248, 0.30)" in css
+    assert "color-mix(in srgb, var(--theme-accent) 30%, var(--outline-variant))" in css
 
     for selector in [
         ".custom-select-shell",
@@ -7241,22 +7346,15 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "overflow: hidden",
         "overscroll-behavior: contain",
         "scrollbar-gutter: stable",
-        "background: rgba(255, 255, 255, 0.90)",
-        "background: rgba(255, 255, 255, 0.88)",
-        "rgba(15, 23, 42, 0.76)",
-        "radial-gradient(circle at 18% 22%, rgba(6, 182, 212, 0.15)",
-        "radial-gradient(circle at 84% 72%, rgba(139, 92, 246, 0.13)",
+        "background: var(--surface-container-lowest)",
+        "color: var(--on-surface)",
+        "caret-color: var(--theme-accent-readable)",
         "backdrop-filter: blur(10px)",
-        "border: 1px solid rgba(59, 130, 246, 0.30)",
-        "border: 1px solid rgba(59, 130, 246, 0.24)",
-        "border: 1.5px solid #06b6d4",
-        "filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.50))",
+        "border-color: var(--theme-accent-readable)",
+        "box-shadow: 0 0 0 3px var(--theme-focus-ring)",
         "grid-template-columns: repeat(7, 1fr)",
-        "background: linear-gradient(135deg, #3b82f6, #06b6d4)",
-        "border-color: color-mix(in srgb, var(--secondary) 46%, transparent)",
-        "border-color: color-mix(in srgb, var(--secondary) 52%, transparent)",
-        "background: linear-gradient(135deg, var(--secondary), color-mix(in srgb, var(--secondary) 72%, var(--primary)))",
-        "filter: drop-shadow(0 0 3px #3b82f6)",
+        "background: var(--theme-accent)",
+        "color: var(--theme-on-accent)",
         "animation: dropdown-slide 0.3s ease-out",
         "padding-left: 24px",
         "content: \"✓\"",
@@ -7665,9 +7763,9 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert space_theme is not None
-    assert "--space-page-background:" in space_theme.group("body")
+    assert "--space-page-background:" not in space_theme.group("body")
     assert "--space-page-gutter-background" not in space_theme.group("body")
-    assert "background: var(--space-page-background)" in space_theme.group("body")
+    assert "background: var(--theme-page-background)" in space_theme.group("body")
     assert "background-size: 100vw 100vh" in space_theme.group("body")
     assert "background-position: 0 0" in space_theme.group("body")
     assert "background-attachment: fixed" in space_theme.group("body")
@@ -7686,7 +7784,7 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert space_body is not None
-    assert "background: transparent" in space_body.group("body")
+    assert "background: var(--theme-page-background)" in space_body.group("body")
 
     mobile_top_nav = re.search(
         r"\[data-theme=\"space-tech\"\] \.top-nav\s*\{(?P<body>.*?)\}",

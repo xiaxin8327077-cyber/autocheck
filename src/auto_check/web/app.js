@@ -542,6 +542,11 @@ const THEME_PALETTE_SURFACES = Object.freeze({
   light: "#F7FAFC",
   dark: "#121318",
 });
+const THEME_PAGE_BACKGROUND_BASES = Object.freeze({
+  vitality: Object.freeze({ light: "#F8FAFC", dark: "#07111F" }),
+  calm: Object.freeze({ light: "#F7FAFC", dark: "#121318" }),
+});
+const THEME_PAGE_BACKGROUND_MIX = Object.freeze({ light: 0.07, dark: 0.12 });
 let effectiveThemeColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
 
 function normalizeThemeHex(value) {
@@ -603,7 +608,7 @@ function mixThemeHex(from, to, ratio) {
   });
 }
 
-function deriveThemePalette(value, mode = "light") {
+function deriveThemePalette(value, mode = "light", pageBase = null) {
   const accent = normalizeThemeHex(value) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality;
   const colorMode = mode === "dark" ? "dark" : "light";
   const surface = THEME_PALETTE_SURFACES[colorMode];
@@ -616,11 +621,17 @@ function deriveThemePalette(value, mode = "light") {
     readableAccent = mixThemeHex(accent, readableTarget, step / 100);
   }
   const rgb = themeHexToRgb(accent);
+  const normalizedPageBase = normalizeThemeHex(pageBase) || surface;
   return {
     accent,
     onAccent,
     readableAccent,
     focusRing: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${colorMode === "dark" ? "0.38" : "0.28"})`,
+    pageBackground: mixThemeHex(
+      normalizedPageBase,
+      accent,
+      THEME_PAGE_BACKGROUND_MIX[colorMode],
+    ),
   };
 }
 
@@ -632,11 +643,16 @@ function applyEffectiveThemeColors(colors = effectiveThemeColors) {
   const root = document.documentElement;
   const themeKey = root.getAttribute("data-theme") === "space-tech" ? "vitality" : "calm";
   const colorMode = root.getAttribute("data-color-mode") === "dark" ? "dark" : "light";
-  const palette = deriveThemePalette(effectiveThemeColors[themeKey], colorMode);
+  const palette = deriveThemePalette(
+    effectiveThemeColors[themeKey],
+    colorMode,
+    THEME_PAGE_BACKGROUND_BASES[themeKey][colorMode],
+  );
   root.style.setProperty("--theme-accent", palette.accent);
   root.style.setProperty("--theme-on-accent", palette.onAccent);
   root.style.setProperty("--theme-accent-readable", palette.readableAccent);
   root.style.setProperty("--theme-focus-ring", palette.focusRing);
+  root.style.setProperty("--theme-page-background", palette.pageBackground);
   return { colors: { ...effectiveThemeColors }, palette };
 }
 
