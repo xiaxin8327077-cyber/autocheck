@@ -3880,18 +3880,17 @@ function renderHistoryDetailContent(run) {
   return `
     <div class="history-detail-card">
       <div class="history-detail">
-    <div class="history-summary-grid">
-      ${historySummaryItem("报告期", run.run_date)}
-      ${historySummaryItem("执行人", historyExecutorName(run))}
-      ${historySummaryItem("执行时间", run.run_at)}
-      ${historySummaryItem("基准记录", historyBaselineText(run))}
-    </div>
-    ${historyDetailCounts(run)}
-    ${historySection("本次新增差异", historyDiffItems(run, "added_results"))}
-    ${historySection("本次减少差异", historyDiffItems(run, "removed_results"))}
-    ${historySection("本次完整核对结果", run.results || [])}
+        <div class="history-summary-grid">
+          ${historySummaryItem("报告期", run.run_date)}
+          ${historySummaryItem("执行人", historyExecutorName(run))}
+          ${historySummaryItem("执行时间", run.run_at)}
+          ${historySummaryItem("基准记录", historyBaselineText(run))}
+        </div>
+        ${historySection("本次完整核对结果", run.results || [], "complete")}
+        ${historySection("本次新增差异", historyDiffItems(run, "added_results"), "added")}
+        ${historySection("本次减少差异", historyDiffItems(run, "removed_results"), "removed")}
       </div>
-      <div class="history-detail-footer">
+      <div class="app-modal-footer history-detail-footer">
         <button type="button" class="btn-primary btn-sm restore-history-detail" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>
       </div>
     </div>
@@ -3914,41 +3913,34 @@ function historySummaryItem(label, value) {
   return `<div class="history-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
-function historyDetailCounts(run) {
-  return `<div class="history-detail-counts">
-    ${historyCountItem("本次新增差异", historyHasBaseline(run) ? (run.added_results || []) : null)}
-    ${historyCountItem("本次减少差异", historyHasBaseline(run) ? (run.removed_results || []) : null)}
-    ${historyCountItem("本次完整核对结果", run.results || [])}
-  </div>`;
-}
-
-function historyCountItem(label, items) {
-  if (items === null) {
-    return `<div class="history-count-item"><span>${escapeHtml(label)}</span><strong>-</strong></div>`;
-  }
-  return `<div class="history-count-item"><span>${escapeHtml(label)}</span><strong>${formatMoney(items.length)} 条</strong></div>`;
-}
-
-function historySection(title, items) {
+function historySection(title, items, tone) {
   if (!items.length) return "";
-  const sectionClass = `${title === "本次完整核对结果" ? " history-section--full-results" : ""}${items.length > 10 ? " history-section--scroll" : ""}`;
-  return `<div class="history-section${sectionClass}">
-    <div class="history-section-title">${escapeHtml(title)} <span>${items.length} 条</span></div>
+  const scrollClass = items.length > 10 ? " history-section--scroll" : "";
+  return `<section class="history-section history-section--${tone}${scrollClass}">
+    <div class="history-section-title">
+      <span class="history-section-bar" aria-hidden="true"></span>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${formatMoney(items.length)} 条</span>
+    </div>
     <div class="history-section-table">${historyResultTable(items)}</div>
-  </div>`;
+  </section>`;
 }
 
 function historyResultTable(items) {
   if (!items.length) return '<div class="history-empty">无</div>';
   return `<table class="detail-table history-result-table">
     <thead><tr><th>项目编号</th><th>项目名称</th><th>差异金额</th><th>差异类型</th><th>状态</th></tr></thead>
-    <tbody>${items.map((item) => `<tr>
-      <td>${escapeHtml(item.project_code)}</td>
-      <td>${escapeHtml(item.project_name)}</td>
-      <td class="money-cell">${formatMoney(item.difference)}</td>
-      <td>${escapeHtml(item.difference_reason || "")}</td>
-      <td>${escapeHtml(item.match_status || "")}</td>
-    </tr>`).join("")}</tbody>
+    <tbody>${items.map((item) => {
+      const status = String(item.match_status || "");
+      const statusClass = status === "已解释" ? "history-status--done" : "history-status--pending";
+      return `<tr>
+        <td>${escapeHtml(item.project_code)}</td>
+        <td>${escapeHtml(item.project_name)}</td>
+        <td class="money-cell">${formatMoney(item.difference)}</td>
+        <td>${escapeHtml(item.difference_reason || "")}</td>
+        <td><span class="history-status ${statusClass}">${escapeHtml(status)}</span></td>
+      </tr>`;
+    }).join("")}</tbody>
   </table>`;
 }
 

@@ -2933,7 +2933,6 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".sidebar-footer .status",
         "#page-report-navigation .report-nav-refresh-button",
         ".history-summary-item",
-        ".history-count-item",
         ".history-section",
         ".detail-block",
         ".detail-item",
@@ -5503,8 +5502,9 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "[data-color-mode=\"dark\"] .history-detail-card" in css
     assert "var(--surface-container-lowest)" in css
     assert "var(--on-surface)" in css
-    assert "history-section--full-results" in app_js
+    assert 'history-section--${tone}' in app_js
     assert 'items.length > 10 ? " history-section--scroll" : ""' in app_js
+    assert 'class="history-status ${statusClass}"' in app_js
 
 
 def test_history_detail_modal_layout_keeps_tables_readable():
@@ -5533,7 +5533,8 @@ def test_history_detail_modal_layout_keeps_tables_readable():
 
     summary_grid = re.search(r"(?m)^\.history-summary-grid\s*\{(?P<body>.*?)\}", css, re.S)
     assert summary_grid is not None
-    assert "repeat(auto-fit, minmax(220px, 1fr))" in summary_grid.group("body")
+    assert "display: flex" in summary_grid.group("body")
+    assert "flex-wrap: wrap" in summary_grid.group("body")
 
     detail = re.search(r"(?m)^\.history-detail-card \.history-detail\s*\{(?P<body>.*?)\}", css, re.S)
     assert detail is not None
@@ -5570,30 +5571,60 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert result_header is not None
     assert "position: static" in result_header.group("body")
 
+    cells = re.search(
+        r"(?m)^\.history-result-table th,\s*\n\.history-result-table td\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert cells is not None
+    assert "text-align: center" in cells.group("body")
+    assert ".history-result-table td.money-cell" in css
+
     summary_value = re.search(r"(?m)^\.history-summary-item strong\s*\{\s*min-width: 0;(?P<body>.*?)\}", css, re.S)
     assert summary_value is not None
     assert "overflow-wrap: break-word" in summary_value.group("body")
     assert "word-break: normal" in summary_value.group("body")
     assert '[data-color-mode="dark"] .history-summary-item' in css
     assert '[data-color-mode="dark"] .history-result-table td' in css
-    assert '[data-color-mode="dark"] .history-count-item strong' in css
+    assert '[data-color-mode="dark"] .history-result-table th' in css
+    assert ".history-status--done" in css
+    assert ".history-status--pending" in css
 
 
-def test_history_detail_counts_are_one_row():
+def test_history_detail_uses_inline_metadata_and_colored_sections():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    assert "function historyDetailCounts(run)" in app_js
-    assert "${historyDetailCounts(run)}" in app_js
-    assert "historyCountItem(\"本次新增差异\", historyHasBaseline(run) ? (run.added_results || []) : null)" in app_js
-    assert "historyCountItem(\"本次减少差异\", historyHasBaseline(run) ? (run.removed_results || []) : null)" in app_js
-    assert "historyCountItem(\"本次完整核对结果\", run.results || [])" in app_js
-    assert 'if (items === null)' in app_js
-    assert '<strong>-</strong>' in app_js
+    start = app_js.index("function renderHistoryDetailContent(run)")
+    end = app_js.index("function renderHistoryDetailLoading", start)
+    detail = app_js[start:end]
 
-    counts = re.search(r"(?m)^\.history-detail-counts\s*\{(?P<body>.*?)\}", css, re.S)
-    assert counts is not None
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in counts.group("body")
+    complete = 'historySection("本次完整核对结果", run.results || [], "complete")'
+    added = 'historySection("本次新增差异", historyDiffItems(run, "added_results"), "added")'
+    removed = 'historySection("本次减少差异", historyDiffItems(run, "removed_results"), "removed")'
+    assert detail.index(complete) < detail.index(added) < detail.index(removed)
+    assert "${historyDetailCounts(run)}" not in detail
+    assert "function historyDetailCounts" not in app_js
+    assert "function historyCountItem" not in app_js
+
+    summary = re.search(r"(?m)^\.history-summary-grid\s*\{(?P<body>.*?)\}", css, re.S)
+    assert summary is not None
+    assert "display: flex" in summary.group("body")
+    assert "flex-wrap: wrap" in summary.group("body")
+
+    for tone in ("complete", "added", "removed"):
+        assert f".history-section--{tone} .history-section-bar" in css
+    assert ".history-status--done" in css
+    assert ".history-status--pending" in css
+
+    cells = re.search(
+        r"(?m)^\.history-result-table th,\s*\n\.history-result-table td\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert cells is not None
+    assert "text-align: center" in cells.group("body")
+    assert ".history-result-table td.money-cell" in css
 
 
 def test_history_list_shows_loading_animation_while_fetching():
