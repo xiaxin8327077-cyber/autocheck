@@ -173,6 +173,11 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         function revealAuthenticatedApp() {
           revealCount += 1;
         }
+        function resetSystemThemeColorsForAuthChange() { return 1; }
+        async function loadSystemThemeColors() { return true; }
+        function captureSystemThemeColors() { return {}; }
+        function restoreSystemThemeColors() { return true; }
+        const systemThemeColorState = { authRevision: 1 };
         function deferred() {
           let resolve;
           let reject;
@@ -278,6 +283,160 @@ def _run_theme_color_node_scenario(tmp_path: Path, scenario_source: str) -> None
     subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
 
 
+def _run_system_theme_color_node_scenario(tmp_path: Path, scenario_source: str) -> None:
+    app_js = _read(APP_JS)
+    runtime_block = re.search(
+        r"// Theme color runtime start.*?// Theme color runtime end",
+        app_js,
+        re.S,
+    )
+    state_block = re.search(
+        r"// System theme colors start.*?// System theme colors end",
+        app_js,
+        re.S,
+    )
+    assert runtime_block is not None
+    assert state_block is not None
+
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+
+        class FakeElement {
+          constructor(value = "") {
+            this.value = value;
+            this.textContent = "";
+            this.hidden = false;
+            this.disabled = false;
+            this.style = {};
+            this.listeners = new Map();
+            this.classList = {
+              values: new Set(),
+              toggle: (name, enabled) => {
+                if (enabled) this.classList.values.add(name);
+                else this.classList.values.delete(name);
+              },
+            };
+          }
+
+          addEventListener(type, listener) {
+            this.listeners.set(type, listener);
+          }
+
+          dispatch(type) {
+            return this.listeners.get(type)?.({ target: this });
+          }
+        }
+
+        const elements = {
+          systemThemeColorsSection: new FakeElement(),
+          systemVitalityThemeColor: new FakeElement("#3F6FAF"),
+          systemCalmThemeColor: new FakeElement("#355F63"),
+          systemVitalityThemeColorSwatch: new FakeElement(),
+          systemCalmThemeColorSwatch: new FakeElement(),
+          systemVitalityThemeColorError: new FakeElement(),
+          systemCalmThemeColorError: new FakeElement(),
+          systemThemeColorsStatus: new FakeElement(),
+          saveSystemThemeColorsBtn: new FakeElement(),
+          resetSystemThemeColorsBtn: new FakeElement(),
+        };
+        elements.systemThemeColorsSection.hidden = true;
+        const cssVariables = new Map();
+        const attributes = new Map([
+          ["data-theme", "space-tech"],
+          ["data-color-mode", "light"],
+        ]);
+        globalThis.document = {
+          getElementById: (id) => elements[id] || null,
+          documentElement: {
+            getAttribute: (name) => attributes.get(name) || null,
+            setAttribute: (name, value) => attributes.set(name, String(value)),
+            style: {
+              setProperty: (name, value) => cssVariables.set(name, value),
+              getPropertyValue: (name) => cssVariables.get(name) || "",
+            },
+          },
+        };
+
+        const storageValues = new Map();
+        const storageWrites = [];
+        globalThis.localStorage = {
+          getItem: (key) => storageValues.get(key) ?? null,
+          setItem: (key, value) => {
+            storageValues.set(key, String(value));
+            storageWrites.push({ key, value: String(value) });
+          },
+          removeItem: (key) => storageValues.delete(key),
+        };
+        const apiCalls = [];
+        const toasts = [];
+        let apiImpl = async () => ({
+          colors: {
+            system: { vitality: "#3F6FAF", calm: "#355F63" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#3F6FAF", calm: "#355F63" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        async function api(path, options = {}) {
+          apiCalls.push({ path, options });
+          return apiImpl(path, options);
+        }
+        function showToast(message, type = "info") {
+          toasts.push({ message, type });
+        }
+        function deferred() {
+          let resolve;
+          let reject;
+          const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+          });
+          return { promise, resolve, reject };
+        }
+        async function flushMicrotasks() {
+          for (let index = 0; index < 6; index += 1) await Promise.resolve();
+        }
+
+        __THEME_RUNTIME_BLOCK__
+        __SYSTEM_THEME_COLOR_BLOCK__
+
+        const themeHarness = {
+          state: systemThemeColorState,
+          load: loadSystemThemeColors,
+          save: saveSystemThemeColors,
+          reset: resetSystemThemeColorDraft,
+          discard: discardUnsavedSystemThemeColors,
+          resetAuth: resetSystemThemeColorsForAuthChange,
+          capture: captureSystemThemeColors,
+          restore: restoreSystemThemeColors,
+          elements,
+          cssVariables,
+          storageValues,
+          storageWrites,
+          apiCalls,
+          toasts,
+        };
+
+        (async () => {
+        __SCENARIO__
+        })().catch((error) => {
+          console.error(error.stack || error);
+          process.exitCode = 1;
+        });
+        """
+    ).replace("__THEME_RUNTIME_BLOCK__", runtime_block.group(0)).replace(
+        "__SYSTEM_THEME_COLOR_BLOCK__",
+        state_block.group(0),
+    ).replace(
+        "__SCENARIO__",
+        textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
+    )
+    script_path = tmp_path / "system_theme_color_state_machine.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
 def test_canceled_theme_gradient_contract_is_absent_from_frontend():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -357,6 +516,301 @@ def test_theme_and_dark_mode_switches_reapply_effective_solid_colors():
     assert apply_dark_mode is not None
     for body in (commit_theme.group("body"), apply_dark_mode.group("body")):
         assert "applyEffectiveThemeColors(effectiveThemeColors);" in body
+
+
+def test_system_theme_color_controls_are_capability_driven_text_inputs():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+    app_js = _read(APP_JS)
+    section = re.search(
+        r'<section id="systemThemeColorsSection"(?P<attrs>[^>]*)>(?P<body>.*?)</section>',
+        html,
+        re.S,
+    )
+    assert section is not None
+    assert "hidden" in section.group("attrs")
+    body = section.group("body")
+    for field, swatch, error in (
+        (
+            "systemVitalityThemeColor",
+            "systemVitalityThemeColorSwatch",
+            "systemVitalityThemeColorError",
+        ),
+        (
+            "systemCalmThemeColor",
+            "systemCalmThemeColorSwatch",
+            "systemCalmThemeColorError",
+        ),
+    ):
+        assert re.search(
+            rf'<input id="{field}" type="text"[^>]*maxlength="7"[^>]*>',
+            body,
+        )
+        assert f'aria-describedby="{error}"' in body
+        assert f'id="{swatch}"' in body
+        assert f'id="{error}"' in body
+    assert 'id="saveSystemThemeColorsBtn"' in body
+    assert 'id="resetSystemThemeColorsBtn"' in body
+    assert 'id="systemThemeColorsStatus"' in body
+    assert 'type="color"' not in html
+    assert "admin-only" not in section.group("attrs")
+    assert "can_manage_system_theme_colors" in app_js
+    state_block = re.search(
+        r"// System theme colors start(?P<body>.*?)// System theme colors end",
+        app_js,
+        re.S,
+    )
+    assert state_block is not None
+    assert 'authState.user?.role === "admin"' not in state_block.group("body")
+    assert "data-role" not in state_block.group("body")
+    for selector in (
+        "#page-settings .system-theme-colors",
+        "#page-settings .system-theme-color-input",
+        "#page-settings .system-theme-color-swatch",
+        "#page-settings .system-theme-color-error",
+    ):
+        assert selector in css
+
+
+def test_system_theme_color_valid_preview_normalization_and_atomic_save(tmp_path):
+    _run_system_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const h = themeHarness;
+        assert.equal(h.elements.systemThemeColorsSection.hidden, true);
+        assert.equal(await h.load({ silent: true }), true);
+        assert.equal(h.elements.systemThemeColorsSection.hidden, false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.deepEqual(h.state.draftColors, h.state.savedColors);
+        assert.deepEqual(h.state.lastValidDraft, h.state.savedColors);
+        assert.equal(h.cssVariables.get("--theme-accent"), "#3F6FAF");
+
+        h.elements.systemVitalityThemeColor.value = "#abcdef";
+        h.elements.systemVitalityThemeColor.dispatch("input");
+        assert.equal(h.state.rawInputs.vitality, "#abcdef");
+        assert.equal(h.state.draftColors.vitality, "#ABCDEF");
+        assert.equal(h.state.lastValidDraft.vitality, "#ABCDEF");
+        assert.equal(h.cssVariables.get("--theme-accent"), "#ABCDEF");
+        assert.equal(h.elements.systemVitalityThemeColorError.hidden, true);
+        h.elements.systemVitalityThemeColor.dispatch("blur");
+        assert.equal(h.elements.systemVitalityThemeColor.value, "#ABCDEF");
+
+        h.elements.systemCalmThemeColor.value = "#102030";
+        h.elements.systemCalmThemeColor.dispatch("input");
+        assert.equal(h.state.dirty, true);
+        assert.equal(h.elements.saveSystemThemeColorsBtn.disabled, false);
+        let postBody = null;
+        apiImpl = async (path, options) => {
+          assert.equal(path, "/api/settings/interface/theme-colors");
+          assert.equal(options.method, "POST");
+          postBody = JSON.parse(options.body);
+          return {
+            colors: {
+              system: { vitality: "#ABCDEF", calm: "#102030" },
+              personal: { vitality: null, calm: null },
+              effective: { vitality: "#ABCDEF", calm: "#102030" },
+            },
+            capabilities: { can_manage_system_theme_colors: true },
+          };
+        };
+        assert.equal(await h.save(), true);
+        assert.deepEqual(postBody, {
+          vitality_theme_color: "#ABCDEF",
+          calm_theme_color: "#102030",
+        });
+        assert.deepEqual(h.state.savedColors, postBody && {
+          vitality: postBody.vitality_theme_color,
+          calm: postBody.calm_theme_color,
+        });
+        assert.equal(h.state.dirty, false);
+        assert.equal(h.elements.systemThemeColorsStatus.textContent, "保存成功");
+        assert.deepEqual(
+          JSON.parse(h.storageValues.get("autoCheckLastEffectiveThemeColors")),
+          { vitality: "#ABCDEF", calm: "#102030" },
+        );
+        """,
+    )
+
+
+def test_system_theme_color_invalid_input_reset_failure_and_leave_discard(tmp_path):
+    _run_system_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const h = themeHarness;
+        apiImpl = async () => ({
+          colors: {
+            system: { vitality: "#112233", calm: "#445566" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#112233", calm: "#445566" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await h.load({ silent: true }), true);
+        const appliedBeforeInvalid = h.cssVariables.get("--theme-accent");
+
+        h.elements.systemVitalityThemeColor.value = "#123";
+        h.elements.systemVitalityThemeColor.dispatch("input");
+        assert.equal(h.state.rawInputs.vitality, "#123");
+        assert.equal(h.state.lastValidDraft.vitality, "#112233");
+        assert.equal(h.cssVariables.get("--theme-accent"), appliedBeforeInvalid);
+        assert.equal(h.elements.systemVitalityThemeColorError.hidden, false);
+        assert.equal(h.elements.saveSystemThemeColorsBtn.disabled, true);
+        assert.equal(await h.save(), false);
+
+        const callsBeforeReset = h.apiCalls.length;
+        h.reset();
+        assert.deepEqual(h.state.draftColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(h.apiCalls.length, callsBeforeReset);
+        assert.equal(h.state.dirty, true);
+        assert.equal(h.cssVariables.get("--theme-accent"), "#3F6FAF");
+
+        apiImpl = async () => { throw new Error("save failed"); };
+        assert.equal(await h.save(), false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#112233",
+          calm: "#445566",
+        });
+        assert.deepEqual(h.state.draftColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(h.cssVariables.get("--theme-accent"), "#3F6FAF");
+        assert.equal(h.state.dirty, true);
+        assert.equal(h.elements.systemThemeColorsStatus.textContent, "保存失败");
+        assert.equal(h.toasts.length, 1);
+
+        assert.equal(h.discard(), true);
+        assert.deepEqual(h.state.draftColors, h.state.savedColors);
+        assert.equal(h.cssVariables.get("--theme-accent"), "#112233");
+        assert.equal(h.state.dirty, false);
+        """,
+    )
+
+
+def test_system_theme_color_state_rejects_stale_get_post_and_auth_revisions(tmp_path):
+    _run_system_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const h = themeHarness;
+        const oldGet = deferred();
+        apiImpl = async () => oldGet.promise;
+        const oldLoading = h.load({ silent: true });
+        await flushMicrotasks();
+        h.resetAuth();
+        oldGet.resolve({
+          colors: {
+            system: { vitality: "#AAAAAA", calm: "#BBBBBB" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#AAAAAA", calm: "#BBBBBB" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await oldLoading, false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+
+        apiImpl = async () => ({
+          colors: {
+            system: { vitality: "#102030", calm: "#405060" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#102030", calm: "#405060" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await h.load({ silent: true }), true);
+
+        const getDuringMutation = deferred();
+        const currentPost = deferred();
+        apiImpl = async (_path, options) => (
+          options.method === "POST" ? currentPost.promise : getDuringMutation.promise
+        );
+        const loading = h.load({ silent: true });
+        await flushMicrotasks();
+        h.elements.systemVitalityThemeColor.value = "#708090";
+        h.elements.systemVitalityThemeColor.dispatch("input");
+        const saving = h.save();
+        await flushMicrotasks();
+        currentPost.resolve({
+          colors: {
+            system: { vitality: "#708090", calm: "#405060" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#708090", calm: "#405060" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await saving, true);
+        getDuringMutation.resolve({
+          colors: {
+            system: { vitality: "#111111", calm: "#222222" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#111111", calm: "#222222" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await loading, false);
+        assert.equal(h.state.savedColors.vitality, "#708090");
+
+        h.elements.systemCalmThemeColor.value = "#A0B0C0";
+        h.elements.systemCalmThemeColor.dispatch("input");
+        const stalePost = deferred();
+        apiImpl = async () => stalePost.promise;
+        const staleSaving = h.save();
+        await flushMicrotasks();
+        h.resetAuth();
+        stalePost.resolve({
+          colors: {
+            system: { vitality: "#708090", calm: "#A0B0C0" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#708090", calm: "#A0B0C0" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await staleSaving, false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(h.state.saving, false);
+        assert.equal(h.elements.systemThemeColorsSection.hidden, true);
+        """,
+    )
+
+
+def test_system_theme_colors_integrate_with_settings_navigation_and_auth_boundaries():
+    app_js = _read(APP_JS)
+    ensure_authenticated = re.search(
+        r"async function ensureAuthenticated\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    switch_page = re.search(
+        r"async function switchPage\(name, options = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    logout = re.search(
+        r"async function logout\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert ensure_authenticated is not None
+    assert switch_page is not None
+    assert logout is not None
+    assert "resetSystemThemeColorsForAuthChange();" in ensure_authenticated.group("body")
+    assert "loadSystemThemeColors({ silent: true })" in ensure_authenticated.group("body")
+    assert "discardUnsavedSystemThemeColors();" in switch_page.group("body")
+    assert "captureSystemThemeColors();" in logout.group("body")
+    assert "resetSystemThemeColorsForAuthChange();" in logout.group("body")
+    assert "restoreSystemThemeColors(" in logout.group("body")
+    assert 'loadPageSection("全局主题色", () => loadSystemThemeColors({ silent: false }))' in app_js
 
 
 def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_state_contract(tmp_path):
@@ -3979,7 +4433,7 @@ def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallb
     assert ensure_auth is not None
     auth_body = ensure_auth.group("body")
     reset_call = "resetInterfaceRadiusForAuthChange();"
-    load_call = "await loadInterfaceRadiusPreference({ silent: true });"
+    load_call = "loadInterfaceRadiusPreference({ silent: true }),"
     assert reset_call in auth_body
     assert load_call in auth_body
     assert auth_body.index(reset_call) < auth_body.index('authState.csrfToken = payload.csrf_token || "";')
@@ -4234,9 +4688,12 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     )
     assert switch_page is not None
     switch_body = switch_page.group("body")
-    discard_call = 'if (previousPage === "settings" && name !== "settings") discardUnsavedInterfaceRadius();'
-    assert discard_call in switch_body
-    assert switch_body.index(discard_call) < switch_body.index("document.documentElement.setAttribute('data-page', name);")
+    assert 'if (previousPage === "settings" && name !== "settings") {' in switch_body
+    assert "discardUnsavedInterfaceRadius();" in switch_body
+    assert "discardUnsavedSystemThemeColors();" in switch_body
+    assert switch_body.index("discardUnsavedInterfaceRadius();") < switch_body.index(
+        "document.documentElement.setAttribute('data-page', name);"
+    )
 
 
 def test_login_uses_last_authenticated_interface_radius_display_cache():

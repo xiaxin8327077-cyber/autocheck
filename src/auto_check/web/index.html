@@ -1219,6 +1219,37 @@
                   <button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
                   <span id="interfaceSettingsStatus" role="status">已保存</span>
                 </div>
+                <section id="systemThemeColorsSection" class="system-theme-colors" aria-labelledby="systemThemeColorsTitle" hidden>
+                  <div class="system-theme-colors-heading">
+                    <div>
+                      <h4 id="systemThemeColorsTitle">全局主题色</h4>
+                      <p>统一应用于所有用户和登录页，仅支持完整的 #RRGGBB 色值</p>
+                    </div>
+                    <span id="systemThemeColorsStatus" role="status">已保存</span>
+                  </div>
+                  <div class="system-theme-color-grid">
+                    <label class="system-theme-color-field" for="systemVitalityThemeColor">
+                      <span class="setting-label">活力主题</span>
+                      <span class="system-theme-color-control">
+                        <input id="systemVitalityThemeColor" type="text" class="setting-input system-theme-color-input" maxlength="7" value="#3F6FAF" autocomplete="off" spellcheck="false" aria-describedby="systemVitalityThemeColorError" />
+                        <output id="systemVitalityThemeColorSwatch" class="system-theme-color-swatch" aria-label="活力主题色预览"></output>
+                      </span>
+                      <span id="systemVitalityThemeColorError" class="system-theme-color-error" role="alert" hidden></span>
+                    </label>
+                    <label class="system-theme-color-field" for="systemCalmThemeColor">
+                      <span class="setting-label">沉稳主题</span>
+                      <span class="system-theme-color-control">
+                        <input id="systemCalmThemeColor" type="text" class="setting-input system-theme-color-input" maxlength="7" value="#355F63" autocomplete="off" spellcheck="false" aria-describedby="systemCalmThemeColorError" />
+                        <output id="systemCalmThemeColorSwatch" class="system-theme-color-swatch" aria-label="沉稳主题色预览"></output>
+                      </span>
+                      <span id="systemCalmThemeColorError" class="system-theme-color-error" role="alert" hidden></span>
+                    </label>
+                  </div>
+                  <div class="settings-actions system-theme-color-actions">
+                    <button id="saveSystemThemeColorsBtn" type="button" class="btn-primary btn-sm">保存全局主题色</button>
+                    <button id="resetSystemThemeColorsBtn" type="button" class="btn-outline btn-sm">恢复默认主题色</button>
+                  </div>
+                </section>
               </div>
             </section>
 

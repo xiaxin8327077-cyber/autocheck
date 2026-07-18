@@ -411,10 +411,14 @@ async function ensureAuthenticated() {
     throw new Error("login required");
   }
   resetInterfaceRadiusForAuthChange();
+  resetSystemThemeColorsForAuthChange();
   authState.csrfToken = payload.csrf_token || "";
   authState.user = payload.user || null;
   document.documentElement.dataset.role = authState.user?.role === "admin" ? "admin" : "user";
-  await loadInterfaceRadiusPreference({ silent: true });
+  await Promise.all([
+    loadInterfaceRadiusPreference({ silent: true }),
+    loadSystemThemeColors({ silent: true }),
+  ]);
   activateThemeUserStorage();
   applySavedUserTheme();
   updateCurrentUsername();
@@ -638,6 +642,414 @@ function applyEffectiveThemeColors(colors = effectiveThemeColors) {
 
 applyEffectiveThemeColors(effectiveThemeColors);
 // Theme color runtime end
+
+// System theme colors start
+const LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY = "autoCheckLastEffectiveThemeColors";
+const systemThemeColorsSection = document.getElementById("systemThemeColorsSection");
+const systemVitalityThemeColor = document.getElementById("systemVitalityThemeColor");
+const systemCalmThemeColor = document.getElementById("systemCalmThemeColor");
+const systemVitalityThemeColorSwatch = document.getElementById("systemVitalityThemeColorSwatch");
+const systemCalmThemeColorSwatch = document.getElementById("systemCalmThemeColorSwatch");
+const systemVitalityThemeColorError = document.getElementById("systemVitalityThemeColorError");
+const systemCalmThemeColorError = document.getElementById("systemCalmThemeColorError");
+const systemThemeColorsStatus = document.getElementById("systemThemeColorsStatus");
+const saveSystemThemeColorsBtn = document.getElementById("saveSystemThemeColorsBtn");
+const resetSystemThemeColorsBtn = document.getElementById("resetSystemThemeColorsBtn");
+const systemThemeColorState = {
+  savedColors: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
+  savedEffectiveColors: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
+  draftColors: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
+  lastValidDraft: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
+  rawInputs: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
+  errors: { vitality: "", calm: "" },
+  canManage: false,
+  loaded: false,
+  loadFailed: false,
+  loading: false,
+  saving: false,
+  dirty: false,
+  statusText: "已保存",
+  loadRequestId: 0,
+  saveRequestId: 0,
+  authRevision: 0,
+  editRevision: 0,
+  serverMutationRevision: 0,
+};
+
+function copyThemeColors(colors) {
+  return { vitality: colors.vitality, calm: colors.calm };
+}
+
+function themeColorsMatch(left, right) {
+  return left.vitality === right.vitality && left.calm === right.calm;
+}
+
+function normalizeSystemThemeColorInput(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : null;
+}
+
+function readSystemThemeColorsPayload(payload) {
+  const system = {
+    vitality: normalizeThemeHex(payload?.colors?.system?.vitality),
+    calm: normalizeThemeHex(payload?.colors?.system?.calm),
+  };
+  const effective = {
+    vitality: normalizeThemeHex(payload?.colors?.effective?.vitality),
+    calm: normalizeThemeHex(payload?.colors?.effective?.calm),
+  };
+  const capability = payload?.capabilities?.can_manage_system_theme_colors;
+  if (
+    !system.vitality
+    || !system.calm
+    || !effective.vitality
+    || !effective.calm
+    || typeof capability !== "boolean"
+  ) {
+    throw new Error("主题色响应无效");
+  }
+  return { system, effective, canManage: capability };
+}
+
+function cacheEffectiveThemeColors(colors) {
+  const cached = {
+    vitality: normalizeThemeHex(colors?.vitality),
+    calm: normalizeThemeHex(colors?.calm),
+  };
+  if (!cached.vitality || !cached.calm) return false;
+  try {
+    localStorage.setItem(LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY, JSON.stringify(cached));
+  } catch (_) {}
+  return true;
+}
+
+function systemThemeColorDraftIsValid() {
+  return !systemThemeColorState.errors.vitality && !systemThemeColorState.errors.calm;
+}
+
+function syncSystemThemeColorDirtyStatus({ preserveStatus = false } = {}) {
+  const normalizedRaw = {
+    vitality: normalizeSystemThemeColorInput(systemThemeColorState.rawInputs.vitality),
+    calm: normalizeSystemThemeColorInput(systemThemeColorState.rawInputs.calm),
+  };
+  systemThemeColorState.dirty = (
+    !normalizedRaw.vitality
+    || !normalizedRaw.calm
+    || !themeColorsMatch(normalizedRaw, systemThemeColorState.savedColors)
+  );
+  if (!preserveStatus) {
+    systemThemeColorState.statusText = systemThemeColorState.dirty
+      ? (systemThemeColorDraftIsValid() ? "正在预览，尚未保存" : "请检查颜色格式")
+      : "已保存";
+  }
+  return systemThemeColorState.dirty;
+}
+
+function renderSystemThemeColors() {
+  if (systemThemeColorsSection) {
+    systemThemeColorsSection.hidden = !systemThemeColorState.canManage;
+  }
+  const controls = {
+    vitality: {
+      input: systemVitalityThemeColor,
+      swatch: systemVitalityThemeColorSwatch,
+      error: systemVitalityThemeColorError,
+    },
+    calm: {
+      input: systemCalmThemeColor,
+      swatch: systemCalmThemeColorSwatch,
+      error: systemCalmThemeColorError,
+    },
+  };
+  Object.entries(controls).forEach(([key, control]) => {
+    if (control.input) {
+      control.input.value = systemThemeColorState.rawInputs[key];
+      control.input.disabled = (
+        !systemThemeColorState.canManage
+        || systemThemeColorState.loading
+        || systemThemeColorState.saving
+      );
+      control.input.setAttribute?.(
+        "aria-invalid",
+        systemThemeColorState.errors[key] ? "true" : "false",
+      );
+    }
+    if (control.swatch) {
+      control.swatch.style.backgroundColor = systemThemeColorState.lastValidDraft[key];
+      control.swatch.value = systemThemeColorState.lastValidDraft[key];
+    }
+    if (control.error) {
+      control.error.textContent = systemThemeColorState.errors[key];
+      control.error.hidden = !systemThemeColorState.errors[key];
+    }
+  });
+  if (systemThemeColorsStatus) {
+    systemThemeColorsStatus.textContent = systemThemeColorState.statusText;
+  }
+  if (saveSystemThemeColorsBtn) {
+    saveSystemThemeColorsBtn.disabled = (
+      !systemThemeColorState.canManage
+      || systemThemeColorState.loading
+      || systemThemeColorState.saving
+      || !systemThemeColorState.dirty
+      || !systemThemeColorDraftIsValid()
+    );
+    saveSystemThemeColorsBtn.classList.toggle("loading", systemThemeColorState.saving);
+    saveSystemThemeColorsBtn.textContent = systemThemeColorState.saving
+      ? "保存中..."
+      : "保存全局主题色";
+  }
+  if (resetSystemThemeColorsBtn) {
+    resetSystemThemeColorsBtn.disabled = (
+      !systemThemeColorState.canManage
+      || systemThemeColorState.loading
+      || systemThemeColorState.saving
+    );
+  }
+}
+
+function setSystemThemeColorStateFromPayload(parsed, { preserveDraft = false } = {}) {
+  systemThemeColorState.savedColors = copyThemeColors(parsed.system);
+  systemThemeColorState.savedEffectiveColors = copyThemeColors(parsed.effective);
+  systemThemeColorState.canManage = parsed.canManage;
+  systemThemeColorState.loaded = true;
+  systemThemeColorState.loadFailed = false;
+  cacheEffectiveThemeColors(parsed.effective);
+  if (!preserveDraft || !parsed.canManage) {
+    systemThemeColorState.draftColors = copyThemeColors(parsed.system);
+    systemThemeColorState.lastValidDraft = copyThemeColors(parsed.system);
+    systemThemeColorState.rawInputs = copyThemeColors(parsed.system);
+    systemThemeColorState.errors = { vitality: "", calm: "" };
+    applyEffectiveThemeColors(parsed.effective);
+  }
+  syncSystemThemeColorDirtyStatus();
+}
+
+function updateSystemThemeColorDraft(key, value) {
+  if (systemThemeColorState.saving || !systemThemeColorState.canManage) return;
+  const normalized = normalizeSystemThemeColorInput(value);
+  systemThemeColorState.editRevision += 1;
+  systemThemeColorState.rawInputs[key] = value;
+  if (normalized) {
+    systemThemeColorState.draftColors[key] = normalized;
+    systemThemeColorState.lastValidDraft[key] = normalized;
+    systemThemeColorState.errors[key] = "";
+    applyEffectiveThemeColors(systemThemeColorState.lastValidDraft);
+  } else {
+    systemThemeColorState.errors[key] = "请输入完整的 #RRGGBB 色值";
+  }
+  syncSystemThemeColorDirtyStatus();
+  renderSystemThemeColors();
+}
+
+function normalizeSystemThemeColorField(key) {
+  const normalized = normalizeSystemThemeColorInput(systemThemeColorState.rawInputs[key]);
+  if (!normalized) return false;
+  systemThemeColorState.rawInputs[key] = normalized;
+  systemThemeColorState.draftColors[key] = normalized;
+  systemThemeColorState.lastValidDraft[key] = normalized;
+  syncSystemThemeColorDirtyStatus();
+  renderSystemThemeColors();
+  return true;
+}
+
+async function loadSystemThemeColors({ silent = false } = {}) {
+  if (systemThemeColorState.saving) return false;
+  const requestId = ++systemThemeColorState.loadRequestId;
+  const authRevision = systemThemeColorState.authRevision;
+  const editRevision = systemThemeColorState.editRevision;
+  const mutationRevision = systemThemeColorState.serverMutationRevision;
+  const hadUnsavedDraft = systemThemeColorState.dirty;
+  systemThemeColorState.loading = true;
+  renderSystemThemeColors();
+  const isCurrentRequest = () => (
+    requestId === systemThemeColorState.loadRequestId
+    && authRevision === systemThemeColorState.authRevision
+    && mutationRevision === systemThemeColorState.serverMutationRevision
+  );
+  try {
+    const payload = await api("/api/settings/interface/theme-colors");
+    if (!isCurrentRequest()) return false;
+    const parsed = readSystemThemeColorsPayload(payload);
+    const preserveDraft = (
+      parsed.canManage
+      && (hadUnsavedDraft || editRevision !== systemThemeColorState.editRevision)
+    );
+    setSystemThemeColorStateFromPayload(parsed, { preserveDraft });
+    return true;
+  } catch (error) {
+    if (!isCurrentRequest()) return false;
+    systemThemeColorState.loadFailed = true;
+    systemThemeColorState.statusText = "加载失败，继续使用当前主题色";
+    if (!silent) showToast(`全局主题色加载失败: ${error.message}`, "error");
+    return false;
+  } finally {
+    if (isCurrentRequest()) {
+      systemThemeColorState.loading = false;
+      renderSystemThemeColors();
+    }
+  }
+}
+
+async function saveSystemThemeColors() {
+  if (
+    systemThemeColorState.saving
+    || !systemThemeColorState.canManage
+    || !systemThemeColorState.dirty
+    || !systemThemeColorDraftIsValid()
+  ) {
+    return false;
+  }
+  const requestId = ++systemThemeColorState.saveRequestId;
+  const authRevision = systemThemeColorState.authRevision;
+  systemThemeColorState.serverMutationRevision += 1;
+  const mutationRevision = systemThemeColorState.serverMutationRevision;
+  const submittedColors = copyThemeColors(systemThemeColorState.draftColors);
+  const isCurrentRequest = () => (
+    requestId === systemThemeColorState.saveRequestId
+    && authRevision === systemThemeColorState.authRevision
+    && mutationRevision === systemThemeColorState.serverMutationRevision
+  );
+  systemThemeColorState.saving = true;
+  systemThemeColorState.statusText = "保存中...";
+  renderSystemThemeColors();
+  try {
+    const payload = await api("/api/settings/interface/theme-colors", {
+      method: "POST",
+      body: JSON.stringify({
+        vitality_theme_color: submittedColors.vitality,
+        calm_theme_color: submittedColors.calm,
+      }),
+    });
+    if (!isCurrentRequest()) return false;
+    const parsed = readSystemThemeColorsPayload(payload);
+    setSystemThemeColorStateFromPayload(parsed);
+    systemThemeColorState.statusText = "保存成功";
+    applyEffectiveThemeColors(parsed.effective);
+    return true;
+  } catch (error) {
+    if (!isCurrentRequest()) return false;
+    systemThemeColorState.statusText = "保存失败";
+    syncSystemThemeColorDirtyStatus({ preserveStatus: true });
+    showToast(`全局主题色保存失败: ${error.message}`, "error");
+    return false;
+  } finally {
+    if (isCurrentRequest()) {
+      systemThemeColorState.saving = false;
+      renderSystemThemeColors();
+    }
+  }
+}
+
+function resetSystemThemeColorDraft() {
+  if (systemThemeColorState.saving || !systemThemeColorState.canManage) return false;
+  systemThemeColorState.editRevision += 1;
+  systemThemeColorState.draftColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.lastValidDraft = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.rawInputs = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.errors = { vitality: "", calm: "" };
+  applyEffectiveThemeColors(systemThemeColorState.lastValidDraft);
+  syncSystemThemeColorDirtyStatus();
+  renderSystemThemeColors();
+  return true;
+}
+
+function discardUnsavedSystemThemeColors() {
+  systemThemeColorState.loadRequestId += 1;
+  const changed = systemThemeColorState.dirty;
+  systemThemeColorState.editRevision += 1;
+  systemThemeColorState.draftColors = copyThemeColors(systemThemeColorState.savedColors);
+  systemThemeColorState.lastValidDraft = copyThemeColors(systemThemeColorState.savedColors);
+  systemThemeColorState.rawInputs = copyThemeColors(systemThemeColorState.savedColors);
+  systemThemeColorState.errors = { vitality: "", calm: "" };
+  applyEffectiveThemeColors(systemThemeColorState.savedEffectiveColors);
+  syncSystemThemeColorDirtyStatus();
+  renderSystemThemeColors();
+  return changed;
+}
+
+function resetSystemThemeColorsForAuthChange() {
+  systemThemeColorState.loadRequestId += 1;
+  systemThemeColorState.saveRequestId += 1;
+  systemThemeColorState.authRevision += 1;
+  systemThemeColorState.editRevision += 1;
+  systemThemeColorState.serverMutationRevision += 1;
+  systemThemeColorState.savedColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.savedEffectiveColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.draftColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.lastValidDraft = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.rawInputs = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  systemThemeColorState.errors = { vitality: "", calm: "" };
+  systemThemeColorState.canManage = false;
+  systemThemeColorState.loaded = false;
+  systemThemeColorState.loadFailed = false;
+  systemThemeColorState.loading = false;
+  systemThemeColorState.saving = false;
+  systemThemeColorState.dirty = false;
+  systemThemeColorState.statusText = "已保存";
+  applyEffectiveThemeColors(DEFAULT_EFFECTIVE_THEME_COLORS);
+  renderSystemThemeColors();
+  return systemThemeColorState.authRevision;
+}
+
+function captureSystemThemeColors() {
+  return {
+    savedColors: copyThemeColors(systemThemeColorState.savedColors),
+    savedEffectiveColors: copyThemeColors(systemThemeColorState.savedEffectiveColors),
+    draftColors: copyThemeColors(systemThemeColorState.draftColors),
+    lastValidDraft: copyThemeColors(systemThemeColorState.lastValidDraft),
+    rawInputs: copyThemeColors(systemThemeColorState.rawInputs),
+    errors: { ...systemThemeColorState.errors },
+    canManage: systemThemeColorState.canManage,
+    loaded: systemThemeColorState.loaded,
+    loadFailed: systemThemeColorState.loadFailed,
+    dirty: systemThemeColorState.dirty,
+    statusText: systemThemeColorState.statusText,
+  };
+}
+
+function restoreSystemThemeColors(snapshot, expectedAuthRevision) {
+  if (expectedAuthRevision !== systemThemeColorState.authRevision) return false;
+  systemThemeColorState.loadRequestId += 1;
+  systemThemeColorState.saveRequestId += 1;
+  systemThemeColorState.authRevision += 1;
+  systemThemeColorState.editRevision += 1;
+  systemThemeColorState.serverMutationRevision += 1;
+  systemThemeColorState.savedColors = copyThemeColors(snapshot.savedColors);
+  systemThemeColorState.savedEffectiveColors = copyThemeColors(snapshot.savedEffectiveColors);
+  systemThemeColorState.draftColors = copyThemeColors(snapshot.draftColors);
+  systemThemeColorState.lastValidDraft = copyThemeColors(snapshot.lastValidDraft);
+  systemThemeColorState.rawInputs = copyThemeColors(snapshot.rawInputs);
+  systemThemeColorState.errors = { ...snapshot.errors };
+  systemThemeColorState.canManage = snapshot.canManage;
+  systemThemeColorState.loaded = snapshot.loaded;
+  systemThemeColorState.loadFailed = snapshot.loadFailed;
+  systemThemeColorState.loading = false;
+  systemThemeColorState.saving = false;
+  systemThemeColorState.dirty = snapshot.dirty;
+  systemThemeColorState.statusText = snapshot.statusText;
+  applyEffectiveThemeColors(snapshot.dirty ? snapshot.lastValidDraft : snapshot.savedEffectiveColors);
+  renderSystemThemeColors();
+  return true;
+}
+
+systemVitalityThemeColor?.addEventListener("input", () => {
+  updateSystemThemeColorDraft("vitality", systemVitalityThemeColor.value);
+});
+systemCalmThemeColor?.addEventListener("input", () => {
+  updateSystemThemeColorDraft("calm", systemCalmThemeColor.value);
+});
+systemVitalityThemeColor?.addEventListener("blur", () => {
+  normalizeSystemThemeColorField("vitality");
+});
+systemCalmThemeColor?.addEventListener("blur", () => {
+  normalizeSystemThemeColorField("calm");
+});
+saveSystemThemeColorsBtn?.addEventListener("click", saveSystemThemeColors);
+resetSystemThemeColorsBtn?.addEventListener("click", resetSystemThemeColorDraft);
+renderSystemThemeColors();
+// System theme colors end
 
 // Interface radius start
 const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({
@@ -1158,6 +1570,7 @@ async function loadSettingsPageData() {
   await Promise.all([
     loadPageSection("系统信息", loadSystemInfo),
     loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false })),
+    loadPageSection("全局主题色", () => loadSystemThemeColors({ silent: false })),
     loadPageSection("数据源配置", loadConfigList),
     loadPageSection("逐笔校验配置", loadDbValidationSettings),
     loadPageSection("流程执行配置", loadFlowSettings),
@@ -1216,7 +1629,10 @@ async function switchPage(name, options = {}) {
     showToast("普通用户无权访问用户管理", "error");
     name = "report-navigation";
   }
-  if (previousPage === "settings" && name !== "settings") discardUnsavedInterfaceRadius();
+  if (previousPage === "settings" && name !== "settings") {
+    discardUnsavedInterfaceRadius();
+    discardUnsavedSystemThemeColors();
+  }
   document.documentElement.setAttribute('data-page', name);
   syncNavState(name);
   const nextHash = `#${name}`;
@@ -1756,16 +2172,26 @@ async function logout() {
   const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？");
   if (!confirmed) return;
   const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
+  const systemThemeColorsSnapshot = captureSystemThemeColors();
   const logoutAuthRevision = resetInterfaceRadiusForAuthChange();
+  const logoutThemeAuthRevision = resetSystemThemeColorsForAuthChange();
   try {
     await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   } catch (error) {
-    if (restoreInterfaceRadiusPreference(interfaceRadiusSnapshot, logoutAuthRevision)) {
+    const restoredInterface = restoreInterfaceRadiusPreference(interfaceRadiusSnapshot, logoutAuthRevision);
+    const restoredThemeColors = restoreSystemThemeColors(
+      systemThemeColorsSnapshot,
+      logoutThemeAuthRevision,
+    );
+    if (restoredInterface || restoredThemeColors) {
       showToast(error.message, "error");
     }
     return;
   }
-  if (logoutAuthRevision !== interfaceRadiusState.authRevision) return;
+  if (
+    logoutAuthRevision !== interfaceRadiusState.authRevision
+    || logoutThemeAuthRevision !== systemThemeColorState.authRevision
+  ) return;
   authState.csrfToken = "";
   try { sessionStorage.removeItem(USER_AVATAR_SESSION_KEY); } catch (_) {}
   window.location.href = "/login.html";
