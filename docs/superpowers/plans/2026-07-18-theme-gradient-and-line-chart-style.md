@@ -763,7 +763,7 @@ Commit the three task files as `feat: unify login theme layout and background`.
 
 ---
 
-## Task 9: Close the remaining user-management, data-source and home-stat radius gaps
+## Task 9: Close the remaining scoped interface radius gaps
 
 **Files:**
 
@@ -773,11 +773,11 @@ Commit the three task files as `feat: unify login theme layout and background`.
 **Interfaces:**
 
 - Consumes: the existing root `--ui-radius` maintained by Task 4.
-- Produces: six additional scoped radius selectors with no DOM or event changes.
+- Produces: thirteen additional scoped radius selectors with no DOM or event changes.
 
 - [ ] **Step 1: Write failing selector tests**
 
-Assert these six selectors consume `var(--ui-radius)` in the existing final radius-override block:
+Assert these thirteen selectors consume `var(--ui-radius)` in the existing final radius-override block:
 
 ```css
 #page-users .user-filter-pill,
@@ -785,14 +785,21 @@ Assert these six selectors consume `var(--ui-radius)` in the existing final radi
 .user-modal .user-role-card-icon,
 .user-modal .user-enable-row,
 #configModal .modal-section,
-#infoModal .home-stat-modal-table-wrap
+#infoModal .home-stat-modal-table-wrap,
+#dbValidationModal .db-validation-table-item,
+#dbValidationModal #dbValidationLog,
+.flow-chain-editor-overlay .flow-definition-table,
+.flow-chain-editor-overlay .flow-selected-step,
+.flow-chain-editor-overlay .flow-selected-step-actions .btn-icon,
+#page-report-navigation .report-nav-done-meta,
+#page-report-navigation .report-nav-no-panel-done-meta
 ```
 
-Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius. Assert `.home-stat-modal-table-wrap` keeps `overflow: auto`, the nested `.home-stat-modal-table` receives no separate radius override, and the shared wrapper remains used by both `renderHomeReportPeriodTable()` and `renderHomeResultTable()` so “报送期差异数详情” and the other home-stat detail tables are covered together.
+Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius. Assert `.home-stat-modal-table-wrap` keeps `overflow: auto`, the nested `.home-stat-modal-table` receives no separate radius override, and the shared wrapper remains used by both `renderHomeReportPeriodTable()` and `renderHomeResultTable()` so “报送期差异数详情” and the other home-stat detail tables are covered together. Assert `#dbValidationLog` keeps the existing `.pbc-import-log` overflow/log behavior and `.db-validation-table-item` keeps its checkbox structure. Assert the flow editor's layout-only `.flow-selected-step-list` is not added to the radius override; only `.flow-definition-table`, each `.flow-selected-step`, and its scoped `.btn-icon` controls consume the preference. Assert both fishbone completion selectors keep their existing colors, borders, shadows, transforms and top/bottom positioning; the test may only require their radius to consume the shared token.
 
-Run `python -m pytest -q tests/test_web_static.py -k "radius and (user or modal or home_stat)"`.
+Run `python -m pytest -q tests/test_web_static.py -k "radius and (user or modal or home_stat or validation or flow)"`.
 
-Expected: FAIL because the filter pill is fixed at `999px`, the role/enable surfaces are fixed at `12px`/`10px`, the data-source connection group is fixed at `8px`, and the home-stat table wrapper is fixed at `10px`.
+Expected: FAIL because the filter pill and no-panel completion label are fixed at `999px`, the role/enable surfaces are fixed at `12px`/`10px`, the data-source connection group and flow-definition box are fixed at `8px`, the home-stat table wrapper and validation log are fixed at `10px`, validation rows and the in-panel completion bar are fixed at `7px`, and selected-flow rows/buttons are fixed at `4px`.
 
 - [ ] **Step 2: Add the selectors to the established radius override**
 
@@ -802,14 +809,14 @@ Use the existing rule:
 border-radius: var(--ui-radius) !important;
 ```
 
-Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior, table data, sorting, sticky headers, scrolling or event listeners. The user selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping. Keep `.home-stat-modal-table-wrap` as the sole rounded/clipping surface with `overflow: auto`; do not add a second radius to `.home-stat-modal-table`.
+Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior, table data, sorting, sticky headers, scrolling, validation selection/logging, flow loading/searching/ordering/moving/removing, fishbone completion-state styling/positioning or event listeners. The user selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping. Keep `.home-stat-modal-table-wrap` as the sole rounded/clipping surface with `overflow: auto`; do not add a second radius to `.home-stat-modal-table`. Scope validation selectors to `#dbValidationModal` and flow-editor selectors to `.flow-chain-editor-overlay` so unrelated lists, logs and icon controls are unchanged. For fishbone completion metadata, change only `border-radius`; retain status colors, dashed/solid border choice, shadow, `transform`, `top` and `bottom` rules.
 
 - [ ] **Step 3: Verify and commit**
 
 Run:
 
 ```powershell
-python -m pytest -q tests/test_web_static.py -k "radius or user or modal or home_stat"
+python -m pytest -q tests/test_web_static.py -k "radius or user or modal or home_stat or validation or flow"
 git diff --check
 ```
 
@@ -836,7 +843,7 @@ Commit the two task files as `fix: apply radius to omitted interface controls`.
 
 - [ ] **Step 1: Update release-facing documentation**
 
-Document fixed theme colors, one global gradient switch, the five-role semantic button system, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the remaining radius gaps including home-stat detail table wrappers, per-user cross-device persistence, and `005` deployment order. README must explain that the gradient switch affects only theme-primary buttons, while danger/warning/success buttons retain stable semantic colors.
+Document fixed theme colors, one global gradient switch, the five-role semantic button system, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the remaining radius gaps including home-stat detail tables, validation rows/logs, flow-editor surfaces and fishbone completion metadata, per-user cross-device persistence, and `005` deployment order. README must explain that the gradient switch affects only theme-primary buttons, while danger/warning/success buttons retain stable semantic colors.
 
 Keep the in-app changelog concise:
 
@@ -904,6 +911,6 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Single-series fill follows the selected geometry exactly.
 - Line colors follow current theme/gradient; multi-series charts remain distinguishable with same-theme derived levels.
 - Semantic status/badge colors and non-line categorical chart colors remain independently meaningful; action buttons use the standardized semantic-action tokens from Task 6.
-- User filter pills, role cards/icons, enable-row container, the data-source “数据库连接” group and home-stat detail table wrappers follow `--ui-radius`; group/table headers are clipped by their outer containers, while the switch track/thumb retain their dedicated shape and table scrolling/sticky headers remain intact.
+- User filter pills, role cards/icons, enable-row container, the data-source “数据库连接” group, home-stat detail table wrappers, validation rows/logs, flow-definition boxes, selected-flow rows/inline controls and both fishbone completion metadata forms follow `--ui-radius`; group/table headers are clipped by their outer containers, while switch track/thumb retain their dedicated shape and all scrolling, sticky-header, validation, flow-editor and fishbone positioning behavior remains intact.
 - Theme, dark mode, radius, gradient and chart-style drafts do not overwrite each other.
 - Full pytest passes, `git diff --check` is clean, and the executable is rebuilt only after source verification.

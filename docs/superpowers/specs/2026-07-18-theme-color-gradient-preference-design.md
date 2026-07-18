@@ -170,8 +170,14 @@
 - 用户新建/编辑弹窗“启用账号”整行容器：`.user-enable-row`。
 - 新建/编辑数据源弹窗中的“数据库连接”分组容器：`#configModal .modal-section`。
 - 首页统计详情弹窗中的表格滚动容器：`#infoModal .home-stat-modal-table-wrap`，覆盖“报送期差异数详情”及复用该容器的其他首页统计项目明细表。
+- 人行逐笔校验弹窗中的校验表单选择行：`#dbValidationModal .db-validation-table-item`。
+- 人行逐笔校验弹窗中的日志显示框：`#dbValidationModal #dbValidationLog`。
+- 新建/编辑流程链弹窗左侧的可选流程加载/结果框：`.flow-chain-editor-overlay .flow-definition-table`。
+- 新建/编辑流程链弹窗右侧的已选流程行及其行内操作按钮：`.flow-chain-editor-overlay .flow-selected-step`、`.flow-chain-editor-overlay .flow-selected-step-actions .btn-icon`。
+- 报送导航鱼骨详情卡内的完成时间条：`#page-report-navigation .report-nav-done-meta`。
+- 报送导航无详情卡节点的独立完成时间标签：`#page-report-navigation .report-nav-no-panel-done-meta`。
 
-筛选胶囊不再固定为 `999px`，角色卡片和启用账号容器不再固定为 `12px`，“数据库连接”分组不再固定为 `8px`，首页统计详情表格滚动容器不再固定为 `10px`。数据源分组只给外层 `.modal-section` 应用 `--ui-radius` 并保留 `overflow: hidden`，顶部 `.modal-section-header` 通过外层裁切自然呈现相同的左上/右上圆角，不再单独设置另一套圆角，以免标题条与内容区边界出现接缝。首页统计详情表格同样只给外层 `.home-stat-modal-table-wrap` 应用 `--ui-radius`，保留 `overflow: auto`，由容器裁切表头和表格背景；内层 `.home-stat-modal-table` 不再单独设置圆角，表格布局、滚动和粘性表头行为保持不变。启用开关自身的轨道和圆形滑块保持现有专用形态，避免全局圆角值破坏开关识别；只调整其外层 `.user-enable-row`。所有选中、禁用、悬浮和焦点状态继续使用同一个 `--ui-radius`。
+筛选胶囊及鱼骨无详情卡完成时间标签不再固定为 `999px`，角色卡片和启用账号容器不再固定为 `12px`，“数据库连接”分组和流程定义框不再固定为 `8px`，首页统计详情表格滚动容器和人行逐笔日志框不再固定为 `10px`，人行逐笔表单行及鱼骨详情卡内完成时间条不再固定为 `7px`，已选流程行及其行内按钮不再固定为 `4px`。数据源分组只给外层 `.modal-section` 应用 `--ui-radius` 并保留 `overflow: hidden`，顶部 `.modal-section-header` 通过外层裁切自然呈现相同的左上/右上圆角，不再单独设置另一套圆角，以免标题条与内容区边界出现接缝。首页统计详情表格同样只给外层 `.home-stat-modal-table-wrap` 应用 `--ui-radius`，保留 `overflow: auto`，由容器裁切表头和表格背景；内层 `.home-stat-modal-table` 不再单独设置圆角，表格布局、滚动和粘性表头行为保持不变。人行逐笔校验的表单选择行和日志框只替换圆角值，列表滚动、勾选、日志追加和日志滚动保持不变。流程链编辑器只调整有边框/背景的流程定义框、已选流程行及行内按钮；无独立视觉表面的 `.flow-selected-step-list` 不强行增加圆角，加载/错误文案、搜索、排序、移动和移除行为保持不变。鱼骨完成时间条/标签只替换圆角，继续保留完成状态颜色、虚线/实线边框、阴影、层级和上下分支定位。启用开关自身的轨道和圆形滑块保持现有专用形态，避免全局圆角值破坏开关识别；只调整其外层 `.user-enable-row`。所有选中、禁用、悬浮和焦点状态继续使用同一个 `--ui-radius`。
 
 ### 4.8 页面与登录背景
 
@@ -394,7 +400,7 @@ line_chart_style VARCHAR(16) NOT NULL DEFAULT 'straight' COMMENT '折线图风�
 - 验证两种折线风格在渐变开/关、活力/沉稳、浅色/暗色组合下使用正确主题色，图例和数值标签同步。
 - 验证单点、空数据、负值、重复值和多系列数据在两种风格下不报错。
 - 验证 GET/POST 失败不阻塞页面功能。
-- 验证 `.user-filter-pill`、`.user-role-card`、`.user-role-card-icon`、`.user-enable-row`、`#configModal .modal-section` 和 `#infoModal .home-stat-modal-table-wrap` 消费 `var(--ui-radius)`，不再被更高优先级固定圆角覆盖；数据源分组标题条由外层 `overflow: hidden` 裁切，首页统计详情表格由外层 `overflow: auto` 裁切，均不产生独立圆角接缝。
+- 验证 `.user-filter-pill`、`.user-role-card`、`.user-role-card-icon`、`.user-enable-row`、`#configModal .modal-section`、`#infoModal .home-stat-modal-table-wrap`、`#dbValidationModal .db-validation-table-item`、`#dbValidationModal #dbValidationLog`、`.flow-chain-editor-overlay .flow-definition-table`、`.flow-chain-editor-overlay .flow-selected-step`、`.flow-chain-editor-overlay .flow-selected-step-actions .btn-icon`、`#page-report-navigation .report-nav-done-meta` 和 `#page-report-navigation .report-nav-no-panel-done-meta` 消费 `var(--ui-radius)`，不再被更高优先级固定圆角覆盖；数据源分组标题条由外层 `overflow: hidden` 裁切，首页统计详情表格由外层 `overflow: auto` 裁切，均不产生独立圆角接缝。
 - 验证渐变开关同时切换强调面、应用内容区背景、登录页背景和折线颜色；关闭时无装饰光斑残留。
 - 验证登录页从最近成功缓存恢复渐变状态，首次/非法缓存回退为开启，登录失败不污染缓存。
 - 验证暗色登录页不再包含双栏网格、暗色专属宽度/内边距或显示左侧面板的规则。
@@ -413,7 +419,7 @@ line_chart_style VARCHAR(16) NOT NULL DEFAULT 'straight' COMMENT '折线图风�
 - 检查主题切换、暗色切换和圆角预览互不干扰。
 - 对同一份首页数据分别检查直线折线和平滑曲线；确认直线折线无空心数据点圆圈、平滑曲线保留圆圈，其他面积填充、标签、图例、提示框和动画一致。
 - 切换主题或渐变开关时确认折线颜色立即重绘；多系列仍能通过同主题深浅层级清晰区分。
-- 将圆角分别设为 `1px`、`4px`、`15px`，检查用户筛选胶囊、角色卡片/图标、启用账号容器、数据源弹窗“数据库连接”分组和“报送期差异数详情”等首页统计详情表格同步变化；标题条/表头顶角与外框一致，筛选、角色选择、启停、数据源表单、表格滚动和粘性表头保持正常。
+- 将圆角分别设为 `1px`、`4px`、`15px`，检查用户筛选胶囊、角色卡片/图标、启用账号容器、数据源弹窗“数据库连接”分组、“报送期差异数详情”等首页统计详情表格、人行逐笔校验表单行/日志框、流程链可选流程框/已选流程行及其行内按钮、鱼骨详情卡内/独立完成时间标签同步变化；标题条/表头顶角与外框一致，筛选、角色选择、启停、数据源表单、表格滚动、粘性表头、表单勾选、日志滚动、流程搜索/排序/移动/移除以及鱼骨标签定位保持正常。
 - 活力/沉稳分别检查应用内容区和登录页在渐变开/关、浅色/暗色下的背景；背景可辨识但不降低卡片和文字对比度。
 - 在登录页切换明暗模式，确认卡片、Logo、字段和按钮位置完全不动，只有配色与 Logo 明暗资源改变。
 - 活力/沉稳及渐变开/关组合下检查“忘记密码”“去联系管理员”、焦点状态和勾选框；暗色模式文字对比度可读。
