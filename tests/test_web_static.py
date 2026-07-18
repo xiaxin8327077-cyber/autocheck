@@ -2906,6 +2906,33 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".run-log-panel",
         "#page-report-navigation .report-nav-stat-card",
         "#page-report-navigation .report-nav-card",
+        "#page-report-navigation .report-nav-branch-panel",
+        "#page-report-navigation .report-nav-batch",
+        "#page-report-navigation .report-nav-todo",
+        "#page-report-navigation .report-nav-load-state",
+        ".toast",
+        ".flow-toast",
+        ".top-nav-status",
+        ".dark-mode-toggle",
+        ".history-summary-item",
+        ".history-count-item",
+        ".history-section",
+        ".detail-block",
+        ".detail-item",
+        ".status-badge",
+        ".flow-chain-list",
+        ".flow-chain-selection-summary",
+        ".flow-run-panel:last-child #flowLog",
+        ".flow-history-table-wrap",
+        ".db-validation-history-table-wrap",
+        ".pbc-upload-area",
+        "#page-settings .metric-item",
+        "#page-settings .db-validation-source-row",
+        ".flow-chain-config",
+        ".config-item",
+        "#page-settings .about-description",
+        "#page-settings .about-features",
+        "#page-settings .about-tech",
         "#page-settings .settings-dashboard-card",
         "#page-users .user-stat-card",
         "#page-users .user-filter-bar",
@@ -2963,7 +2990,6 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".login-form",
         ".login-input",
         ".brand-theme-toggle",
-        ".dark-mode-toggle",
         ".user-initial-avatar",
         ".user-menu-icon",
         ".status-dot",
@@ -3001,6 +3027,28 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
     for _selector_group, body in blocks:
         declarations = [item.strip() for item in body.split(";") if item.strip()]
         assert declarations == ["border-radius: var(--ui-radius) !important"]
+
+
+def test_readme_documents_expanded_interface_radius_surface_coverage():
+    readme = _read(README_MD)
+
+    for text in (
+        "鱼骨详情卡",
+        "报送日期分组卡",
+        "注意事项卡",
+        "统计失败提示条",
+        "右上角通知",
+        "顶部版本标签",
+        "暗色切换按钮外壳",
+        "历史详情与执行历史表格外框",
+        "结果详情分区",
+        "结果状态标签",
+        "一键导入上传区",
+        "系统信息指标卡",
+        "数据源与流程链配置行",
+        "关于系统内容卡",
+    ):
+        assert text in readme
 
 
 def test_radius_surfaces_drop_fixed_polygon_clipping_but_pbc_close_stays_diamond():
