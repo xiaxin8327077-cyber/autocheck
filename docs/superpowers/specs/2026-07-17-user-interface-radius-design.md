@@ -300,6 +300,9 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 报送导航鱼骨详情卡：`#page-report-navigation .report-nav-branch-panel`
 - 报送日期分组卡：`#page-report-navigation .report-nav-batch`
 - 注意事项单条卡片：`#page-report-navigation .report-nav-todo`
+- 报送导航加载、无快照及统计失败提示条：`#page-report-navigation .report-nav-load-state`
+- 右上角成功、警告、错误和普通通知外壳：`.toast`
+- 流程后台执行右下角浮动通知外壳：`.flow-toast`
 - 暗色模式切换按钮外壳：`.dark-mode-toggle`
 - 历史详情摘要信息卡：`.history-summary-item`
 - 历史详情差异计数卡：`.history-count-item`
@@ -330,6 +333,8 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 ### 12.4 测试与验收
 
 - 静态测试必须逐项断言 12.2 的选择器存在于集中式覆盖层。
+- 报送导航提示条仅调整外框圆角，`.ready` 隐藏状态、`.error` 颜色以及统计失败处理逻辑保持不变。
+- 通知只调整 `.toast` 和 `.flow-toast` 外壳；通知图标、流程进度条和关闭按钮保持原样，通知出现、消失、展开和自动关闭行为不变。
 - `.dark-mode-toggle` 从禁止清单移入必需清单；其内部图形不加入覆盖层。
 - 覆盖层属性审计继续断言每个规则只有 `border-radius`。
 - 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。
