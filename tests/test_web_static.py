@@ -2955,6 +2955,7 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".btn-close",
         ".page-btn",
         ".trend-quick-btn",
+        ".trend-quick-btns",
         ".pbc-btn",
         ".report-nav-action-button",
         ".info-detail-action",
@@ -2982,6 +2983,7 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".custom-select-dropdown",
         ".custom-date-shell",
         ".custom-date-dropdown",
+        "#page-report-navigation .report-nav-filter-chips span",
     ):
         assert selector in selectors
 
@@ -3035,7 +3037,9 @@ def test_readme_documents_expanded_interface_radius_surface_coverage():
     for text in (
         "鱼骨详情卡",
         "报送日期分组卡",
+        "统计周期分段选择器",
         "注意事项卡",
+        "注意事项筛选标签",
         "统计失败提示条",
         "右上角通知",
         "顶部版本标签",

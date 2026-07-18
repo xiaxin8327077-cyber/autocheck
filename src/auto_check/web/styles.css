@@ -12137,6 +12137,7 @@ input.custom-input-native:disabled {
 .btn-close,
 .page-btn,
 .trend-quick-btn,
+.trend-quick-btns,
 .pbc-btn,
 .report-nav-action-button,
 .info-detail-action,
@@ -12163,7 +12164,8 @@ input.custom-input-native:disabled {
 .custom-select-trigger,
 .custom-select-dropdown,
 .custom-date-shell,
-.custom-date-dropdown {
+.custom-date-dropdown,
+#page-report-navigation .report-nav-filter-chips span {
   border-radius: var(--ui-radius) !important;
 }
 /* User interface radius preference: end */
