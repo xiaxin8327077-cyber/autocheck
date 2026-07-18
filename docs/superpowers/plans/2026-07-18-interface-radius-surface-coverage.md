@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让用户截图指定的鱼骨详情、日期分组、注意事项、历史详情、流程执行、上传、系统设置等矩形表面全部读取现有全局圆角值，同时不改变任何业务功能或特殊形状。
+**Goal:** 让用户截图指定的业务矩形表面、通知、结果详情和登录页全部读取现有全局圆角值，同时保持数据库为登录后唯一权威并且不改变任何业务功能。
 
-**Architecture:** 继续使用 `styles.css` 末尾现有的集中式 `--ui-radius` 覆盖层，只增加逐项核对过的精确选择器，并保持覆盖层唯一声明为 `border-radius`。静态测试把新选择器加入契约、把暗色切换外壳从禁止项移入必需项；README 记录详细覆盖，应用内更新日志沿用已有“系统优化及BUG修复”精简口径。
+**Architecture:** 主应用继续使用 `styles.css` 末尾现有的集中式 `--ui-radius` 覆盖层，只增加逐项核对过的精确选择器，并保持覆盖层唯一声明为 `border-radius`。登录页使用固定键 `autoCheckLastInterfaceRadius` 读取本机最后一次认证后成功获取或保存的圆角显示缓存，默认 4px；主应用成功 GET/POST 后才刷新缓存，MySQL 仍是登录后唯一权威。静态测试锁定精确选择器、显示缓存边界和 README 说明，应用内更新日志沿用已有“系统优化及BUG修复”精简口径。
 
 **Tech Stack:** 原生 HTML/CSS/JavaScript、Python 3.12、pytest、PowerShell、PyInstaller、Windows WebView/浏览器验收。
 
@@ -13,9 +13,10 @@
 - 仅修改界面显示，不修改 HTML 结构、JavaScript 事件、API、数据库、权限、表单值、焦点顺序或点击区域。
 - 全部目标使用同一个 `--ui-radius`；范围仍为 1–15px、默认 4px、步长 1px。
 - 默认太空主题、沉稳主题和暗色模式均需兼容。
-- 圆形图标、头像、状态点、图表节点、胶囊、标签、进度条、复选框、单选框、滑块和 SVG 内部形状保持原样。
+- 圆形图标、头像、状态点、图表节点、普通胶囊、普通标签、进度条、复选框、单选框、滑块和 SVG 内部形状保持原样；用户明确指定的结果页 `.status-badge` 除外。
 - 覆盖层禁止使用全局 `button`、`table`、`[class*=item]`、`[class*=card]` 或通配后代选择器。
 - `src/auto_check/web/app.js` 的 v2.1 日志保持“新增界面圆角个性化设置。”和“系统优化及BUG修复。”的精简口径，不展开本次界面细节。
+- 登录页缓存只保存一个 1–15 的整数，不保存用户 ID、用户名或按用户映射；缓存读取/写入失败不得阻断登录和主应用。
 - 所有编辑在 `D:\trae\autocheck\.worktrees\user-interface-radius-preferences` 独立 worktree 内完成。
 
 ---
@@ -27,7 +28,7 @@
 
 **Interfaces:**
 - Consumes: `styles.css` 中 `/* User interface radius preference: start/end */` 标记区，以及 `README_MD` 测试常量。
-- Produces: 20 个新增必需选择器、特殊形状排除契约和 README 详细覆盖契约。
+- Produces: 27 个新增必需选择器、特殊形状排除契约和 README 详细覆盖契约。
 
 - [ ] **Step 1: 扩展圆角选择器契约测试**
 
@@ -37,10 +38,17 @@
         "#page-report-navigation .report-nav-branch-panel",
         "#page-report-navigation .report-nav-batch",
         "#page-report-navigation .report-nav-todo",
+        "#page-report-navigation .report-nav-load-state",
+        ".toast",
+        ".flow-toast",
+        ".top-nav-status",
         ".dark-mode-toggle",
         ".history-summary-item",
         ".history-count-item",
         ".history-section",
+        ".detail-block",
+        ".detail-item",
+        ".status-badge",
         ".flow-chain-list",
         ".flow-chain-selection-summary",
         ".flow-run-panel:last-child #flowLog",
@@ -76,8 +84,13 @@ def test_readme_documents_expanded_interface_radius_surface_coverage():
         "鱼骨详情卡",
         "报送日期分组卡",
         "注意事项卡",
+        "统计失败提示条",
+        "右上角通知",
+        "顶部版本标签",
         "暗色切换按钮外壳",
         "历史详情与执行历史表格外框",
+        "结果详情分区",
+        "结果状态标签",
         "一键导入上传区",
         "系统信息指标卡",
         "数据源与流程链配置行",
@@ -118,10 +131,17 @@ Expected: FAIL；第一个测试报告新增选择器尚不在覆盖层，第二
 #page-report-navigation .report-nav-branch-panel,
 #page-report-navigation .report-nav-batch,
 #page-report-navigation .report-nav-todo,
+#page-report-navigation .report-nav-load-state,
+.toast,
+.flow-toast,
+.top-nav-status,
 .dark-mode-toggle,
 .history-summary-item,
 .history-count-item,
 .history-section,
+.detail-block,
+.detail-item,
+.status-badge,
 .flow-chain-list,
 .flow-chain-selection-summary,
 .flow-run-panel:last-child #flowLog,
@@ -150,7 +170,7 @@ Expected: FAIL；第一个测试报告新增选择器尚不在覆盖层，第二
 在 `README.md` 的“系统设置”条目中，把覆盖说明扩展为包含以下完整句子：
 
 ```markdown
-截图指定的矩形子表面也统一跟随该值，包括鱼骨详情卡、报送日期分组卡、注意事项卡、暗色切换按钮外壳、历史详情与执行历史表格外框、一键导入上传区、系统信息指标卡、数据源与流程链配置行、关于系统内容卡。
+截图指定的子表面也统一跟随该值，包括鱼骨详情卡、报送日期分组卡、注意事项卡、统计失败提示条、右上角通知、流程浮动通知、顶部版本标签、暗色切换按钮外壳、历史详情与执行历史表格外框、结果详情分区、结果状态标签、一键导入上传区、系统信息指标卡、数据源与流程链配置行、关于系统内容卡，以及使用本机上一次成功用户圆角的登录页卡片、输入框和登录按钮。
 ```
 
 保持紧随其后的特殊形状排除说明不变。
@@ -160,7 +180,7 @@ Expected: FAIL；第一个测试报告新增选择器尚不在覆盖层，第二
 在 v2.1 的“新增用户级界面圆角个性化设置”条目末尾加入：
 
 ```markdown
-；截图指定的矩形子表面进一步覆盖鱼骨详情、报送日期、注意事项、历史详情、执行历史、上传区、系统信息、数据源与流程链配置以及关于系统内容卡
+；截图指定的子表面进一步覆盖报送导航提示、通知、版本标签、结果详情与状态、历史与流程、上传区、系统设置内容卡和登录页
 ```
 
 不要修改应用界面版本号，也不要展开 `src/auto_check/web/app.js` 的精简更新日志。
@@ -205,16 +225,210 @@ git commit -m "fix: extend unified radius to highlighted surfaces"
 
 ---
 
-### Task 3: 全量验证、重新打包与浏览器验收
+### Task 3: 登录页使用最后一次认证成功的圆角显示缓存
+
+**Files:**
+- Modify: `src/auto_check/web/login.html:8-24`
+- Modify: `src/auto_check/web/login.html:606-616`
+- Modify: `src/auto_check/web/app.js:551-790`
+- Modify: `tests/test_web_static.py:3180-3390`
+- Test: `tests/test_web_static.py`
+
+**Interfaces:**
+- Consumes: 主应用 `normalizeInterfaceRadius()`、成功的 `GET/POST /api/settings/interface` 返回值和登录页 `document.documentElement`。
+- Produces: 固定显示缓存键 `autoCheckLastInterfaceRadius`、登录页首屏根变量和浅色/暗色登录矩形表面圆角。
+
+- [ ] **Step 1: 先写登录页缓存与样式失败测试**
+
+在 `tests/test_web_static.py` 的圆角测试区新增：
+
+```python
+def test_login_uses_last_authenticated_interface_radius_display_cache():
+    login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
+
+    assert "--ui-radius: 4px;" in login_html
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in login_html
+    assert "function normalizeLoginInterfaceRadius(value)" in login_html
+    assert "Number.isInteger(parsed)" in login_html
+    assert "parsed >= 1 && parsed <= 15" in login_html
+    assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" in login_html
+    assert 'document.documentElement.style.setProperty("--ui-radius", `${radiusPx}px`);' in login_html
+    assert login_html.index('id="initialInterfaceRadiusScript"') < login_html.index("<style>")
+
+    for selector in (
+        ".right-panel",
+        ':root[data-login-theme="dark"] .login-container',
+        ".form-input",
+        ':root[data-login-theme="dark"] .form-input',
+        ".login-btn",
+        ':root[data-login-theme="dark"] .login-btn',
+    ):
+        assert selector in login_html
+```
+
+- [ ] **Step 2: 把主应用本地存储断言改为单一非权威显示缓存契约**
+
+将 `test_interface_radius_settings_refresh_on_each_entry_without_local_storage()` 重命名为 `test_interface_radius_settings_use_server_authority_with_login_display_cache()`，保留设置页每次进入重新 GET 的断言，并把原来禁止所有 radius localStorage 的断言替换为：
+
+```python
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in body
+    assert "function cacheAuthenticatedInterfaceRadius(radiusPx)" in body
+    assert "localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));" in body
+    assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
+    assert "localStorage.removeItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
+    assert app_js.count("localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY") == 1
+    assert "autoCheckRadius" not in app_js
+```
+
+在现有 `test_interface_radius_preview_reset_save_and_discard_are_draft_safe()` 中增加：
+
+```python
+    assert "cacheAuthenticatedInterfaceRadius(" not in slider_body
+    assert "cacheAuthenticatedInterfaceRadius(" not in reset_body
+    assert "cacheAuthenticatedInterfaceRadius(savedRadiusPx);" in save_body
+    assert "cacheAuthenticatedInterfaceRadius(" not in catch_body
+```
+
+并在 `test_interface_radius_state_normalization_rendering_and_api_boundary()` 中取得 `loadInterfaceRadiusPreference` 函数体，断言成功路径包含 `cacheAuthenticatedInterfaceRadius(radiusPx);`，catch 路径不包含该调用。
+
+- [ ] **Step 3: 运行新测试并确认先失败**
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py::test_login_uses_last_authenticated_interface_radius_display_cache tests/test_web_static.py::test_interface_radius_settings_use_server_authority_with_login_display_cache tests/test_web_static.py::test_interface_radius_preview_reset_save_and_discard_are_draft_safe tests/test_web_static.py::test_interface_radius_state_normalization_rendering_and_api_boundary
+```
+
+Expected: FAIL；登录页尚无显示缓存，主应用尚未在成功 GET/POST 后同步缓存。
+
+- [ ] **Step 4: 在登录页首屏读取并规范化显示缓存**
+
+在 `login.html` 的 `<style>` 之前加入：
+
+```html
+    <script id="initialInterfaceRadiusScript">
+      (() => {
+        const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
+        const DEFAULT_LOGIN_INTERFACE_RADIUS_PX = 4;
+
+        function normalizeLoginInterfaceRadius(value) {
+          const parsed = Number(value);
+          return Number.isInteger(parsed) && parsed >= 1 && parsed <= 15
+            ? parsed
+            : DEFAULT_LOGIN_INTERFACE_RADIUS_PX;
+        }
+
+        let radiusPx = DEFAULT_LOGIN_INTERFACE_RADIUS_PX;
+        try {
+          radiusPx = normalizeLoginInterfaceRadius(localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY));
+        } catch (_) {}
+        document.documentElement.style.setProperty("--ui-radius", `${radiusPx}px`);
+      })();
+    </script>
+```
+
+并在登录页 `:root` 变量中增加：
+
+```css
+        --ui-radius: 4px;
+```
+
+- [ ] **Step 5: 让登录页指定矩形表面读取根变量**
+
+在 `login.html` 内联样式末尾、`</style>` 前增加：
+
+```css
+      .right-panel,
+      .form-input,
+      .login-btn,
+      :root[data-login-theme="dark"] .login-container,
+      :root[data-login-theme="dark"] .form-input,
+      :root[data-login-theme="dark"] .login-btn {
+        border-radius: var(--ui-radius);
+      }
+```
+
+不要加入 `.theme-toggle`、`.password-toggle`、`.remember-me input`、`.deco`、`.shape`、`.feature-card` 或 `.social-btn`。
+
+- [ ] **Step 6: 主应用只在成功 GET/POST 后写显示缓存**
+
+在 `app.js` 的 `// Interface radius start/end` 区域中，常量和 `normalizeInterfaceRadius()` 后加入：
+
+```javascript
+const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
+
+function cacheAuthenticatedInterfaceRadius(radiusPx) {
+  const normalizedRadiusPx = normalizeInterfaceRadius(radiusPx);
+  try {
+    localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));
+  } catch (_) {}
+  return normalizedRadiusPx;
+}
+```
+
+在 `loadInterfaceRadiusPreference()` 成功解析 `radiusPx` 并更新成功状态后加入：
+
+```javascript
+    cacheAuthenticatedInterfaceRadius(radiusPx);
+```
+
+在 `saveInterfaceRadiusPreference()` 成功应用服务端返回值后加入：
+
+```javascript
+    cacheAuthenticatedInterfaceRadius(savedRadiusPx);
+```
+
+不得在 slider `input`、恢复默认、catch、登录提交或偏好失败回退路径调用缓存函数。
+
+- [ ] **Step 7: 运行聚焦测试和前端全量静态测试**
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py -k "interface_radius or login_uses_last_authenticated_interface_radius"
+python -m pytest -q tests/test_web_static.py
+```
+
+Expected: 全部通过；登录、主题、密码显示、记住我和原圆角状态机测试无回归。
+
+- [ ] **Step 8: 检查登录缓存边界并提交**
+
+Run:
+
+```powershell
+git diff -- src/auto_check/web/login.html src/auto_check/web/app.js tests/test_web_static.py
+git diff --check
+```
+
+Expected: 缓存只含一个整数键；主应用只写不读；登录页只读；无用户映射、API、数据库或认证流程变化。
+
+```powershell
+git add src/auto_check/web/login.html src/auto_check/web/app.js tests/test_web_static.py
+git commit -m "feat: apply last user radius to login surfaces"
+```
+
+---
+
+### Task 4: 全量验证、重新打包与浏览器验收
 
 **Files:**
 - Verify: `src/auto_check/web/styles.css`
+- Verify: `src/auto_check/web/login.html`
+- Verify: `src/auto_check/web/app.js`
 - Verify: `tests/test_web_static.py`
 - Verify: `README.md`
 - Modify: `dist/auto-check.exe`
 
 **Interfaces:**
-- Consumes: Task 2 已提交的 CSS/测试/README。
+- Consumes: Task 2 已提交的主应用 CSS/测试/README，以及 Task 3 已提交的登录显示缓存。
 - Produces: 通过全量回归的新 Windows 可执行文件，以及 1px、4px、15px 下的可视验收结果。
 
 - [ ] **Step 1: 运行全量测试**
@@ -310,11 +524,14 @@ Expected: 返回新进程 ID，首页 HTTP 状态为 200。
 在已登录页面进入“系统设置→界面设置”；如果会话失效，使用现有管理员账号重新登录。分别把滑块拖到 1px、4px、15px，但不点击保存，逐类抽查：
 
 - 报送导航：鱼骨详情卡、报送日期分组卡、注意事项卡。
-- 暗色模式：切换按钮外壳跟随数值，内部月亮图形不变。
-- 历史/流程/逐笔：历史详情卡、流程链列表与摘要、执行日志、两类执行历史表格外框。
+- 提示与导航：统计失败提示条、右上角通用通知、流程浮动通知、顶部版本标签、暗色切换按钮外壳。
+- 结果/历史：结果详情分区、键值信息框、匹配状态标签、历史详情卡和两类执行历史表格外框。
+- 流程/逐笔：流程链列表与摘要、执行日志和逐笔校验数据源配置行。
 - 工具/设置：上传区、系统信息指标卡、逐笔数据源配置行、流程链与数据源配置行、关于系统三类内容卡。
 
 Expected: 所有矩形目标的计算样式 `border-radius` 与滑块值一致；复选框、圆形图标、状态点、进度条和表格行保持原样；弹窗开关、暗色切换、流程选择、历史查看和文件选择入口仍可操作。
+
+随后把 `autoCheckLastInterfaceRadius` 依次设为 1、4、15 并重新打开登录页，分别检查浅色与暗色：浅色登录卡片、暗色登录外框、输入框和登录按钮使用缓存值；主题按钮、密码眼睛按钮、复选框和装饰圆形保持原样。最后恢复缓存为已保存的 4。
 
 - [ ] **Step 9: 恢复已保存值并记录最终状态**
 
@@ -324,7 +541,7 @@ Run:
 
 ```powershell
 git status --short
-git log -3 --oneline
+git log -5 --oneline
 ```
 
-Expected: 工作区干净；最近提交依次包含设计补充、CSS/测试/README 实现和 exe 刷新。
+Expected: 工作区干净；最近提交包含设计补充、主应用 CSS/测试/README 实现、登录显示缓存实现和 exe 刷新。
