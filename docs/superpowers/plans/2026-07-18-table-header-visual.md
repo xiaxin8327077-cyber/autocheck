@@ -101,3 +101,75 @@ Expected: focused tests PASS, all static tests PASS, and `git diff --check` repo
 git add -- src/auto_check/web/styles.css tests/test_web_static.py
 git commit -m "fix: unify table header contrast"
 ```
+
+### Task 2: Match main-list header height to user management
+
+**Files:**
+- Modify: `tests/test_web_static.py`
+- Modify: `src/auto_check/web/styles.css`
+
+**Interfaces:**
+- Consumes: the existing `.result-card > .table-wrap > .result-table` structure used by the reconciliation-result and reconciliation-history pages.
+- Produces: `14px` vertical table-header padding for those two main lists only.
+
+- [ ] **Step 1: Write the failing scope and height test**
+
+Add a static test that requires a narrowly scoped rule:
+
+```python
+def test_main_result_and_history_headers_match_user_table_height_only():
+    css = _read(STYLES_CSS)
+    main_headers = re.search(
+        r"(?m)^\.result-card > \.table-wrap > \.result-table > thead > tr > th\s*"
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert main_headers is not None
+    assert "padding-top: 14px" in main_headers.group("body")
+    assert "padding-bottom: 14px" in main_headers.group("body")
+    assert "height:" not in main_headers.group("body")
+    assert ".app-modal-shell" not in main_headers.group(0)
+```
+
+- [ ] **Step 2: Run the test and verify it fails**
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py -k "main_result_and_history_headers_match_user_table_height_only"
+```
+
+Expected: FAIL because the scoped main-list header rule does not yet exist.
+
+- [ ] **Step 3: Implement the scoped vertical padding**
+
+Add the following rule after the existing history-table cell sizing rule, so it wins over `.history-table th, .history-table td` without changing horizontal padding:
+
+```css
+.result-card > .table-wrap > .result-table > thead > tr > th {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+```
+
+Do not modify global `th`, `.history-result-table th`, modal selectors, or user-management padding.
+
+- [ ] **Step 4: Verify focused and full static tests**
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py -k "main_result_and_history_headers_match_user_table_height_only or modal_table_headers_match_history_tokens or history_detail_modal_layout"
+python -m pytest -q tests/test_web_static.py
+git diff --check
+```
+
+Expected: focused tests PASS, all static tests PASS, and `git diff --check` reports no whitespace errors.
+
+- [ ] **Step 5: Commit the height adjustment**
+
+```powershell
+git add -- src/auto_check/web/styles.css tests/test_web_static.py
+git commit -m "fix: align main table header height"
+```
