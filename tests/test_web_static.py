@@ -5570,7 +5570,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     result_header = re.search(r"(?m)^\.history-result-table th\s*\{(?P<body>.*?)\}", css, re.S)
     assert result_header is not None
     assert "position: static" in result_header.group("body")
-    assert "color: color-mix(in srgb, var(--on-surface-variant) 45%, var(--surface-container-lowest))" in result_header.group("body")
+    assert "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))" in result_header.group("body")
     assert "font-weight: 500" in result_header.group("body")
     assert "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))" in result_header.group("body")
     assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
@@ -5591,8 +5591,10 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert '[data-color-mode="dark"] .history-summary-item' in css
     assert '[data-color-mode="dark"] .history-result-table td' in css
     assert '[data-color-mode="dark"] .history-result-table th' in css
-    assert ".history-status--done" in css
-    assert ".history-status--pending" in css
+    for status_tone in ("done", "pending"):
+        status = re.search(rf"(?m)^\.history-status--{status_tone}\s*\{{(?P<body>.*?)\}}", css, re.S)
+        assert status is not None
+        assert "background: transparent" in status.group("body")
     assert ".history-detail-counts" not in css
 
 
@@ -5651,6 +5653,8 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     )
     assert webkit_scrollbar is not None
     assert "display: none" in webkit_scrollbar.group("body")
+    assert "width: 0" in webkit_scrollbar.group("body")
+    assert "height: 0" in webkit_scrollbar.group("body")
 
     modal_body = re.search(r"(?m)^\.app-modal-shell > \.app-modal-body\s*\{(?P<body>.*?)\}", css, re.S)
     assert modal_body is not None

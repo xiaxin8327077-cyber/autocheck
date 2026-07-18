@@ -4048,7 +4048,7 @@ th {
 .history-result-table th {
   position: static;
   z-index: auto;
-  color: color-mix(in srgb, var(--on-surface-variant) 45%, var(--surface-container-lowest));
+  color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
   background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
@@ -4078,17 +4078,18 @@ th {
   min-height: 20px;
   padding: 2px 10px;
   border-radius: 999px;
+  border: 1px solid var(--outline-variant);
+  background: transparent;
   color: var(--on-surface-variant);
   font-size: 11px;
   white-space: nowrap;
 }
 
 .history-status--done {
-  background: var(--surface-container-high);
+  background: transparent;
 }
 
 .history-status--pending {
-  border: 1px solid var(--outline-variant);
   background: transparent;
 }
 
