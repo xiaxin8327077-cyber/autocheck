@@ -67,7 +67,7 @@ SET @appearance_preference_ddl = IF(
       AND constraint_name = 'chk_user_interface_vitality_theme_color'
   ),
   'SELECT 1',
-  'ALTER TABLE `user_interface_preferences` ADD CONSTRAINT `chk_user_interface_vitality_theme_color` CHECK (`vitality_theme_color` IS NULL OR BINARY `vitality_theme_color` REGEXP ''^#[0-9A-F]{6}$'')'
+  'ALTER TABLE `user_interface_preferences` ADD CONSTRAINT `chk_user_interface_vitality_theme_color` CHECK (`vitality_theme_color` IS NULL OR REGEXP_LIKE(`vitality_theme_color`, ''^#[0-9A-F]{6}$'', ''c''))'
 );
 PREPARE appearance_preference_statement FROM @appearance_preference_ddl;
 EXECUTE appearance_preference_statement;
@@ -82,7 +82,7 @@ SET @appearance_preference_ddl = IF(
       AND constraint_name = 'chk_user_interface_calm_theme_color'
   ),
   'SELECT 1',
-  'ALTER TABLE `user_interface_preferences` ADD CONSTRAINT `chk_user_interface_calm_theme_color` CHECK (`calm_theme_color` IS NULL OR BINARY `calm_theme_color` REGEXP ''^#[0-9A-F]{6}$'')'
+  'ALTER TABLE `user_interface_preferences` ADD CONSTRAINT `chk_user_interface_calm_theme_color` CHECK (`calm_theme_color` IS NULL OR REGEXP_LIKE(`calm_theme_color`, ''^#[0-9A-F]{6}$'', ''c''))'
 );
 PREPARE appearance_preference_statement FROM @appearance_preference_ddl;
 EXECUTE appearance_preference_statement;

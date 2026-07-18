@@ -217,10 +217,12 @@ def test_mysql_storage_doc_contains_complete_final_interface_preference_ddl() ->
         "CONSTRAINT `chk_system_interface_preferences_singleton` CHECK (`id` = 1)",
         "CONSTRAINT `chk_system_interface_vitality_theme_color`",
         "CONSTRAINT `chk_system_interface_calm_theme_color`",
-        "BINARY `vitality_theme_color` REGEXP '^#[0-9A-F]{6}$'",
-        "BINARY `calm_theme_color` REGEXP '^#[0-9A-F]{6}$'",
+        "REGEXP_LIKE(`vitality_theme_color`, '^#[0-9A-F]{6}$', 'c')",
+        "REGEXP_LIKE(`calm_theme_color`, '^#[0-9A-F]{6}$', 'c')",
     ]:
         assert expected in canonical
 
     assert "theme_gradient_enabled" not in canonical
     assert "app_settings" not in canonical
+    assert "BINARY `vitality_theme_color` REGEXP" not in canonical
+    assert "BINARY `calm_theme_color` REGEXP" not in canonical

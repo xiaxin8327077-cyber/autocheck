@@ -53,8 +53,8 @@ CREATE TABLE `user_interface_preferences` (
   PRIMARY KEY (`user_id`),
   CONSTRAINT `chk_user_interface_radius_px` CHECK (`radius_px` BETWEEN 1 AND 15),
   CONSTRAINT `chk_user_interface_line_chart_style` CHECK (`line_chart_style` IN ('straight', 'smooth')),
-  CONSTRAINT `chk_user_interface_vitality_theme_color` CHECK (`vitality_theme_color` IS NULL OR BINARY `vitality_theme_color` REGEXP '^#[0-9A-F]{6}$'),
-  CONSTRAINT `chk_user_interface_calm_theme_color` CHECK (`calm_theme_color` IS NULL OR BINARY `calm_theme_color` REGEXP '^#[0-9A-F]{6}$')
+  CONSTRAINT `chk_user_interface_vitality_theme_color` CHECK (`vitality_theme_color` IS NULL OR REGEXP_LIKE(`vitality_theme_color`, '^#[0-9A-F]{6}$', 'c')),
+  CONSTRAINT `chk_user_interface_calm_theme_color` CHECK (`calm_theme_color` IS NULL OR REGEXP_LIKE(`calm_theme_color`, '^#[0-9A-F]{6}$', 'c'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='用户界面偏好表：保存每个用户的界面圆角设置。';
 ```
@@ -70,8 +70,8 @@ CREATE TABLE `system_interface_preferences` (
   `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
   PRIMARY KEY (`id`),
   CONSTRAINT `chk_system_interface_preferences_singleton` CHECK (`id` = 1),
-  CONSTRAINT `chk_system_interface_vitality_theme_color` CHECK (BINARY `vitality_theme_color` REGEXP '^#[0-9A-F]{6}$'),
-  CONSTRAINT `chk_system_interface_calm_theme_color` CHECK (BINARY `calm_theme_color` REGEXP '^#[0-9A-F]{6}$')
+  CONSTRAINT `chk_system_interface_vitality_theme_color` CHECK (REGEXP_LIKE(`vitality_theme_color`, '^#[0-9A-F]{6}$', 'c')),
+  CONSTRAINT `chk_system_interface_calm_theme_color` CHECK (REGEXP_LIKE(`calm_theme_color`, '^#[0-9A-F]{6}$', 'c'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='系统界面偏好表：保存全局纯色主题配置。';
 ```

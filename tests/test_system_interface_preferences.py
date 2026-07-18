@@ -42,8 +42,10 @@ def test_system_interface_preferences_schema_is_guarded_and_contains_no_seed_dml
     assert "`updated_at` DATETIME(6) NOT NULL" in sql
     assert "PRIMARY KEY (`id`)" in sql
     assert "CHECK (`id` = 1)" in sql
-    assert "CHECK (BINARY `vitality_theme_color` REGEXP '^#[0-9A-F]{6}$')" in sql
-    assert "CHECK (BINARY `calm_theme_color` REGEXP '^#[0-9A-F]{6}$')" in sql
+    assert "CHECK (REGEXP_LIKE(`vitality_theme_color`, '^#[0-9A-F]{6}$', 'c'))" in sql
+    assert "CHECK (REGEXP_LIKE(`calm_theme_color`, '^#[0-9A-F]{6}$', 'c'))" in sql
+    assert "BINARY `vitality_theme_color` REGEXP" not in sql
+    assert "BINARY `calm_theme_color` REGEXP" not in sql
     for forbidden_keyword in (
         "CREATE DATABASE",
         "USE",

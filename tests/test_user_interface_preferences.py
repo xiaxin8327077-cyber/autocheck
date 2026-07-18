@@ -91,8 +91,10 @@ def test_user_interface_preference_updates_are_guarded_incremental_ddl():
     assert "`vitality_theme_color` CHAR(7) NULL" in sql
     assert "`calm_theme_color` CHAR(7) NULL" in sql
     assert "CHECK (`line_chart_style` IN (''straight'', ''smooth''))" in sql
-    assert "CHECK (`vitality_theme_color` IS NULL OR BINARY `vitality_theme_color` REGEXP ''^#[0-9A-F]{6}$'')" in sql
-    assert "CHECK (`calm_theme_color` IS NULL OR BINARY `calm_theme_color` REGEXP ''^#[0-9A-F]{6}$'')" in sql
+    assert "CHECK (`vitality_theme_color` IS NULL OR REGEXP_LIKE(`vitality_theme_color`, ''^#[0-9A-F]{6}$'', ''c''))" in sql
+    assert "CHECK (`calm_theme_color` IS NULL OR REGEXP_LIKE(`calm_theme_color`, ''^#[0-9A-F]{6}$'', ''c''))" in sql
+    assert "BINARY `vitality_theme_color` REGEXP" not in sql
+    assert "BINARY `calm_theme_color` REGEXP" not in sql
     assert "ALTER TABLE `user_interface_preferences`" in sql
     assert set(re.findall(r"ALTER\s+TABLE\s+`([^`]+)`", upper)) == {
         "USER_INTERFACE_PREFERENCES"
