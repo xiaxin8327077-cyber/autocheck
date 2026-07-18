@@ -3243,9 +3243,9 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     ):
         assert preserved_declaration in global_body
     for visual_declaration in (
-        "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
-        "font-weight: 500",
-        "background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low))",
+        "color: var(--on-surface-variant)",
+        "font-weight: 600",
+        "background: var(--surface-container-low)",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert visual_declaration in global_body
@@ -3270,9 +3270,9 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     assert shared_headers is not None
     shared_body = shared_headers.group("body")
     for declaration in (
-        "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
-        "font-weight: 500",
-        "background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low))",
+        "color: var(--on-surface-variant)",
+        "font-weight: 600",
+        "background: var(--surface-container-low)",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert declaration in shared_body
@@ -3318,6 +3318,12 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, "
         "var(--surface-container-lowest))"
     ) in dark_body
+
+    user_header = re.search(r"(?m)^\.user-table th\s*\{(?P<body>.*?)\}", css, re.S)
+    assert user_header is not None
+    assert "font-size: 12px" in user_header.group("body")
+    for duplicate_visual in ("background:", "color:", "font-weight:"):
+        assert duplicate_visual not in user_header.group("body")
 
 
 def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
@@ -5911,9 +5917,9 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     result_header = re.search(r"(?m)^\.history-result-table th\s*\{(?P<body>.*?)\}", css, re.S)
     assert result_header is not None
     assert "position: static" in result_header.group("body")
-    assert "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))" in result_header.group("body")
-    assert "font-weight: 500" in result_header.group("body")
-    assert "background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low))" in result_header.group("body")
+    assert "color: var(--on-surface-variant)" in result_header.group("body")
+    assert "font-weight: 600" in result_header.group("body")
+    assert "background: var(--surface-container-low)" in result_header.group("body")
     assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
 
     cells = re.search(

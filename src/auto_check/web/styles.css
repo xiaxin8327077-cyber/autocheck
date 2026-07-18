@@ -3341,9 +3341,9 @@ th {
   top: 0;
   z-index: 2;
   font-size: 12px;
-  font-weight: 500;
-  color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
-  background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low));
+  font-weight: 600;
+  color: var(--on-surface-variant);
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -4059,9 +4059,9 @@ th {
 .history-result-table th {
   position: static;
   z-index: auto;
-  color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
-  font-weight: 500;
-  background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low));
+  color: var(--on-surface-variant);
+  font-weight: 600;
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -9805,10 +9805,7 @@ input:focus, select:focus {
 }
 
 .user-table th {
-  background: var(--surface-container-low);
-  color: var(--on-surface-variant);
   font-size: 12px;
-  font-weight: 800;
 }
 
 .user-loading-row td {
@@ -12191,9 +12188,9 @@ input.custom-input-native:disabled {
 .app-modal-shell .pbc-file-list-header,
 .app-modal-shell .db-validation-table-header,
 .app-modal-shell .flow-def-header {
-  color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
-  font-weight: 500;
-  background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low));
+  color: var(--on-surface-variant);
+  font-weight: 600;
+  background: var(--surface-container-low);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
