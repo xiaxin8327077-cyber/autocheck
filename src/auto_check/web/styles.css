@@ -5945,7 +5945,6 @@ input:focus, select:focus {
   position: absolute;
   top: 16px; right: 16px;
   width: 36px; height: 36px;
-  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
   border: none;
   background: var(--outline-variant);
   color: var(--on-surface);
@@ -5957,7 +5956,6 @@ input:focus, select:focus {
 .pbc-modal-close:hover {
   background: var(--on-surface);
   color: var(--surface-container-lowest);
-  transform: rotate(90deg);
 }
 
 /* Modal header */
@@ -5971,17 +5969,6 @@ input:focus, select:focus {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.pbc-modal-icon {
-  width: 44px; height: 44px;
-  border-radius: 10px;
-  background: rgba(249, 115, 22, 0.1);
-  color: var(--orange, #f97316);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  font-size: 24px;
-  line-height: 1;
 }
 
 .pbc-modal-header h2 {
@@ -5998,11 +5985,6 @@ input:focus, select:focus {
 
 .db-validation-modal {
   width: 940px;
-}
-
-.db-validation-modal-icon {
-  background: rgba(14, 165, 233, 0.12);
-  color: var(--secondary, #0ea5e9);
 }
 
 .db-validation-grid {
@@ -6238,10 +6220,6 @@ input:focus, select:focus {
   flex: 1;
   overflow: hidden;
   min-height: 0;
-}
-
-.flow-modal-icon {
-  background: linear-gradient(135deg, #0f766e, #2563eb);
 }
 
 .flow-history-btn {
@@ -10086,17 +10064,6 @@ input:focus, select:focus {
   margin: 0;
 }
 
-.user-modal-icon {
-  width: 40px;
-  height: 40px;
-  display: grid;
-  place-items: center;
-  border-radius: 12px;
-  background: #dff7fb;
-  color: #4c1d95;
-  font-size: 18px;
-}
-
 .user-modal-body {
   padding: 22px;
 }
@@ -12070,6 +12037,110 @@ input.custom-input-native:disabled {
   box-shadow: var(--space-panel-hover-shadow) !important;
 }
 
+/* ===== Shared balanced modal visual system ===== */
+.app-modal-overlay {
+  background: color-mix(in srgb, #0f172a 34%, transparent);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.app-modal-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.16);
+}
+
+.app-modal-header {
+  flex: 0 0 auto;
+  min-height: 58px;
+  margin: 0;
+  padding: 17px 24px;
+  border-bottom: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+}
+
+.app-modal-header h2,
+.app-modal-header h3 {
+  margin: 0;
+  color: var(--on-surface);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.app-modal-header p {
+  margin: 4px 0 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.app-modal-shell > .app-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 22px 24px;
+  overflow: auto;
+}
+
+.pbc-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.app-modal-shell > .app-modal-footer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 24px;
+  border-top: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+}
+
+.app-modal-close {
+  top: 15px;
+  right: 20px;
+  width: 28px;
+  height: 28px;
+  clip-path: none;
+  border: 0;
+  background: transparent;
+  color: var(--outline);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-modal-close:hover {
+  color: var(--on-surface);
+  background: var(--surface-container-low);
+  transform: none;
+}
+
+.app-modal-shell :is(.btn-primary, .btn-confirm-primary, .pbc-btn--primary) {
+  color: #ffffff;
+  background: var(--secondary);
+  box-shadow: none;
+}
+
+.app-modal-shell .pbc-btn--success {
+  color: #ffffff;
+  background: var(--success, #16a34a);
+  box-shadow: none;
+}
+
+[data-color-mode="dark"] .app-modal-overlay {
+  background: rgba(2, 6, 23, 0.66);
+}
+
+[data-color-mode="dark"] .app-modal-shell,
+[data-color-mode="dark"] .app-modal-header,
+[data-color-mode="dark"] .app-modal-footer {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: #0f172a;
+}
+
 /* User interface radius preference: start */
 .nav-item,
 .nav-group-toggle,
@@ -12133,6 +12204,7 @@ input.custom-input-native:disabled {
 #page-local-storage .local-storage-detail-panel,
 .modal,
 .pbc-modal,
+.pbc-modal-close,
 .user-modal,
 .btn-primary,
 .btn-outline,

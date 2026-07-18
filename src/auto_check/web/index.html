@@ -605,15 +605,14 @@
       </section>
 
       <!-- PBC 导入弹窗 -->
-      <div class="pbc-modal-overlay" id="pbcModalOverlay">
-        <div class="pbc-modal" id="pbcModal">
-          <button class="pbc-modal-close" id="pbcModalClose">
+      <div class="app-modal-overlay pbc-modal-overlay" id="pbcModalOverlay">
+        <div class="app-modal-shell pbc-modal" id="pbcModal">
+          <button class="app-modal-close pbc-modal-close" id="pbcModalClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
 
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon">&#x1F4E5;</div>
               <div>
                 <h2>一键导入</h2>
                 <p>上传数据文件，自动映射列，一键完成数据库导入</p>
@@ -621,6 +620,7 @@
             </div>
           </div>
 
+          <div class="app-modal-body pbc-modal-body">
           <!-- Steps indicator -->
           <div class="pbc-steps" id="pbcSteps">
             <div class="pbc-step pbc-step--active" data-step="1">
@@ -750,8 +750,9 @@
             </div>
           </div>
 
+          </div>
           <!-- Footer buttons -->
-          <div class="pbc-modal-footer" id="pbcModalFooter">
+          <div class="app-modal-footer pbc-modal-footer" id="pbcModalFooter">
             <button type="button" class="pbc-btn pbc-btn--secondary" id="pbcPrevBtn" hidden>上一步</button>
             <div class="pbc-modal-footer-actions">
               <span class="pbc-upload-summary" id="pbcUploadSummary" hidden>共 0 个文件</span>
@@ -765,15 +766,14 @@
       </div>
 
       <!-- 数据库校验弹窗 -->
-      <div class="pbc-modal-overlay db-validation-modal-overlay" id="dbValidationModalOverlay">
-        <div class="pbc-modal db-validation-modal" id="dbValidationModal">
-          <button class="pbc-modal-close" id="dbValidationModalClose">
+      <div class="app-modal-overlay pbc-modal-overlay db-validation-modal-overlay" id="dbValidationModalOverlay">
+        <div class="app-modal-shell pbc-modal db-validation-modal" id="dbValidationModal">
+          <button class="app-modal-close pbc-modal-close" id="dbValidationModalClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
 
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon db-validation-modal-icon">&#128202;</div>
               <div>
                 <h2>人行逐笔校验引擎</h2>
                 <p>选择逐笔表数据源和报告期，校验完成后下载 Excel</p>
@@ -782,6 +782,7 @@
             </div>
           </div>
 
+          <div class="app-modal-body pbc-modal-body">
           <div class="db-validation-grid">
             <div class="db-validation-panel">
               <h4 class="pbc-mapping-section-title">运行参数</h4>
@@ -835,7 +836,8 @@
             </div>
           </div>
 
-          <div class="pbc-modal-footer">
+          </div>
+          <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="dbValidationStatus"></span>
             <div class="pbc-modal-footer-actions">
               <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationRulesDocBtn">下载规则说明</button>
@@ -847,20 +849,20 @@
         </div>
       </div>
 
-      <div class="pbc-modal-overlay db-validation-history-overlay" id="dbValidationHistoryOverlay">
-        <div class="pbc-modal db-validation-history-modal">
-          <button class="pbc-modal-close" id="dbValidationHistoryClose">
+      <div class="app-modal-overlay pbc-modal-overlay db-validation-history-overlay" id="dbValidationHistoryOverlay">
+        <div class="app-modal-shell pbc-modal db-validation-history-modal">
+          <button class="app-modal-close pbc-modal-close" id="dbValidationHistoryClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon db-validation-modal-icon">&#128202;</div>
               <div>
                 <h2>执行历史</h2>
                 <p>查看每次数据库校验执行记录，并下载对应结果 Excel</p>
               </div>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="db-validation-history-table-wrap">
             <table class="result-table db-validation-history-table">
               <thead>
@@ -879,17 +881,17 @@
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       </div>
 
-      <div class="pbc-modal-overlay flow-modal-overlay" id="flowModalOverlay">
-        <div class="pbc-modal flow-modal" id="flowModal">
-          <button class="pbc-modal-close" id="flowModalClose">
+      <div class="app-modal-overlay pbc-modal-overlay flow-modal-overlay" id="flowModalOverlay">
+        <div class="app-modal-shell pbc-modal flow-modal" id="flowModal">
+          <button class="app-modal-close pbc-modal-close" id="flowModalClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
               <div>
                 <h2>流程执行</h2>
                 <p>选择已配置的流程链，按顺序执行并等待每个流程结束</p>
@@ -897,6 +899,7 @@
               <button type="button" class="pbc-btn pbc-btn--secondary flow-history-btn" id="flowHistoryBtn">执行记录</button>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="flow-run-grid">
             <div class="flow-run-panel flow-chain-select-panel">
               <div class="flow-chain-select-header">
@@ -930,7 +933,8 @@
               </div>
             </div>
           </div>
-          <div class="pbc-modal-footer">
+          </div>
+          <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="flowStatus"></span>
             <div class="pbc-modal-footer-actions">
               <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" disabled>停止</button>
@@ -941,20 +945,20 @@
         </div>
       </div>
 
-      <div class="pbc-modal-overlay flow-history-overlay" id="flowHistoryOverlay">
-        <div class="pbc-modal flow-history-modal">
-          <button class="pbc-modal-close" id="flowHistoryClose">
+      <div class="app-modal-overlay pbc-modal-overlay flow-history-overlay" id="flowHistoryOverlay">
+        <div class="app-modal-shell pbc-modal flow-history-modal">
+          <button class="app-modal-close pbc-modal-close" id="flowHistoryClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
               <div>
                 <h2>流程执行记录</h2>
                 <p>查看手工执行记录</p>
               </div>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="flow-history-table-wrap">
             <table class="result-table flow-history-table">
               <thead>
@@ -973,23 +977,24 @@
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       </div>
 
-      <div class="pbc-modal-overlay flow-chain-editor-overlay" id="flowChainEditorOverlay">
-        <div class="pbc-modal flow-chain-editor-modal">
-          <button class="pbc-modal-close" id="flowChainEditorClose">
+      <div class="app-modal-overlay pbc-modal-overlay flow-chain-editor-overlay" id="flowChainEditorOverlay">
+        <div class="app-modal-shell pbc-modal flow-chain-editor-modal">
+          <button class="app-modal-close pbc-modal-close" id="flowChainEditorClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
               <div>
                 <h2 id="flowChainEditorTitle">新增流程链</h2>
                 <p>配置链路名称和流程执行顺序</p>
               </div>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="flow-chain-editor-body">
             <div class="flow-chain-editor-grid">
               <label class="modal-field">
@@ -1026,7 +1031,8 @@
               </section>
             </div>
           </div>
-          <div class="pbc-modal-footer">
+          </div>
+          <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="flowChainEditorStatus"></span>
             <div class="pbc-modal-footer-actions">
               <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel">取消</button>
@@ -1492,15 +1498,15 @@
       </section>
 
       <!-- 确认弹窗 -->
-      <div class="modal-overlay" id="confirmModal" hidden>
-        <div class="modal modal-confirm">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="confirmModal" hidden>
+        <div class="app-modal-shell modal modal-confirm">
+          <div class="app-modal-header modal-header">
             <h3 id="confirmTitle">确认操作</h3>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <p id="confirmMessage">确定要执行此操作吗？</p>
           </div>
-          <div class="modal-footer">
+          <div class="app-modal-footer modal-footer">
             <button class="btn-outline" id="confirmCancel">取消</button>
             <button id="confirmOk" class="btn-confirm-primary">确定</button>
           </div>
@@ -1508,19 +1514,19 @@
       </div>
 
       <!-- 输入弹窗 -->
-      <div class="modal-overlay" id="promptModal" hidden>
-        <div class="modal modal-confirm modal-prompt" tabindex="-1">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="promptModal" hidden>
+        <div class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1">
+          <div class="app-modal-header modal-header">
             <h3 id="promptTitle">请输入</h3>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <p id="promptMessage">请输入内容</p>
             <input id="promptInput" class="prompt-input" autocomplete="off" />
             <div id="promptDateControl" hidden class="prompt-date-control">
               <input id="promptDateInput" class="prompt-input" type="date" autocomplete="off" />
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="app-modal-footer modal-footer">
             <button class="btn-outline" id="promptCancel">取消</button>
             <button id="promptOk" class="btn-confirm-primary">确定</button>
           </div>
@@ -1528,32 +1534,32 @@
       </div>
 
       <!-- 信息弹窗 -->
-      <div class="modal-overlay" id="infoModal" hidden>
-        <div class="modal modal-info">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="infoModal" hidden>
+        <div class="app-modal-shell modal modal-info">
+          <div class="app-modal-header modal-header">
             <div class="modal-title-row">
               <h3 id="infoTitle">信息</h3>
               <button class="info-detail-action" id="infoDetailAction" type="button" hidden>查看明细</button>
             </div>
-            <button class="btn-close" id="infoClose">&times;</button>
+            <button class="app-modal-close btn-close" id="infoClose">&times;</button>
           </div>
-          <div class="modal-body" id="infoBody">
+          <div class="app-modal-body modal-body" id="infoBody">
           </div>
         </div>
       </div>
 
       <!-- 报送导航治理统计维护弹窗 -->
-      <div class="modal-overlay" id="reportNavCardMaintenanceModal" hidden>
-        <div class="modal modal-confirm report-nav-card-maintenance-modal">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="reportNavCardMaintenanceModal" hidden>
+        <div class="app-modal-shell modal modal-confirm report-nav-card-maintenance-modal">
+          <div class="app-modal-header modal-header">
             <h3 id="reportNavCardMaintenanceTitle">维护治理统计</h3>
-            <button class="btn-close" id="reportNavCardMaintenanceClose" type="button">&times;</button>
+            <button class="app-modal-close btn-close" id="reportNavCardMaintenanceClose" type="button">&times;</button>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <p class="report-nav-card-maintenance-help">请一次填写四个统计周期的已完成和未完成数量。</p>
             <div class="report-nav-card-maintenance-grid" id="reportNavCardMaintenanceGrid"></div>
           </div>
-          <div class="modal-footer">
+          <div class="app-modal-footer modal-footer">
             <button class="btn-outline" id="reportNavCardMaintenanceCancel" type="button">取消</button>
             <button class="btn-confirm-primary" id="reportNavCardMaintenanceSave" type="button">保存</button>
           </div>
@@ -1561,16 +1567,15 @@
       </div>
 
       <!-- 用户管理弹窗 -->
-      <div class="modal-overlay" id="userModal" hidden>
-        <div class="modal user-modal">
-          <div class="modal-header user-modal-header">
+      <div class="app-modal-overlay modal-overlay" id="userModal" hidden>
+        <div class="app-modal-shell modal user-modal">
+          <div class="app-modal-header modal-header user-modal-header">
             <div class="user-modal-title">
-              <span class="user-modal-icon" id="userModalIcon" aria-hidden="true">👥</span>
               <h3 id="userModalTitle">新建用户</h3>
             </div>
-            <button class="btn-close user-modal-close" id="userModalClose" type="button">&times;</button>
+            <button class="app-modal-close btn-close user-modal-close" id="userModalClose" type="button">&times;</button>
           </div>
-          <div class="modal-body user-modal-body">
+          <div class="app-modal-body modal-body user-modal-body">
             <input id="userId" type="hidden" />
             <div class="user-modal-form">
               <label class="user-form-group">
@@ -1618,7 +1623,7 @@
               </div>
             </div>
           </div>
-          <div class="modal-footer user-modal-footer">
+          <div class="app-modal-footer modal-footer user-modal-footer">
             <span class="modal-status" id="userModalStatus"></span>
             <button id="userModalCancel" type="button" class="btn-outline btn-sm">取消</button>
             <button id="userModalSave" type="button" class="btn-primary btn-sm">确定</button>
@@ -1627,13 +1632,13 @@
       </div>
 
       <!-- 配置弹窗 -->
-      <div class="modal-overlay" id="configModal" hidden>
-        <div class="modal">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="configModal" hidden>
+        <div class="app-modal-shell modal">
+          <div class="app-modal-header modal-header">
             <h3 id="modalTitle">新建数据源</h3>
-            <button class="btn-close" id="modalClose">&times;</button>
+            <button class="app-modal-close btn-close" id="modalClose">&times;</button>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <label class="modal-field">
               <span>配置名称</span><input id="modalName" placeholder="如：本地测试环境" />
             </label>
@@ -1654,7 +1659,7 @@
               </div>
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="app-modal-footer modal-footer">
             <span class="modal-status" id="modalStatus"></span>
             <button id="modalTestBtn" type="button" class="btn-outline btn-sm">测试连接</button>
             <button id="modalSaveBtn" type="button" class="btn-primary btn-sm">保存</button>

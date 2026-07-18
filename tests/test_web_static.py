@@ -3016,7 +3016,6 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".user-initial-avatar",
         ".user-menu-icon",
         ".status-dot",
-        ".pbc-modal-close",
         ".filter-clear-button",
         ".expand-btn",
         ".custom-date-nav",
@@ -3080,7 +3079,7 @@ def test_readme_documents_expanded_interface_radius_surface_coverage():
         assert text in readme
 
 
-def test_radius_surfaces_drop_fixed_polygon_clipping_but_pbc_close_stays_diamond():
+def test_pbc_close_uses_shared_radius_instead_of_diamond():
     css = _read(STYLES_CSS)
 
     for selector in ("tool-card", "pbc-modal"):
@@ -3098,14 +3097,59 @@ def test_radius_surfaces_drop_fixed_polygon_clipping_but_pbc_close_stays_diamond
         re.S,
     )
     assert close_rule is not None
-    close_body = " ".join(close_rule.group("body").split())
-    assert "clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);" in close_body
+    close_body = close_rule.group("body")
+    assert "clip-path" not in close_body
+    assert "rotate(90deg)" not in css
 
     override = css.split("/* User interface radius preference: start */", 1)[1].split(
         "/* User interface radius preference: end */",
         1,
     )[0]
-    assert ".pbc-modal-close" not in override
+    assert ".pbc-modal-close" in override
+
+
+def test_all_system_modals_use_balanced_shared_shell():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+
+    overlay_ids = (
+        "pbcModalOverlay",
+        "dbValidationModalOverlay",
+        "dbValidationHistoryOverlay",
+        "flowModalOverlay",
+        "flowHistoryOverlay",
+        "flowChainEditorOverlay",
+        "confirmModal",
+        "promptModal",
+        "infoModal",
+        "reportNavCardMaintenanceModal",
+        "userModal",
+        "configModal",
+    )
+    for overlay_id in overlay_ids:
+        opening = re.search(
+            rf'<div class="(?P<classes>[^"]+)" id="{overlay_id}"',
+            html,
+        )
+        assert opening is not None
+        assert "app-modal-overlay" in opening.group("classes").split()
+
+    assert html.count("app-modal-shell") == len(overlay_ids)
+    assert html.count("app-modal-header") == len(overlay_ids)
+    assert "pbc-modal-icon" not in html
+    assert "user-modal-icon" not in html
+
+    for selector in (
+        ".app-modal-overlay",
+        ".app-modal-shell",
+        ".app-modal-header",
+        ".app-modal-body",
+        ".app-modal-footer",
+        ".app-modal-close",
+    ):
+        assert selector in css
+    assert '[data-color-mode="dark"] .app-modal-overlay' in css
+    assert '[data-color-mode="dark"] .app-modal-shell' in css
 
 
 def test_interface_radius_has_default_and_regular_user_three_card_responsive_layout():
@@ -4937,7 +4981,7 @@ def test_report_navigation_schedule_prompt_uses_system_custom_date_component():
     assert '"请选择新的报送日期"' in app_js
     assert '"请输入新的报送日期（YYYY-MM-DD）"' not in app_js
     assert 'type: "date"' in app_js
-    assert 'class="modal modal-confirm modal-prompt" tabindex="-1"' in html
+    assert 'class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1"' in html
 
     assert ".prompt-date-control" in css
     assert ".prompt-date-control .custom-date-shell" in css
@@ -5155,7 +5199,11 @@ def test_pbc_import_footer_shows_uploaded_file_total_near_next_button():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    footer = re.search(r'<div class="pbc-modal-footer" id="pbcModalFooter">(?P<body>.*?)</div>', html, re.S)
+    footer = re.search(
+        r'<div class="app-modal-footer pbc-modal-footer" id="pbcModalFooter">(?P<body>.*?)</div>',
+        html,
+        re.S,
+    )
     assert footer is not None
     assert 'id="pbcUploadSummary"' in footer.group("body")
     assert 'id="pbcClearFilesBtn"' in footer.group("body")
@@ -5193,12 +5241,15 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    modal = re.search(r'<div class="modal-overlay" id="userModal" hidden>(?P<body>.*?)</div>\s*</div>\s*<!--', html, re.S)
+    modal = re.search(
+        r'<div class="app-modal-overlay modal-overlay" id="userModal" hidden>(?P<body>.*?)</div>\s*</div>\s*<!--',
+        html,
+        re.S,
+    )
     assert modal is not None
     for token in [
         "user-modal-header",
         "user-modal-title",
-        "user-modal-icon",
         "user-modal-form",
         "user-role-card",
         "user-enable-row",
@@ -5206,6 +5257,8 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
     ]:
         assert token in modal.group("body")
         assert f".{token}" in css
+    assert "app-modal-shell" in modal.group("body")
+    assert "user-modal-icon" not in modal.group("body")
     assert '<input id="userRole" type="hidden" value="user" />' in modal.group("body")
     assert '<input id="userEnabled" type="hidden" value="true" />' in modal.group("body")
     assert '<select id="userRole"' not in modal.group("body")
