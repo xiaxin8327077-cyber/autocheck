@@ -18,9 +18,10 @@
 - 折线图风格只有 `straight` 和 `smooth`；默认、旧记录补值、接口失败回退和恢复默认均为 `straight`。
 - 直线折线隐藏空心数据点圆圈；平滑曲线保留现有圆圈。数值标签和 tooltip 命中区域始终保留。
 - 两种风格均跟随当前主题：渐变开启时使用主题渐变，关闭时使用主题纯色。多系列折线只从当前主题色派生固定深浅层级。
-- 渐变开关同时控制应用内容区底层和登录页背景；关闭时使用活力 `#EDF3FC/#E9F0FC`、沉稳 `#EBF1F3/#E7EEF1` 的内容区/登录页纯色底。
+- 渐变开关同时控制应用内容区底层和登录页背景；两者共用同一背景配方。关闭时活力内容区/登录页均使用 `#EDF3FC`，沉稳均使用 `#EBF1F3`。
 - 登录页暗色与亮色使用完全相同的居中单卡片布局，暗色不得保留双栏或左侧功能介绍。
 - 登录页交互链接、焦点和勾选框跟随主题色；按钮/勾选框填充响应渐变开关，普通文字与语义反馈色保持独立。
+- 登录输入框聚焦边框与光晕跟随主题色，错误态优先使用语义红，浏览器原生密码管理弹层不在改造范围。
 - 除连接几何、圆圈可见性和主题驱动的折线颜色外，不改变图表数据、线宽、阴影、面积填充、标签、网格、图例、坐标轴、tooltip、动画或请求流程。
 - 成功绿、警告橙/黄、错误红及饼图、柱图等业务分类色保持独立。
 - 每个任务按 TDD 顺序执行：先补失败测试，确认失败原因正确，再写最小实现，再运行聚焦测试。
@@ -346,10 +347,10 @@ Add separate page-background tokens instead of reusing the full button fill:
 
 ```css
 --theme-page-background-solid: #edf3fc;
---theme-page-background-gradient: /* vitality blue/cyan/purple layers at 8%–12% */;
+--theme-page-background-gradient: /* vitality blue/cyan/purple layers at 4%–7% */;
 ```
 
-The vitality login background uses the same stops at `11%–17%`, with purple at the lower end of the range. The calm theme overrides the solid value with `#EBF1F3` and uses the approved low-opacity teal layers. Dark solid content backgrounds are vitality `#121D36` and calm `#101C2E`; dark gradient mode uses the same theme stops at lower opacity over those bases.
+The login page must reuse the exact same theme-stop strength and solid background as the application content area: vitality `4%–7%` with solid `#EDF3FC`, calm `5%–8%` with solid `#EBF1F3`. The vitality purple stop stays at the lower end of its range. Dark content/login backgrounds also share one recipe: vitality solid `#121D36`, calm solid `#101C2E`, with the same reduced theme-stop strength when gradient mode is enabled.
 
 ### Step 3: Migrate only approved high-emphasis surfaces
 
@@ -460,13 +461,14 @@ Require:
 
 - the pre-style bootstrap reads the most recent successful gradient cache, normalizes exact boolean values, and defaults to enabled;
 - the login root receives `data-theme-gradient="true/false"` before CSS renders;
-- vitality and calm login backgrounds have approved gradient and solid tokens; solid values are `#E9F0FC` and `#E7EEF1`;
+- vitality and calm login backgrounds reuse the application-content background recipe and strength; light solid values are `#EDF3FC` and `#EBF1F3`;
 - decorative `.deco` colors derive from the current theme and are hidden when gradient is disabled;
 - failed login never updates interface-preference caches;
 - dark mode contains no `grid-template-columns: 1fr 1fr`, `max-width: 860px`, dark-only `min-height`, dark-only panel padding, or `.left-panel { display: flex; }` override;
 - both modes share the same container/card geometry and form order;
 - the dark logo, if used, occupies the same brand slot and dimensions as the light logo.
 - login links, input caret/focus, password-toggle focus and checked checkbox consume login accent tokens; normal labels and semantic feedback do not.
+- username/password/confirm-password focus rings use the current theme at roughly `14%` outer-ring and `10%` soft-shadow opacity; invalid and disabled states keep semantic/neutral precedence.
 
 Run `python -m pytest -q tests/test_web_static.py -k "login and (theme or gradient or layout)"`.
 
@@ -480,9 +482,11 @@ Only successful authenticated GET/POST in `app.js` may update the gradient displ
 
 ### Step 3: Add login background tokens
 
-Declare login equivalents for the main app tokens. Gradient mode uses low-opacity theme stops; light solid mode uses vitality `#E9F0FC` and calm `#E7EEF1`; dark solid mode uses vitality `#222A39` and calm `#202831`. Dark gradient mode uses the same theme family over those dark neutral bases. When gradient is disabled, hide the decorative background blobs so no unrelated pink/green gradient remains.
+Declare login equivalents for the main app tokens, but reuse the exact application-content recipes rather than separate login values. Gradient mode uses vitality `4%–7%` and calm `5%–8%`; light solid mode uses vitality `#EDF3FC` and calm `#EBF1F3`; dark solid mode uses vitality `#121D36` and calm `#101C2E`. Dark gradient mode uses the same strength and theme family as the corresponding application backdrop. When gradient is disabled, hide the decorative background blobs so no unrelated pink/green gradient remains.
 
 Add `--login-accent-text` for links/caret/focus and `--login-accent-fill` for the login button and checked checkbox. Accent fill follows the gradient switch; accent text always uses a readable solid theme color. In dark mode derive a lighter same-hue foreground when required for contrast. Do not apply accent text to headings, field labels, helper text, or semantic status messages.
+
+Use the solid accent text token for input border/caret and low-alpha derived values for the focus ring/shadow. Apply the rule consistently to username, password and setup confirmation fields, including autofill focus. Error selectors must override the theme ring with semantic red; disabled fields must not show the accent glow. Do not attempt to style the browser-owned saved-password popup.
 
 ### Step 4: Remove dark-only geometry
 
@@ -621,6 +625,7 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Before authentication, login uses the last successfully cached gradient preference and defaults safely when absent/invalid.
 - Login light/dark modes share one centered single-card geometry; switching mode changes colors/resources only and does not move any content.
 - Login interactive links, focus states and checked checkbox follow the current theme; normal copy and semantic feedback retain their own colors.
+- Login input focus borders and soft glows follow the current theme without introducing a multicolor gradient ring.
 - Straight mode uses direct line segments and hides visible point circles; labels and tooltip hits remain.
 - Smooth mode keeps the current curve tension and point circles.
 - Single-series fill follows the selected geometry exactly.
