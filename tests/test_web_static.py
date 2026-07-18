@@ -23,6 +23,105 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def test_semantic_action_tokens_and_disabled_priority_are_centralized():
+    css = _read(STYLES_CSS)
+
+    for declaration in [
+        "--action-danger: #BA1A1A;",
+        "--action-warning: #B45309;",
+        "--action-success: #137333;",
+        "--action-danger: #FFB4AB;",
+        "--action-warning: #FBBF24;",
+        "--action-success: #6DDB9C;",
+    ]:
+        assert declaration in css
+
+    for selector in [
+        '[data-action-tone="primary"][data-action-variant="solid"]',
+        '[data-action-tone="danger"][data-action-variant="solid"]',
+        '[data-action-tone="warning"][data-action-variant="solid"]',
+        '[data-action-tone="success"][data-action-variant="solid"]',
+        '[data-action-tone="danger"][data-action-variant="weak"]',
+        '[data-action-tone="warning"][data-action-variant="weak"]',
+        '[data-action-tone="success"][data-action-variant="weak"]',
+        '[data-action-tone][data-action-variant]:disabled',
+    ]:
+        assert selector in css
+
+    disabled_rule = re.search(
+        r'(?m)^:is\([^\n]*\[data-action-tone\][^\n]*\):disabled[^\{]*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert disabled_rule is not None
+    disabled_body = disabled_rule.group("body")
+    assert "color: var(--on-surface-variant)" in disabled_body
+    assert "background: var(--surface-variant)" in disabled_body
+    assert "box-shadow: none" in disabled_body
+    assert "transform: none" in disabled_body
+
+
+def test_semantic_button_inventory_classifies_key_static_and_dynamic_actions():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+
+    static_actions = {
+        "stopRunBtn": ("warning", "solid"),
+        "pbcClearFilesBtn": ("danger", "weak"),
+        "pbcFinishBtn": ("success", "solid"),
+        "dbValidationDownloadBtn": ("neutral", "weak"),
+        "flowCancelBtn": ("warning", "weak"),
+        "resetInterfaceSettingsBtn": ("warning", "weak"),
+        "resetSystemThemeColorsBtn": ("warning", "weak"),
+        "resetSettingsBtn": ("warning", "weak"),
+        "userModalCancel": ("neutral", "weak"),
+        "userModalSave": ("primary", "solid"),
+    }
+    for element_id, (tone, variant) in static_actions.items():
+        button = re.search(rf'<button[^>]*id="{element_id}"[^>]*>', html)
+        assert button is not None, element_id
+        assert f'data-action-tone="{tone}"' in button.group(0), element_id
+        assert f'data-action-variant="{variant}"' in button.group(0), element_id
+
+    for required_fragment in [
+        'class="user-icon-action edit-user" data-action-tone="neutral" data-action-variant="weak"',
+        'class="user-icon-action toggle-user" data-action-tone="${enabled ? "warning" : "success"}" data-action-variant="weak"',
+        'class="user-icon-action delete-user" data-action-tone="danger" data-action-variant="weak"',
+        'class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak"',
+        'class="btn-outline btn-xs btn-danger del-cfg" data-action-tone="danger" data-action-variant="weak"',
+        'class="btn-outline btn-sm flow-chain-remove" data-action="remove-chain" data-action-tone="danger" data-action-variant="weak"',
+        'class="pbc-file-remove-btn" data-action-tone="danger" data-action-variant="weak"',
+        'data-action-tone="${canRestore ? "neutral" : "danger"}" data-action-variant="weak"',
+    ]:
+        assert required_fragment in app_js
+
+
+def test_show_confirm_normalizes_and_resets_explicit_action_tone():
+    app_js = _read(APP_JS)
+
+    assert "function showConfirm(title, message, options = {})" in app_js
+    confirm_body = app_js[
+        app_js.index("function showConfirm(title, message, options = {})") :
+        app_js.index("function showPrompt", app_js.index("function showConfirm(title, message, options = {})"))
+    ]
+    assert 'const allowedTones = new Set(["primary", "danger", "warning", "success"]);' in confirm_body
+    assert 'const tone = allowedTones.has(options.tone) ? options.tone : "primary";' in confirm_body
+    assert "okBtn.dataset.actionTone = tone;" in confirm_body
+    assert 'okBtn.dataset.actionVariant = "solid";' in confirm_body
+    assert "delete okBtn.dataset.actionTone;" in confirm_body
+    assert "delete okBtn.dataset.actionVariant;" in confirm_body
+
+    for required_fragment in [
+        'showConfirm("删除用户", `确定删除用户 ${targetUser.username} 吗？`, { tone: "danger" })',
+        'showConfirm("删除历史记录", "确定删除这条历史记录吗？", { tone: "danger" })',
+        'showConfirm("删除数据源", `确定删除“${cfg?.name || b.dataset.id}”吗？`, { tone: "danger" })',
+        'showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？", { tone: "warning" })',
+        '{ tone: nextEnabled ? "success" : "warning" }',
+        '{ tone: "danger" }',
+    ]:
+        assert required_fragment in app_js
+
+
 def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) -> None:
     app_js = _read(APP_JS)
     block = re.search(
@@ -3784,8 +3883,8 @@ def test_interface_settings_card_is_shared_and_has_one_exact_radius_slider():
     assert '<input id="interfaceRadiusSlider" type="range" min="1" max="15" step="1" value="4" />' in card_html
     assert '<output id="interfaceRadiusValue">4px</output>' in card_html
     assert '<span id="interfaceSettingsStatus" role="status">已保存</span>' in card_html
-    assert '<button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm">保存界面设置</button>' in card_html
-    assert '<button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>' in card_html
+    assert '<button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存界面设置</button>' in card_html
+    assert '<button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>' in card_html
     assert "导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角" in card_html
     assert html.count('id="interfaceRadiusSlider"') == 1
     assert len(re.findall(r'<input[^>]+id="interfaceRadiusSlider"[^>]*>', html)) == 1
@@ -5914,7 +6013,7 @@ def test_pbc_import_modal_flow_and_defaults_do_not_skip_mapping_step():
     assert "function hasPbcActiveMappings()" in app_js
     assert "(pbcCurrentStep === 2 && !hasPbcActiveMappings())" in app_js
     assert "pbcNextBtn?.addEventListener(\"click\", async () => {" in app_js
-    assert 'const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？");' in app_js
+    assert 'const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？", { tone: "primary" });' in app_js
     assert "if (!confirmed) return;" in app_js
     assert re.search(r"else if \(pbcCurrentStep === 2\) \{(?P<body>.*?)goToStep\(3\);", app_js, re.S)
     assert "updatePbcStepUI();" in re.search(r"async function handlePbcFileUpload\(file\) \{(?P<body>.*?)function renderPbcFileList", app_js, re.S).group("body")
@@ -6265,7 +6364,7 @@ def test_browser_native_dialogs_are_replaced_by_app_modals():
     assert 'id="confirmModal"' in html
     assert 'id="promptModal"' in html
     assert 'id="promptInput"' in html
-    assert "function showConfirm(title, message)" in app_js
+    assert "function showConfirm(title, message, options = {})" in app_js
     assert "function showPrompt(title, message, options = {})" in app_js
     assert 'await showPrompt("重置密码"' in app_js
     assert 'await showConfirm("删除历史记录"' in app_js

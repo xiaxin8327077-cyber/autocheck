@@ -365,10 +365,10 @@
             <div class="date-picker">
               <input id="runDate" type="date" />
             </div>
-            <button id="runBtn" type="button" class="btn-primary">
+            <button id="runBtn" type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid">
               <span class="btn-icon">&#8635;</span> 开始
             </button>
-            <button id="stopRunBtn" type="button" class="btn-stop" title="停止执行" hidden>
+            <button id="stopRunBtn" type="button" class="btn-stop" data-action-tone="warning" data-action-variant="solid" title="停止执行" hidden>
               <span class="stop-icon"></span>
             </button>
             <div class="run-progress" id="waveProgressContainer" hidden>
@@ -428,7 +428,7 @@
                 </select>
                 <button id="clearStatusFilter" class="filter-clear-button" type="button" aria-label="清除状态筛选">&times;</button>
               </span>
-              <button class="btn-primary" id="exportBtn"><span class="btn-icon" aria-hidden="true">&#8681;</span><span data-export-label>导出</span></button>
+              <button class="btn-primary" id="exportBtn" data-action-tone="neutral" data-action-variant="weak"><span class="btn-icon" aria-hidden="true">&#8681;</span><span data-export-label>导出</span></button>
               <span class="export-progress" id="exportProgress" hidden>
                 <span class="loading-spinner export-progress-spinner" aria-hidden="true"></span>
                 <span id="exportProgressText">准备导出...</span>
@@ -511,7 +511,7 @@
                   <button id="clearHistoryExecutorFilter" class="filter-clear-button" type="button" aria-label="清除执行人筛选">&times;</button>
                 </span>
               </label>
-              <button id="historyRefreshBtn" type="button" class="btn-outline btn-sm">刷新</button>
+              <button id="historyRefreshBtn" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">刷新</button>
             </div>
           </div>
           <div class="table-wrap history-table-wrap">
@@ -696,7 +696,7 @@
                       </select>
                     </label>
                   </div>
-                  <button id="pbcLoadMappingsBtn" type="button" class="pbc-btn pbc-btn--outline">
+                  <button id="pbcLoadMappingsBtn" type="button" class="pbc-btn pbc-btn--outline" data-action-tone="neutral" data-action-variant="weak">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
                     读取目标列并自动映射
                   </button>
@@ -751,14 +751,14 @@
 
           <!-- Footer buttons -->
           <div class="app-modal-footer pbc-modal-footer" id="pbcModalFooter">
-            <button type="button" class="pbc-btn pbc-btn--secondary" id="pbcPrevBtn" hidden>上一步</button>
+            <button type="button" class="pbc-btn pbc-btn--secondary" id="pbcPrevBtn" data-action-tone="neutral" data-action-variant="weak" hidden>上一步</button>
             <div class="pbc-modal-footer-actions">
               <span class="pbc-upload-summary" id="pbcUploadSummary" hidden>共 0 个文件</span>
-              <button type="button" class="pbc-btn pbc-btn--ghost" id="pbcClearFilesBtn" disabled>一键清空</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcNextBtn">下一步</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcRetryBtn" hidden>重试</button>
+              <button type="button" class="pbc-btn pbc-btn--ghost" id="pbcClearFilesBtn" data-action-tone="danger" data-action-variant="weak" disabled>一键清空</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcNextBtn" data-action-tone="primary" data-action-variant="solid">下一步</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcRetryBtn" data-action-tone="primary" data-action-variant="solid" hidden>重试</button>
             </div>
-            <button type="button" class="pbc-btn pbc-btn--success" id="pbcFinishBtn" hidden>完成</button>
+            <button type="button" class="pbc-btn pbc-btn--success" id="pbcFinishBtn" data-action-tone="success" data-action-variant="solid" hidden>完成</button>
           </div>
         </div>
       </div>
@@ -836,10 +836,10 @@
           <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="dbValidationStatus"></span>
             <div class="pbc-modal-footer-actions">
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationRulesDocBtn">下载规则说明</button>
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationCloseBtn">关闭</button>
-              <button type="button" class="pbc-btn pbc-btn--success" id="dbValidationDownloadBtn" disabled>下载结果</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="dbValidationStartBtn">开始校验</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationRulesDocBtn" data-action-tone="neutral" data-action-variant="weak">下载规则说明</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationCloseBtn" data-action-tone="neutral" data-action-variant="weak">关闭</button>
+              <button type="button" class="pbc-btn pbc-btn--success" id="dbValidationDownloadBtn" data-action-tone="neutral" data-action-variant="weak" disabled>下载结果</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="dbValidationStartBtn" data-action-tone="primary" data-action-variant="solid">开始校验</button>
             </div>
           </div>
         </div>
@@ -931,9 +931,9 @@
           <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="flowStatus"></span>
             <div class="pbc-modal-footer-actions">
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" disabled>停止</button>
-              <button type="button" class="pbc-btn pbc-btn--ghost" id="flowBgRunBtn" hidden>后台运行</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="flowStartBtn">开始执行</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" data-action-tone="warning" data-action-variant="weak" disabled>停止</button>
+              <button type="button" class="pbc-btn pbc-btn--ghost" id="flowBgRunBtn" data-action-tone="neutral" data-action-variant="weak" hidden>后台运行</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="flowStartBtn" data-action-tone="primary" data-action-variant="solid">开始执行</button>
             </div>
           </div>
         </div>
@@ -1004,12 +1004,12 @@
               <section class="flow-step-builder-panel">
                 <div class="flow-step-builder-head">
                   <strong>可选流程</strong>
-                  <button type="button" class="btn-outline btn-sm" id="flowDefinitionRefreshBtn">刷新</button>
+                  <button type="button" class="btn-outline btn-sm" id="flowDefinitionRefreshBtn" data-action-tone="neutral" data-action-variant="weak">刷新</button>
                 </div>
                 <input id="flowDefinitionSearch" class="setting-input" placeholder="搜索流程名称或 flow_id" />
                 <div class="flow-manual-add">
                   <input id="flowManualFlowId" class="setting-input" placeholder="输入 flow_id 直接添加" />
-                  <button type="button" class="btn-outline btn-sm" id="addManualFlowBtn">添加</button>
+                  <button type="button" class="btn-outline btn-sm" id="addManualFlowBtn" data-action-tone="primary" data-action-variant="solid">添加</button>
                 </div>
                 <p class="flow-definition-limit-hint" id="flowDefinitionLimitHint" hidden></p>
                 <div class="flow-definition-table" id="flowDefinitionTable">
@@ -1029,8 +1029,8 @@
           <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="flowChainEditorStatus"></span>
             <div class="pbc-modal-footer-actions">
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel">取消</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="flowChainEditorSave">保存链路</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="flowChainEditorSave" data-action-tone="primary" data-action-variant="solid">保存链路</button>
             </div>
           </div>
         </div>
@@ -1046,8 +1046,8 @@
               <p>管理员可维护系统登录账号、角色和启用状态。</p>
             </div>
             <div class="user-toolbar-actions">
-              <button id="exportUsersBtn" type="button" class="btn-outline" data-export-users-btn>📥 导出列表</button>
-              <button id="newUserBtn" type="button" class="btn-primary" data-new-user-btn>+ 新建用户</button>
+              <button id="exportUsersBtn" type="button" class="btn-outline" data-action-tone="neutral" data-action-variant="weak" data-export-users-btn>📥 导出列表</button>
+              <button id="newUserBtn" type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid" data-new-user-btn>+ 新建用户</button>
             </div>
           </div>
 
@@ -1090,8 +1090,8 @@
               <button type="button" class="user-filter-pill" data-user-filter="disabled">已停用 <span id="userFilterDisabledCount">0</span></button>
             </div>
             <div class="user-filter-actions-space">
-              <button type="button" class="btn-outline" data-export-users-btn>📥 导出列表</button>
-              <button type="button" class="btn-primary" data-new-user-btn>+ 新建用户</button>
+              <button type="button" class="btn-outline" data-action-tone="neutral" data-action-variant="weak" data-export-users-btn>📥 导出列表</button>
+              <button type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid" data-new-user-btn>+ 新建用户</button>
             </div>
           </div>
 
@@ -1215,8 +1215,8 @@
                   <span class="setting-hint">统一控制系统折线图的数据点连接方式</span>
                 </div>
                 <div class="settings-actions">
-                  <button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm">保存界面设置</button>
-                  <button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
+                  <button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存界面设置</button>
+                  <button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>
                   <span id="interfaceSettingsStatus" role="status">已保存</span>
                 </div>
                 <section id="systemThemeColorsSection" class="system-theme-colors" aria-labelledby="systemThemeColorsTitle" hidden>
@@ -1246,8 +1246,8 @@
                     </label>
                   </div>
                   <div class="settings-actions system-theme-color-actions">
-                    <button id="saveSystemThemeColorsBtn" type="button" class="btn-primary btn-sm">保存全局主题色</button>
-                    <button id="resetSystemThemeColorsBtn" type="button" class="btn-outline btn-sm">恢复默认主题色</button>
+                    <button id="saveSystemThemeColorsBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存全局主题色</button>
+                    <button id="resetSystemThemeColorsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认主题色</button>
                   </div>
                 </section>
               </div>
@@ -1293,8 +1293,8 @@
                   </label>
                 </div>
                 <div class="settings-actions">
-                  <button id="saveSettingsBtn" type="button" class="btn-primary btn-sm">保存设置</button>
-                  <button id="resetSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
+                  <button id="saveSettingsBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存设置</button>
+                  <button id="resetSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>
                 </div>
               </div>
             </section>
@@ -1464,8 +1464,8 @@
                   <p>配置自动对账表字段，并查看对数逻辑字段</p>
                 </div>
                 <div class="card-header-actions reconcile-schema-header-actions">
-                  <button id="initReconcileSchemaFromFileBtn" type="button" class="btn-outline btn-sm">根据配置文件初始化配置</button>
-                  <button id="saveReconcileSchemaBtn" type="button" class="btn-outline btn-sm">保存表字段配置</button>
+                  <button id="initReconcileSchemaFromFileBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">根据配置文件初始化配置</button>
+                  <button id="saveReconcileSchemaBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="solid">保存表字段配置</button>
                   <span class="modal-status" id="reconcileSchemaStatus"></span>
                 </div>
               </div>
@@ -1540,8 +1540,8 @@
             <p id="confirmMessage">确定要执行此操作吗？</p>
           </div>
           <div class="app-modal-footer modal-footer">
-            <button class="btn-outline" id="confirmCancel">取消</button>
-            <button id="confirmOk" class="btn-confirm-primary">确定</button>
+            <button class="btn-outline" id="confirmCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="confirmOk" class="btn-confirm-primary" data-action-tone="primary" data-action-variant="solid">确定</button>
           </div>
         </div>
       </div>
@@ -1659,8 +1659,8 @@
           </div>
           <div class="app-modal-footer modal-footer user-modal-footer">
             <span class="modal-status" id="userModalStatus"></span>
-            <button id="userModalCancel" type="button" class="btn-outline btn-sm">取消</button>
-            <button id="userModalSave" type="button" class="btn-primary btn-sm">确定</button>
+            <button id="userModalCancel" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="userModalSave" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">确定</button>
           </div>
         </div>
       </div>

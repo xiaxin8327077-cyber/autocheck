@@ -2122,7 +2122,7 @@ reportNavSchedules?.addEventListener("dblclick", async (event) => {
     showToast("请输入 YYYY-MM-DD 格式的日期", "error");
     return;
   }
-  const confirmed = await showConfirm("修改报送日期", `确认将报送日期修改为 ${nextDate} 吗？`);
+  const confirmed = await showConfirm("修改报送日期", `确认将报送日期修改为 ${nextDate} 吗？`, { tone: "warning" });
   if (!confirmed) return;
   try {
     const result = await api(`/api/report-navigation/schedules/${encodeURIComponent(target.dataset.scheduleProcess)}`, {
@@ -2148,6 +2148,7 @@ async function handleReportNavigationManualAction(stepRow) {
   const confirmed = await showConfirm(
     isCancel ? "撤销手工完成" : "标记步骤完成",
     isCancel ? "撤销后将恢复该步骤最近一次自动统计状态，确认继续吗？" : "确认将该步骤手工标记为已完成吗？",
+    { tone: isCancel ? "warning" : "success" },
   );
   if (!confirmed) return;
   stepRow.classList.add("busy");
@@ -2185,7 +2186,7 @@ async function encryptPasswordForTransport(password) {
 }
 
 async function logout() {
-  const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？");
+  const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？", { tone: "warning" });
   if (!confirmed) return;
   const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
   const systemThemeColorsSnapshot = captureSystemThemeColors();
@@ -2403,9 +2404,9 @@ function renderUsers() {
       <td>${escapeHtml(user.last_login_at ? formatDisplayTime(user.last_login_at) : "-")}</td>
       <td class="user-actions-cell">
         <div class="user-actions">
-          <button class="user-icon-action edit-user" data-id="${escapeHtml(user.id || "")}" title="${canEdit ? "编辑" : adminLockedTitle}" ${canEdit ? "" : "disabled"}>✏️</button>
-          <button class="user-icon-action toggle-user" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可停用" : (!canEdit ? adminLockedTitle : (enabled ? "停用" : "启用"))}" ${toggleDisabled ? "disabled" : ""}>${enabled ? "⏸️" : "▶️"}</button>
-          <button class="user-icon-action delete-user" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可删除" : (!canEdit ? adminLockedTitle : "删除")}" ${deleteDisabled ? "disabled" : ""}>🗑️</button>
+          <button class="user-icon-action edit-user" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${canEdit ? "编辑" : adminLockedTitle}" ${canEdit ? "" : "disabled"}>✏️</button>
+          <button class="user-icon-action toggle-user" data-action-tone="${enabled ? "warning" : "success"}" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可停用" : (!canEdit ? adminLockedTitle : (enabled ? "停用" : "启用"))}" ${toggleDisabled ? "disabled" : ""}>${enabled ? "⏸️" : "▶️"}</button>
+          <button class="user-icon-action delete-user" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可删除" : (!canEdit ? adminLockedTitle : "删除")}" ${deleteDisabled ? "disabled" : ""}>🗑️</button>
         </div>
       </td>
     </tr>`;
@@ -2613,7 +2614,7 @@ async function deleteUser(targetUser) {
     showToast("初始管理员不可删除", "warning");
     return;
   }
-  const confirmed = await showConfirm("删除用户", `确定删除用户 ${targetUser.username} 吗？`);
+  const confirmed = await showConfirm("删除用户", `确定删除用户 ${targetUser.username} 吗？`, { tone: "danger" });
   if (!confirmed) return;
   try {
     const userId = targetUser.id;
@@ -2631,7 +2632,11 @@ async function toggleUserEnabled(targetUser) {
     return;
   }
   const nextEnabled = targetUser.enabled === false;
-  const confirmed = await showConfirm(nextEnabled ? "启用用户" : "停用用户", `确认${nextEnabled ? "启用" : "停用"}用户 ${targetUser.username} 吗？`);
+  const confirmed = await showConfirm(
+    nextEnabled ? "启用用户" : "停用用户",
+    `确认${nextEnabled ? "启用" : "停用"}用户 ${targetUser.username} 吗？`,
+    { tone: nextEnabled ? "success" : "warning" },
+  );
   if (!confirmed) return;
   try {
     const userId = targetUser.id;
@@ -4452,7 +4457,7 @@ function renderHistoryList() {
       ? `<td class="admin-only">${escapeHtml(formatHistorySourceName(run))}</td>`
       : "";
     const deleteAction = canManageHistory()
-      ? `<button class="btn-outline btn-xs btn-danger delete-history" data-id="${escapeHtml(run.id)}">删除</button>`
+      ? `<button class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(run.id)}">删除</button>`
       : "";
     return `<tr class="history-main-row" data-history-id="${escapeHtml(run.id)}">
       <td>${escapeHtml(run.run_date)}</td>
@@ -4464,7 +4469,7 @@ function renderHistoryList() {
       <td class="money-cell history-added">${escapeHtml(formatHistoryDiffCount(run, "added_count", { unit: false }))}</td>
       <td class="money-cell history-removed">${escapeHtml(formatHistoryDiffCount(run, "removed_count", { unit: false }))}</td>
       <td class="history-actions">
-        <button class="btn-outline btn-xs view-history" data-id="${escapeHtml(run.id)}">查看</button>
+        <button class="btn-outline btn-xs view-history" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(run.id)}">查看</button>
         ${deleteAction}
       </td>
     </tr>`;
@@ -4525,7 +4530,7 @@ function renderHistoryDetailContent(run) {
 }
 
 function renderHistoryDetailFooter(run) {
-  return `<button type="button" class="btn-primary btn-sm restore-history-detail" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>`;
+  return `<button type="button" class="btn-primary btn-sm restore-history-detail" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>`;
 }
 
 function renderHistoryDetailLoading(id) {
@@ -4654,7 +4659,7 @@ historyBody?.addEventListener("click", async (e) => {
         setStatus("普通用户无权删除历史记录");
         return;
       }
-      const confirmed = await showConfirm("删除历史记录", "确定删除这条历史记录吗？");
+      const confirmed = await showConfirm("删除历史记录", "确定删除这条历史记录吗？", { tone: "danger" });
       if (!confirmed) return;
       await api("/api/history", { method: "DELETE", body: JSON.stringify({ id }) });
       if ((selectedHistory && selectedHistory.id === id) || selectedHistoryId === String(id || "")) {
@@ -5056,8 +5061,8 @@ function renderConfigList() {
       <span class="config-item-name">${escapeHtml(c.name)}</span>
       <span class="config-item-info">${escapeHtml(c.db_type || "")}/${escapeHtml(c.host || "")}:${escapeHtml(c.port || "")} | ${escapeHtml(c.database || "")}${c.schema ? ` / ${escapeHtml(c.schema)}` : ""}</span>
       <div class="config-item-actions">
-        <button class="btn-outline btn-xs edit-cfg" data-id="${escapeHtml(c.id || "")}">编辑</button>
-        <button class="btn-outline btn-xs btn-danger del-cfg" data-id="${escapeHtml(c.id || "")}">删除</button>
+        <button class="btn-outline btn-xs edit-cfg" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(c.id || "")}">编辑</button>
+        <button class="btn-outline btn-xs btn-danger del-cfg" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(c.id || "")}">删除</button>
       </div>
     </div>
   `).join("");
@@ -5068,7 +5073,7 @@ function renderConfigList() {
   }));
   configList.querySelectorAll(".del-cfg").forEach((b) => b.addEventListener("click", async () => {
     const cfg = allConfigs.find((c) => c.id === b.dataset.id);
-    const confirmed = await showConfirm("删除数据源", `确定删除“${cfg?.name || b.dataset.id}”吗？`);
+    const confirmed = await showConfirm("删除数据源", `确定删除“${cfg?.name || b.dataset.id}”吗？`, { tone: "danger" });
     if (!confirmed) return;
     try { await api("/api/configs", { method: "DELETE", body: JSON.stringify({ id: b.dataset.id }) }); loadConfigList(); setStatus("已删除"); } catch (e) { setStatus(e.message); }
   }));
@@ -5821,7 +5826,7 @@ saveReconcileSchemaBtn?.addEventListener("click", async () => {
 });
 
 initReconcileSchemaFromFileBtn?.addEventListener("click", async () => {
-  const confirmed = await showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？");
+  const confirmed = await showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？", { tone: "warning" });
   if (!confirmed) return;
   if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "初始化中...";
   if (initReconcileSchemaFromFileBtn) initReconcileSchemaFromFileBtn.disabled = true;
@@ -8007,16 +8012,20 @@ setupCollapsible("aboutToggle", "aboutBody", "aboutArrow");
 renderBusinessSettings();
 
 // Confirm modal
-function showConfirm(title, message) {
+function showConfirm(title, message, options = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById("confirmModal");
     const titleEl = document.getElementById("confirmTitle");
     const messageEl = document.getElementById("confirmMessage");
     const okBtn = document.getElementById("confirmOk");
     const cancelBtn = document.getElementById("confirmCancel");
+    const allowedTones = new Set(["primary", "danger", "warning", "success"]);
+    const tone = allowedTones.has(options.tone) ? options.tone : "primary";
 
     titleEl.textContent = title;
     messageEl.textContent = message;
+    okBtn.dataset.actionTone = tone;
+    okBtn.dataset.actionVariant = "solid";
     modal.hidden = false;
 
     const cleanup = () => {
@@ -8024,6 +8033,8 @@ function showConfirm(title, message) {
       setTimeout(() => {
         modal.hidden = true;
         modal.classList.remove("closing");
+        delete okBtn.dataset.actionTone;
+        delete okBtn.dataset.actionVariant;
       }, 200);
     };
 
@@ -8282,7 +8293,8 @@ document.getElementById("resetSettingsBtn")?.addEventListener("click", resetSett
 document.getElementById("clearHistoryBtn")?.addEventListener("click", async () => {
   const confirmed = await showConfirm(
     "清理历史记录",
-    "确定要清理所有历史记录吗？此操作不可恢复。"
+    "确定要清理所有历史记录吗？此操作不可恢复。",
+    { tone: "danger" },
   );
   if (!confirmed) return;
 
@@ -9030,9 +9042,9 @@ function renderFlowSelectedSteps() {
       <span class="flow-step-index">${index + 1}</span>
       <span class="flow-selected-step-name" title="${escapeHtml(step.name || step.flow_id)}${step.flow_id && step.name ? ' (ID: ' + escapeHtml(step.flow_id) + ')' : ''}">${escapeHtml(step.name || step.flow_id)}</span>
       <div class="flow-selected-step-actions">
-        <button type="button" class="btn-icon" data-action="move-step-up" title="上移" ${index === 0 ? "disabled" : ""}>↑</button>
-        <button type="button" class="btn-icon" data-action="move-step-down" title="下移" ${index === flowChainEditorSelectedSteps.length - 1 ? "disabled" : ""}>↓</button>
-        <button type="button" class="btn-icon" data-action="remove-selected-step" title="移除">×</button>
+        <button type="button" class="btn-icon" data-action="move-step-up" data-action-tone="neutral" data-action-variant="weak" title="上移" ${index === 0 ? "disabled" : ""}>↑</button>
+        <button type="button" class="btn-icon" data-action="move-step-down" data-action-tone="neutral" data-action-variant="weak" title="下移" ${index === flowChainEditorSelectedSteps.length - 1 ? "disabled" : ""}>↓</button>
+        <button type="button" class="btn-icon" data-action="remove-selected-step" data-action-tone="danger" data-action-variant="weak" title="移除">×</button>
       </div>
     </div>
   `).join("");
@@ -9092,7 +9104,7 @@ function _renderFlowDefinitionTable(flows) {
           <div class="flow-def-row">
             <span class="flow-def-name">${escapeHtml(flow.name || "-")}</span>
             <div class="flow-def-action">
-              <button type="button" class="btn-outline btn-sm" data-action="add-flow-definition" data-flow-id="${escapeHtml(flow.flow_id)}" data-flow-name="${escapeHtml(flow.name || "")}" ${selected ? "disabled" : ""}>${selected ? "已加入" : "加入"}</button>
+              <button type="button" class="btn-outline btn-sm" data-action="add-flow-definition" data-action-tone="primary" data-action-variant="weak" data-flow-id="${escapeHtml(flow.flow_id)}" data-flow-name="${escapeHtml(flow.name || "")}" ${selected ? "disabled" : ""}>${selected ? "已加入" : "加入"}</button>
             </div>
           </div>
         `;
@@ -9723,8 +9735,8 @@ function renderFlowChainSettings(chains = []) {
           <strong>${escapeHtml(chain.name || `流程链${index + 1}`)}</strong>
         </div>
         <div class="flow-chain-config-actions">
-          <button type="button" class="btn-outline btn-sm" data-action="edit-chain">编辑</button>
-          <button type="button" class="btn-outline btn-sm flow-chain-remove" data-action="remove-chain">删除</button>
+          <button type="button" class="btn-outline btn-sm" data-action="edit-chain" data-action-tone="neutral" data-action-variant="weak">编辑</button>
+          <button type="button" class="btn-outline btn-sm flow-chain-remove" data-action="remove-chain" data-action-tone="danger" data-action-variant="weak">删除</button>
         </div>
       </div>
     `;
@@ -10196,7 +10208,7 @@ pbcNextBtn?.addEventListener("click", async () => {
   if (pbcNextBtn.disabled) return;
   if (pbcCurrentStep === 1) goToStep(2);
   else if (pbcCurrentStep === 2) {
-    const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？");
+    const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？", { tone: "primary" });
     if (!confirmed) return;
     goToStep(3);
   }
@@ -10309,7 +10321,7 @@ function renderPbcFileList() {
         <div class="pbc-file-list-row">
           <span class="pbc-file-name">${escapeHtml(file.name || upload.name)}</span>
           <span class="pbc-file-cols">${(file.columns || []).length} 列</span>
-          <span><button class="pbc-file-remove-btn" data-idx="${idx}">&times;</button></span>
+          <span><button class="pbc-file-remove-btn" data-action-tone="danger" data-action-variant="weak" data-idx="${idx}">&times;</button></span>
         </div>
       `);
     });
@@ -10455,7 +10467,7 @@ function renderPbcMappings() {
         <option value="">不导入</option>
         ${targetOptions}
       </select>
-      <button class="pbc-mapping-action ${canRestore ? "pbc-mapping-restore" : "pbc-mapping-remove"}" data-index="${index}" data-action="${canRestore ? "restore" : "remove"}" title="${canRestore ? "还原自动映射" : "移除列"}">
+      <button class="pbc-mapping-action ${canRestore ? "pbc-mapping-restore" : "pbc-mapping-remove"}" data-action-tone="${canRestore ? "neutral" : "danger"}" data-action-variant="weak" data-index="${index}" data-action="${canRestore ? "restore" : "remove"}" title="${canRestore ? "还原自动映射" : "移除列"}">
         ${canRestore
           ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>'
           : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'}
