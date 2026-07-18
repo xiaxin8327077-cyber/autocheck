@@ -3891,17 +3891,17 @@ th {
 .history-detail-card .history-detail-footer {
   position: relative;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   flex: 0 0 auto;
-  padding: 12px 14px;
+  padding: 12px 16px;
   background: var(--surface-container-lowest);
   border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest));
 }
 
 .history-detail-card .history-detail-footer .btn-primary {
+  grid-column: 5;
+  justify-self: center;
   min-width: 104px;
   justify-content: center;
 }

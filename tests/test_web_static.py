@@ -5674,8 +5674,21 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert footer is not None
     assert "flex: 0 0 auto" in footer.group("body")
     assert "position: relative" in footer.group("body")
+    assert "display: grid" in footer.group("body")
+    assert "grid-template-columns: repeat(5, minmax(0, 1fr))" in footer.group("body")
+    assert "padding: 12px 16px" in footer.group("body")
     assert "background: var(--surface-container-lowest)" in footer.group("body")
     assert "border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest))" in footer.group("body")
+
+    restore_action = re.search(
+        r"(?m)^\.history-detail-card \.history-detail-footer \.btn-primary\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert restore_action is not None
+    assert "grid-column: 5" in restore_action.group("body")
+    assert "justify-self: center" in restore_action.group("body")
+    assert "min-width: 104px" in restore_action.group("body")
 
     section = re.search(r"(?m)^\.history-section\s*\{(?P<body>.*?)\}", css, re.S)
     assert section is not None
