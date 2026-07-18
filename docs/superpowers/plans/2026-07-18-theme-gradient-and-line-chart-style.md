@@ -20,6 +20,7 @@
 - 两种风格均跟随当前主题：渐变开启时使用主题渐变，关闭时使用主题纯色。多系列折线只从当前主题色派生固定深浅层级。
 - 渐变开关同时控制应用内容区底层和登录页背景；关闭时使用活力 `#EDF3FC/#E9F0FC`、沉稳 `#EBF1F3/#E7EEF1` 的内容区/登录页纯色底。
 - 登录页暗色与亮色使用完全相同的居中单卡片布局，暗色不得保留双栏或左侧功能介绍。
+- 登录页交互链接、焦点和勾选框跟随主题色；按钮/勾选框填充响应渐变开关，普通文字与语义反馈色保持独立。
 - 除连接几何、圆圈可见性和主题驱动的折线颜色外，不改变图表数据、线宽、阴影、面积填充、标签、网格、图例、坐标轴、tooltip、动画或请求流程。
 - 成功绿、警告橙/黄、错误红及饼图、柱图等业务分类色保持独立。
 - 每个任务按 TDD 顺序执行：先补失败测试，确认失败原因正确，再写最小实现，再运行聚焦测试。
@@ -465,6 +466,7 @@ Require:
 - dark mode contains no `grid-template-columns: 1fr 1fr`, `max-width: 860px`, dark-only `min-height`, dark-only panel padding, or `.left-panel { display: flex; }` override;
 - both modes share the same container/card geometry and form order;
 - the dark logo, if used, occupies the same brand slot and dimensions as the light logo.
+- login links, input caret/focus, password-toggle focus and checked checkbox consume login accent tokens; normal labels and semantic feedback do not.
 
 Run `python -m pytest -q tests/test_web_static.py -k "login and (theme or gradient or layout)"`.
 
@@ -479,6 +481,8 @@ Only successful authenticated GET/POST in `app.js` may update the gradient displ
 ### Step 3: Add login background tokens
 
 Declare login equivalents for the main app tokens. Gradient mode uses low-opacity theme stops; light solid mode uses vitality `#E9F0FC` and calm `#E7EEF1`; dark solid mode uses vitality `#222A39` and calm `#202831`. Dark gradient mode uses the same theme family over those dark neutral bases. When gradient is disabled, hide the decorative background blobs so no unrelated pink/green gradient remains.
+
+Add `--login-accent-text` for links/caret/focus and `--login-accent-fill` for the login button and checked checkbox. Accent fill follows the gradient switch; accent text always uses a readable solid theme color. In dark mode derive a lighter same-hue foreground when required for contrast. Do not apply accent text to headings, field labels, helper text, or semantic status messages.
 
 ### Step 4: Remove dark-only geometry
 
@@ -616,6 +620,7 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Gradient switching also changes the application backdrop and login background; solid mode contains no residual decorative gradient blobs.
 - Before authentication, login uses the last successfully cached gradient preference and defaults safely when absent/invalid.
 - Login light/dark modes share one centered single-card geometry; switching mode changes colors/resources only and does not move any content.
+- Login interactive links, focus states and checked checkbox follow the current theme; normal copy and semantic feedback retain their own colors.
 - Straight mode uses direct line segments and hides visible point circles; labels and tooltip hits remain.
 - Smooth mode keeps the current curve tension and point circles.
 - Single-series fill follows the selected geometry exactly.
