@@ -16,6 +16,7 @@
 - 保留已完成的统一弹窗壳层、弹窗表面层级、留白、滚动和布局改造；主题/渐变任务不得重新定义弹窗结构或把弹窗白色主体改回旧式大面积灰底。
 - 保留已统一的表头背景色、文字色、边框和高度；主题色与渐变不得作用于表头。圆角补齐只能对计划列出的窄范围选择器修改 `border-radius`，不得借机改写表头、弹窗颜色或布局。
 - 活力主题固定纯色 `#3B82F6`，沉稳主题固定纯色 `#25676E`，不提供颜色选择器。
+- 渐变默认关闭；新用户、旧记录补值、接口失败回退、登录页无缓存回退和恢复默认均为 `false`。
 - 渐变开关同时作用于两套主题和折线图颜色。
 - 折线图风格只有 `straight` 和 `smooth`；默认、旧记录补值、接口失败回退和恢复默认均为 `straight`。
 - 直线折线隐藏空心数据点圆圈；平滑曲线保留现有圆圈。数值标签和 tooltip 命中区域始终保留。
@@ -70,7 +71,7 @@ Replace integer-only expectations with an immutable value object and add cases f
 @dataclass(frozen=True, slots=True)
 class UserInterfacePreferences:
     radius_px: int = 4
-    theme_gradient_enabled: bool = True
+    theme_gradient_enabled: bool = False
     line_chart_style: str = "straight"
 ```
 
@@ -85,7 +86,7 @@ Expected: FAIL because storage still returns and saves only an integer.
 Add:
 
 ```python
-DEFAULT_THEME_GRADIENT_ENABLED = True
+DEFAULT_THEME_GRADIENT_ENABLED = False
 DEFAULT_LINE_CHART_STYLE = "straight"
 LINE_CHART_STYLES = frozenset({"straight", "smooth"})
 ```
@@ -134,7 +135,7 @@ Update GET/POST expectations to:
 {
   "settings": {
     "radius_px": 4,
-    "theme_gradient_enabled": true,
+    "theme_gradient_enabled": false,
     "line_chart_style": "straight"
   }
 }
@@ -197,7 +198,7 @@ Commit the three task files as `feat: expose appearance preferences through sett
 Extend the schema tests to require a guarded `005_user_appearance_preferences.sql` that:
 
 - only alters `user_interface_preferences`;
-- adds `theme_gradient_enabled TINYINT(1) NOT NULL DEFAULT 1`;
+- adds `theme_gradient_enabled TINYINT(1) NOT NULL DEFAULT 0`;
 - adds `line_chart_style VARCHAR(16) NOT NULL DEFAULT 'straight'`;
 - constrains the values to `0/1` and `straight/smooth`;
 - contains no DML, table recreation, foreign key, database creation or schema-version mutation;
@@ -230,7 +231,7 @@ Use `DATABASE()` plus `information_schema.COLUMNS` / `information_schema.TABLE_C
 
 ```sql
 ALTER TABLE `user_interface_preferences`
-  ADD COLUMN `theme_gradient_enabled` TINYINT(1) NOT NULL DEFAULT 1
+  ADD COLUMN `theme_gradient_enabled` TINYINT(1) NOT NULL DEFAULT 0
     COMMENT '是否启用主题渐变：1启用，0关闭' AFTER `radius_px`,
   ADD COLUMN `line_chart_style` VARCHAR(16) NOT NULL DEFAULT 'straight'
     COMMENT '折线图风格：straight直线折线，smooth平滑曲线' AFTER `theme_gradient_enabled`,
@@ -283,7 +284,7 @@ Require:
 - strict GET/POST parsing of all three preference fields;
 - one POST payload containing all three fields;
 - dirty state when any field differs from the saved snapshot;
-- reset defaults `{ radius_px: 4, theme_gradient_enabled: true, line_chart_style: "straight" }`;
+- reset defaults `{ radius_px: 4, theme_gradient_enabled: false, line_chart_style: "straight" }`;
 - stale GET/POST results remain invalidated across edits, saves, logout and user switch;
 - failed save keeps the visible draft but not the saved snapshot;
 - leaving the page restores all three saved values.
@@ -298,7 +299,7 @@ Expected: FAIL because only the radius control/state exists.
 Keep the current card and save/reset buttons. Add an accessible native switch and a two-option segmented radiogroup:
 
 ```html
-<input id="interfaceThemeGradientToggle" type="checkbox" role="switch" checked>
+<input id="interfaceThemeGradientToggle" type="checkbox" role="switch">
 <div id="interfaceLineChartStyle" role="radiogroup" aria-label="折线图风格">
   <label><input type="radio" name="interfaceLineChartStyle" value="straight" checked>直线折线</label>
   <label><input type="radio" name="interfaceLineChartStyle" value="smooth">平滑曲线</label>
@@ -314,7 +315,7 @@ Preserve request IDs, auth revision, edit revision, server mutation revision and
 ```javascript
 const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({
   radiusPx: 4,
-  themeGradientEnabled: true,
+  themeGradientEnabled: false,
   lineChartStyle: "straight",
 });
 ```
@@ -345,11 +346,11 @@ Commit the four task files as `feat: add appearance controls to interface settin
 **Interfaces:**
 
 - Consumes: `themeGradientEnabled` draft/saved state from Task 4 and the existing theme/dark attributes.
-- Produces: `--theme-accent-solid`, `--theme-accent-gradient`, `--theme-accent-fill`, shared page-background tokens and `applyThemeGradient(enabled)` consumed by Tasks 6–8.
+- Produces: `--theme-accent-solid`, `--theme-accent-gradient`, `--theme-accent-fill`, shared page-background and form-control state tokens, and `applyThemeGradient(enabled)` consumed by Tasks 6–8.
 
 - [ ] **Step 1: Write failing token and scope tests**
 
-Assert the exact fixed solid/gradient values, `data-theme-gradient="true/false"`, absence of user color controls, and scoped high-emphasis selectors. Assert semantic status colors and non-line categorical chart colors remain independent. Require the application shell/content backdrop to consume the approved low-emphasis page-background token and switch through the same root attribute.
+Assert the exact fixed solid/gradient values, `data-theme-gradient="true/false"`, absence of user color controls, and scoped high-emphasis selectors. Assert semantic status colors and non-line categorical chart colors remain independent. Require the application shell/content backdrop to consume the approved low-emphasis page-background token and switch through the same root attribute. Require inputs, textareas, search fields, selects and date controls to consume theme-derived focus border/ring/caret/icon tokens, while error/success/disabled states override them. For the custom calendar, require its selected-day fill to use `--theme-accent-fill`, prove `data-theme-gradient="false"` resolves it to `--theme-accent-solid` with no gradient residue, and require month/navigation/clear/today accents to use the solid token. Add a regression assertion that these form selectors cannot match table headers or change the existing header background, text, border or height rules.
 
 Run `python -m pytest -q tests/test_web_static.py -k "theme or gradient or semantic"`.
 
@@ -387,6 +388,8 @@ The login page must reuse the exact same theme-stop strength and solid backgroun
 Apply the fill token to active primary navigation, ordinary primary/confirm buttons, active tabs/segments, non-semantic selected filters, non-semantic module icons and existing decorative accents. Defer dangerous, warning, success and mixed-use button mapping to Task 6. Do not touch semantic badges, report-process category colors, categorical chart series or error banners. Preserve dimensions, radius, pointer behavior and disabled behavior.
 
 Apply the page-background token once at the root/application-shell layer behind `.main-content`; do not duplicate it per business page. Keep cards, tables and modal surfaces unchanged.
+
+Apply the solid theme token to focus borders, low-opacity focus rings, carets, select arrows and date-picker indicators for existing input, textarea, search, select and date-control families. Custom dropdown active/selected options and selected dates may consume the theme fill; the editable field surface and ordinary options remain neutral. The custom calendar selected day must consume `--theme-accent-fill`, so gradient-on retains the approved fill and gradient-off resolves to `--theme-accent-solid`; remove any component-local gradient that could survive the off state. Its month title, previous/next controls, clear and today actions consume `--theme-accent-solid`. Preserve current value handling, validation, keyboard behavior, event bindings, control dimensions and `--ui-radius`. Error, success, read-only and disabled selectors must have higher specificity than the theme-focus rules. Do not use broad selectors that include `th`, table-header controls or table-header containers, and do not modify existing table-header color/height declarations.
 
 - [ ] **Step 4: Apply preview state independently**
 
@@ -717,7 +720,7 @@ Commit the two task files as `feat: add themed selectable line chart geometry`.
 
 Require:
 
-- the pre-style bootstrap reads the most recent successful gradient cache, normalizes exact boolean values, and defaults to enabled;
+- the pre-style bootstrap reads the most recent successful gradient cache, normalizes exact boolean values, and defaults to disabled;
 - the login root receives `data-theme-gradient="true/false"` before CSS renders;
 - vitality and calm login backgrounds reuse the application-content background recipe and strength; light solid values are `#EDF3FC` and `#EBF1F3`;
 - decorative `.deco` colors derive from the current theme and are hidden when gradient is disabled;
@@ -775,14 +778,17 @@ Commit the three task files as `feat: unify login theme layout and background`.
 **Interfaces:**
 
 - Consumes: the existing root `--ui-radius` maintained by Task 4.
-- Produces: thirteen additional scoped radius selectors with no DOM or event changes.
+- Produces: sixteen additional scoped radius selectors with no DOM or event changes.
 
 - [ ] **Step 1: Write failing selector tests**
 
-Assert these thirteen selectors consume `var(--ui-radius)` in the existing final radius-override block:
+Assert these sixteen selectors consume `var(--ui-radius)` in the existing final radius-override block:
 
 ```css
 #page-users .user-filter-pill,
+#page-users .user-avatar,
+#page-users .role-badge,
+#page-users .user-status-badge,
 .user-modal .user-role-card,
 .user-modal .user-role-card-icon,
 .user-modal .user-enable-row,
@@ -797,7 +803,7 @@ Assert these thirteen selectors consume `var(--ui-radius)` in the existing final
 #page-report-navigation .report-nav-no-panel-done-meta
 ```
 
-Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius. Assert `.home-stat-modal-table-wrap` keeps `overflow: auto`, the nested `.home-stat-modal-table` receives no separate radius override, and the shared wrapper remains used by both `renderHomeReportPeriodTable()` and `renderHomeResultTable()` so “报送期差异数详情” and the other home-stat detail tables are covered together. Assert `#dbValidationLog` keeps the existing `.pbc-import-log` overflow/log behavior and `.db-validation-table-item` keeps its checkbox structure. Assert the flow editor's layout-only `.flow-selected-step-list` is not added to the radius override; only `.flow-definition-table`, each `.flow-selected-step`, and its scoped `.btn-icon` controls consume the preference. Assert both fishbone completion selectors keep their existing colors, borders, shadows, transforms and top/bottom positioning; the test may only require their radius to consume the shared token.
+Also assert the override does not include `.user-avatar-status`, `.current-user-badge`, `.user-enable-switch` or its thumb: the online point, “我” marker and switch track/circle retain their dedicated shapes. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius. Assert `.home-stat-modal-table-wrap` keeps `overflow: auto`, the nested `.home-stat-modal-table` receives no separate radius override, and the shared wrapper remains used by both `renderHomeReportPeriodTable()` and `renderHomeResultTable()` so “报送期差异数详情” and the other home-stat detail tables are covered together. Assert `#dbValidationLog` keeps the existing `.pbc-import-log` overflow/log behavior and `.db-validation-table-item` keeps its checkbox structure. Assert the flow editor's layout-only `.flow-selected-step-list` is not added to the radius override; only `.flow-definition-table`, each `.flow-selected-step`, and its scoped `.btn-icon` controls consume the preference. Assert both fishbone completion selectors keep their existing colors, borders, shadows, transforms and top/bottom positioning; the test may only require their radius to consume the shared token.
 
 Run `python -m pytest -q tests/test_web_static.py -k "radius and (user or modal or home_stat or validation or flow)"`.
 
@@ -811,7 +817,7 @@ Use the existing rule:
 border-radius: var(--ui-radius) !important;
 ```
 
-Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior, table data, sorting, sticky headers, scrolling, validation selection/logging, flow loading/searching/ordering/moving/removing, fishbone completion-state styling/positioning or event listeners. The user selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping. Keep `.home-stat-modal-table-wrap` as the sole rounded/clipping surface with `overflow: auto`; do not add a second radius to `.home-stat-modal-table`. Scope validation selectors to `#dbValidationModal` and flow-editor selectors to `.flow-chain-editor-overlay` so unrelated lists, logs and icon controls are unchanged. For fishbone completion metadata, change only `border-radius`; retain status colors, dashed/solid border choice, shadow, `transform`, `top` and `bottom` rules.
+Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior, table data, sorting, sticky headers, scrolling, validation selection/logging, flow loading/searching/ordering/moving/removing, fishbone completion-state styling/positioning or event listeners. Scope list avatar/role/status selectors under `#page-users`; change only their `border-radius` and preserve avatar dimensions, online point, “我” marker, badge colors and table layout. The user-modal selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping. Keep `.home-stat-modal-table-wrap` as the sole rounded/clipping surface with `overflow: auto`; do not add a second radius to `.home-stat-modal-table`. Scope validation selectors to `#dbValidationModal` and flow-editor selectors to `.flow-chain-editor-overlay` so unrelated lists, logs and icon controls are unchanged. For fishbone completion metadata, change only `border-radius`; retain status colors, dashed/solid border choice, shadow, `transform`, `top` and `bottom` rules.
 
 - [ ] **Step 3: Verify and commit**
 
@@ -845,7 +851,7 @@ Commit the two task files as `fix: apply radius to omitted interface controls`.
 
 - [ ] **Step 1: Update release-facing documentation**
 
-Document fixed theme colors, one global gradient switch, the five-role semantic button system, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the remaining radius gaps including home-stat detail tables, validation rows/logs, flow-editor surfaces and fishbone completion metadata, per-user cross-device persistence, and `005` deployment order. README must explain that the gradient switch affects only theme-primary buttons, while danger/warning/success buttons retain stable semantic colors.
+Document fixed theme colors, one global gradient switch defaulting to off, the five-role semantic button system, theme-aware input/select/date focus and selection states, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the remaining radius gaps including user-list avatar/role/status surfaces, home-stat detail tables, validation rows/logs, flow-editor surfaces and fishbone completion metadata, per-user cross-device persistence, and `005` deployment order. README must explain that the gradient switch affects only theme-primary buttons and eligible selected states, while input surfaces stay neutral and danger/warning/success buttons retain stable semantic colors. Update `docs/mysql-application-storage.zh-CN.md` so its canonical `user_interface_preferences` DDL includes `radius_px`, `theme_gradient_enabled DEFAULT 0`, `line_chart_style DEFAULT 'straight'`, all three checks, `updated_at`, the primary key and comments—not only an upgrade note.
 
 Keep the in-app changelog concise:
 
@@ -874,7 +880,11 @@ git diff --stat
 
 Exclude unrelated files, credentials, database data and generated `build/` content.
 
-- [ ] **Step 4: Package the application**
+- [ ] **Step 4: Apply and verify the authorized MySQL migration**
+
+The controller—not a subagent—uses the database connection supplied by the user in this session. Do not write credentials to source, documentation, shell scripts, logs or commits. Before mutation, query `information_schema.COLUMNS` and `information_schema.TABLE_CONSTRAINTS` for `user_interface_preferences`; execute the guarded `005_user_appearance_preferences.sql`; then query the schema again and verify both columns, `DEFAULT 0` / `DEFAULT 'straight'`, both new checks, the existing radius check and existing row count. Do not modify preference rows.
+
+- [ ] **Step 5: Package the application**
 
 Confirm `dist\auto-check.exe` is not running, then run:
 
@@ -886,7 +896,7 @@ Get-FileHash dist\auto-check.exe -Algorithm SHA256
 
 Expected: packaging exits `0`, the timestamp is current, and the final handoff records size and SHA-256.
 
-- [ ] **Step 5: Commit only release-facing changes**
+- [ ] **Step 6: Commit only release-facing changes**
 
 Stage the listed docs, concise changelog/tests, and tracked executable if repository policy requires it. Inspect the staged list before committing. Commit as `docs: document appearance preference rollout`.
 
@@ -894,7 +904,7 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 
 ## Final acceptance checklist
 
-- New and upgraded users default to gradient enabled and straight line charts.
+- New and upgraded users default to gradient disabled and straight line charts.
 - Radius, gradient and chart style save atomically for the authenticated user only.
 - Two users see independent settings across login and device changes.
 - Gradient switching immediately previews both themes and all line charts; no user color picker exists.
@@ -907,12 +917,14 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Delete/irreversible clear is red, disable/stop/restore-default is orange, enable/complete is green, ordinary primary actions follow the current theme, and view/edit/refresh/export/cancel/back remains neutral.
 - Strong semantic actions use a solid background and contrast foreground; weak row/tool actions use the same semantic hue for text/icon/border. Disabled state is neutral gray and overrides all tones.
 - The gradient switch affects only theme-primary buttons. Danger, warning and success remain stable single colors in both themes; dark mode adjusts contrast without changing meaning.
+- Inputs, textareas, search fields, selects and date controls follow the active theme for focus borders/rings, caret, icons and eligible custom selected states; their editable surfaces remain neutral and semantic validation/disabled states take priority. The custom calendar selected date uses the approved gradient only when enabled and becomes the fixed theme solid color when disabled, with no residual component gradient.
+- Theme and gradient selectors do not alter the separately unified table-header background, text, border or height.
 - Confirmation dialogs receive an explicit action tone from the caller, default safely to primary, and never infer risk from localized button text.
 - Straight mode uses direct line segments and hides visible point circles; labels and tooltip hits remain.
 - Smooth mode keeps the current curve tension and point circles.
 - Single-series fill follows the selected geometry exactly.
 - Line colors follow current theme/gradient; multi-series charts remain distinguishable with same-theme derived levels.
 - Semantic status/badge colors and non-line categorical chart colors remain independently meaningful; action buttons use the standardized semantic-action tokens from Task 6.
-- User filter pills, role cards/icons, enable-row container, the data-source “数据库连接” group, home-stat detail table wrappers, validation rows/logs, flow-definition boxes, selected-flow rows/inline controls and both fishbone completion metadata forms follow `--ui-radius`; group/table headers are clipped by their outer containers, while switch track/thumb retain their dedicated shape and all scrolling, sticky-header, validation, flow-editor and fishbone positioning behavior remains intact.
+- User filter pills, list avatars, role/status badges, role cards/icons, enable-row container, the data-source “数据库连接” group, home-stat detail table wrappers, validation rows/logs, flow-definition boxes, selected-flow rows/inline controls and both fishbone completion metadata forms follow `--ui-radius`; online dots, the “我” marker and switch track/thumb retain their dedicated shapes; group/table headers are clipped by their outer containers and all scrolling, sticky-header, validation, flow-editor and fishbone positioning behavior remains intact.
 - Theme, dark mode, radius, gradient and chart-style drafts do not overwrite each other.
 - Full pytest passes, `git diff --check` is clean, and the executable is rebuilt only after source verification.
