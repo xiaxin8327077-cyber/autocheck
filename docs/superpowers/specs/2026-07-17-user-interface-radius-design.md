@@ -308,6 +308,9 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 历史详情摘要信息卡：`.history-summary-item`
 - 历史详情差异计数卡：`.history-count-item`
 - 历史详情结果区块：`.history-section`
+- 对数结果页展开详情分区：`.detail-block`
+- 对数结果页展开详情键值信息框：`.detail-item`
+- 对数结果页匹配状态标签：`.status-badge`
 - 流程执行的流程链列表外框：`.flow-chain-list`
 - 流程执行的已选流程摘要外框：`.flow-chain-selection-summary`
 - 流程执行日志外框：`.flow-run-panel:last-child #flowLog`
@@ -338,6 +341,8 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 通知只调整 `.toast` 和 `.flow-toast` 外壳；通知图标、流程进度条和关闭按钮保持原样，通知出现、消失、展开和自动关闭行为不变。
 - `.top-nav-status` 只调整外壳圆角；版本文字、临时状态消息、宽度和入场动画保持不变。
 - `.dark-mode-toggle` 从禁止清单移入必需清单；其内部图形不加入覆盖层。
+- `.status-badge` 是用户截图明确指定的结果页例外，使用统一圆角替代固定 `999px`；其他胶囊徽标和标签继续保持原样。
+- `.detail-block` 和 `.detail-item` 只调整外框圆角；详情内容、表格行、展开收起和分页行为保持不变。
 - 覆盖层属性审计继续断言每个规则只有 `border-radius`。
 - 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。
 - 抽查流程选择、历史查看、文件选择/拖拽入口、数据源编辑、暗色切换等原交互仍可正常使用。
