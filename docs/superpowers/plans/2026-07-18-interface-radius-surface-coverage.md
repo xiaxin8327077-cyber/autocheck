@@ -13,7 +13,7 @@
 - 仅修改界面显示，不修改 HTML 结构、JavaScript 事件、API、数据库、权限、表单值、焦点顺序或点击区域。
 - 全部目标使用同一个 `--ui-radius`；范围仍为 1–15px、默认 4px、步长 1px。
 - 默认太空主题、沉稳主题和暗色模式均需兼容。
-- 圆形图标、头像、状态点、图表节点、普通胶囊、普通标签、进度条、复选框、单选框、滑块和 SVG 内部形状保持原样；用户明确指定的结果页 `.status-badge` 除外。
+- 圆形图标、头像、状态点、图表节点、普通胶囊、普通标签、进度条、复选框、单选框、滑块和 SVG 内部形状保持原样；用户明确指定的结果页 `.status-badge` 和注意事项筛选标签除外。
 - 覆盖层禁止使用全局 `button`、`table`、`[class*=item]`、`[class*=card]` 或通配后代选择器。
 - `src/auto_check/web/app.js` 的 v2.1 日志保持“新增界面圆角个性化设置。”和“系统优化及BUG修复。”的精简口径，不展开本次界面细节。
 - 登录页缓存只保存一个 1–15 的整数，不保存用户 ID、用户名或按用户映射；缓存读取/写入失败不得阻断登录和主应用。
@@ -417,7 +417,84 @@ git commit -m "feat: apply last user radius to login surfaces"
 
 ---
 
-### Task 3: 全量验证、重新打包与浏览器验收
+### Task 3: 补齐统计周期外壳与注意事项筛选标签
+
+**Files:**
+- Modify: `src/auto_check/web/styles.css`
+- Modify: `tests/test_web_static.py`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: 现有集中式 `--ui-radius` 覆盖层，以及已覆盖的 `.trend-quick-btn`。
+- Produces: 统计周期分段选择器外壳和注意事项筛选标签统一读取同一圆角值，不改变筛选、选中态或图表逻辑。
+
+- [ ] **Step 1: 先增加失败测试**
+
+在 `test_user_radius_override_is_semantic_and_border_radius_only()` 的必需选择器元组中加入：
+
+```python
+        ".trend-quick-btns",
+        "#page-report-navigation .report-nav-filter-chips span",
+```
+
+在 `test_readme_documents_expanded_interface_radius_surface_coverage()` 的详细术语中加入：
+
+```python
+        "统计周期分段选择器",
+        "注意事项筛选标签",
+```
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py::test_user_radius_override_is_semantic_and_border_radius_only tests/test_web_static.py::test_readme_documents_expanded_interface_radius_surface_coverage
+```
+
+Expected: FAIL；CSS 尚缺两个精确选择器，README 尚缺两处覆盖说明。
+
+- [ ] **Step 2: 实现最小显示覆盖**
+
+在 `/* User interface radius preference: start/end */` 集中式覆盖层加入：
+
+```css
+.trend-quick-btns,
+#page-report-navigation .report-nav-filter-chips span,
+```
+
+继续共用唯一规则体：
+
+```css
+{
+  border-radius: var(--ui-radius) !important;
+}
+```
+
+不得修改 `.trend-quick-btn` 的筛选事件、选中态颜色、图表刷新逻辑，或注意事项标签的文字、数量与交互。
+
+- [ ] **Step 3: 同步 README 详细说明**
+
+在当前功能和 v2.1 详细变更中补充“统计周期分段选择器”和“注意事项筛选标签”；不修改应用内 `app.js` 的精简更新日志。
+
+- [ ] **Step 4: 验证并提交**
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py::test_user_radius_override_is_semantic_and_border_radius_only tests/test_web_static.py::test_readme_documents_expanded_interface_radius_surface_coverage tests/test_web_static.py::test_v21_changelog_documents_interface_radius_concisely
+python -m pytest -q tests/test_web_static.py
+git diff --check
+```
+
+Expected: 聚焦与前端静态测试全部通过；CSS 覆盖层仍只有 `border-radius`；无业务代码变化。
+
+```powershell
+git add src/auto_check/web/styles.css tests/test_web_static.py README.md
+git commit -m "fix: include remaining filter controls in unified radius"
+```
+
+---
+
+### Task 4: 全量验证、重新打包与浏览器验收
 
 **Files:**
 - Verify: `src/auto_check/web/styles.css`
@@ -428,7 +505,7 @@ git commit -m "feat: apply last user radius to login surfaces"
 - Modify: `dist/auto-check.exe`
 
 **Interfaces:**
-- Consumes: Task 1 已提交的主应用 CSS/测试/README，以及 Task 2 已提交的登录显示缓存。
+- Consumes: Task 1 已提交的主应用 CSS/测试/README、Task 2 已提交的登录显示缓存，以及 Task 3 已提交的两处筛选控件补充覆盖。
 - Produces: 通过全量回归的新 Windows 可执行文件，以及 1px、4px、15px 下的可视验收结果。
 
 - [ ] **Step 1: 运行全量测试**

@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 报送日期分组卡：`#page-report-navigation .report-nav-batch`
 - 注意事项单条卡片：`#page-report-navigation .report-nav-todo`
 - 报送导航加载、无快照及统计失败提示条：`#page-report-navigation .report-nav-load-state`
+- 统计趋势周期分段选择器外壳：`.trend-quick-btns`（内部 `.trend-quick-btn` 已由现有矩形按钮规则覆盖）
+- 注意事项筛选标签：`#page-report-navigation .report-nav-filter-chips span`
 - 右上角成功、警告、错误和普通通知外壳：`.toast`
 - 流程后台执行右下角浮动通知外壳：`.flow-toast`
 - 活力主题顶部版本号及临时状态标签：`.top-nav-status`
@@ -332,7 +334,7 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 暗色模式切换按钮只调整外壳；内部月亮图形及其状态表现保持原样。
 - 流程链条目中的复选框保持原样。
 - 表格数据行、表头单元格和分隔线不逐行增加圆角；只调整截图指定的表格外框或结果区块外框。
-- 圆形图标、头像、状态点、图表节点、胶囊徽标、标签、进度条、滑块轨道与手柄、单选框和 SVG 内部形状继续排除。
+- 圆形图标、头像、状态点、图表节点、普通胶囊徽标、普通标签、进度条、滑块轨道与手柄、单选框和 SVG 内部形状继续排除；用户明确补充的注意事项筛选标签除外。
 
 ### 12.4 测试与验收
 
@@ -342,6 +344,8 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - `.top-nav-status` 只调整外壳圆角；版本文字、临时状态消息、宽度和入场动画保持不变。
 - `.dark-mode-toggle` 从禁止清单移入必需清单；其内部图形不加入覆盖层。
 - `.status-badge` 是用户截图明确指定的结果页例外，使用统一圆角替代固定 `999px`；其他胶囊徽标和标签继续保持原样。
+- `.trend-quick-btns` 只调整分段选择器的背景外壳；既有 `.trend-quick-btn` 继续调整各矩形按钮，选中态、范围切换和图表刷新逻辑不变。
+- `#page-report-navigation .report-nav-filter-chips span` 是用户截图明确指定的筛选标签例外；筛选数量、选中态颜色和点击逻辑不变。
 - `.detail-block` 和 `.detail-item` 只调整外框圆角；详情内容、表格行、展开收起和分页行为保持不变。
 - 覆盖层属性审计继续断言每个规则只有 `border-radius`。
 - 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。
