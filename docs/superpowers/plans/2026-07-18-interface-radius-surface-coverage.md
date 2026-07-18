@@ -17,6 +17,7 @@
 - 覆盖层禁止使用全局 `button`、`table`、`[class*=item]`、`[class*=card]` 或通配后代选择器。
 - `src/auto_check/web/app.js` 的 v2.1 日志保持“新增界面圆角个性化设置。”和“系统优化及BUG修复。”的精简口径，不展开本次界面细节。
 - 登录页缓存只保存一个 1–15 的整数，不保存用户 ID、用户名或按用户映射；缓存读取/写入失败不得阻断登录和主应用。
+- 弹窗专项检查与弹窗内部新增覆盖暂缓，等待后续弹窗改造；本计划只保留已经确认的既有弹窗基础覆盖。
 - 所有编辑在 `D:\trae\autocheck\.worktrees\user-interface-radius-preferences` 独立 worktree 内完成。
 
 ---
@@ -554,7 +555,63 @@ git commit -m "fix: apply unified radius to status and refresh controls"
 
 ---
 
-### Task 5: 全量验证、重新打包与浏览器验收
+### Task 5: 补齐对账业务设置页面内矩形分区
+
+**Files:**
+- Modify: `src/auto_check/web/styles.css`
+- Modify: `tests/test_web_static.py`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: 对账业务设置页面现有字段配置、说明条和业务字段分组结构。
+- Produces: 三类页面内矩形分区读取统一圆角，不修改表单、展开、表格行或保存逻辑。
+
+- [ ] **Step 1: 先增加失败测试**
+
+在 `test_user_radius_override_is_semantic_and_border_radius_only()` 的必需选择器中加入：
+
+```python
+        "#page-settings .reconcile-schema-table",
+        "#page-settings .business-settings-note",
+        "#page-settings .business-field-group",
+```
+
+在 README 详细覆盖术语测试中加入“对账表字段配置卡”“对账业务维护说明条”“对账业务字段表格分组”。运行聚焦测试并确认先失败。
+
+- [ ] **Step 2: 实现最小显示覆盖**
+
+在集中式圆角覆盖层加入：
+
+```css
+#page-settings .reconcile-schema-table,
+#page-settings .business-settings-note,
+#page-settings .business-field-group,
+```
+
+继续共用唯一 `border-radius: var(--ui-radius) !important;` 规则体。不得修改 HTML、`app.js`、表单值、字段展开、业务表格行、保存行为或任何弹窗选择器。
+
+- [ ] **Step 3: 同步 README 并验证**
+
+在当前功能和 v2.1 详细变更中补充三类对账业务设置页面矩形分区；应用内 `app.js` 更新日志保持精简且不改动。
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py::test_user_radius_override_is_semantic_and_border_radius_only tests/test_web_static.py::test_readme_documents_expanded_interface_radius_surface_coverage
+python -m pytest -q tests/test_web_static.py
+git diff --check
+```
+
+Expected: 聚焦和静态测试通过；只修改 CSS 精确选择器、静态契约和 README。
+
+```powershell
+git add src/auto_check/web/styles.css tests/test_web_static.py README.md
+git commit -m "fix: apply unified radius to business settings panels"
+```
+
+---
+
+### Task 6: 全量验证、重新打包与浏览器验收
 
 **Files:**
 - Verify: `src/auto_check/web/styles.css`
@@ -565,7 +622,7 @@ git commit -m "fix: apply unified radius to status and refresh controls"
 - Modify: `dist/auto-check.exe`
 
 **Interfaces:**
-- Consumes: Task 1 已提交的主应用 CSS/测试/README、Task 2 已提交的登录显示缓存、Task 3 已提交的筛选控件补充覆盖，以及 Task 4 已提交的状态与刷新控件补充覆盖。
+- Consumes: Task 1 已提交的主应用 CSS/测试/README、Task 2 已提交的登录显示缓存、Task 3 已提交的筛选控件补充覆盖、Task 4 已提交的状态与刷新控件补充覆盖，以及 Task 5 已提交的对账业务设置页面分区覆盖。
 - Produces: 通过全量回归的新 Windows 可执行文件，以及 1px、4px、15px 下的可视验收结果。
 
 - [ ] **Step 1: 运行全量测试**
@@ -664,9 +721,9 @@ Expected: 返回新进程 ID，首页 HTTP 状态为 200。
 - 提示与导航：统计失败提示条、右上角通用通知、流程浮动通知、顶部版本标签、侧栏状态消息框和暗色切换按钮外壳。
 - 结果/历史：结果详情分区、键值信息框、匹配状态标签、历史详情卡和两类执行历史表格外框。
 - 流程/逐笔：流程链列表与摘要、执行日志和逐笔校验数据源配置行。
-- 工具/设置：统计周期分段选择器、上传区、系统信息指标卡、逐笔数据源配置行、流程链与数据源配置行、关于系统三类内容卡。
+- 工具/设置：统计周期分段选择器、上传区、系统信息指标卡、逐笔数据源配置行、流程链与数据源配置行、对账表字段配置卡、对账业务维护说明条、对账业务字段表格分组，以及关于系统三类内容卡。
 
-Expected: 所有矩形目标的计算样式 `border-radius` 与滑块值一致；复选框、圆形图标、状态点、进度条和表格行保持原样；弹窗开关、暗色切换、流程选择、历史查看和文件选择入口仍可操作。
+Expected: 所有已确认矩形目标的计算样式 `border-radius` 与滑块值一致；复选框、圆形图标、状态点、进度条和表格行保持原样；暗色切换、流程选择、历史查看和文件选择入口仍可操作。弹窗专项验收暂缓，不新增或评估弹窗内部覆盖。
 
 随后把 `autoCheckLastInterfaceRadius` 依次设为 1、4、15 并重新打开登录页，分别检查浅色与暗色：浅色登录卡片、暗色登录外框、输入框和登录按钮使用缓存值；主题按钮、密码眼睛按钮、复选框和装饰圆形保持原样。最后恢复缓存为已保存的 4。
 

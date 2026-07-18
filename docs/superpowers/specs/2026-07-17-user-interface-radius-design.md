@@ -323,6 +323,9 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 人行一键导入上传区：`.pbc-upload-area`
 - 系统信息指标卡：`#page-settings .metric-item`
 - 逐笔校验数据源配置行：`#page-settings .db-validation-source-row`
+- 对账表字段配置卡：`#page-settings .reconcile-schema-table`
+- 对账业务维护说明条：`#page-settings .business-settings-note`
+- 对账业务字段表格分组外框：`#page-settings .business-field-group`
 - 流程链配置行：`.flow-chain-config`
 - 数据源配置行：`.config-item`
 - 关于系统简介卡：`#page-settings .about-description`
@@ -350,6 +353,8 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - `#page-report-navigation .report-nav-filter-chips span` 是用户截图明确指定的筛选标签例外；筛选数量、选中态颜色和点击逻辑不变。
 - `#page-report-navigation .report-nav-refresh-button` 从特殊形状排除清单移入必需清单；只调整按钮外壳，内部刷新 SVG、旋转动画、冷却倒计时和刷新请求逻辑不变。
 - `.sidebar-footer .status` 只调整“主题已保存”等运行时消息外框；文字、恢复定时器和入场动画不变。顶部同类消息继续由既有 `.top-nav-status` 覆盖。
+- 对账业务设置仅调整 `.reconcile-schema-table`、`.business-settings-note` 和 `.business-field-group` 三类页面内矩形外框；表单值、字段展开、业务表格行和保存逻辑不变。
+- 用户已明确暂停弹窗检查，因为后续将单独改造弹窗；本轮不继续新增数据源弹窗、流程链编辑弹窗或其他弹窗内部选择器。
 - `.detail-block` 和 `.detail-item` 只调整外框圆角；详情内容、表格行、展开收起和分页行为保持不变。
 - 覆盖层属性审计继续断言每个规则只有 `border-radius`。
 - 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。
