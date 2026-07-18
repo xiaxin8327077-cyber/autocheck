@@ -763,7 +763,7 @@ Commit the three task files as `feat: unify login theme layout and background`.
 
 ---
 
-## Task 9: Close the remaining user-management and data-source radius gaps
+## Task 9: Close the remaining user-management, data-source and home-stat radius gaps
 
 **Files:**
 
@@ -773,25 +773,26 @@ Commit the three task files as `feat: unify login theme layout and background`.
 **Interfaces:**
 
 - Consumes: the existing root `--ui-radius` maintained by Task 4.
-- Produces: five additional scoped radius selectors with no DOM or event changes.
+- Produces: six additional scoped radius selectors with no DOM or event changes.
 
 - [ ] **Step 1: Write failing selector tests**
 
-Assert these five selectors consume `var(--ui-radius)` in the existing final radius-override block:
+Assert these six selectors consume `var(--ui-radius)` in the existing final radius-override block:
 
 ```css
 #page-users .user-filter-pill,
 .user-modal .user-role-card,
 .user-modal .user-role-card-icon,
 .user-modal .user-enable-row,
-#configModal .modal-section
+#configModal .modal-section,
+#infoModal .home-stat-modal-table-wrap
 ```
 
-Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius.
+Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius. Assert `.home-stat-modal-table-wrap` keeps `overflow: auto`, the nested `.home-stat-modal-table` receives no separate radius override, and the shared wrapper remains used by both `renderHomeReportPeriodTable()` and `renderHomeResultTable()` so “报送期差异数详情” and the other home-stat detail tables are covered together.
 
-Run `python -m pytest -q tests/test_web_static.py -k "radius and user"`.
+Run `python -m pytest -q tests/test_web_static.py -k "radius and (user or modal or home_stat)"`.
 
-Expected: FAIL because the filter pill is fixed at `999px`, the role/enable surfaces are fixed at `12px`/`10px`, and the data-source connection group is fixed at `8px`.
+Expected: FAIL because the filter pill is fixed at `999px`, the role/enable surfaces are fixed at `12px`/`10px`, the data-source connection group is fixed at `8px`, and the home-stat table wrapper is fixed at `10px`.
 
 - [ ] **Step 2: Add the selectors to the established radius override**
 
@@ -801,14 +802,14 @@ Use the existing rule:
 border-radius: var(--ui-radius) !important;
 ```
 
-Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior or event listeners. The user selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping.
+Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior, table data, sorting, sticky headers, scrolling or event listeners. The user selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping. Keep `.home-stat-modal-table-wrap` as the sole rounded/clipping surface with `overflow: auto`; do not add a second radius to `.home-stat-modal-table`.
 
 - [ ] **Step 3: Verify and commit**
 
 Run:
 
 ```powershell
-python -m pytest -q tests/test_web_static.py -k "radius or user or modal"
+python -m pytest -q tests/test_web_static.py -k "radius or user or modal or home_stat"
 git diff --check
 ```
 
@@ -835,7 +836,7 @@ Commit the two task files as `fix: apply radius to omitted interface controls`.
 
 - [ ] **Step 1: Update release-facing documentation**
 
-Document fixed theme colors, one global gradient switch, the five-role semantic button system, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the remaining radius gaps, per-user cross-device persistence, and `005` deployment order. README must explain that the gradient switch affects only theme-primary buttons, while danger/warning/success buttons retain stable semantic colors.
+Document fixed theme colors, one global gradient switch, the five-role semantic button system, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the remaining radius gaps including home-stat detail table wrappers, per-user cross-device persistence, and `005` deployment order. README must explain that the gradient switch affects only theme-primary buttons, while danger/warning/success buttons retain stable semantic colors.
 
 Keep the in-app changelog concise:
 
@@ -903,6 +904,6 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Single-series fill follows the selected geometry exactly.
 - Line colors follow current theme/gradient; multi-series charts remain distinguishable with same-theme derived levels.
 - Semantic status/badge colors and non-line categorical chart colors remain independently meaningful; action buttons use the standardized semantic-action tokens from Task 6.
-- User filter pills, role cards/icons, enable-row container and the data-source “数据库连接” group follow `--ui-radius`; the group header is clipped by its outer container, while the switch track/thumb retain their dedicated shape.
+- User filter pills, role cards/icons, enable-row container, the data-source “数据库连接” group and home-stat detail table wrappers follow `--ui-radius`; group/table headers are clipped by their outer containers, while the switch track/thumb retain their dedicated shape and table scrolling/sticky headers remain intact.
 - Theme, dark mode, radius, gradient and chart-style drafts do not overwrite each other.
 - Full pytest passes, `git diff --check` is clean, and the executable is rebuilt only after source verification.
