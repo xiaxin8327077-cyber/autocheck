@@ -3320,6 +3320,17 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "保存失败" in body
     assert "加载失败，当前使用默认 4px" in body
 
+    loader = re.search(
+        r"async function loadInterfaceRadiusPreference\(\{ silent = false \} = \{\}\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert loader is not None
+    load_body = loader.group("body")
+    load_success_body, load_catch_body = load_body.split("} catch (error) {", 1)
+    assert "cacheAuthenticatedInterfaceRadius(radiusPx);" in load_success_body
+    assert "cacheAuthenticatedInterfaceRadius(" not in load_catch_body
+
 
 def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     app_js = _read(APP_JS)
@@ -3346,6 +3357,7 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert "syncInterfaceRadiusDirtyStatus();" in slider_body
     assert "api(" not in slider_body
     assert "POST" not in slider_body
+    assert "cacheAuthenticatedInterfaceRadius(" not in slider_body
 
     reset_handler = re.search(
         r'resetInterfaceSettingsBtn\?\.addEventListener\("click", \(\) => \{(?P<body>.*?)\n\}\);',
@@ -3362,6 +3374,7 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert "interfaceRadiusState.savedRadiusPx" not in reset_body
     assert "api(" not in reset_body
     assert "POST" not in reset_body
+    assert "cacheAuthenticatedInterfaceRadius(" not in reset_body
 
     save = re.search(
         r"async function saveInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
@@ -3381,6 +3394,7 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert "interfaceRadiusState.draftRadiusPx = savedRadiusPx;" in save_body
     assert 'interfaceRadiusState.statusText = "保存成功";' in save_body
     assert "applyInterfaceRadius(savedRadiusPx);" in save_body
+    assert "cacheAuthenticatedInterfaceRadius(savedRadiusPx);" in save_body
     assert "} catch (error) {" in save_body
     assert "} finally {" in save_body
     catch_body = save_body.split("} catch (error) {", 1)[1].split("} finally {", 1)[0]
@@ -3388,6 +3402,7 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert "interfaceRadiusState.savedRadiusPx =" not in catch_body
     assert "interfaceRadiusState.draftRadiusPx =" not in catch_body
     assert "applyInterfaceRadius(" not in catch_body
+    assert "cacheAuthenticatedInterfaceRadius(" not in catch_body
     finally_body = save_body.split("} finally {", 1)[1]
     assert "interfaceRadiusState.saving = false;" in finally_body
     assert "renderInterfaceRadiusPreference();" in finally_body
@@ -3418,7 +3433,30 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert switch_body.index(discard_call) < switch_body.index("document.documentElement.setAttribute('data-page', name);")
 
 
-def test_interface_radius_settings_refresh_on_each_entry_without_local_storage():
+def test_login_uses_last_authenticated_interface_radius_display_cache():
+    login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
+
+    assert "--ui-radius: 4px;" in login_html
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in login_html
+    assert "function normalizeLoginInterfaceRadius(value)" in login_html
+    assert "Number.isInteger(parsed)" in login_html
+    assert "parsed >= 1 && parsed <= 15" in login_html
+    assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" in login_html
+    assert 'document.documentElement.style.setProperty("--ui-radius", `${radiusPx}px`);' in login_html
+    assert login_html.index('id="initialInterfaceRadiusScript"') < login_html.index("<style>")
+
+    for selector in (
+        ".right-panel",
+        ':root[data-login-theme="dark"] .login-container',
+        ".form-input",
+        ':root[data-login-theme="dark"] .form-input',
+        ".login-btn",
+        ':root[data-login-theme="dark"] .login-btn',
+    ):
+        assert selector in login_html
+
+
+def test_interface_radius_settings_use_server_authority_with_login_display_cache():
     app_js = _read(APP_JS)
 
     settings_loader = re.search(
@@ -3431,8 +3469,21 @@ def test_interface_radius_settings_refresh_on_each_entry_without_local_storage()
     assert "Promise.all" in settings_body
     assert 'loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false }))' in settings_body
 
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in body
+    assert "function cacheAuthenticatedInterfaceRadius(radiusPx)" in body
+    assert "localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));" in body
+    assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
+    assert "localStorage.removeItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
+    assert app_js.count("localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY") == 1
     assert "autoCheckRadius" not in app_js
-    assert not re.search(r"localStorage\.(?:getItem|setItem|removeItem)\([^\n]*(?:radius|Radius)", app_js)
 
 
 def test_interface_radius_node_keeps_new_draft_when_older_get_finishes(tmp_path):

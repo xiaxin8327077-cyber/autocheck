@@ -5,8 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>监管智核</title>
     <link rel="icon" href="/assets/favicon-64x64.svg?v=2.0.8-regulatory-intelligence-core" />
+    <script id="initialInterfaceRadiusScript">
+      (() => {
+        const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
+        const DEFAULT_LOGIN_INTERFACE_RADIUS_PX = 4;
+
+        function normalizeLoginInterfaceRadius(value) {
+          const parsed = Number(value);
+          return Number.isInteger(parsed) && parsed >= 1 && parsed <= 15
+            ? parsed
+            : DEFAULT_LOGIN_INTERFACE_RADIUS_PX;
+        }
+
+        let radiusPx = DEFAULT_LOGIN_INTERFACE_RADIUS_PX;
+        try {
+          radiusPx = normalizeLoginInterfaceRadius(localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY));
+        } catch (_) {}
+        document.documentElement.style.setProperty("--ui-radius", `${radiusPx}px`);
+      })();
+    </script>
     <style>
       :root {
+        --ui-radius: 4px;
         --bg: #f0fdf4;
         --surface: rgba(255, 255, 255, 0.7);
         --shadow-light: #ffffff;
@@ -602,6 +622,15 @@
       }
 
       .social-btn:hover { transform: translateY(-2px); }
+
+      .right-panel,
+      .form-input,
+      .login-btn,
+      :root[data-login-theme="dark"] .login-container,
+      :root[data-login-theme="dark"] .form-input,
+      :root[data-login-theme="dark"] .login-btn {
+        border-radius: var(--ui-radius);
+      }
 
       @media (max-width: 900px) {
         :root[data-login-theme="dark"] .login-container {

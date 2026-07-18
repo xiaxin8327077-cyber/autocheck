@@ -534,6 +534,7 @@ const DEFAULT_INTERFACE_RADIUS_PX = 4;
 const MIN_INTERFACE_RADIUS_PX = 1;
 const MAX_INTERFACE_RADIUS_PX = 15;
 const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;
+const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
 const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
 const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
 const interfaceSettingsStatus = document.getElementById("interfaceSettingsStatus");
@@ -562,6 +563,14 @@ function normalizeInterfaceRadius(radiusPx) {
     return radiusPx;
   }
   return DEFAULT_INTERFACE_RADIUS_PX;
+}
+
+function cacheAuthenticatedInterfaceRadius(radiusPx) {
+  const normalizedRadiusPx = normalizeInterfaceRadius(radiusPx);
+  try {
+    localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));
+  } catch (_) {}
+  return normalizedRadiusPx;
 }
 
 function applyInterfaceRadius(radiusPx) {
@@ -679,6 +688,7 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     interfaceRadiusState.savedRadiusPx = radiusPx;
     interfaceRadiusState.loaded = true;
     interfaceRadiusState.loadFailed = false;
+    cacheAuthenticatedInterfaceRadius(radiusPx);
     if (!hadUnsavedDraft && editRevision === interfaceRadiusState.editRevision) {
       interfaceRadiusState.draftRadiusPx = radiusPx;
       applyInterfaceRadius(radiusPx);
@@ -744,6 +754,7 @@ async function saveInterfaceRadiusPreference() {
     interfaceRadiusState.loadFailed = false;
     interfaceRadiusState.statusText = "保存成功";
     applyInterfaceRadius(savedRadiusPx);
+    cacheAuthenticatedInterfaceRadius(savedRadiusPx);
     return true;
   } catch (error) {
     if (!isCurrentRequest()) return false;
