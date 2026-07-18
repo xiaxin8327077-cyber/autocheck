@@ -529,10 +529,119 @@ function applySavedUserTheme() {
   }
 }
 
+// Theme color runtime start
+const DEFAULT_EFFECTIVE_THEME_COLORS = Object.freeze({
+  vitality: "#3F6FAF",
+  calm: "#355F63",
+});
+const THEME_PALETTE_SURFACES = Object.freeze({
+  light: "#F7FAFC",
+  dark: "#121318",
+});
+let effectiveThemeColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+
+function normalizeThemeHex(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : null;
+}
+
+function themeHexToRgb(value) {
+  const normalized = normalizeThemeHex(value);
+  if (!normalized) return null;
+  return {
+    red: Number.parseInt(normalized.slice(1, 3), 16),
+    green: Number.parseInt(normalized.slice(3, 5), 16),
+    blue: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function themeRgbToHex({ red, green, blue }) {
+  const channel = (value) => Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, "0")
+    .toUpperCase();
+  return `#${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
+function themeRelativeLuminance(value) {
+  const rgb = themeHexToRgb(value);
+  if (!rgb) return 0;
+  const linearize = (channel) => {
+    const srgb = channel / 255;
+    return srgb <= 0.04045
+      ? srgb / 12.92
+      : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  return (
+    (0.2126 * linearize(rgb.red))
+    + (0.7152 * linearize(rgb.green))
+    + (0.0722 * linearize(rgb.blue))
+  );
+}
+
+function contrastRatio(first, second) {
+  const firstLuminance = themeRelativeLuminance(first);
+  const secondLuminance = themeRelativeLuminance(second);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function mixThemeHex(from, to, ratio) {
+  const start = themeHexToRgb(from);
+  const end = themeHexToRgb(to);
+  const weight = Math.max(0, Math.min(1, ratio));
+  return themeRgbToHex({
+    red: start.red + ((end.red - start.red) * weight),
+    green: start.green + ((end.green - start.green) * weight),
+    blue: start.blue + ((end.blue - start.blue) * weight),
+  });
+}
+
+function deriveThemePalette(value, mode = "light") {
+  const accent = normalizeThemeHex(value) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality;
+  const colorMode = mode === "dark" ? "dark" : "light";
+  const surface = THEME_PALETTE_SURFACES[colorMode];
+  const blackContrast = contrastRatio(accent, "#000000");
+  const whiteContrast = contrastRatio(accent, "#FFFFFF");
+  const onAccent = blackContrast >= whiteContrast ? "#000000" : "#FFFFFF";
+  const readableTarget = colorMode === "dark" ? "#FFFFFF" : "#000000";
+  let readableAccent = accent;
+  for (let step = 1; contrastRatio(readableAccent, surface) < 4.5 && step <= 100; step += 1) {
+    readableAccent = mixThemeHex(accent, readableTarget, step / 100);
+  }
+  const rgb = themeHexToRgb(accent);
+  return {
+    accent,
+    onAccent,
+    readableAccent,
+    focusRing: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${colorMode === "dark" ? "0.38" : "0.28"})`,
+  };
+}
+
+function applyEffectiveThemeColors(colors = effectiveThemeColors) {
+  effectiveThemeColors = {
+    vitality: normalizeThemeHex(colors?.vitality) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality,
+    calm: normalizeThemeHex(colors?.calm) || DEFAULT_EFFECTIVE_THEME_COLORS.calm,
+  };
+  const root = document.documentElement;
+  const themeKey = root.getAttribute("data-theme") === "space-tech" ? "vitality" : "calm";
+  const colorMode = root.getAttribute("data-color-mode") === "dark" ? "dark" : "light";
+  const palette = deriveThemePalette(effectiveThemeColors[themeKey], colorMode);
+  root.style.setProperty("--theme-accent", palette.accent);
+  root.style.setProperty("--theme-on-accent", palette.onAccent);
+  root.style.setProperty("--theme-accent-readable", palette.readableAccent);
+  root.style.setProperty("--theme-focus-ring", palette.focusRing);
+  return { colors: { ...effectiveThemeColors }, palette };
+}
+
+applyEffectiveThemeColors(effectiveThemeColors);
+// Theme color runtime end
+
 // Interface radius start
 const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({
   radiusPx: 4,
-  themeGradientEnabled: false,
   lineChartStyle: "straight",
 });
 const DEFAULT_INTERFACE_RADIUS_PX = DEFAULT_INTERFACE_PREFERENCES.radiusPx;
@@ -540,10 +649,8 @@ const MIN_INTERFACE_RADIUS_PX = 1;
 const MAX_INTERFACE_RADIUS_PX = 15;
 const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;
 const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
-const LAST_INTERFACE_GRADIENT_CACHE_KEY = "autoCheckLastInterfaceThemeGradient";
 const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
 const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
-const interfaceThemeGradientToggle = document.getElementById("interfaceThemeGradientToggle");
 const interfaceLineChartStyleStraight = document.getElementById("interfaceLineChartStyleStraight");
 const interfaceLineChartStyleSmooth = document.getElementById("interfaceLineChartStyleSmooth");
 const interfaceSettingsStatus = document.getElementById("interfaceSettingsStatus");
@@ -566,7 +673,6 @@ const interfaceRadiusState = {
 function copyInterfacePreferences(preferences) {
   return {
     radiusPx: preferences.radiusPx,
-    themeGradientEnabled: preferences.themeGradientEnabled,
     lineChartStyle: preferences.lineChartStyle,
   };
 }
@@ -574,7 +680,6 @@ function copyInterfacePreferences(preferences) {
 function interfacePreferencesMatch(left, right) {
   return (
     left.radiusPx === right.radiusPx
-    && left.themeGradientEnabled === right.themeGradientEnabled
     && left.lineChartStyle === right.lineChartStyle
   );
 }
@@ -594,10 +699,6 @@ function cacheAuthenticatedInterfacePreferences(preferences) {
   const normalizedRadiusPx = normalizeInterfaceRadius(preferences.radiusPx);
   try {
     localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));
-    localStorage.setItem(
-      LAST_INTERFACE_GRADIENT_CACHE_KEY,
-      preferences.themeGradientEnabled ? "true" : "false",
-    );
   } catch (_) {}
   return {
     ...preferences,
@@ -613,7 +714,6 @@ function applyInterfaceRadius(radiusPx) {
 
 function applyInterfacePreferences(preferences) {
   const normalizedRadiusPx = applyInterfaceRadius(preferences.radiusPx);
-  document.documentElement.dataset.themeGradient = String(preferences.themeGradientEnabled);
   return {
     ...preferences,
     radiusPx: normalizedRadiusPx,
@@ -622,18 +722,16 @@ function applyInterfacePreferences(preferences) {
 
 function readInterfacePreferencesPayload(payload) {
   const radiusPx = payload?.settings?.radius_px;
-  const themeGradientEnabled = payload?.settings?.theme_gradient_enabled;
   const lineChartStyle = payload?.settings?.line_chart_style;
   if (
     !Number.isInteger(radiusPx)
     || radiusPx < MIN_INTERFACE_RADIUS_PX
     || radiusPx > MAX_INTERFACE_RADIUS_PX
-    || typeof themeGradientEnabled !== "boolean"
     || !["straight", "smooth"].includes(lineChartStyle)
   ) {
     throw new Error("界面设置响应无效");
   }
-  return { radiusPx, themeGradientEnabled, lineChartStyle };
+  return { radiusPx, lineChartStyle };
 }
 
 function syncInterfaceRadiusDirtyStatus() {
@@ -655,10 +753,6 @@ function renderInterfaceRadiusPreference() {
   }
   if (interfaceRadiusValue) {
     interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;
-  }
-  if (interfaceThemeGradientToggle) {
-    interfaceThemeGradientToggle.checked = interfaceRadiusState.draftPreferences.themeGradientEnabled;
-    interfaceThemeGradientToggle.disabled = interfaceRadiusState.saving;
   }
   if (interfaceLineChartStyleStraight) {
     interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";
@@ -809,7 +903,6 @@ async function saveInterfaceRadiusPreference() {
       method: "POST",
       body: JSON.stringify({
         radius_px: interfaceRadiusState.draftPreferences.radiusPx,
-        theme_gradient_enabled: interfaceRadiusState.draftPreferences.themeGradientEnabled,
         line_chart_style: interfaceRadiusState.draftPreferences.lineChartStyle,
       }),
     });
@@ -865,10 +958,6 @@ interfaceRadiusSlider?.addEventListener("input", () => {
   updateInterfacePreferenceDraft({
     radiusPx: normalizeInterfaceRadius(Number(interfaceRadiusSlider.value)),
   });
-});
-
-interfaceThemeGradientToggle?.addEventListener("input", () => {
-  updateInterfacePreferenceDraft({ themeGradientEnabled: interfaceThemeGradientToggle.checked });
 });
 
 interfaceLineChartStyleStraight?.addEventListener("input", () => {
@@ -10220,6 +10309,7 @@ function commitTheme(theme) {
   } else {
     document.documentElement.setAttribute("data-theme", "light");
   }
+  applyEffectiveThemeColors(effectiveThemeColors);
   updateSpaceTopNavFrost();
   refreshHomeChartsForTheme();
 }
@@ -10281,6 +10371,7 @@ function applyDarkMode(darkMode) {
   } else {
     document.documentElement.setAttribute("data-color-mode", "light");
   }
+  applyEffectiveThemeColors(effectiveThemeColors);
   syncDarkModeButtons(enabled);
 }
 

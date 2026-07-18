@@ -76,7 +76,6 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         const elements = {
           interfaceRadiusSlider: new FakeElement("4"),
           interfaceRadiusValue: new FakeElement(),
-          interfaceThemeGradientToggle: new FakeElement(),
           interfaceLineChartStyleStraight: new FakeElement("straight"),
           interfaceLineChartStyleSmooth: new FakeElement("smooth"),
           interfaceSettingsStatus: new FakeElement(),
@@ -130,7 +129,7 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
           },
           removeItem: (key) => storageValues.delete(key),
         };
-        let apiImpl = async () => ({ settings: { radius_px: 4 } });
+        let apiImpl = async () => ({ settings: { radius_px: 4, line_chart_style: "straight" } });
         let fetchImpl = async () => ({
           ok: true,
           json: async () => ({
@@ -148,7 +147,6 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
           return {
             ...payload,
             settings: {
-              theme_gradient_enabled: false,
               line_chart_style: "straight",
               ...settings,
             },
@@ -235,12 +233,137 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
     subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
 
 
+def _run_theme_color_node_scenario(tmp_path: Path, scenario_source: str) -> None:
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Theme color runtime start.*?// Theme color runtime end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+        const cssVariables = new Map();
+        const attributes = new Map([
+          ["data-theme", "space-tech"],
+          ["data-color-mode", "light"],
+        ]);
+        globalThis.document = {
+          documentElement: {
+            getAttribute: (name) => attributes.get(name) || null,
+            setAttribute: (name, value) => attributes.set(name, String(value)),
+            style: {
+              setProperty: (name, value) => cssVariables.set(name, value),
+              getPropertyValue: (name) => cssVariables.get(name) || "",
+            },
+          },
+        };
+
+        __THEME_COLOR_BLOCK__
+
+        (async () => {
+        __SCENARIO__
+        })().catch((error) => {
+          console.error(error.stack || error);
+          process.exitCode = 1;
+        });
+        """
+    ).replace("__THEME_COLOR_BLOCK__", block.group(0)).replace(
+        "__SCENARIO__",
+        textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
+    )
+    script_path = tmp_path / "theme_color_runtime.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def test_canceled_theme_gradient_contract_is_absent_from_frontend():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    frontend = "\n".join((html, app_js, css))
+
+    for canceled_token in (
+        "interfaceThemeGradientToggle",
+        "themeGradientEnabled",
+        "theme_gradient_enabled",
+        "data-theme-gradient",
+        "themeGradient",
+        "autoCheckLastInterfaceThemeGradient",
+        "--theme-accent-gradient",
+        "--theme-page-background-gradient",
+    ):
+        assert canceled_token not in frontend
+
+
+def test_solid_theme_palette_runtime_normalizes_and_guarantees_contrast(tmp_path):
+    _run_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        assert.equal(normalizeThemeHex("#3f6faf"), "#3F6FAF");
+        assert.equal(normalizeThemeHex("#fff"), null);
+        assert.equal(normalizeThemeHex("rgb(63, 111, 175)"), null);
+
+        const lightPalette = deriveThemePalette("#3F6FAF", "light");
+        assert.equal(lightPalette.accent, "#3F6FAF");
+        assert.ok(["#000000", "#FFFFFF"].includes(lightPalette.onAccent));
+        assert.ok(
+          contrastRatio(lightPalette.accent, lightPalette.onAccent)
+            >= contrastRatio(lightPalette.accent, lightPalette.onAccent === "#000000" ? "#FFFFFF" : "#000000")
+        );
+        assert.ok(contrastRatio(lightPalette.readableAccent, "#F7FAFC") >= 4.5);
+        assert.match(lightPalette.focusRing, /^rgba\(63, 111, 175, 0\.\d+\)$/);
+
+        const darkPalette = deriveThemePalette("#3F6FAF", "dark");
+        assert.equal(darkPalette.accent, "#3F6FAF");
+        assert.ok(contrastRatio(darkPalette.readableAccent, "#121318") >= 4.5);
+
+        const applied = applyEffectiveThemeColors({
+          vitality: "#3f6faf",
+          calm: "#355f63",
+        });
+        assert.deepEqual(applied.colors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(cssVariables.get("--theme-accent"), "#3F6FAF");
+        assert.equal(cssVariables.get("--theme-on-accent"), applied.palette.onAccent);
+        assert.equal(cssVariables.get("--theme-accent-readable"), applied.palette.readableAccent);
+        assert.equal(cssVariables.get("--theme-focus-ring"), applied.palette.focusRing);
+
+        attributes.set("data-theme", "light");
+        attributes.set("data-color-mode", "dark");
+        const calmApplied = applyEffectiveThemeColors(applied.colors);
+        assert.equal(calmApplied.palette.accent, "#355F63");
+        assert.ok(contrastRatio(calmApplied.palette.readableAccent, "#121318") >= 4.5);
+        """,
+    )
+
+
+def test_theme_and_dark_mode_switches_reapply_effective_solid_colors():
+    app_js = _read(APP_JS)
+    commit_theme = re.search(
+        r"function commitTheme\(theme\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    apply_dark_mode = re.search(
+        r"function applyDarkMode\(darkMode\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert commit_theme is not None
+    assert apply_dark_mode is not None
+    for body in (commit_theme.group("body"), apply_dark_mode.group("body")):
+        assert "applyEffectiveThemeColors(effectiveThemeColors);" in body
+
+
 def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_state_contract(tmp_path):
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    assert '<input id="interfaceThemeGradientToggle" type="checkbox" role="switch">' in html
     assert (
         '<div id="interfaceLineChartStyle" role="radiogroup" aria-label="折线图风格">'
         in html
@@ -259,14 +382,12 @@ def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_s
         r'<input[^>]+name="interfaceLineChartStyle"[^>]+value="([^"]+)"',
         html,
     ) == ["straight", "smooth"]
-    assert html.count('id="interfaceThemeGradientToggle"') == 1
     assert html.index('value="straight" checked') < html.index('value="smooth"')
     assert 'type="color"' not in html
     assert "HEX" not in html
     assert "tension" not in html.lower()
 
     for selector in (
-        "#page-settings #interfaceThemeGradientToggle",
         "#page-settings #interfaceLineChartStyle",
         "#page-settings #interfaceLineChartStyle label:has(input:focus-visible)",
         "#page-settings #interfaceLineChartStyle label:has(input:disabled)",
@@ -274,13 +395,11 @@ def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_s
     ):
         assert selector in css
 
-    assert "同时控制活力和沉稳主题的主按钮、选中项和重点图标" in html
     assert "统一控制系统折线图的数据点连接方式" in html
 
     assert "const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({" in app_js
     for field in (
         "radiusPx: 4",
-        "themeGradientEnabled: false",
         'lineChartStyle: "straight"',
         "savedPreferences:",
         "draftPreferences:",
@@ -297,40 +416,30 @@ def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_s
         const h = radiusHarness;
         assert.deepEqual(h.state.savedPreferences, {
           radiusPx: 4,
-          themeGradientEnabled: false,
           lineChartStyle: "straight",
         });
         assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
 
-        h.elements.interfaceThemeGradientToggle.checked = true;
-        h.elements.interfaceThemeGradientToggle.dispatch("input");
-        assert.equal(h.state.draftPreferences.themeGradientEnabled, true);
-        assert.equal(document.documentElement.dataset.themeGradient, "true");
-        assert.equal(h.state.statusText, "正在预览，尚未保存");
-
         h.elements.interfaceLineChartStyleSmooth.checked = true;
         h.elements.interfaceLineChartStyleSmooth.dispatch("input");
         assert.equal(h.state.draftPreferences.lineChartStyle, "smooth");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
 
         let postBody = null;
         apiImpl = async (_path, options) => {
           postBody = JSON.parse(options.body);
           return { settings: {
             radius_px: 4,
-            theme_gradient_enabled: true,
             line_chart_style: "smooth",
           } };
         };
         assert.equal(await h.save(), true);
         assert.deepEqual(postBody, {
           radius_px: 4,
-          theme_gradient_enabled: true,
           line_chart_style: "smooth",
         });
         assert.deepEqual(h.state.savedPreferences, h.state.draftPreferences);
 
-        h.elements.interfaceThemeGradientToggle.checked = false;
-        h.elements.interfaceThemeGradientToggle.dispatch("input");
         h.elements.interfaceLineChartStyleStraight.checked = true;
         h.elements.interfaceLineChartStyleStraight.dispatch("input");
         h.elements.interfaceRadiusSlider.value = "8";
@@ -339,19 +448,16 @@ def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_s
         assert.equal(await h.save(), false);
         assert.deepEqual(h.state.savedPreferences, {
           radiusPx: 4,
-          themeGradientEnabled: true,
           lineChartStyle: "smooth",
         });
         assert.deepEqual(h.state.draftPreferences, {
           radiusPx: 8,
-          themeGradientEnabled: false,
           lineChartStyle: "straight",
         });
         assert.equal(h.state.statusText, "保存失败");
 
         assert.equal(h.discard(), true);
         assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
-        assert.equal(document.documentElement.dataset.themeGradient, "true");
         """,
     )
 
@@ -362,28 +468,24 @@ def test_interface_preferences_strict_payloads_and_success_only_display_cache(tm
         """
         const h = radiusHarness;
         const radiusCacheKey = "autoCheckLastInterfaceRadius";
-        const gradientCacheKey = "autoCheckLastInterfaceThemeGradient";
         h.useStrictResponses();
 
         apiImpl = async () => ({ settings: {
           radius_px: 7,
-          theme_gradient_enabled: true,
           line_chart_style: "smooth",
         } });
         assert.equal(await h.load({ silent: true }), true);
         assert.deepEqual(h.state.savedPreferences, {
           radiusPx: 7,
-          themeGradientEnabled: true,
           lineChartStyle: "smooth",
         });
         assert.equal(h.storageValues.get(radiusCacheKey), "7");
-        assert.equal(h.storageValues.get(gradientCacheKey), "true");
-        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.storageWrites.length, 1);
 
         const invalidPayloads = [
-          { radius_px: 7, theme_gradient_enabled: "true", line_chart_style: "smooth" },
-          { radius_px: 7, theme_gradient_enabled: true, line_chart_style: "curve" },
-          { radius_px: 7, theme_gradient_enabled: true },
+          { radius_px: 7, line_chart_style: "curve" },
+          { radius_px: 7 },
+          { radius_px: 0, line_chart_style: "smooth" },
         ];
         for (const settings of invalidPayloads) {
           h.resetAuth();
@@ -391,38 +493,33 @@ def test_interface_preferences_strict_payloads_and_success_only_display_cache(tm
           assert.equal(await h.load({ silent: true }), false);
           assert.deepEqual(h.state.savedPreferences, {
             radiusPx: 4,
-            themeGradientEnabled: false,
             lineChartStyle: "straight",
           });
           assert.equal(h.storageValues.get(radiusCacheKey), "7");
-          assert.equal(h.storageValues.get(gradientCacheKey), "true");
-          assert.equal(h.storageWrites.length, 2);
+          assert.equal(h.storageWrites.length, 1);
         }
 
         apiImpl = async () => { throw new Error("load failed"); };
         assert.equal(await h.load({ silent: true }), false);
-        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.storageWrites.length, 1);
 
-        h.elements.interfaceThemeGradientToggle.checked = true;
-        h.elements.interfaceThemeGradientToggle.dispatch("input");
         h.elements.interfaceLineChartStyleSmooth.checked = true;
         h.elements.interfaceLineChartStyleSmooth.dispatch("input");
         apiImpl = async () => ({ settings: {
           radius_px: 4,
-          theme_gradient_enabled: 1,
-          line_chart_style: "smooth",
+          line_chart_style: "curve",
         } });
         assert.equal(await h.save(), false);
-        assert.equal(h.state.savedPreferences.themeGradientEnabled, false);
-        assert.equal(h.state.draftPreferences.themeGradientEnabled, true);
-        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.state.savedPreferences.lineChartStyle, "straight");
+        assert.equal(h.state.draftPreferences.lineChartStyle, "smooth");
+        assert.equal(h.storageWrites.length, 1);
 
         fetchImpl = async () => ({
           ok: false,
           json: async () => ({ authenticated: false }),
         });
         await assert.rejects(() => h.ensureAuthenticated(), /login required/);
-        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.storageWrites.length, 1);
         """,
     )
 
@@ -3983,7 +4080,6 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert strict_payload is not None
     strict_body = strict_payload.group("body")
     assert "payload?.settings?.radius_px" in strict_body
-    assert "payload?.settings?.theme_gradient_enabled" in strict_body
     assert "payload?.settings?.line_chart_style" in strict_body
     assert "!Number.isInteger(radiusPx)" in strict_body
     assert "radiusPx < MIN_INTERFACE_RADIUS_PX" in strict_body
@@ -3999,7 +4095,6 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     render_body = render.group("body")
     assert "interfaceRadiusSlider.value = String(interfaceRadiusState.draftPreferences.radiusPx);" in render_body
     assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;" in render_body
-    assert "interfaceThemeGradientToggle.checked = interfaceRadiusState.draftPreferences.themeGradientEnabled;" in render_body
     assert 'interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";' in render_body
     assert "interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;" in render_body
     assert "interfaceRadiusSlider.disabled = interfaceRadiusState.saving;" in render_body
@@ -4097,7 +4192,6 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert 'method: "POST"' in save_body
     for payload_field in (
         "radius_px: interfaceRadiusState.draftPreferences.radiusPx",
-        "theme_gradient_enabled: interfaceRadiusState.draftPreferences.themeGradientEnabled",
         "line_chart_style: interfaceRadiusState.draftPreferences.lineChartStyle",
     ):
         assert payload_field in save_body
@@ -4190,15 +4284,11 @@ def test_interface_radius_settings_use_server_authority_with_login_display_cache
     body = block.group("body")
 
     assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in body
-    assert 'const LAST_INTERFACE_GRADIENT_CACHE_KEY = "autoCheckLastInterfaceThemeGradient";' in body
     assert "function cacheAuthenticatedInterfacePreferences(preferences)" in body
     assert "localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));" in body
-    assert "localStorage.setItem(" in body
-    assert "LAST_INTERFACE_GRADIENT_CACHE_KEY" in body
     assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
     assert "localStorage.removeItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
     assert app_js.count("localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY") == 1
-    assert app_js.count("LAST_INTERFACE_GRADIENT_CACHE_KEY") == 2
     assert "autoCheckRadius" not in app_js
 
 
@@ -4341,7 +4431,6 @@ def test_interface_radius_node_disables_and_guards_draft_controls_while_saving(t
         h.elements.interfaceRadiusSlider.dispatch("input");
         const saving = h.save();
         assert.equal(h.elements.interfaceRadiusSlider.disabled, true);
-        assert.equal(h.elements.interfaceThemeGradientToggle.disabled, true);
         assert.equal(h.elements.interfaceLineChartStyleStraight.disabled, true);
         assert.equal(h.elements.interfaceLineChartStyleSmooth.disabled, true);
         assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, true);
@@ -4357,7 +4446,6 @@ def test_interface_radius_node_disables_and_guards_draft_controls_while_saving(t
         assert.equal(h.state.savedPreferences.radiusPx, 9);
         assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.elements.interfaceRadiusSlider.disabled, false);
-        assert.equal(h.elements.interfaceThemeGradientToggle.disabled, false);
         assert.equal(h.elements.interfaceLineChartStyleStraight.disabled, false);
         assert.equal(h.elements.interfaceLineChartStyleSmooth.disabled, false);
         assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, false);
@@ -4550,13 +4638,11 @@ def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path)
         h.useStrictResponses();
         apiImpl = async () => ({ settings: {
           radius_px: 8,
-          theme_gradient_enabled: true,
           line_chart_style: "smooth",
         } });
         assert.equal(await h.load({ silent: true }), true);
         assert.equal(h.cssVariables.get("--ui-radius"), "8px");
-        assert.equal(h.storageValues.get("autoCheckLastInterfaceThemeGradient"), "true");
-        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.storageWrites.length, 1);
 
         const oldGet = deferred();
         const newGet = deferred();
@@ -4580,30 +4666,25 @@ def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path)
 
         oldGet.resolve({ settings: {
           radius_px: 12,
-          theme_gradient_enabled: true,
           line_chart_style: "smooth",
         } });
         assert.equal(await oldLoading, false);
         assert.equal(h.state.savedPreferences.radiusPx, 4);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
-        assert.equal(h.storageValues.get("autoCheckLastInterfaceThemeGradient"), "true");
-        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.storageWrites.length, 1);
 
         newGet.resolve({ settings: {
           radius_px: 6,
-          theme_gradient_enabled: false,
           line_chart_style: "straight",
         } });
         await authenticating;
         assert.deepEqual(h.state.savedPreferences, {
           radiusPx: 6,
-          themeGradientEnabled: false,
           lineChartStyle: "straight",
         });
         assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
         assert.equal(h.cssVariables.get("--ui-radius"), "6px");
-        assert.equal(h.storageValues.get("autoCheckLastInterfaceThemeGradient"), "false");
-        assert.equal(h.storageWrites.length, 4);
+        assert.equal(h.storageWrites.length, 2);
         assert.equal(h.revealCount(), 1);
         """,
     )
@@ -4758,14 +4839,11 @@ def test_interface_radius_logout_failure_restores_dirty_snapshot(tmp_path):
         h.useStrictResponses();
         apiImpl = async () => ({ settings: {
           radius_px: 8,
-          theme_gradient_enabled: true,
           line_chart_style: "smooth",
         } });
         assert.equal(await h.load({ silent: true }), true);
         h.elements.interfaceRadiusSlider.value = "9";
         h.elements.interfaceRadiusSlider.dispatch("input");
-        h.elements.interfaceThemeGradientToggle.checked = false;
-        h.elements.interfaceThemeGradientToggle.dispatch("input");
         h.elements.interfaceLineChartStyleStraight.checked = true;
         h.elements.interfaceLineChartStyleStraight.dispatch("input");
 
@@ -4784,12 +4862,10 @@ def test_interface_radius_logout_failure_restores_dirty_snapshot(tmp_path):
         await loggingOut;
         assert.deepEqual(h.state.savedPreferences, {
           radiusPx: 8,
-          themeGradientEnabled: true,
           lineChartStyle: "smooth",
         });
         assert.deepEqual(h.state.draftPreferences, {
           radiusPx: 9,
-          themeGradientEnabled: false,
           lineChartStyle: "straight",
         });
         assert.equal(h.state.loaded, true);

@@ -30,6 +30,10 @@
   --card-hover-shadow: rgba(22, 101, 52, 0.10);
   --card-hover-shadow-soft: rgba(22, 101, 52, 0.07);
   --card-hover-shadow-strong: rgba(22, 101, 52, 0.12);
+  --theme-accent: #3F6FAF;
+  --theme-on-accent: #FFFFFF;
+  --theme-accent-readable: #3F6FAF;
+  --theme-focus-ring: rgba(63, 111, 175, 0.28);
   --ui-radius: 4px;
   background: var(--surface);
   font-size: 14px;
@@ -8974,53 +8978,15 @@ input:focus, select:focus {
   text-align: right;
 }
 
-#page-settings .card-interface .setting-item--switch,
 #page-settings .card-interface .setting-item--line-style {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-#page-settings #interfaceThemeGradientToggle {
-  appearance: none;
-  position: relative;
-  width: 44px;
-  height: 24px;
-  margin: 0;
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--ui-radius);
-  background: var(--surface-container-high);
-  cursor: pointer;
-  transition: background-color 0.18s ease, border-color 0.18s ease;
-}
-
-#page-settings #interfaceThemeGradientToggle::after {
-  content: "";
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--on-surface-variant);
-  transition: transform 0.18s ease, background-color 0.18s ease;
-}
-
-#page-settings #interfaceThemeGradientToggle:checked {
-  border-color: var(--secondary);
-  background: var(--secondary);
-}
-
-#page-settings #interfaceThemeGradientToggle:checked::after {
-  transform: translateX(20px);
-  background: var(--on-secondary);
-}
-
-#page-settings #interfaceThemeGradientToggle:focus-visible,
 #page-settings #interfaceLineChartStyle label:has(input:focus-visible) {
   outline: 2px solid var(--secondary);
   outline-offset: 3px;
 }
 
-#page-settings #interfaceThemeGradientToggle:disabled,
 #page-settings #interfaceLineChartStyle input:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -9069,10 +9035,6 @@ input:focus, select:focus {
 
 [data-color-mode="dark"] #page-settings #interfaceLineChartStyle {
   border-color: color-mix(in srgb, var(--secondary) 45%, var(--outline-variant));
-  background: var(--surface-container);
-}
-
-[data-color-mode="dark"] #page-settings #interfaceThemeGradientToggle:not(:checked) {
   background: var(--surface-container);
 }
 
