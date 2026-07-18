@@ -3354,6 +3354,29 @@ def test_result_detail_labels_use_table_header_color_and_values_are_transparent(
     assert "surface-container-high" not in detail_label.group("body")
 
 
+def test_section_headers_use_the_shared_table_header_color():
+    css = _read(STYLES_CSS)
+
+    for selector in (
+        ".modal-section-header",
+        ".business-field-header",
+        ".db-validation-panel",
+        ".flow-chain-selected-count",
+        ".flow-chain-list",
+        ".flow-chain-selection-summary",
+        ".pbc-import-log",
+        ".flow-run-panel:last-child #flowLog",
+    ):
+        section_header = re.search(
+            rf"(?m)^{re.escape(selector)}\s*\{{(?P<body>.*?)\}}",
+            css,
+            re.S,
+        )
+        assert section_header is not None
+        assert "background: var(--surface-container-low)" in section_header.group("body")
+        assert "surface-container-high" not in section_header.group("body")
+
+
 def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)

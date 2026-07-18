@@ -5759,7 +5759,7 @@ input:focus, select:focus {
 .modal-section-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 14px; font-size: 13px; font-weight: 600;
-  background: var(--surface-container-high); cursor: pointer; user-select: none;
+  background: var(--surface-container-low); cursor: pointer; user-select: none;
 }
 .modal-section-header .collapse-arrow { color: var(--outline); }
 
@@ -6015,7 +6015,7 @@ input:focus, select:focus {
 
 .db-validation-panel {
   border: 1px solid var(--outline-variant);
-  background: var(--surface-container);
+  background: var(--surface-container-low);
   border-radius: 8px;
   padding: 16px;
   min-width: 0;
@@ -6288,7 +6288,7 @@ input:focus, select:focus {
 .flow-chain-selected-count {
   font-size: 12px;
   color: var(--on-surface-variant);
-  background: var(--surface-container);
+  background: var(--surface-container-low);
   padding: 2px 8px;
   border-radius: 4px;
 }
@@ -6299,7 +6299,7 @@ input:focus, select:focus {
   overflow-x: hidden;
   border: 1px solid var(--outline-variant);
   border-radius: 6px;
-  background: var(--surface-container);
+  background: var(--surface-container-low);
   min-height: 180px;
 }
 
@@ -6353,7 +6353,7 @@ input:focus, select:focus {
 /* 已选摘要 */
 .flow-chain-selection-summary {
   border: 1px solid var(--outline-variant);
-  background: var(--surface-container);
+  background: var(--surface-container-low);
   border-radius: 6px;
   padding: 12px;
   flex-shrink: 0;
@@ -6438,7 +6438,7 @@ input:focus, select:focus {
   max-height: 280px;
   border: 1px solid var(--outline-variant);
   border-radius: 8px;
-  background: var(--surface-container);
+  background: var(--surface-container-low);
   padding: 12px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -7776,7 +7776,7 @@ input:focus, select:focus {
   border: 1px solid var(--outline-variant);
   border-radius: 10px;
   padding: 12px;
-  background: var(--surface-container);
+  background: var(--surface-container-low);
   text-align: left;
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 12px;
@@ -8566,7 +8566,7 @@ input:focus, select:focus {
   gap: 12px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--outline-variant);
-  background: var(--surface-container-high);
+  background: var(--surface-container-low);
 }
 
 .business-field-header strong {
