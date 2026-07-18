@@ -3151,6 +3151,84 @@ def test_all_system_modals_use_balanced_shared_shell():
     assert '[data-color-mode="dark"] .app-modal-shell' in css
 
 
+def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+
+    content_markers = {
+        "pbcModal": "<!-- Steps indicator -->",
+        "dbValidationModal": '<div class="db-validation-grid">',
+        "flowModal": '<div class="flow-run-grid">',
+    }
+    for modal_id, content_marker in content_markers.items():
+        modal = re.search(
+            rf'<div class="app-modal-shell [^"]+" id="{modal_id}">(?P<body>.*?)'
+            r'<div class="app-modal-footer pbc-modal-footer"',
+            html,
+            re.S,
+        )
+        assert modal is not None
+        assert content_marker in modal.group("body")
+        assert '<div class="app-modal-body pbc-modal-body">' not in modal.group("body")
+
+    shared_shell = re.search(
+        r"(?m)^\.app-modal-shell\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_shell is not None
+    for layout_declaration in (
+        "display: flex",
+        "flex-direction: column",
+        "padding: 0",
+        "overflow: hidden",
+    ):
+        assert layout_declaration not in shared_shell.group("body")
+
+    primary_safe_scope = (
+        ".app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal)"
+    )
+    for selector_suffix in (
+        "",
+        " > .app-modal-header",
+        " > .app-modal-body",
+        " > .app-modal-footer",
+        " .app-modal-close",
+    ):
+        assert f"{primary_safe_scope}{selector_suffix}" in css
+
+    pbc_modal = re.search(r"(?m)^\.pbc-modal\s*\{(?P<body>.*?)\}", css, re.S)
+    pbc_header = re.search(r"(?m)^\.pbc-modal-header\s*\{(?P<body>.*?)\}", css, re.S)
+    pbc_footer = re.search(r"(?m)^\.pbc-modal-footer\s*\{(?P<body>.*?)\}", css, re.S)
+    flow_modal = re.search(r"(?m)^\.flow-modal\s*\{(?P<body>.*?)\}", css, re.S)
+    assert pbc_modal is not None
+    assert "padding: 32px 32px 24px" in pbc_modal.group("body")
+    assert "overflow-y: auto" in pbc_modal.group("body")
+    assert pbc_header is not None
+    assert "margin-bottom: 24px" in pbc_header.group("body")
+    assert "padding-bottom: 16px" in pbc_header.group("body")
+    assert pbc_footer is not None
+    assert "margin-top: 24px" in pbc_footer.group("body")
+    assert "padding-top: 16px" in pbc_footer.group("body")
+    assert flow_modal is not None
+    assert "display: flex" in flow_modal.group("body")
+    assert "overflow: hidden" in flow_modal.group("body")
+
+    shared_close = re.search(
+        r"(?m)^\.app-modal-close\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_close is not None
+    for layout_declaration in ("top:", "right:", "width:", "height:"):
+        assert layout_declaration not in shared_close.group("body")
+
+    pbc_close = re.search(r"(?m)^\.pbc-modal-close\s*\{(?P<body>.*?)\}", css, re.S)
+    assert pbc_close is not None
+    assert "top: 16px; right: 16px" in pbc_close.group("body")
+    assert "width: 36px; height: 36px" in pbc_close.group("body")
+
+
 def test_interface_radius_has_default_and_regular_user_three_card_responsive_layout():
     css = _read(STYLES_CSS)
 
@@ -5673,7 +5751,12 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "width: 0" in webkit_scrollbar.group("body")
     assert "height: 0" in webkit_scrollbar.group("body")
 
-    modal_body = re.search(r"(?m)^\.app-modal-shell > \.app-modal-body\s*\{(?P<body>.*?)\}", css, re.S)
+    modal_body = re.search(
+        r"(?m)^\.app-modal-shell:not\(#pbcModal\):not\(#dbValidationModal\):not\(#flowModal\)"
+        r" > \.app-modal-body\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
     assert modal_body is not None
     assert "overflow: auto" in modal_body.group("body")
 

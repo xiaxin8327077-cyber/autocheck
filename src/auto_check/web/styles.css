@@ -12043,14 +12043,17 @@ input.custom-input-native:disabled {
 }
 
 .app-modal-shell {
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.16);
+}
+
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) {
   display: flex;
   flex-direction: column;
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  border: 1px solid var(--outline-variant);
-  background: var(--surface-container-lowest);
-  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.16);
 }
 
 .app-modal-shell,
@@ -12067,12 +12070,15 @@ input.custom-input-native:disabled {
 }
 
 .app-modal-header {
+  border-bottom: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+}
+
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-header {
   flex: 0 0 auto;
   min-height: 58px;
   margin: 0;
   padding: 17px 24px;
-  border-bottom: 1px solid var(--outline-variant);
-  background: var(--surface-container-lowest);
 }
 
 .app-modal-header h2,
@@ -12089,7 +12095,7 @@ input.custom-input-native:disabled {
   font-size: 12px;
 }
 
-.app-modal-shell > .app-modal-body {
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-body {
   flex: 1 1 auto;
   min-height: 0;
   padding: 22px 24px;
@@ -12102,25 +12108,31 @@ input.custom-input-native:disabled {
   gap: 18px;
 }
 
-.app-modal-shell > .app-modal-footer {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 14px 24px;
+.app-modal-footer {
   border-top: 1px solid var(--outline-variant);
   background: var(--surface-container-lowest);
 }
 
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-footer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 14px 24px;
+}
+
 .app-modal-close {
-  top: 15px;
-  right: 20px;
-  width: 28px;
-  height: 28px;
   clip-path: none;
   border: 0;
   background: transparent;
   color: var(--outline);
   box-shadow: none;
   transform: none;
+}
+
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) .app-modal-close {
+  top: 15px;
+  right: 20px;
+  width: 28px;
+  height: 28px;
 }
 
 .app-modal-close:hover {
