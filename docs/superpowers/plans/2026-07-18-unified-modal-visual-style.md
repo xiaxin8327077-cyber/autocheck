@@ -111,6 +111,16 @@ assert "app-modal-shell" in modal.group("body")
 assert "user-modal-icon" not in modal.group("body")
 ```
 
+同时把该测试定位用户弹窗的正则开头改为允许共享遮罩类：
+
+```python
+modal = re.search(
+    r'<div class="app-modal-overlay modal-overlay" id="userModal" hidden>(?P<body>.*?)</div>\s*</div>\s*<!--',
+    html,
+    re.S,
+)
+```
+
 - [ ] **Step 2: 运行测试并确认按预期失败**
 
 Run:
@@ -168,15 +178,15 @@ class="btn-close user-modal-close" -> class="app-modal-close btn-close user-moda
 class="pbc-modal-close" -> class="app-modal-close pbc-modal-close"
 ```
 
-为六个工具弹窗补齐正文边界：
+为六个工具弹窗补齐正文边界。不要把 `pbc-modal-body` 直接追加到现有 grid/table-wrap 元素，以免共享 flex 规则覆盖专用布局；应新增正文包装层：
 
 ```text
 pbcModal: 在 <!-- Steps indicator --> 前插入 <div class="app-modal-body pbc-modal-body">，在 <!-- Footer buttons --> 前闭合该 div。
-dbValidationModal: 将 class="db-validation-grid" 改为 class="app-modal-body pbc-modal-body db-validation-grid"。
-dbValidationHistoryOverlay: 将 class="db-validation-history-table-wrap" 改为 class="app-modal-body pbc-modal-body db-validation-history-table-wrap"。
-flowModal: 将 class="flow-run-grid" 改为 class="app-modal-body pbc-modal-body flow-run-grid"。
-flowHistoryOverlay: 将 class="flow-history-table-wrap" 改为 class="app-modal-body pbc-modal-body flow-history-table-wrap"。
-flowChainEditorOverlay: 将 class="flow-chain-editor-body" 改为 class="app-modal-body pbc-modal-body flow-chain-editor-body"。
+dbValidationModal: 在 <div class="db-validation-grid"> 前插入 <div class="app-modal-body pbc-modal-body">，在 pbc-modal-footer 前闭合包装层。
+dbValidationHistoryOverlay: 用 <div class="app-modal-body pbc-modal-body"> 包住完整 db-validation-history-table-wrap。
+flowModal: 在 <div class="flow-run-grid"> 前插入 <div class="app-modal-body pbc-modal-body">，在 pbc-modal-footer 前闭合包装层。
+flowHistoryOverlay: 用 <div class="app-modal-body pbc-modal-body"> 包住完整 flow-history-table-wrap。
+flowChainEditorOverlay: 用 <div class="app-modal-body pbc-modal-body"> 包住完整 flow-chain-editor-body，并让 pbc-modal-footer 保持为正文包装层的下一个兄弟节点。
 ```
 
 删除六个 `.pbc-modal-icon` 元素和 `userModalIcon` 元素；保留标题、副标题、工具入口按钮以及用户角色卡内部的小图标。
@@ -227,7 +237,7 @@ flowChainEditorOverlay: 将 class="flow-chain-editor-body" 改为 class="app-mod
   font-size: 12px;
 }
 
-.app-modal-body {
+.app-modal-shell > .app-modal-body {
   flex: 1 1 auto;
   min-height: 0;
   padding: 22px 24px;
@@ -240,7 +250,7 @@ flowChainEditorOverlay: 将 class="flow-chain-editor-body" 改为 class="app-mod
   gap: 18px;
 }
 
-.app-modal-footer {
+.app-modal-shell > .app-modal-footer {
   flex: 0 0 auto;
   margin: 0;
   padding: 14px 24px;
@@ -367,6 +377,8 @@ def test_history_detail_uses_inline_metadata_and_colored_sections():
 
 删除旧 `test_history_detail_counts_are_one_row` 对三张计数卡的断言；`tests/test_history_ui_static.py` 继续校验共享 info modal、关闭按钮和恢复按钮事件不变，并新增完整/新增/减少顺序断言。
 
+同步更新现有 `test_history_detail_opens_in_modal_and_respects_permissions` 与 `test_history_detail_modal_layout_keeps_tables_readable`：删除 `history-section--full-results`、计数卡、`repeat(auto-fit, minmax(220px, 1fr))` 以及旧计数卡暗色规则断言，改为断言三个 tone 类、flex 元数据、`history-status` 和显式居中规则；保留 1240px、92vh、780px 最低表宽、360px 分组滚动及恢复按钮断言。
+
 - [ ] **Step 2: 运行历史详情测试并确认失败**
 
 Run:
@@ -421,15 +433,26 @@ function historySection(title, items, tone) {
 }
 ```
 
-在 `historyResultTable()` 中生成状态胶囊：
+把 `historyResultTable()` 完整改为：
 
 ```javascript
-const status = String(item.match_status || "");
-const statusClass = status === "已解释" ? "history-status--done" : "history-status--pending";
-```
-
-```html
-<td><span class="history-status ${statusClass}">${escapeHtml(status)}</span></td>
+function historyResultTable(items) {
+  if (!items.length) return '<div class="history-empty">无</div>';
+  return `<table class="detail-table history-result-table">
+    <thead><tr><th>项目编号</th><th>项目名称</th><th>差异金额</th><th>差异类型</th><th>状态</th></tr></thead>
+    <tbody>${items.map((item) => {
+      const status = String(item.match_status || "");
+      const statusClass = status === "已解释" ? "history-status--done" : "history-status--pending";
+      return `<tr>
+        <td>${escapeHtml(item.project_code)}</td>
+        <td>${escapeHtml(item.project_name)}</td>
+        <td class="money-cell">${formatMoney(item.difference)}</td>
+        <td>${escapeHtml(item.difference_reason || "")}</td>
+        <td><span class="history-status ${statusClass}">${escapeHtml(status)}</span></td>
+      </tr>`;
+    }).join("")}</tbody>
+  </table>`;
+}
 ```
 
 保持五个表头、数据字段和金额格式化函数不变。
