@@ -3171,6 +3171,17 @@ def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
         assert content_marker in modal.group("body")
         assert '<div class="app-modal-body pbc-modal-body">' not in modal.group("body")
 
+    for auxiliary_body_class in (
+        "db-validation-history-table-wrap",
+        "flow-history-table-wrap",
+        "flow-chain-editor-body",
+    ):
+        assert re.search(
+            r'<div class="app-modal-body pbc-modal-body">\s*'
+            rf'<div class="{auxiliary_body_class}">',
+            html,
+        )
+
     shared_shell = re.search(
         r"(?m)^\.app-modal-shell\s*\{(?P<body>.*?)\}",
         css,
@@ -3227,6 +3238,46 @@ def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
     assert pbc_close is not None
     assert "top: 16px; right: 16px" in pbc_close.group("body")
     assert "width: 36px; height: 36px" in pbc_close.group("body")
+
+
+def test_primary_tool_modal_header_margins_are_not_overridden_by_shared_visuals():
+    css = _read(STYLES_CSS)
+
+    shared_headings = re.search(
+        r"(?m)^\.app-modal-header h2,\s*\n\.app-modal-header h3\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_headings is not None
+    assert "margin:" not in shared_headings.group("body")
+
+    shared_paragraph = re.search(
+        r"(?m)^\.app-modal-header p\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_paragraph is not None
+    assert "margin:" not in shared_paragraph.group("body")
+
+    primary_safe_scope = (
+        ".app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal)"
+    )
+    safe_headings = re.search(
+        rf"(?m)^{re.escape(primary_safe_scope)} > \.app-modal-header h2,\s*\n"
+        rf"{re.escape(primary_safe_scope)} > \.app-modal-header h3\s*\{{(?P<body>.*?)\}}",
+        css,
+        re.S,
+    )
+    assert safe_headings is not None
+    assert "margin: 0" in safe_headings.group("body")
+
+    safe_paragraph = re.search(
+        rf"(?m)^{re.escape(primary_safe_scope)} > \.app-modal-header p\s*\{{(?P<body>.*?)\}}",
+        css,
+        re.S,
+    )
+    assert safe_paragraph is not None
+    assert "margin: 4px 0 0" in safe_paragraph.group("body")
 
 
 def test_interface_radius_has_default_and_regular_user_three_card_responsive_layout():

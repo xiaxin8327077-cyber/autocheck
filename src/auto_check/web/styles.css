@@ -12083,16 +12083,23 @@ input.custom-input-native:disabled {
 
 .app-modal-header h2,
 .app-modal-header h3 {
-  margin: 0;
   color: var(--on-surface);
   font-size: 16px;
   font-weight: 500;
 }
 
 .app-modal-header p {
-  margin: 4px 0 0;
   color: var(--on-surface-variant);
   font-size: 12px;
+}
+
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-header h2,
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-header h3 {
+  margin: 0;
+}
+
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-header p {
+  margin: 4px 0 0;
 }
 
 .app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-body {
