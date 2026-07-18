@@ -3183,6 +3183,50 @@ def test_all_system_modals_use_balanced_shared_shell():
     assert '[data-color-mode="dark"] .app-modal-shell' in css
 
 
+def test_all_modal_footers_use_the_neutral_shared_surface():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+
+    footer_classes = [
+        classes
+        for classes in re.findall(r'<div class="(?P<classes>[^"]+)"', html)
+        if {"modal-footer", "pbc-modal-footer"}.intersection(classes.split())
+    ]
+    assert footer_classes
+    assert all("app-modal-footer" in classes.split() for classes in footer_classes)
+
+    shared_footer = re.search(
+        r"(?m)^\.app-modal-shell \.app-modal-footer\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_footer is not None
+    assert "background: var(--surface-container-lowest)" in shared_footer.group("body")
+    assert "border-top: 1px solid var(--outline-variant)" in shared_footer.group("body")
+    for layout_declaration in ("display:", "height:", "min-height:", "padding:", "margin:"):
+        assert layout_declaration not in shared_footer.group("body")
+
+    confirm_footer = re.search(
+        r"(?m)^\.modal-confirm \.modal-footer\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert confirm_footer is not None
+    assert "surface-container-high" in confirm_footer.group("body")
+    assert css.index(".modal-confirm .modal-footer") < css.index(
+        ".app-modal-shell .app-modal-footer"
+    )
+
+    dark_footer = re.search(
+        r'(?m)^\[data-color-mode="dark"\] \.app-modal-shell \.app-modal-footer\s*'
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert dark_footer is not None
+    assert "background: #0f172a" in dark_footer.group("body")
+
+
 def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)

@@ -12117,7 +12117,7 @@ input.custom-input-native:disabled {
   gap: 18px;
 }
 
-.app-modal-footer {
+.app-modal-shell .app-modal-footer {
   border-top: 1px solid var(--outline-variant);
   background: var(--surface-container-lowest);
 }
@@ -12168,7 +12168,7 @@ input.custom-input-native:disabled {
 
 [data-color-mode="dark"] .app-modal-shell,
 [data-color-mode="dark"] .app-modal-header,
-[data-color-mode="dark"] .app-modal-footer {
+[data-color-mode="dark"] .app-modal-shell .app-modal-footer {
   border-color: rgba(148, 163, 184, 0.24);
   background: #0f172a;
 }
