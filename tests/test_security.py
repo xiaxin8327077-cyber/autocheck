@@ -491,17 +491,29 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
             server, "GET", "/api/settings/interface", None, admin_headers
         )
         assert status == 200
-        assert payload == {"settings": {"radius_px": 4}}
+        assert payload == {
+            "settings": {
+                "radius_px": 4,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        }
 
         status, payload, _ = _json_request(
             server,
             "POST",
             "/api/settings/interface",
-            {"radius_px": 6},
+            {"radius_px": 6, "theme_gradient_enabled": True, "line_chart_style": "smooth"},
             admin_headers,
         )
         assert status == 200
-        assert payload == {"settings": {"radius_px": 6}}
+        assert payload == {
+            "settings": {
+                "radius_px": 6,
+                "theme_gradient_enabled": True,
+                "line_chart_style": "smooth",
+            }
+        }
 
         status, payload, _ = _json_request(
             server,
@@ -537,7 +549,13 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
             {"Cookie": operator_cookie},
         )
         assert status == 200
-        assert payload == {"settings": {"radius_px": 4}}
+        assert payload == {
+            "settings": {
+                "radius_px": 4,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        }
 
         status, payload, _ = _json_request(
             server,
@@ -557,23 +575,41 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
             server,
             "POST",
             "/api/settings/interface",
-            {"radius_px": 12},
+            {"radius_px": 12, "theme_gradient_enabled": False, "line_chart_style": "straight"},
             operator_headers,
         )
         assert status == 200
-        assert payload == {"settings": {"radius_px": 12}}
+        assert payload == {
+            "settings": {
+                "radius_px": 12,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        }
 
         status, payload, _ = _json_request(
             server, "GET", "/api/settings/interface", None, operator_headers
         )
         assert status == 200
-        assert payload == {"settings": {"radius_px": 12}}
+        assert payload == {
+            "settings": {
+                "radius_px": 12,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        }
 
         status, payload, _ = _json_request(
             server, "GET", "/api/settings/interface", None, admin_headers
         )
         assert status == 200
-        assert payload == {"settings": {"radius_px": 6}}
+        assert payload == {
+            "settings": {
+                "radius_px": 6,
+                "theme_gradient_enabled": True,
+                "line_chart_style": "smooth",
+            }
+        }
     finally:
         server.shutdown()
         server.server_close()

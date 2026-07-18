@@ -64,10 +64,10 @@ from auto_check.app.flow_tool import (
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
 from auto_check.app.storage_user_interface_preferences import (
-    DEFAULT_LINE_CHART_STYLE,
-    DEFAULT_THEME_GRADIENT_ENABLED,
+    LINE_CHART_STYLES,
     MAX_INTERFACE_RADIUS_PX,
     MIN_INTERFACE_RADIUS_PX,
+    UserInterfacePreferences,
     load_user_interface_preferences,
     save_user_interface_preferences,
 )
@@ -116,6 +116,16 @@ FlowChainExecutor = Callable[..., FlowChainRunResult]
 PasswordDecryptor = Callable[[str], str]
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
+
+
+def _serialize_interface_preferences(value: UserInterfacePreferences) -> dict[str, object]:
+    return {
+        "radius_px": value.radius_px,
+        "theme_gradient_enabled": value.theme_gradient_enabled,
+        "line_chart_style": value.line_chart_style,
+    }
+
+
 DEFAULT_SERVER_PORT = 8765
 STORAGE_ADMIN_DISABLED_ERROR = "local storage administration is disabled"
 
@@ -320,7 +330,7 @@ class ApiRouter:
                 if method == "GET":
                     with self.application_database.connect() as connection:
                         preferences = load_user_interface_preferences(connection, user_id)
-                    return 200, {"settings": {"radius_px": preferences.radius_px}}
+                    return 200, {"settings": _serialize_interface_preferences(preferences)}
                 if method == "POST":
                     if not isinstance(body, dict):
                         raise ValueError("radius_px must be an integer between 1 and 15")
@@ -330,15 +340,21 @@ class ApiRouter:
                         or not MIN_INTERFACE_RADIUS_PX <= radius_px <= MAX_INTERFACE_RADIUS_PX
                     ):
                         raise ValueError("radius_px must be an integer between 1 and 15")
+                    theme_gradient_enabled = body.get("theme_gradient_enabled")
+                    if type(theme_gradient_enabled) is not bool:
+                        raise ValueError("theme_gradient_enabled must be a boolean")
+                    line_chart_style = body.get("line_chart_style")
+                    if type(line_chart_style) is not str or line_chart_style not in LINE_CHART_STYLES:
+                        raise ValueError("line_chart_style must be one of: smooth, straight")
                     with self.application_database.transaction() as connection:
                         preferences = save_user_interface_preferences(
                             connection,
                             user_id,
                             radius_px=radius_px,
-                            theme_gradient_enabled=DEFAULT_THEME_GRADIENT_ENABLED,
-                            line_chart_style=DEFAULT_LINE_CHART_STYLE,
+                            theme_gradient_enabled=theme_gradient_enabled,
+                            line_chart_style=line_chart_style,
                         )
-                    return 200, {"settings": {"radius_px": preferences.radius_px}}
+                    return 200, {"settings": _serialize_interface_preferences(preferences)}
 
             if method == "GET" and path == "/api/report-navigation/dashboard":
                 query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))

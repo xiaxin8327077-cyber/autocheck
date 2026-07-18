@@ -678,69 +678,153 @@ def test_interface_settings_api_defaults_upserts_and_isolates_current_users(
 
     assert router.handle(
         "GET", "/api/settings/interface", None, current_user=first_user
-    ) == (200, {"settings": {"radius_px": 4}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 4,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        },
+    )
 
     assert router.handle(
         "POST",
         "/api/settings/interface",
-        {"radius_px": 7, "user_id": "user-2"},
+        {
+            "radius_px": 7,
+            "theme_gradient_enabled": True,
+            "line_chart_style": "smooth",
+            "user_id": "user-2",
+        },
         current_user=first_user,
-    ) == (200, {"settings": {"radius_px": 7}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 7,
+                "theme_gradient_enabled": True,
+                "line_chart_style": "smooth",
+            }
+        },
+    )
     assert router.handle(
         "POST",
         "/api/settings/interface",
-        {"radius_px": 9},
+        {"radius_px": 9, "theme_gradient_enabled": False, "line_chart_style": "straight"},
         current_user=first_user,
-    ) == (200, {"settings": {"radius_px": 9}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 9,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        },
+    )
 
     assert router.handle(
         "GET", "/api/settings/interface", None, current_user=first_user
-    ) == (200, {"settings": {"radius_px": 9}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 9,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        },
+    )
     assert router.handle(
         "GET", "/api/settings/interface", None, current_user=second_user
-    ) == (200, {"settings": {"radius_px": 4}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 4,
+                "theme_gradient_enabled": False,
+                "line_chart_style": "straight",
+            }
+        },
+    )
     assert [
         (row["user_id"], row["radius_px"])
         for row in shared_application_database.connection.tables["user_interface_preferences"]
     ] == [("user-1", 9)]
 
 
-@pytest.mark.parametrize("radius_px", [1, 15])
-def test_interface_settings_api_accepts_boundary_values(tmp_path, radius_px):
+@pytest.mark.parametrize(("radius_px", "theme_gradient_enabled", "line_chart_style"), [(1, False, "straight"), (15, True, "smooth")])
+def test_interface_settings_api_accepts_boundary_values(
+    tmp_path, radius_px, theme_gradient_enabled, line_chart_style
+):
     router = ApiRouter(config_path=tmp_path / "config.json")
     current_user = {"id": "user-1", "role": "user"}
 
     assert router.handle(
         "POST",
         "/api/settings/interface",
-        {"radius_px": radius_px},
+        {
+            "radius_px": radius_px,
+            "theme_gradient_enabled": theme_gradient_enabled,
+            "line_chart_style": line_chart_style,
+        },
         current_user=current_user,
-    ) == (200, {"settings": {"radius_px": radius_px}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": radius_px,
+                "theme_gradient_enabled": theme_gradient_enabled,
+                "line_chart_style": line_chart_style,
+            }
+        },
+    )
     assert router.handle(
         "GET", "/api/settings/interface", None, current_user=current_user
-    ) == (200, {"settings": {"radius_px": radius_px}})
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": radius_px,
+                "theme_gradient_enabled": theme_gradient_enabled,
+                "line_chart_style": line_chart_style,
+            }
+        },
+    )
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "error"),
     [
-        pytest.param({"radius_px": 0}, id="below-minimum"),
-        pytest.param({"radius_px": 16}, id="above-maximum"),
-        pytest.param({"radius_px": 1.5}, id="float"),
-        pytest.param({"radius_px": True}, id="true"),
-        pytest.param({"radius_px": False}, id="false"),
-        pytest.param({"radius_px": None}, id="null"),
-        pytest.param({}, id="missing"),
-        pytest.param({"radius_px": "4"}, id="numeric-string"),
-        pytest.param({"radius_px": "bad"}, id="string"),
-        pytest.param([1], id="body-list"),
-        pytest.param("bad", id="body-string"),
-        pytest.param(1, id="body-integer"),
-        pytest.param(True, id="body-boolean"),
+        pytest.param({"radius_px": 0, "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="below-minimum"),
+        pytest.param({"radius_px": 16, "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="above-maximum"),
+        pytest.param({"radius_px": 1.5, "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="float"),
+        pytest.param({"radius_px": True, "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-true"),
+        pytest.param({"radius_px": False, "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-false"),
+        pytest.param({"radius_px": None, "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-null"),
+        pytest.param({"theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-missing"),
+        pytest.param({"radius_px": "4", "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="numeric-string"),
+        pytest.param({"radius_px": "bad", "theme_gradient_enabled": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-string"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": 0, "line_chart_style": "straight"}, "theme_gradient_enabled must be a boolean", id="gradient-zero"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": 1, "line_chart_style": "straight"}, "theme_gradient_enabled must be a boolean", id="gradient-one"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": "true", "line_chart_style": "straight"}, "theme_gradient_enabled must be a boolean", id="gradient-string"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": None, "line_chart_style": "straight"}, "theme_gradient_enabled must be a boolean", id="gradient-null"),
+        pytest.param({"radius_px": 4, "line_chart_style": "straight"}, "theme_gradient_enabled must be a boolean", id="gradient-missing"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": False, "line_chart_style": "curve"}, "line_chart_style must be one of: smooth, straight", id="line-style-curve"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": False, "line_chart_style": "STRAIGHT"}, "line_chart_style must be one of: smooth, straight", id="line-style-uppercase"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": False, "line_chart_style": 1}, "line_chart_style must be one of: smooth, straight", id="line-style-integer"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": False, "line_chart_style": None}, "line_chart_style must be one of: smooth, straight", id="line-style-null"),
+        pytest.param({"radius_px": 4, "theme_gradient_enabled": False}, "line_chart_style must be one of: smooth, straight", id="line-style-missing"),
+        pytest.param([1], "radius_px must be an integer between 1 and 15", id="body-list"),
+        pytest.param("bad", "radius_px must be an integer between 1 and 15", id="body-string"),
+        pytest.param(1, "radius_px must be an integer between 1 and 15", id="body-integer"),
+        pytest.param(True, "radius_px must be an integer between 1 and 15", id="body-boolean"),
     ],
 )
 def test_interface_settings_api_rejects_invalid_values_without_writing(
-    tmp_path, shared_application_database, body
+    tmp_path, shared_application_database, body, error
 ):
     router = ApiRouter(config_path=tmp_path / "config.json")
 
@@ -752,7 +836,7 @@ def test_interface_settings_api_rejects_invalid_values_without_writing(
     )
 
     assert status == 400
-    assert payload == {"error": "radius_px must be an integer between 1 and 15"}
+    assert payload == {"error": error}
     assert shared_application_database.connection.tables["user_interface_preferences"] == []
 
 
