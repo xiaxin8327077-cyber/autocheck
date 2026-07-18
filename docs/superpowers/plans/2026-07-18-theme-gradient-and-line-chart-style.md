@@ -507,7 +507,7 @@ Commit the three task files as `feat: unify login theme layout and background`.
 
 ---
 
-## Task 8: Close the two user-management radius gaps
+## Task 8: Close the remaining user-management and data-source radius gaps
 
 **Files:**
 
@@ -516,20 +516,21 @@ Commit the three task files as `feat: unify login theme layout and background`.
 
 ### Step 1: Write failing selector tests
 
-Assert these four selectors consume `var(--ui-radius)` in the existing final radius-override block:
+Assert these five selectors consume `var(--ui-radius)` in the existing final radius-override block:
 
 ```css
 #page-users .user-filter-pill,
 .user-modal .user-role-card,
 .user-modal .user-role-card-icon,
-.user-modal .user-enable-row
+.user-modal .user-enable-row,
+#configModal .modal-section
 ```
 
-Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape.
+Also assert the override does not include `.user-enable-switch` or its thumb, because the switch track/circle retain their dedicated shape. Assert the data-source `.modal-section` keeps `overflow: hidden` and `.modal-section-header` remains nested inside it, so the “数据库连接” title bar is clipped by the outer radius instead of receiving an independent radius.
 
 Run `python -m pytest -q tests/test_web_static.py -k "radius and user"`.
 
-Expected: FAIL because the filter pill is fixed at `999px`, and the role/enable surfaces are fixed at `12px`/`10px`.
+Expected: FAIL because the filter pill is fixed at `999px`, the role/enable surfaces are fixed at `12px`/`10px`, and the data-source connection group is fixed at `8px`.
 
 ### Step 2: Add the selectors to the established radius override
 
@@ -539,18 +540,18 @@ Use the existing rule:
 border-radius: var(--ui-radius) !important;
 ```
 
-Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes or event listeners. The selector scope must cover both new-user and edit-user modes because they share the same modal.
+Do not alter DOM, spacing, color, role selection, enabled-switch state, disabled state, filter data attributes, data-source form behavior or event listeners. The user selector scope must cover both new-user and edit-user modes because they share the same modal; `#configModal .modal-section` must cover both new-data-source and edit-data-source modes. Keep the section header square on its lower edge and let the outer container perform corner clipping.
 
 ### Step 3: Verify and commit
 
 Run:
 
 ```powershell
-python -m pytest -q tests/test_web_static.py -k "radius or user"
+python -m pytest -q tests/test_web_static.py -k "radius or user or modal"
 git diff --check
 ```
 
-Commit the two task files as `fix: apply user radius to omitted controls`.
+Commit the two task files as `fix: apply radius to omitted interface controls`.
 
 ---
 
@@ -631,6 +632,6 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Single-series fill follows the selected geometry exactly.
 - Line colors follow current theme/gradient; multi-series charts remain distinguishable with same-theme derived levels.
 - Semantic colors and non-line categorical chart colors remain unchanged.
-- User filter pills, role cards/icons and enable-row container follow `--ui-radius`; the switch track/thumb retain their dedicated shape.
+- User filter pills, role cards/icons, enable-row container and the data-source “数据库连接” group follow `--ui-radius`; the group header is clipped by its outer container, while the switch track/thumb retain their dedicated shape.
 - Theme, dark mode, radius, gradient and chart-style drafts do not overwrite each other.
 - Full pytest passes, `git diff --check` is clean, and the executable is rebuilt only after source verification.
