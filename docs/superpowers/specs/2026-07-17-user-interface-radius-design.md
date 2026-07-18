@@ -303,10 +303,12 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 报送导航加载、无快照及统计失败提示条：`#page-report-navigation .report-nav-load-state`
 - 统计趋势周期分段选择器外壳：`.trend-quick-btns`（内部 `.trend-quick-btn` 已由现有矩形按钮规则覆盖）
 - 注意事项筛选标签：`#page-report-navigation .report-nav-filter-chips span`
+- 报送导航手工刷新按钮外壳：`#page-report-navigation .report-nav-refresh-button`
 - 右上角成功、警告、错误和普通通知外壳：`.toast`
 - 流程后台执行右下角浮动通知外壳：`.flow-toast`
 - 活力主题顶部版本号及临时状态标签：`.top-nav-status`
 - 暗色模式切换按钮外壳：`.dark-mode-toggle`
+- 侧栏运行时状态消息框：`.sidebar-footer .status`
 - 历史详情摘要信息卡：`.history-summary-item`
 - 历史详情差异计数卡：`.history-count-item`
 - 历史详情结果区块：`.history-section`
@@ -346,6 +348,8 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - `.status-badge` 是用户截图明确指定的结果页例外，使用统一圆角替代固定 `999px`；其他胶囊徽标和标签继续保持原样。
 - `.trend-quick-btns` 只调整分段选择器的背景外壳；既有 `.trend-quick-btn` 继续调整各矩形按钮，选中态、范围切换和图表刷新逻辑不变。
 - `#page-report-navigation .report-nav-filter-chips span` 是用户截图明确指定的筛选标签例外；筛选数量、选中态颜色和点击逻辑不变。
+- `#page-report-navigation .report-nav-refresh-button` 从特殊形状排除清单移入必需清单；只调整按钮外壳，内部刷新 SVG、旋转动画、冷却倒计时和刷新请求逻辑不变。
+- `.sidebar-footer .status` 只调整“主题已保存”等运行时消息外框；文字、恢复定时器和入场动画不变。顶部同类消息继续由既有 `.top-nav-status` 覆盖。
 - `.detail-block` 和 `.detail-item` 只调整外框圆角；详情内容、表格行、展开收起和分页行为保持不变。
 - 覆盖层属性审计继续断言每个规则只有 `border-radius`。
 - 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。

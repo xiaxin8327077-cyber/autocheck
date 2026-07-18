@@ -13,7 +13,7 @@
 - 仅修改界面显示，不修改 HTML 结构、JavaScript 事件、API、数据库、权限、表单值、焦点顺序或点击区域。
 - 全部目标使用同一个 `--ui-radius`；范围仍为 1–15px、默认 4px、步长 1px。
 - 默认太空主题、沉稳主题和暗色模式均需兼容。
-- 圆形图标、头像、状态点、图表节点、普通胶囊、普通标签、进度条、复选框、单选框、滑块和 SVG 内部形状保持原样；用户明确指定的结果页 `.status-badge` 和注意事项筛选标签除外。
+- 圆形图标、头像、状态点、图表节点、普通胶囊、普通标签、进度条、复选框、单选框、滑块和 SVG 内部形状保持原样；用户明确指定的结果页 `.status-badge`、注意事项筛选标签和报送导航刷新按钮外壳除外。
 - 覆盖层禁止使用全局 `button`、`table`、`[class*=item]`、`[class*=card]` 或通配后代选择器。
 - `src/auto_check/web/app.js` 的 v2.1 日志保持“新增界面圆角个性化设置。”和“系统优化及BUG修复。”的精简口径，不展开本次界面细节。
 - 登录页缓存只保存一个 1–15 的整数，不保存用户 ID、用户名或按用户映射；缓存读取/写入失败不得阻断登录和主应用。
@@ -494,7 +494,67 @@ git commit -m "fix: include remaining filter controls in unified radius"
 
 ---
 
-### Task 4: 全量验证、重新打包与浏览器验收
+### Task 4: 补齐侧栏状态框与报送导航刷新按钮
+
+**Files:**
+- Modify: `src/auto_check/web/styles.css`
+- Modify: `tests/test_web_static.py`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: 既有 `.top-nav-status`、`.dark-mode-toggle` 覆盖和报送导航刷新按钮原交互样式。
+- Produces: 侧栏运行时状态框与刷新按钮外壳读取统一圆角，不改变主题消息、动画、冷却或刷新请求。
+
+- [ ] **Step 1: 先增加失败测试**
+
+在必需选择器元组中加入：
+
+```python
+        ".sidebar-footer .status",
+        "#page-report-navigation .report-nav-refresh-button",
+```
+
+从 `forbidden_selector` 元组中仅删除：
+
+```python
+        ".report-nav-refresh-button",
+```
+
+在 README 详细覆盖术语测试中加入“侧栏状态消息框”和“报送导航刷新按钮”。运行两个聚焦测试并确认先失败。
+
+- [ ] **Step 2: 实现最小显示覆盖**
+
+在集中式圆角覆盖层加入：
+
+```css
+.sidebar-footer .status,
+#page-report-navigation .report-nav-refresh-button,
+```
+
+继续共用唯一 `border-radius: var(--ui-radius) !important;` 规则体。不得修改 `.report-nav-refresh-icon`、`refreshing` 动画、倒计时、POST 请求、状态文字或状态恢复定时器。
+
+- [ ] **Step 3: 同步 README 并验证**
+
+在当前功能和 v2.1 详细变更中补充侧栏状态消息框与报送导航刷新按钮；应用内 `app.js` 日志保持精简且不改动。
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py::test_user_radius_override_is_semantic_and_border_radius_only tests/test_web_static.py::test_readme_documents_expanded_interface_radius_surface_coverage tests/test_web_static.py::test_report_navigation_manual_refresh_has_icon_cooldown_and_error_feedback
+python -m pytest -q tests/test_web_static.py
+git diff --check
+```
+
+Expected: 全部通过；只改 CSS 精确选择器、静态契约和 README，无业务逻辑变化。
+
+```powershell
+git add src/auto_check/web/styles.css tests/test_web_static.py README.md
+git commit -m "fix: apply unified radius to status and refresh controls"
+```
+
+---
+
+### Task 5: 全量验证、重新打包与浏览器验收
 
 **Files:**
 - Verify: `src/auto_check/web/styles.css`
@@ -505,7 +565,7 @@ git commit -m "fix: include remaining filter controls in unified radius"
 - Modify: `dist/auto-check.exe`
 
 **Interfaces:**
-- Consumes: Task 1 已提交的主应用 CSS/测试/README、Task 2 已提交的登录显示缓存，以及 Task 3 已提交的两处筛选控件补充覆盖。
+- Consumes: Task 1 已提交的主应用 CSS/测试/README、Task 2 已提交的登录显示缓存、Task 3 已提交的筛选控件补充覆盖，以及 Task 4 已提交的状态与刷新控件补充覆盖。
 - Produces: 通过全量回归的新 Windows 可执行文件，以及 1px、4px、15px 下的可视验收结果。
 
 - [ ] **Step 1: 运行全量测试**
@@ -600,11 +660,11 @@ Expected: 返回新进程 ID，首页 HTTP 状态为 200。
 
 在已登录页面进入“系统设置→界面设置”；如果会话失效，使用现有管理员账号重新登录。分别把滑块拖到 1px、4px、15px，但不点击保存，逐类抽查：
 
-- 报送导航：鱼骨详情卡、报送日期分组卡、注意事项卡。
-- 提示与导航：统计失败提示条、右上角通用通知、流程浮动通知、顶部版本标签、暗色切换按钮外壳。
+- 报送导航：鱼骨详情卡、报送日期分组卡、注意事项卡、注意事项筛选标签和手工刷新按钮。
+- 提示与导航：统计失败提示条、右上角通用通知、流程浮动通知、顶部版本标签、侧栏状态消息框和暗色切换按钮外壳。
 - 结果/历史：结果详情分区、键值信息框、匹配状态标签、历史详情卡和两类执行历史表格外框。
 - 流程/逐笔：流程链列表与摘要、执行日志和逐笔校验数据源配置行。
-- 工具/设置：上传区、系统信息指标卡、逐笔数据源配置行、流程链与数据源配置行、关于系统三类内容卡。
+- 工具/设置：统计周期分段选择器、上传区、系统信息指标卡、逐笔数据源配置行、流程链与数据源配置行、关于系统三类内容卡。
 
 Expected: 所有矩形目标的计算样式 `border-radius` 与滑块值一致；复选框、圆形图标、状态点、进度条和表格行保持原样；弹窗开关、暗色切换、流程选择、历史查看和文件选择入口仍可操作。
 
