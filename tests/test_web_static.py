@@ -3245,7 +3245,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     for visual_declaration in (
         "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
         "font-weight: 500",
-        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
+        "background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low))",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert visual_declaration in global_body
@@ -3272,7 +3272,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     for declaration in (
         "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
         "font-weight: 500",
-        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
+        "background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low))",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert declaration in shared_body
@@ -3372,10 +3372,10 @@ def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
         "",
         " > .app-modal-header",
         " > .app-modal-body",
-        " > .app-modal-footer",
         " .app-modal-close",
     ):
         assert f"{primary_safe_scope}{selector_suffix}" in css
+    assert f"{primary_safe_scope}:not(.modal-info--history-detail) > .app-modal-footer" in css
 
     pbc_modal = re.search(r"(?m)^\.pbc-modal\s*\{(?P<body>.*?)\}", css, re.S)
     pbc_header = re.search(r"(?m)^\.pbc-modal-header\s*\{(?P<body>.*?)\}", css, re.S)
@@ -5744,9 +5744,10 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "function historyDetailRow(innerHtml)" not in app_js
     assert "function renderHistoryDetailLoading(id)" in app_js
     assert "function renderHistoryDetailContent(run)" in app_js
+    assert "function renderHistoryDetailFooter(run)" in app_js
     assert "function showHistoryDetailModal(id)" in app_js
     assert 'showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });' in app_js
-    assert 'showInfo("历史详情", renderHistoryDetailContent(history), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });' in app_js
+    assert "footerContent: renderHistoryDetailFooter(history)" in app_js
     assert "rowHtml += historyDetailRow" not in app_js
     assert 'class="history-main-row"' in app_js
     assert 'class="history-detail-row"' not in app_js
@@ -5754,6 +5755,12 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert 'class="btn-close close-history-detail"' not in app_js
     assert 'class="btn-outline btn-xs restore-history"' not in app_js
     assert 'class="btn-primary btn-sm restore-history-detail"' in app_js
+    assert 'id="infoFooter"' in html
+    assert 'class="app-modal-footer history-detail-footer"' in html
+    assert 'document.querySelector("#infoFooter .restore-history-detail")' in app_js
+    assert 'const footerEl = document.getElementById("infoFooter");' in app_js
+    assert 'footerEl.innerHTML = options.footerContent || "";' in app_js
+    assert 'footerEl.hidden = !options.footerContent;' in app_js
     assert "历史详情 -" not in app_js
     assert "function historyBaselineText(run = {})" in app_js
     assert "`${baselineRunAt}执行的同报告期记录`" in app_js
@@ -5763,6 +5770,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     detail_start = app_js.index("function renderHistoryDetailContent(run)")
     detail_end = app_js.index("function renderHistoryDetailLoading", detail_start)
     detail_body = app_js[detail_start:detail_end]
+    assert "history-detail-footer" not in detail_body
     assert detail_body.index('historySummaryItem("报告期", run.run_date)') < detail_body.index('historySummaryItem("执行人", historyExecutorName(run))')
     assert detail_body.index('historySummaryItem("执行人", historyExecutorName(run))') < detail_body.index('historySummaryItem("执行时间", run.run_at)')
     assert detail_body.index('historySummaryItem("执行时间", run.run_at)') < detail_body.index('historySummaryItem("基准记录", historyBaselineText(run))')
@@ -5795,7 +5803,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
 
     assert ".history-detail-card" in css
     assert ".history-detail-card .history-detail" in css
-    assert ".history-detail-card .history-detail-footer" in css
+    assert ".modal-info.modal-info--history-detail > .history-detail-footer" in css
     assert ".modal-info.modal-info--history-detail" in css
     assert "[data-color-mode=\"dark\"] .history-detail-card" in css
     assert "var(--surface-container-lowest)" in css
@@ -5806,6 +5814,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
 
 
 def test_history_detail_modal_layout_keeps_tables_readable():
+    html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
 
     card = re.search(r"(?m)^\.history-detail-card\s*\{(?P<body>.*?)\}", css, re.S)
@@ -5850,7 +5859,12 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "flex: 1 1 auto" in detail.group("body")
     assert "overflow: auto" in detail.group("body")
 
-    footer = re.search(r"(?m)^\.history-detail-card \.history-detail-footer\s*\{(?P<body>.*?)\}", css, re.S)
+    assert html.index('id="infoBody"') < html.index('id="infoFooter"')
+    footer = re.search(
+        r"(?m)^\.modal-info\.modal-info--history-detail > \.history-detail-footer\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
     assert footer is not None
     assert "flex: 0 0 auto" in footer.group("body")
     assert "position: relative" in footer.group("body")
@@ -5865,7 +5879,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "border-top: 1px solid var(--outline-variant)" in footer.group("body")
 
     restore_action = re.search(
-        r"(?m)^\.history-detail-card \.history-detail-footer \.btn-primary\s*\{(?P<body>.*?)\}",
+        r"(?m)^\.modal-info\.modal-info--history-detail > \.history-detail-footer \.btn-primary\s*\{(?P<body>.*?)\}",
         css,
         re.S,
     )
@@ -5899,7 +5913,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "position: static" in result_header.group("body")
     assert "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))" in result_header.group("body")
     assert "font-weight: 500" in result_header.group("body")
-    assert "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))" in result_header.group("body")
+    assert "background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low))" in result_header.group("body")
     assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
 
     cells = re.search(

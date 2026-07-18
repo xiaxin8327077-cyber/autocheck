@@ -3343,7 +3343,7 @@ th {
   font-size: 12px;
   font-weight: 500;
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
-  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -3895,7 +3895,7 @@ th {
   overflow: auto;
 }
 
-.history-detail-card .history-detail-footer {
+.modal-info.modal-info--history-detail > .history-detail-footer {
   position: relative;
   z-index: 2;
   display: grid;
@@ -3910,7 +3910,7 @@ th {
   border-top: 1px solid var(--outline-variant);
 }
 
-.history-detail-card .history-detail-footer .btn-primary {
+.modal-info.modal-info--history-detail > .history-detail-footer .btn-primary {
   grid-column: 5;
   justify-self: center;
   min-width: 104px;
@@ -4061,7 +4061,7 @@ th {
   z-index: auto;
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
-  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -12136,7 +12136,7 @@ input.custom-input-native:disabled {
   background: var(--surface-container-lowest);
 }
 
-.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal) > .app-modal-footer {
+.app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal):not(.modal-info--history-detail) > .app-modal-footer {
   flex: 0 0 auto;
   margin: 0;
   padding: 14px 24px;
@@ -12193,7 +12193,7 @@ input.custom-input-native:disabled {
 .app-modal-shell .flow-def-header {
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
-  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  background: color-mix(in srgb, var(--surface-container-lowest) 40%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 

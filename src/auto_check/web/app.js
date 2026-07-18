@@ -3859,8 +3859,12 @@ async function showHistoryDetailModal(id) {
   showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });
   try {
     const history = await loadHistoryDetail(id);
-    showInfo("历史详情", renderHistoryDetailContent(history), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });
-    document.querySelector("#infoBody .restore-history-detail")?.addEventListener("click", async () => {
+    showInfo("历史详情", renderHistoryDetailContent(history), {
+      modalClass: "modal-info--history-detail",
+      closeOnBackdrop: false,
+      footerContent: renderHistoryDetailFooter(history),
+    });
+    document.querySelector("#infoFooter .restore-history-detail")?.addEventListener("click", async () => {
       await restoreHistoryRun(history);
       document.getElementById("infoClose")?.click();
     });
@@ -3890,11 +3894,12 @@ function renderHistoryDetailContent(run) {
         ${historySection("本次新增差异", historyDiffItems(run, "added_results"), "added")}
         ${historySection("本次减少差异", historyDiffItems(run, "removed_results"), "removed")}
       </div>
-      <div class="app-modal-footer history-detail-footer">
-        <button type="button" class="btn-primary btn-sm restore-history-detail" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>
-      </div>
     </div>
   `;
+}
+
+function renderHistoryDetailFooter(run) {
+  return `<button type="button" class="btn-primary btn-sm restore-history-detail" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>`;
 }
 
 function renderHistoryDetailLoading(id) {
@@ -7478,6 +7483,7 @@ function showInfo(title, content, options = {}) {
   const modal = document.getElementById("infoModal");
   const titleEl = document.getElementById("infoTitle");
   const bodyEl = document.getElementById("infoBody");
+  const footerEl = document.getElementById("infoFooter");
   const closeBtn = document.getElementById("infoClose");
   const detailAction = document.getElementById("infoDetailAction");
   const infoBox = modal.querySelector(".modal-info");
@@ -7486,6 +7492,10 @@ function showInfo(title, content, options = {}) {
 
   titleEl.textContent = title;
   bodyEl.innerHTML = content;
+  if (footerEl) {
+    footerEl.innerHTML = options.footerContent || "";
+    footerEl.hidden = !options.footerContent;
+  }
   if (detailAction) {
     detailAction.hidden = true;
     detailAction.onclick = null;
