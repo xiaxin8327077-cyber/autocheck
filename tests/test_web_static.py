@@ -3341,6 +3341,19 @@ def test_main_result_and_history_headers_match_user_table_height_only():
     assert ".app-modal-shell" not in main_headers.group(0)
 
 
+def test_result_detail_labels_use_table_header_color_and_values_are_transparent():
+    css = _read(STYLES_CSS)
+
+    detail_item = re.search(r"(?m)^\.detail-item\s*\{(?P<body>.*?)\}", css, re.S)
+    assert detail_item is not None
+    assert "background: transparent" in detail_item.group("body")
+
+    detail_label = re.search(r"(?m)^\.detail-item span\s*\{(?P<body>.*?)\}", css, re.S)
+    assert detail_label is not None
+    assert "background: var(--surface-container-low)" in detail_label.group("body")
+    assert "surface-container-high" not in detail_label.group("body")
+
+
 def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)

@@ -3734,7 +3734,7 @@ th {
   min-height: 32px;
   border: 1px solid var(--surface-variant);
   border-radius: 4px;
-  background: var(--surface);
+  background: transparent;
 }
 
 .detail-item span, .detail-item strong {
@@ -3744,7 +3744,7 @@ th {
 
 .detail-item span {
   color: var(--on-surface-variant);
-  background: var(--surface-container-high);
+  background: var(--surface-container-low);
 }
 
 .detail-item strong { font-weight: 600; }
