@@ -1750,7 +1750,9 @@ def test_home_auto_refresh_setting_controls_chart_reload():
     assert "function shouldAutoRefreshHome()" in app_js
     assert "function syncDefaultSettingsControls()" in app_js
     assert '["visualEffects", "autoRefreshHome"].forEach((id)' in app_js
-    assert 'name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)' in app_js
+    assert 'const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();' in app_js
+    assert 'else if (homeChartsNeedThemeRefresh)' in app_js
+    assert 'redrawHomeChartsFromCache();' in app_js
     assert "homeChartsNeedThemeRefresh = false;" in app_js
     assert "renderHomeStats(); renderChart(); renderTrendChart();" in app_js
     assert 'switchPage(savedPage, { forceHomeRefresh: savedPage === "home" })' in app_js
@@ -1850,7 +1852,8 @@ def test_report_navigation_is_default_route_and_preserves_home_dashboard_hash():
     assert ':root[data-page="home"] #page-home' in css
     assert 'switchPage("report-navigation")' in app_js
     assert 'name = "report-navigation";' in app_js
-    assert 'name === "home" && (options.forceHomeRefresh' in app_js
+    assert 'if (name === "home") {' in app_js
+    assert 'const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();' in app_js
 
 
 def test_report_navigation_page_replicates_design_draft_structure():
@@ -2417,9 +2420,8 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert "function drawGlassMultiMetricChart" in app_js
     assert "drawGlassMultiMetricChart(canvas, [" in app_js
     assert "function trendFirstRunMetricStyle()" in app_js
-    assert 'document.documentElement.getAttribute("data-theme") === "space-tech"' in app_js
+    assert "const palette = canvasThemePalette();" in app_js
     assert 'color: firstRunStyle.color' in app_js
-    assert 'endColor: firstRunStyle.endColor' in app_js
     assert 'shadow: firstRunStyle.shadow' in app_js
     assert "function refreshHomeChartsForTheme()" in app_js
     assert "refreshHomeChartsForTheme();" in app_js
@@ -5564,7 +5566,11 @@ def test_home_chart_empty_state_keeps_centered_chart_structure():
 
     assert "function setChartEmptyState" in app_js
     for function_name in ["renderChart", "renderTrendChart"]:
-        body = re.search(rf"async function {function_name}\(\) \{{(?P<body>.*?)\n\}}", app_js, re.S)
+        body = re.search(
+            rf"async function {function_name}\([^)]*\) \{{(?P<body>.*?)\n\}}",
+            app_js,
+            re.S,
+        )
         assert body is not None
         assert "container.innerHTML" not in body.group("body")
         assert "setChartEmptyState" in body.group("body")
@@ -5608,6 +5614,142 @@ def test_home_trend_curve_control_points_stay_inside_plot_area():
     assert "clampNumber(cp1y" in smooth_curve.group("body")
     assert "clampNumber(cp2y" in smooth_curve.group("body")
     assert "{ top: pad.top, bottom: pad.top + ph }" in app_js
+
+
+def test_home_chart_line_style_normalization_and_geometry_are_shared(tmp_path):
+    app_js = _read(APP_JS)
+    normalize_style = re.search(
+        r"function normalizeLineChartStyle\(value\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    smooth_curve = re.search(
+        r"function smoothCurveThrough\(ctx, pts, tension = 0\.35, bounds = null\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    trace_line = re.search(
+        r"function traceChartLine\(ctx, points, style, bounds = null\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    assert normalize_style is not None
+    assert smooth_curve is not None
+    assert trace_line is not None
+
+    script_path = tmp_path / "chart-line-style.cjs"
+    script_path.write_text(
+        textwrap.dedent(
+            f"""
+            const assert = require("node:assert/strict");
+            function clampNumber(value, min, max) {{
+              return Math.min(Math.max(value, min), max);
+            }}
+            {normalize_style.group(0)}
+            {smooth_curve.group(0)}
+            {trace_line.group(0)}
+
+            assert.equal(normalizeLineChartStyle(), "straight");
+            assert.equal(normalizeLineChartStyle("straight"), "straight");
+            assert.equal(normalizeLineChartStyle("smooth"), "smooth");
+            assert.equal(normalizeLineChartStyle("SMOOTH"), "straight");
+            assert.equal(normalizeLineChartStyle("curve"), "straight");
+
+            const points = [{{ x: 1, y: 4 }}, {{ x: 3, y: 2 }}, {{ x: 7, y: 6 }}];
+            const calls = [];
+            const ctx = {{
+              beginPath: () => calls.push(["beginPath"]),
+              moveTo: (...args) => calls.push(["moveTo", ...args]),
+              lineTo: (...args) => calls.push(["lineTo", ...args]),
+              bezierCurveTo: (...args) => calls.push(["bezierCurveTo", ...args]),
+            }};
+            traceChartLine(ctx, points, "straight");
+            assert.deepEqual(calls.map((call) => call[0]), [
+              "beginPath", "moveTo", "lineTo", "lineTo",
+            ]);
+
+            calls.length = 0;
+            traceChartLine(ctx, points, "smooth", {{ top: 0, bottom: 10 }});
+            assert.equal(calls[0][0], "beginPath");
+            assert.equal(calls[1][0], "moveTo");
+            assert.equal(calls.filter((call) => call[0] === "bezierCurveTo").length, 2);
+            """
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def test_home_chart_renderers_use_solid_effective_theme_palette_and_style_points():
+    app_js = _read(APP_JS)
+    single_chart = app_js[
+        app_js.index("function drawGlassChart(") :
+        app_js.index("function drawGlassMultiMetricChart(")
+    ]
+    multi_chart = app_js[
+        app_js.index("function drawGlassMultiMetricChart(") :
+        app_js.index("function cssRootValue(")
+    ]
+
+    assert "function canvasThemePalette()" in app_js
+    assert 'cssRootValue("--theme-accent"' in app_js
+    assert 'cssRootValue("--theme-accent-readable"' in app_js
+    for body in (single_chart, multi_chart):
+        assert "const palette = canvasThemePalette();" in body
+        assert "const lineStyle = currentLineChartStyle();" in body
+        assert "traceChartLine(ctx, drawPts, lineStyle, curveBounds);" in body
+        assert 'if (lineStyle === "smooth"' in body
+        assert "createLinearGradient" not in body
+
+    assert "ctx.fillStyle = palette.areaFill;" in single_chart
+    assert "ctx.strokeStyle = palette.primary;" in single_chart
+    assert "ctx.strokeStyle = metric.strokeColor;" in multi_chart
+    assert 'color: "#f59e0b"' not in app_js
+    assert 'endColor: "#ef4444"' not in app_js
+
+
+def test_home_chart_theme_and_line_style_redraw_cached_data_without_refetch():
+    app_js = _read(APP_JS)
+    redraw = re.search(
+        r"function redrawHomeChartsFromCache\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    refresh_theme = re.search(
+        r"function refreshHomeChartsForTheme\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    apply_preferences = re.search(
+        r"function applyInterfacePreferences\(preferences\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    load_history = re.search(
+        r"async function loadHomeChartHistory\(\{ refreshData = true \} = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+
+    assert redraw is not None
+    assert "renderChart({ refreshData: false })" in redraw.group("body")
+    assert "renderTrendChart({ refreshData: false })" in redraw.group("body")
+    assert refresh_theme is not None
+    assert "redrawHomeChartsFromCache();" in refresh_theme.group("body")
+    assert apply_preferences is not None
+    assert "normalizeLineChartStyle(preferences.lineChartStyle)" in apply_preferences.group("body")
+    assert "refreshHomeChartsForTheme();" in apply_preferences.group("body")
+    assert load_history is not None
+    assert "homeChartHistoryCache" in load_history.group("body")
+    assert 'api("/api/history")' in load_history.group("body")
+
+    schedule_resize = re.search(
+        r"function scheduleHomeChartsResize\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert schedule_resize is not None
+    assert "redrawHomeChartsFromCache();" in schedule_resize.group("body")
 
 
 def test_space_tech_theme_has_structural_top_navigation_and_switching():

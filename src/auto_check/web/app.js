@@ -251,6 +251,8 @@ let selectedChartDate = "";
 let renderChartAnimId = null;
 let renderTrendAnimId = null;
 let homeChartsNeedThemeRefresh = false;
+let homeChartHistoryCache = null;
+let homeChartHistoryRequest = null;
 let homeChartsResizeTimer = null;
 const HOME_CHARTS_RESIZE_DEBOUNCE_MS = 160;
 const HOME_CHARTS_LOW_EFFECTS_RESIZE_DEBOUNCE_MS = 320;
@@ -653,6 +655,7 @@ function applyEffectiveThemeColors(colors = effectiveThemeColors) {
   root.style.setProperty("--theme-accent-readable", palette.readableAccent);
   root.style.setProperty("--theme-focus-ring", palette.focusRing);
   root.style.setProperty("--theme-page-background", palette.pageBackground);
+  if (typeof refreshHomeChartsForTheme === "function") refreshHomeChartsForTheme();
   return { colors: { ...effectiveThemeColors }, palette };
 }
 
@@ -1077,6 +1080,7 @@ const MIN_INTERFACE_RADIUS_PX = 1;
 const MAX_INTERFACE_RADIUS_PX = 15;
 const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;
 const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
+let appliedLineChartStyle = DEFAULT_INTERFACE_PREFERENCES.lineChartStyle;
 const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
 const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
 const interfaceLineChartStyleStraight = document.getElementById("interfaceLineChartStyleStraight");
@@ -1123,6 +1127,14 @@ function normalizeInterfaceRadius(radiusPx) {
   return DEFAULT_INTERFACE_RADIUS_PX;
 }
 
+function normalizeLineChartStyle(value) {
+  return value === "smooth" ? "smooth" : "straight";
+}
+
+function currentLineChartStyle() {
+  return normalizeLineChartStyle(appliedLineChartStyle);
+}
+
 function cacheAuthenticatedInterfacePreferences(preferences) {
   const normalizedRadiusPx = normalizeInterfaceRadius(preferences.radiusPx);
   try {
@@ -1142,9 +1154,16 @@ function applyInterfaceRadius(radiusPx) {
 
 function applyInterfacePreferences(preferences) {
   const normalizedRadiusPx = applyInterfaceRadius(preferences.radiusPx);
+  const normalizedLineChartStyle = normalizeLineChartStyle(preferences.lineChartStyle);
+  const styleChanged = normalizedLineChartStyle !== appliedLineChartStyle;
+  appliedLineChartStyle = normalizedLineChartStyle;
+  if (styleChanged && typeof refreshHomeChartsForTheme === "function") {
+    refreshHomeChartsForTheme();
+  }
   return {
     ...preferences,
     radiusPx: normalizedRadiusPx,
+    lineChartStyle: normalizedLineChartStyle,
   };
 }
 
@@ -1658,9 +1677,15 @@ async function switchPage(name, options = {}) {
   if (name === "settings") loadSettingsPageData();
   if (name === "users") await loadUsers();
   if (name === "report-navigation") await loadReportNavigation();
-  if (name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)) {
-    homeChartsNeedThemeRefresh = false;
-    renderHomeStats(); renderChart(); renderTrendChart();
+  if (name === "home") {
+    const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();
+    if (refreshData) {
+      homeChartsNeedThemeRefresh = false;
+      renderHomeStats(); renderChart(); renderTrendChart();
+    } else if (homeChartsNeedThemeRefresh) {
+      homeChartsNeedThemeRefresh = false;
+      redrawHomeChartsFromCache();
+    }
   }
   if (name === "auto-check" && previousPage !== "auto-check") showResultListReturnLoading();
 }
@@ -5939,6 +5964,41 @@ function smoothCurveThrough(ctx, pts, tension = 0.35, bounds = null) {
   }
 }
 
+function traceChartLine(ctx, points, style, bounds = null) {
+  if (points.length < 2) return;
+  if (normalizeLineChartStyle(style) === "straight") {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+    return;
+  }
+  smoothCurveThrough(ctx, points, 0.35, bounds);
+}
+
+function canvasThemePalette() {
+  const primary = normalizeThemeHex(cssRootValue("--theme-accent"))
+    || DEFAULT_EFFECTIVE_THEME_COLORS.vitality;
+  const readable = normalizeThemeHex(cssRootValue("--theme-accent-readable")) || primary;
+  const isDark = document.documentElement.getAttribute("data-color-mode") === "dark";
+  const secondary = mixThemeHex(primary, isDark ? "#FFFFFF" : "#000000", 0.24);
+  const rgb = themeHexToRgb(primary);
+  return {
+    primary,
+    secondary,
+    readable,
+    areaFill: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${isDark ? "0.18" : "0.14"})`,
+    primaryShadow: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, 0.20)`,
+    grid: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${isDark ? "0.20" : "0.12"})`,
+  };
+}
+
+function applyChartLegendPalette(palette) {
+  const firstRun = document.querySelector(".trend-legend-dot--first-run");
+  const runs = document.querySelector(".trend-legend-dot--runs");
+  if (firstRun) firstRun.style.background = palette.primary;
+  if (runs) runs.style.background = palette.secondary;
+}
+
 function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tooltipItems = []) {
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -5950,14 +6010,9 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
 
-  const isSpace = document.documentElement.getAttribute("data-theme") === "space-tech";
   const isDark = document.documentElement.getAttribute("data-color-mode") === "dark";
-  const lineColor = isSpace ? (isDark ? "#2563eb" : "#3b82f6") : "#25676e";
-  const lineEnd = isSpace ? (isDark ? "#7c3aed" : "#8b5cf6") : "#abeaf2";
-  const lineMid = isSpace ? "#06b6d4" : null;
-  const areaColor = isSpace ? (isDark ? "rgba(37,99,235," : "rgba(59,130,246,") : "rgba(37,103,110,";
-  const dotStroke = lineColor;
-  const valColor = lineColor;
+  const palette = canvasThemePalette();
+  const lineStyle = currentLineChartStyle();
 
   let hoverPt = null;
   canvas.onmousemove = (e) => {
@@ -5994,7 +6049,7 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
     ctx.clearRect(0, 0, w, h);
 
     // Grid
-    ctx.strokeStyle = "rgba(37,103,110,0.1)";
+    ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 0.8;
     for (let i = 0; i <= 4; i++) {
       const y = pad.top + (i / 4) * ph;
@@ -6020,43 +6075,34 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
     if (drawPts.length >= 2) {
       const curveBounds = { top: pad.top, bottom: pad.top + ph };
       // Area fill
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, areaColor + "0.22)");
-      grad.addColorStop(1, areaColor + "0.02)");
-      ctx.beginPath();
-      smoothCurveThrough(ctx, drawPts, 0.35, curveBounds);
+      traceChartLine(ctx, drawPts, lineStyle, curveBounds);
       ctx.lineTo(drawPts[drawPts.length - 1].x, pad.top + ph);
       ctx.lineTo(drawPts[0].x, pad.top + ph);
       ctx.closePath();
-      ctx.fillStyle = grad;
+      ctx.fillStyle = palette.areaFill;
       ctx.fill();
 
-      // Line gradient
-      const lineGrad = ctx.createLinearGradient(0, 0, w, 0);
-      lineGrad.addColorStop(0, lineColor);
-      if (lineMid) lineGrad.addColorStop(0.5, lineMid);
-      lineGrad.addColorStop(1, lineEnd);
-      ctx.beginPath();
-      smoothCurveThrough(ctx, drawPts, 0.35, curveBounds);
-      ctx.strokeStyle = lineGrad;
+      // Solid themed line
+      traceChartLine(ctx, drawPts, lineStyle, curveBounds);
+      ctx.strokeStyle = palette.primary;
       ctx.lineWidth = 2.5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.shadowColor = areaColor + "0.2)";
+      ctx.shadowColor = palette.primaryShadow;
       ctx.shadowBlur = 6;
       ctx.stroke();
       ctx.shadowBlur = 0;
     }
 
-    // Data points (draw for all progress, including single point)
-    if (drawPts.length >= 1) {
+    // Smooth mode keeps visible points; straight mode keeps only invisible hit targets.
+    if (lineStyle === "smooth" && drawPts.length >= 1) {
       drawPts.forEach((p, i) => {
         if (pts.length <= 2 || i % 2 === 0 || i === drawPts.length - 1) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
           ctx.fillStyle = "#fff";
           ctx.fill();
-          ctx.strokeStyle = dotStroke;
+          ctx.strokeStyle = palette.primary;
           ctx.lineWidth = 2;
           ctx.stroke();
         }
@@ -6075,7 +6121,7 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
 
     // Value labels on all points
     if (progress >= 1 && showLabels) {
-      ctx.fillStyle = valColor;
+      ctx.fillStyle = palette.readable;
       ctx.font = "bold 12px 'Microsoft YaHei',sans-serif";
       ctx.textAlign = "center";
       pts.forEach((p) => {
@@ -6144,12 +6190,16 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
   canvas.style.height = h + "px";
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
+  const palette = canvasThemePalette();
+  const lineStyle = currentLineChartStyle();
+  applyChartLegendPalette(palette);
 
   const series = seriesList
-    .map((item) => ({
+    .map((item, index) => ({
       ...item,
       values: (item.values || []).map((value) => Number(value || 0)),
       maxVal: Math.max(...(item.values || []).map((value) => Number(value || 0)), 1),
+      strokeColor: index % 2 === 0 ? palette.primary : palette.secondary,
     }))
     .filter((item) => item.values.length);
   if (!series.length) return;
@@ -6239,7 +6289,7 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
     if (animRef && animRef.cancel) { stopped = true; cancelAnimationFrame(animId); return; }
     ctx.clearRect(0, 0, w, h);
 
-    ctx.strokeStyle = "rgba(37,103,110,0.1)";
+    ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 0.8;
     for (let i = 0; i <= 4; i++) {
       const y = pad.top + (i / 4) * ph;
@@ -6257,33 +6307,31 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
       const pts = pointsFor(metric);
       const drawPts = pts.slice(0, Math.max(2, drawCount));
       if (drawPts.length >= 2) {
-        const grad = ctx.createLinearGradient(0, 0, w, 0);
-        grad.addColorStop(0, metric.color);
-        grad.addColorStop(1, metric.endColor || metric.color);
-        ctx.beginPath();
-        smoothCurveThrough(ctx, drawPts, 0.35, curveBounds);
-        ctx.strokeStyle = grad;
+        traceChartLine(ctx, drawPts, lineStyle, curveBounds);
+        ctx.strokeStyle = metric.strokeColor;
         ctx.lineWidth = 2.4;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
-        ctx.shadowColor = metric.shadow || "rgba(59,130,246,0.18)";
+        ctx.shadowColor = palette.primaryShadow;
         ctx.shadowBlur = 5;
         ctx.stroke();
         ctx.shadowBlur = 0;
       }
-      drawPts.forEach((point, index) => {
-        if (labels.length <= 8 || index % Math.ceil(labels.length / 8) === 0 || index === drawPts.length - 1) {
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
-          ctx.fillStyle = "#fff";
-          ctx.fill();
-          ctx.strokeStyle = metric.color;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      });
+      if (lineStyle === "smooth") {
+        drawPts.forEach((point, index) => {
+          if (labels.length <= 8 || index % Math.ceil(labels.length / 8) === 0 || index === drawPts.length - 1) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = "#fff";
+            ctx.fill();
+            ctx.strokeStyle = metric.strokeColor;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        });
+      }
       if (progress >= 1 && showLabels && labels.length <= 12) {
-        ctx.fillStyle = metric.color;
+        ctx.fillStyle = palette.readable;
         ctx.font = "bold 11px 'Microsoft YaHei',sans-serif";
         ctx.textAlign = "center";
         pts.forEach((point) => {
@@ -6332,19 +6380,20 @@ function cssRootValue(name, fallback = "") {
 }
 
 function trendFirstRunMetricStyle() {
-  const isSpaceTheme = document.documentElement.getAttribute("data-theme") === "space-tech";
-  if (isSpaceTheme) {
-    return {
-      color: "#3b82f6",
-      endColor: "#06b6d4",
-      shadow: "rgba(59,130,246,0.22)",
-    };
-  }
+  const palette = canvasThemePalette();
   return {
-    color: cssRootValue("--secondary", "#25676e"),
-    endColor: cssRootValue("--on-secondary-container", "#2a6b73"),
-    shadow: "rgba(37,103,110,0.22)",
+    color: palette.primary,
+    shadow: palette.primaryShadow,
   };
+}
+
+function redrawHomeChartsFromCache() {
+  if (!homeChartHistoryCache && !homeChartHistoryRequest) {
+    homeChartsNeedThemeRefresh = true;
+    return;
+  }
+  renderChart({ refreshData: false });
+  renderTrendChart({ refreshData: false });
 }
 
 function refreshHomeChartsForTheme() {
@@ -6353,8 +6402,7 @@ function refreshHomeChartsForTheme() {
     return;
   }
   homeChartsNeedThemeRefresh = false;
-  renderChart();
-  renderTrendChart();
+  redrawHomeChartsFromCache();
 }
 
 async function getReconcileBusinessSourceName() {
@@ -6862,8 +6910,7 @@ function scheduleHomeChartsResize() {
   homeChartsResizeTimer = window.setTimeout(() => {
     homeChartsResizeTimer = null;
     if (document.documentElement.getAttribute("data-page") !== "home") return;
-    renderChart();
-    renderTrendChart();
+    redrawHomeChartsFromCache();
   }, visualEffectsEnabled() ? HOME_CHARTS_RESIZE_DEBOUNCE_MS : HOME_CHARTS_LOW_EFFECTS_RESIZE_DEBOUNCE_MS);
 }
 
@@ -7491,7 +7538,25 @@ async function renderHomeStats() {
   }
 }
 
-async function renderChart() {
+async function loadHomeChartHistory({ refreshData = true } = {}) {
+  if (!refreshData && Array.isArray(homeChartHistoryCache)) {
+    return homeChartHistoryCache;
+  }
+  if (homeChartHistoryRequest) return homeChartHistoryRequest;
+  const request = api("/api/history")
+    .then((payload) => {
+      homeChartHistoryCache = Array.isArray(payload?.history) ? payload.history : [];
+      return homeChartHistoryCache;
+    });
+  homeChartHistoryRequest = request;
+  try {
+    return await request;
+  } finally {
+    if (homeChartHistoryRequest === request) homeChartHistoryRequest = null;
+  }
+}
+
+async function renderChart({ refreshData = true } = {}) {
   const container = document.getElementById("chartContainer");
   const infoEl = document.getElementById("chartInfo");
   const emptyEl = document.getElementById("chartEmpty");
@@ -7500,8 +7565,7 @@ async function renderChart() {
   setChartLoadingState(container, true);
 
   try {
-    const historyData = await api("/api/history");
-    const runs = historyData.history || [];
+    const runs = await loadHomeChartHistory({ refreshData });
     if (!runs.length) {
       setChartEmptyState(container, canvas, emptyEl, true, "暂无核对数据");
       infoEl.textContent = "";
@@ -7563,7 +7627,7 @@ async function renderChart() {
 
 /* ===== Home Trend Chart (multi metrics per date) ===== */
 
-async function renderTrendChart() {
+async function renderTrendChart({ refreshData = true } = {}) {
   const container = document.getElementById("trendContainer");
   const infoEl = document.getElementById("trendInfo");
   const emptyEl = document.getElementById("trendEmpty");
@@ -7572,8 +7636,7 @@ async function renderTrendChart() {
   setChartLoadingState(container, true);
 
   try {
-    const historyData = await api("/api/history");
-    const runs = historyData.history || [];
+    const runs = await loadHomeChartHistory({ refreshData });
     if (!runs.length) {
       setChartEmptyState(container, canvas, emptyEl, true, "暂无核对数据");
       infoEl.textContent = "全部数据源";
@@ -7630,16 +7693,12 @@ async function renderTrendChart() {
         name: "每期差异个数",
         values: firstRunValues,
         color: firstRunStyle.color,
-        endColor: firstRunStyle.endColor,
         shadow: firstRunStyle.shadow,
         integerValues: true,
       },
       {
         name: "每期执行次数",
         values: executionValues,
-        color: "#f59e0b",
-        endColor: "#ef4444",
-        shadow: "rgba(245,158,11,0.22)",
         integerValues: true,
       },
     ], labels, renderTrendAnimId, showLabels);
@@ -10765,7 +10824,6 @@ function commitTheme(theme) {
   }
   applyEffectiveThemeColors(effectiveThemeColors);
   updateSpaceTopNavFrost();
-  refreshHomeChartsForTheme();
 }
 
 function applyThemeWithTransition(theme) {
