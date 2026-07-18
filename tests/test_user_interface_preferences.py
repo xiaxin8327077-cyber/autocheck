@@ -1,4 +1,5 @@
 import re
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,13 @@ from mysql_config_test_support import MySqlContractConnection
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_SQL = ROOT / "sql" / "app_storage" / "mysql" / "004_user_interface_preferences.sql"
+
+
+def _assert_preferences(preferences, radius_px, theme_gradient_enabled, line_chart_style):
+    assert preferences.__class__.__name__ == "UserInterfacePreferences"
+    assert preferences.radius_px == radius_px
+    assert preferences.theme_gradient_enabled is theme_gradient_enabled
+    assert preferences.line_chart_style == line_chart_style
 
 
 def test_user_interface_preferences_schema_is_safe_incremental_ddl():
@@ -61,26 +69,83 @@ def test_application_schema_keeps_version_one_and_adds_user_interface_preference
     assert len(EXPECTED_APP_SCHEMA) == 36
 
 
-@pytest.mark.parametrize("invalid_value", [99, True, 1.5, "4"])
-def test_missing_or_invalid_interface_preferences_use_default_four(invalid_value):
+def test_missing_interface_preferences_use_complete_defaults():
     connection = MySqlContractConnection()
 
-    assert load_user_interface_preferences(connection, "user-a") == 4
-
-    connection.tables["user_interface_preferences"].append(
-        {"user_id": "user-a", "radius_px": invalid_value, "updated_at": None}
+    _assert_preferences(
+        load_user_interface_preferences(connection, "user-a"),
+        radius_px=4,
+        theme_gradient_enabled=False,
+        line_chart_style="straight",
     )
 
-    assert load_user_interface_preferences(connection, "user-a") == 4
+
+def test_loaded_interface_preferences_are_immutable():
+    connection = MySqlContractConnection()
+    preferences = load_user_interface_preferences(connection, "user-a")
+
+    with pytest.raises(FrozenInstanceError):
+        preferences.radius_px = 8
+
+
+@pytest.mark.parametrize(
+    ("stored_preferences", "expected_preferences"),
+    [
+        (
+            {"radius_px": 99, "theme_gradient_enabled": 1, "line_chart_style": "smooth"},
+            (4, True, "smooth"),
+        ),
+        (
+            {"radius_px": 8, "theme_gradient_enabled": True, "line_chart_style": "smooth"},
+            (8, False, "smooth"),
+        ),
+        (
+            {"radius_px": 8, "theme_gradient_enabled": 0, "line_chart_style": "curved"},
+            (8, False, "straight"),
+        ),
+    ],
+)
+def test_malformed_interface_preference_fields_fall_back_independently(
+    stored_preferences, expected_preferences
+):
+    connection = MySqlContractConnection()
+
+    connection.tables["user_interface_preferences"].append(
+        {"user_id": "user-a", **stored_preferences, "updated_at": None}
+    )
+
+    _assert_preferences(load_user_interface_preferences(connection, "user-a"), *expected_preferences)
 
 
 def test_interface_preferences_upsert_keeps_one_latest_row():
     connection = MySqlContractConnection()
 
-    assert save_user_interface_preferences(connection, "user-a", 1) == 1
-    assert save_user_interface_preferences(connection, "user-a", 15) == 15
+    _assert_preferences(
+        save_user_interface_preferences(
+            connection,
+            "user-a",
+            radius_px=1,
+            theme_gradient_enabled=True,
+            line_chart_style="smooth",
+        ),
+        1,
+        True,
+        "smooth",
+    )
+    _assert_preferences(
+        save_user_interface_preferences(
+            connection,
+            "user-a",
+            radius_px=15,
+            theme_gradient_enabled=False,
+            line_chart_style="straight",
+        ),
+        15,
+        False,
+        "straight",
+    )
 
-    assert load_user_interface_preferences(connection, "user-a") == 15
+    _assert_preferences(load_user_interface_preferences(connection, "user-a"), 15, False, "straight")
     assert any(
         "ON DUPLICATE KEY UPDATE" in sql.upper() for sql in connection.executed_sql
     )
@@ -88,40 +153,55 @@ def test_interface_preferences_upsert_keeps_one_latest_row():
         {
             "user_id": "user-a",
             "radius_px": 15,
+            "theme_gradient_enabled": 0,
+            "line_chart_style": "straight",
             "updated_at": connection.tables["user_interface_preferences"][0]["updated_at"],
         }
     ]
+    assert type(connection.tables["user_interface_preferences"][0]["theme_gradient_enabled"]) is int
 
 
 def test_interface_preferences_isolate_users():
     connection = MySqlContractConnection()
 
-    save_user_interface_preferences(connection, "user-a", 3)
-    save_user_interface_preferences(connection, "user-b", 12)
+    save_user_interface_preferences(
+        connection, "user-a", radius_px=3, theme_gradient_enabled=False, line_chart_style="straight"
+    )
+    save_user_interface_preferences(
+        connection, "user-b", radius_px=12, theme_gradient_enabled=True, line_chart_style="smooth"
+    )
 
-    assert load_user_interface_preferences(connection, "user-a") == 3
-    assert load_user_interface_preferences(connection, "user-b") == 12
+    _assert_preferences(load_user_interface_preferences(connection, "user-a"), 3, False, "straight")
+    _assert_preferences(load_user_interface_preferences(connection, "user-b"), 12, True, "smooth")
     assert len(connection.tables["user_interface_preferences"]) == 2
 
 
 def test_prune_interface_preferences_keeps_only_active_users():
     connection = MySqlContractConnection()
-    save_user_interface_preferences(connection, "active", 6)
-    save_user_interface_preferences(connection, "deleted", 12)
+    save_user_interface_preferences(
+        connection, "active", radius_px=6, theme_gradient_enabled=True, line_chart_style="smooth"
+    )
+    save_user_interface_preferences(
+        connection, "deleted", radius_px=12, theme_gradient_enabled=False, line_chart_style="straight"
+    )
 
     prune_user_interface_preferences(connection, ["active", "", "active"])
 
     assert [row["user_id"] for row in connection.tables["user_interface_preferences"]] == [
         "active"
     ]
-    assert load_user_interface_preferences(connection, "active") == 6
-    assert load_user_interface_preferences(connection, "deleted") == 4
+    _assert_preferences(load_user_interface_preferences(connection, "active"), 6, True, "smooth")
+    _assert_preferences(load_user_interface_preferences(connection, "deleted"), 4, False, "straight")
 
 
 def test_prune_interface_preferences_with_no_active_users_clears_all():
     connection = MySqlContractConnection()
-    save_user_interface_preferences(connection, "user-a", 2)
-    save_user_interface_preferences(connection, "user-b", 14)
+    save_user_interface_preferences(
+        connection, "user-a", radius_px=2, theme_gradient_enabled=False, line_chart_style="straight"
+    )
+    save_user_interface_preferences(
+        connection, "user-b", radius_px=14, theme_gradient_enabled=True, line_chart_style="smooth"
+    )
 
     prune_user_interface_preferences(connection, [])
 
@@ -133,6 +213,44 @@ def test_save_interface_preferences_rejects_invalid_radius(invalid_value):
     connection = MySqlContractConnection()
 
     with pytest.raises(ValueError) as exc_info:
-        save_user_interface_preferences(connection, "user-a", invalid_value)
+        save_user_interface_preferences(
+            connection,
+            "user-a",
+            radius_px=invalid_value,
+            theme_gradient_enabled=False,
+            line_chart_style="straight",
+        )
 
     assert str(exc_info.value) == "radius_px must be an integer between 1 and 15"
+
+
+@pytest.mark.parametrize("invalid_value", [0, 1, "false", None])
+def test_save_interface_preferences_rejects_non_boolean_theme_gradient(invalid_value):
+    connection = MySqlContractConnection()
+
+    with pytest.raises(ValueError) as exc_info:
+        save_user_interface_preferences(
+            connection,
+            "user-a",
+            radius_px=4,
+            theme_gradient_enabled=invalid_value,
+            line_chart_style="straight",
+        )
+
+    assert str(exc_info.value) == "theme_gradient_enabled must be a boolean"
+
+
+@pytest.mark.parametrize("invalid_value", ["", "curved", True, None])
+def test_save_interface_preferences_rejects_unknown_line_chart_style(invalid_value):
+    connection = MySqlContractConnection()
+
+    with pytest.raises(ValueError) as exc_info:
+        save_user_interface_preferences(
+            connection,
+            "user-a",
+            radius_px=4,
+            theme_gradient_enabled=False,
+            line_chart_style=invalid_value,
+        )
+
+    assert str(exc_info.value) == "line_chart_style must be one of: smooth, straight"

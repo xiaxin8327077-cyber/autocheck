@@ -191,8 +191,20 @@ def test_deleting_user_prunes_interface_preferences_in_same_user_transaction(
     )
 
     with shared_application_database.transaction() as connection:
-        save_user_interface_preferences(connection, admin["id"], 4)
-        save_user_interface_preferences(connection, operator["id"], 12)
+        save_user_interface_preferences(
+            connection,
+            admin["id"],
+            radius_px=4,
+            theme_gradient_enabled=False,
+            line_chart_style="straight",
+        )
+        save_user_interface_preferences(
+            connection,
+            operator["id"],
+            radius_px=12,
+            theme_gradient_enabled=False,
+            line_chart_style="straight",
+        )
 
     transaction_count = shared_application_database.transaction_count
     manager.delete_user(operator["id"], current_user_id=admin["id"])

@@ -64,6 +64,8 @@ from auto_check.app.flow_tool import (
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
 from auto_check.app.storage_user_interface_preferences import (
+    DEFAULT_LINE_CHART_STYLE,
+    DEFAULT_THEME_GRADIENT_ENABLED,
     MAX_INTERFACE_RADIUS_PX,
     MIN_INTERFACE_RADIUS_PX,
     load_user_interface_preferences,
@@ -317,8 +319,8 @@ class ApiRouter:
                     return 401, {"error": "login required"}
                 if method == "GET":
                     with self.application_database.connect() as connection:
-                        radius_px = load_user_interface_preferences(connection, user_id)
-                    return 200, {"settings": {"radius_px": radius_px}}
+                        preferences = load_user_interface_preferences(connection, user_id)
+                    return 200, {"settings": {"radius_px": preferences.radius_px}}
                 if method == "POST":
                     if not isinstance(body, dict):
                         raise ValueError("radius_px must be an integer between 1 and 15")
@@ -329,8 +331,14 @@ class ApiRouter:
                     ):
                         raise ValueError("radius_px must be an integer between 1 and 15")
                     with self.application_database.transaction() as connection:
-                        radius_px = save_user_interface_preferences(connection, user_id, radius_px)
-                    return 200, {"settings": {"radius_px": radius_px}}
+                        preferences = save_user_interface_preferences(
+                            connection,
+                            user_id,
+                            radius_px=radius_px,
+                            theme_gradient_enabled=DEFAULT_THEME_GRADIENT_ENABLED,
+                            line_chart_style=DEFAULT_LINE_CHART_STYLE,
+                        )
+                    return 200, {"settings": {"radius_px": preferences.radius_px}}
 
             if method == "GET" and path == "/api/report-navigation/dashboard":
                 query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
