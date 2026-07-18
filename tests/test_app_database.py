@@ -257,6 +257,15 @@ def test_expected_schema_is_immutable_and_contains_expected_tables():
     assert len(EXPECTED_APP_SCHEMA) == 36
     assert "app_schema_version" in EXPECTED_APP_SCHEMA
     assert "storage_migration_runs" in EXPECTED_APP_SCHEMA
+    assert EXPECTED_APP_SCHEMA["user_interface_preferences"] == frozenset(
+        {
+            "user_id",
+            "radius_px",
+            "theme_gradient_enabled",
+            "line_chart_style",
+            "updated_at",
+        }
+    )
     assert all(isinstance(columns, frozenset) for columns in EXPECTED_APP_SCHEMA.values())
 
     with pytest.raises(TypeError):

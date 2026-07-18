@@ -15,6 +15,9 @@ from mysql_config_test_support import MySqlContractConnection
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_SQL = ROOT / "sql" / "app_storage" / "mysql" / "004_user_interface_preferences.sql"
+PREFERENCE_UPDATES_SQL = (
+    ROOT / "sql" / "app_storage" / "mysql" / "005_user_appearance_preferences.sql"
+)
 
 
 def _assert_preferences(preferences, radius_px, theme_gradient_enabled, line_chart_style):
@@ -61,10 +64,55 @@ def test_user_interface_preferences_schema_is_safe_incremental_ddl():
         assert re.search(pattern, upper) is None, forbidden_keyword
 
 
+def test_user_interface_preference_updates_are_guarded_incremental_ddl():
+    assert PREFERENCE_UPDATES_SQL.exists(), "appearance preference update SQL is required"
+
+    sql = PREFERENCE_UPDATES_SQL.read_text(encoding="utf-8")
+    sql_without_comments = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+    sql_without_comments = re.sub(r"(?m)(?:--|#)[^\r\n]*$", "", sql_without_comments)
+    upper = sql_without_comments.upper()
+
+    assert "DATABASE()" in upper
+    assert "INFORMATION_SCHEMA.COLUMNS" in upper
+    assert "INFORMATION_SCHEMA.TABLE_CONSTRAINTS" in upper
+    assert "PREPARE" in upper
+    assert "EXECUTE" in upper
+    assert "DEALLOCATE PREPARE" in upper
+    assert "`theme_gradient_enabled` TINYINT(1) NOT NULL DEFAULT 0" in sql
+    assert "`line_chart_style` VARCHAR(16) NOT NULL DEFAULT ''straight''" in sql
+    assert "CHECK (`theme_gradient_enabled` IN (0, 1))" in sql
+    assert "CHECK (`line_chart_style` IN (''straight'', ''smooth''))" in sql
+    assert "ALTER TABLE `user_interface_preferences`" in sql
+    assert set(re.findall(r"ALTER\s+TABLE\s+`([^`]+)`", upper)) == {
+        "USER_INTERFACE_PREFERENCES"
+    }
+    for forbidden_keyword in (
+        "CREATE TABLE",
+        "CREATE DATABASE",
+        "USE",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "REPLACE",
+        "DROP",
+        "TRUNCATE",
+        "FOREIGN KEY",
+        "APP_SCHEMA_VERSION",
+    ):
+        pattern = r"\b" + re.escape(forbidden_keyword).replace(r"\ ", r"\s+") + r"\b"
+        assert re.search(pattern, upper) is None, forbidden_keyword
+
+
 def test_application_schema_keeps_version_one_and_adds_user_interface_preferences():
     assert CURRENT_APP_SCHEMA_VERSION == 1
     assert EXPECTED_APP_SCHEMA["user_interface_preferences"] == frozenset(
-        {"user_id", "radius_px", "updated_at"}
+        {
+            "user_id",
+            "radius_px",
+            "theme_gradient_enabled",
+            "line_chart_style",
+            "updated_at",
+        }
     )
     assert len(EXPECTED_APP_SCHEMA) == 36
 
