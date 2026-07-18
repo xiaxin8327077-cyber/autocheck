@@ -285,3 +285,55 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 偏好读取或保存失败不会阻塞主要业务功能。
 - 圆角值为 1px 或 15px 时，按钮、表单、下拉面板和弹窗仍能正常点击、输入、选择和关闭。
 - MySQL 结构校验、全量测试和必要打包均通过。
+
+## 12. 2026-07-18 截图指定矩形表面补充覆盖
+
+### 12.1 范围与原则
+
+在原有导航、主卡片、弹窗、矩形按钮和表单控件覆盖基础上，补充用户截图红框指定的矩形子卡片、列表外框、表格外框和上传区域。全部目标继续读取同一个 `--ui-radius`，范围、默认值、预览、保存和用户隔离行为不变。
+
+本次补充仍然只改变界面显示：不修改 HTML 结构、JavaScript 事件、业务请求、API、数据库、权限、表单值、焦点顺序或点击区域。集中式覆盖层中仍然只允许声明 `border-radius`。
+
+### 12.2 精确选择器清单
+
+以下选择器加入现有 `/* User interface radius preference: start/end */` 覆盖层：
+
+- 报送导航鱼骨详情卡：`#page-report-navigation .report-nav-branch-panel`
+- 报送日期分组卡：`#page-report-navigation .report-nav-batch`
+- 注意事项单条卡片：`#page-report-navigation .report-nav-todo`
+- 暗色模式切换按钮外壳：`.dark-mode-toggle`
+- 历史详情摘要信息卡：`.history-summary-item`
+- 历史详情差异计数卡：`.history-count-item`
+- 历史详情结果区块：`.history-section`
+- 流程执行的流程链列表外框：`.flow-chain-list`
+- 流程执行的已选流程摘要外框：`.flow-chain-selection-summary`
+- 流程执行日志外框：`.flow-run-panel:last-child #flowLog`
+- 流程执行历史表格外框：`.flow-history-table-wrap`
+- 逐笔校验执行历史表格外框：`.db-validation-history-table-wrap`
+- 人行一键导入上传区：`.pbc-upload-area`
+- 系统信息指标卡：`#page-settings .metric-item`
+- 逐笔校验数据源配置行：`#page-settings .db-validation-source-row`
+- 流程链配置行：`.flow-chain-config`
+- 数据源配置行：`.config-item`
+- 关于系统简介卡：`#page-settings .about-description`
+- 关于系统主要功能卡：`#page-settings .about-features`
+- 关于系统技术栈卡：`#page-settings .about-tech`
+
+使用以上逐项选择器，不改为全局 `button`、`table`、`[class*=item]`、`[class*=card]` 或后代通配规则，避免把未指定元素意外纳入全局圆角。
+
+### 12.3 保持原形的内部元素
+
+- 暗色模式切换按钮只调整外壳；内部月亮图形及其状态表现保持原样。
+- 流程链条目中的复选框保持原样。
+- 表格数据行、表头单元格和分隔线不逐行增加圆角；只调整截图指定的表格外框或结果区块外框。
+- 圆形图标、头像、状态点、图表节点、胶囊徽标、标签、进度条、滑块轨道与手柄、单选框和 SVG 内部形状继续排除。
+
+### 12.4 测试与验收
+
+- 静态测试必须逐项断言 12.2 的选择器存在于集中式覆盖层。
+- `.dark-mode-toggle` 从禁止清单移入必需清单；其内部图形不加入覆盖层。
+- 覆盖层属性审计继续断言每个规则只有 `border-radius`。
+- 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。
+- 抽查流程选择、历史查看、文件选择/拖拽入口、数据源编辑、暗色切换等原交互仍可正常使用。
+- `README.md` 的详细版本说明补充上述矩形表面覆盖；应用内更新日志继续使用既有“系统优化及BUG修复”精简口径，不展开界面细节。
+- 运行前端静态测试、全量 `pytest`、`git diff --check`，并刷新 `dist/auto-check.exe`。
