@@ -3343,13 +3343,13 @@ th {
   font-size: 12px;
   font-weight: 500;
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
-  background: var(--surface-container-low);
+  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
 [data-color-mode="dark"] th {
   color: #cbd5e1;
-  background: var(--surface-container-low);
+  background: rgba(30, 41, 59, 0.94);
 }
 
 .result-table tbody tr:hover { background: rgb(235 238 240 / 0.5); }
@@ -3852,6 +3852,8 @@ th {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
   min-height: 0;
   border: none;
   border-radius: 0;
@@ -3900,10 +3902,12 @@ th {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: center;
   flex: 0 0 auto;
+  width: 100%;
   height: 58px;
+  min-height: 58px;
   padding: 0 16px;
   background: var(--surface-container-lowest);
-  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest));
+  border-top: 1px solid var(--outline-variant);
 }
 
 .history-detail-card .history-detail-footer .btn-primary {
@@ -4057,7 +4061,7 @@ th {
   z-index: auto;
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
-  background: var(--surface-container-low);
+  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -4114,7 +4118,7 @@ th {
 
 [data-color-mode="dark"] .history-result-table th {
   color: #cbd5e1;
-  background: var(--surface-container-low);
+  background: rgba(30, 41, 59, 0.94);
 }
 
 [data-color-mode="dark"] .history-result-table td {
@@ -5076,6 +5080,11 @@ input:focus, select:focus {
   max-height: 92vh;
   display: flex;
   flex-direction: column;
+}
+
+.modal-info.modal-info--history-detail > .app-modal-header {
+  height: 58px;
+  min-height: 58px;
 }
 
 .modal-info.modal-info--history-detail .modal-body {
@@ -12184,7 +12193,7 @@ input.custom-input-native:disabled {
 .app-modal-shell .flow-def-header {
   color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
   font-weight: 500;
-  background: var(--surface-container-low);
+  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
@@ -12193,7 +12202,7 @@ input.custom-input-native:disabled {
 [data-color-mode="dark"] .app-modal-shell .db-validation-table-header,
 [data-color-mode="dark"] .app-modal-shell .flow-def-header {
   color: #cbd5e1;
-  background: var(--surface-container-low);
+  background: rgba(30, 41, 59, 0.94);
   border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 

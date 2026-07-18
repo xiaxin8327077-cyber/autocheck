@@ -3245,7 +3245,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     for visual_declaration in (
         "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
         "font-weight: 500",
-        "background: var(--surface-container-low)",
+        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert visual_declaration in global_body
@@ -3257,7 +3257,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     )
     assert global_dark_headers is not None
     assert "color: #cbd5e1" in global_dark_headers.group("body")
-    assert "background: var(--surface-container-low)" in global_dark_headers.group("body")
+    assert "background: rgba(30, 41, 59, 0.94)" in global_dark_headers.group("body")
 
     shared_headers = re.search(
         r"(?m)^\.app-modal-shell table th,\s*\n"
@@ -3272,7 +3272,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     for declaration in (
         "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
         "font-weight: 500",
-        "background: var(--surface-container-low)",
+        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
     ):
         assert declaration in shared_body
@@ -3313,7 +3313,7 @@ def test_modal_table_headers_match_history_tokens_without_layout_overrides():
     assert dark_headers is not None
     dark_body = dark_headers.group("body")
     assert "color: #cbd5e1" in dark_body
-    assert "background: var(--surface-container-low)" in dark_body
+    assert "background: rgba(30, 41, 59, 0.94)" in dark_body
     assert (
         "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, "
         "var(--surface-container-lowest))"
@@ -5813,6 +5813,8 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "display: flex" in card.group("body")
     assert "max-height" not in card.group("body")
     assert "overflow: hidden" in card.group("body")
+    assert "width: 100%" in card.group("body")
+    assert "height: 100%" in card.group("body")
     assert "border: 1px solid" not in card.group("body")
     assert "box-shadow" not in card.group("body")
 
@@ -5822,6 +5824,15 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "max-height: 92vh" in modal.group("body")
     assert "display: flex" in modal.group("body")
     assert "flex-direction: column" in modal.group("body")
+
+    modal_header = re.search(
+        r"(?m)^\.modal-info\.modal-info--history-detail > \.app-modal-header\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert modal_header is not None
+    assert "height: 58px" in modal_header.group("body")
+    assert "min-height: 58px" in modal_header.group("body")
 
     modal_body = re.search(r"(?m)^\.modal-info\.modal-info--history-detail \.modal-body\s*\{(?P<body>.*?)\}", css, re.S)
     assert modal_body is not None
@@ -5846,10 +5857,12 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "display: grid" in footer.group("body")
     assert "grid-template-columns: repeat(5, minmax(0, 1fr))" in footer.group("body")
     assert "height: 58px" in footer.group("body")
+    assert "min-height: 58px" in footer.group("body")
+    assert "width: 100%" in footer.group("body")
     assert "padding: 0 16px" in footer.group("body")
     assert "align-items: center" in footer.group("body")
     assert "background: var(--surface-container-lowest)" in footer.group("body")
-    assert "border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest))" in footer.group("body")
+    assert "border-top: 1px solid var(--outline-variant)" in footer.group("body")
 
     restore_action = re.search(
         r"(?m)^\.history-detail-card \.history-detail-footer \.btn-primary\s*\{(?P<body>.*?)\}",
@@ -5886,7 +5899,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "position: static" in result_header.group("body")
     assert "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))" in result_header.group("body")
     assert "font-weight: 500" in result_header.group("body")
-    assert "background: var(--surface-container-low)" in result_header.group("body")
+    assert "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))" in result_header.group("body")
     assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
 
     cells = re.search(
@@ -5927,7 +5940,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     )
     assert dark_result_header is not None
     assert "color: #cbd5e1" in dark_result_header.group("body")
-    assert "background: var(--surface-container-low)" in dark_result_header.group("body")
+    assert "background: rgba(30, 41, 59, 0.94)" in dark_result_header.group("body")
     for status_tone in ("done", "pending"):
         status = re.search(rf"(?m)^\.history-status--{status_tone}\s*\{{(?P<body>.*?)\}}", css, re.S)
         assert status is not None
