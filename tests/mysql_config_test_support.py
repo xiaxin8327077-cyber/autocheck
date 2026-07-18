@@ -45,6 +45,7 @@ class MySqlContractConnection:
             "config_snapshots": [],
             "users": [],
             "user_interface_preferences": [],
+            "system_interface_preferences": [],
             "run_headers": [],
             "reconcile_runs": [],
             "reconcile_run_counts": [],
@@ -162,7 +163,16 @@ class MySqlContractConnection:
                 for item in parameters:
                     self._insert_row(table_name, table, dict(item))
                 return MemoryResult()
-            primary_key = self._insert_row(table_name, table, params)
+            update_names = None
+            post_values_clause = getattr(statement, "_post_values_clause", None)
+            if post_values_clause is not None:
+                update_names = frozenset(post_values_clause.update)
+            primary_key = self._insert_row(
+                table_name,
+                table,
+                params,
+                update_names=update_names,
+            )
             return MemoryResult(rowcount=1, inserted_primary_key=[primary_key] if primary_key is not None else [])
         if getattr(statement, "is_select", False):
             rows = [dict(row) for row in self.tables[table_name]]
@@ -238,7 +248,14 @@ class MySqlContractConnection:
             return MemoryResult(rowcount=1)
         raise AssertionError(f"unsupported textual SQL: {sql}")
 
-    def _insert_row(self, table_name: str, table: Any, params: dict[str, Any]) -> Any:
+    def _insert_row(
+        self,
+        table_name: str,
+        table: Any,
+        params: dict[str, Any],
+        *,
+        update_names: frozenset[str] | None = None,
+    ) -> Any:
         row = {column.name: params[column.name] for column in table.columns if column.name in params}
         has_id_column = any(column.name == "id" for column in table.columns)
         if has_id_column and "id" not in row:
@@ -260,7 +277,12 @@ class MySqlContractConnection:
             return row.get(key_names[0])
         else:
             created_at = existing.get("created_at")
-            existing.update(row)
+            update_row = (
+                row
+                if update_names is None
+                else {name: row[name] for name in update_names if name in row}
+            )
+            existing.update(update_row)
             if created_at is not None:
                 existing["created_at"] = created_at
             return existing.get(key_names[0])
@@ -282,6 +304,8 @@ class MySqlContractConnection:
             return ("key",)
         if table_name == "user_interface_preferences":
             return ("user_id",)
+        if table_name == "system_interface_preferences":
+            return ("id",)
         if table_name in {"report_nav_processes"}:
             return ("process_code",)
         if table_name in {"report_nav_steps"}:

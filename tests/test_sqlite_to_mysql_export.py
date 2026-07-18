@@ -117,6 +117,7 @@ def test_exporter_generates_mysql_sql_report_and_keeps_console_sanitized(tmp_pat
         "sql/app_storage/mysql/003_report_navigation_seed.sql",
         "sql/app_storage/mysql/004_user_interface_preferences.sql",
         "sql/app_storage/mysql/005_user_appearance_preferences.sql",
+        "sql/app_storage/mysql/006_system_interface_preferences.sql",
     ]
 
 

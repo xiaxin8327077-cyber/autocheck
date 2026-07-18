@@ -254,15 +254,25 @@ def test_url_create_preserves_special_password_without_interpolation_or_leak(tmp
 
 
 def test_expected_schema_is_immutable_and_contains_expected_tables():
-    assert len(EXPECTED_APP_SCHEMA) == 36
+    assert len(EXPECTED_APP_SCHEMA) == 37
     assert "app_schema_version" in EXPECTED_APP_SCHEMA
     assert "storage_migration_runs" in EXPECTED_APP_SCHEMA
     assert EXPECTED_APP_SCHEMA["user_interface_preferences"] == frozenset(
         {
             "user_id",
             "radius_px",
-            "theme_gradient_enabled",
             "line_chart_style",
+            "vitality_theme_color",
+            "calm_theme_color",
+            "updated_at",
+        }
+    )
+    assert EXPECTED_APP_SCHEMA["system_interface_preferences"] == frozenset(
+        {
+            "id",
+            "vitality_theme_color",
+            "calm_theme_color",
+            "updated_by",
             "updated_at",
         }
     )
