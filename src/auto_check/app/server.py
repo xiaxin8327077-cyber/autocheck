@@ -71,6 +71,14 @@ from auto_check.app.storage_user_interface_preferences import (
     load_user_interface_preferences,
     save_user_interface_preferences,
 )
+from auto_check.app.storage_system_interface_preferences import (
+    EffectiveThemeColors,
+    SystemInterfacePreferences,
+    load_system_interface_preferences,
+    normalize_theme_color,
+    resolve_effective_theme_colors,
+    save_system_interface_preferences,
+)
 from auto_check.app.time_utils import beijing_now, beijing_time_text, beijing_timestamp, beijing_today
 from auto_check.app.pbc_import import (
     ColumnMapping,
@@ -121,9 +129,73 @@ MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
 def _serialize_interface_preferences(value: UserInterfacePreferences) -> dict[str, object]:
     return {
         "radius_px": value.radius_px,
-        "theme_gradient_enabled": value.theme_gradient_enabled,
         "line_chart_style": value.line_chart_style,
     }
+
+
+def _can_manage_system_theme_colors(current_user: dict[str, Any] | None) -> bool:
+    return str((current_user or {}).get("role") or "") == "admin"
+
+
+def _serialize_theme_colors(
+    system: SystemInterfacePreferences,
+    personal: UserInterfacePreferences,
+    effective: EffectiveThemeColors,
+    *,
+    current_user: dict[str, Any] | None,
+) -> dict[str, object]:
+    return {
+        "colors": {
+            "system": {
+                "vitality": system.vitality_theme_color,
+                "calm": system.calm_theme_color,
+            },
+            "personal": {
+                "vitality": personal.vitality_theme_color,
+                "calm": personal.calm_theme_color,
+            },
+            "effective": {
+                "vitality": effective.vitality_theme_color,
+                "calm": effective.calm_theme_color,
+            },
+        },
+        "capabilities": {
+            "can_manage_system_theme_colors": _can_manage_system_theme_colors(current_user)
+        },
+    }
+
+
+def _load_theme_colors_payload(
+    connection: Any,
+    current_user: dict[str, Any] | None,
+) -> dict[str, object]:
+    system_preferences = load_system_interface_preferences(connection)
+    user_id = str((current_user or {}).get("id") or "").strip()
+    personal_preferences = (
+        load_user_interface_preferences(connection, user_id)
+        if user_id
+        else UserInterfacePreferences()
+    )
+    effective_colors = resolve_effective_theme_colors(
+        personal_preferences,
+        system_preferences,
+    )
+    return _serialize_theme_colors(
+        system_preferences,
+        personal_preferences,
+        effective_colors,
+        current_user=current_user,
+    )
+
+
+def _validated_theme_color(body: object, field: str) -> str:
+    raw_value = body.get(field) if isinstance(body, dict) else None
+    try:
+        value = normalize_theme_color(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a #RRGGBB string") from exc
+    assert value is not None
+    return value
 
 
 DEFAULT_SERVER_PORT = 8765
@@ -323,6 +395,29 @@ class ApiRouter:
         current_user: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         try:
+            if path == "/api/settings/interface/theme-colors":
+                user_id = str((current_user or {}).get("id") or "").strip()
+                if method == "GET":
+                    with self.application_database.connect() as connection:
+                        payload = _load_theme_colors_payload(connection, current_user)
+                    return 200, payload
+                if method == "POST":
+                    if not user_id:
+                        return 401, {"error": "login required"}
+                    if not _can_manage_system_theme_colors(current_user):
+                        return 403, {"error": "admin role required"}
+                    vitality_theme_color = _validated_theme_color(body, "vitality_theme_color")
+                    calm_theme_color = _validated_theme_color(body, "calm_theme_color")
+                    with self.application_database.transaction() as connection:
+                        save_system_interface_preferences(
+                            connection,
+                            vitality_theme_color=vitality_theme_color,
+                            calm_theme_color=calm_theme_color,
+                            updated_by=user_id,
+                        )
+                        payload = _load_theme_colors_payload(connection, current_user)
+                    return 200, payload
+
             if path == "/api/settings/interface":
                 user_id = str((current_user or {}).get("id") or "").strip()
                 if not user_id:
@@ -340,9 +435,6 @@ class ApiRouter:
                         or not MIN_INTERFACE_RADIUS_PX <= radius_px <= MAX_INTERFACE_RADIUS_PX
                     ):
                         raise ValueError("radius_px must be an integer between 1 and 15")
-                    theme_gradient_enabled = body.get("theme_gradient_enabled")
-                    if type(theme_gradient_enabled) is not bool:
-                        raise ValueError("theme_gradient_enabled must be a boolean")
                     line_chart_style = body.get("line_chart_style")
                     if type(line_chart_style) is not str or line_chart_style not in LINE_CHART_STYLES:
                         raise ValueError("line_chart_style must be one of: smooth, straight")
@@ -351,7 +443,6 @@ class ApiRouter:
                             connection,
                             user_id,
                             radius_px=radius_px,
-                            theme_gradient_enabled=theme_gradient_enabled,
                             line_chart_style=line_chart_style,
                         )
                     return 200, {"settings": _serialize_interface_preferences(preferences)}
@@ -2972,6 +3063,10 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path.startswith("/api/auth/"):
             self._handle_auth(method, path)
+            return
+        if method == "GET" and path == "/api/settings/interface/theme-colors":
+            status, payload = self.router.handle(method, path, None, current_user=None)
+            self._send_json(status, payload)
             return
         session = self._authenticated_session()
         if session is None:

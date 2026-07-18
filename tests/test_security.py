@@ -195,14 +195,12 @@ def test_deleting_user_prunes_interface_preferences_in_same_user_transaction(
             connection,
             admin["id"],
             radius_px=4,
-            theme_gradient_enabled=False,
             line_chart_style="straight",
         )
         save_user_interface_preferences(
             connection,
             operator["id"],
             radius_px=12,
-            theme_gradient_enabled=False,
             line_chart_style="straight",
         )
 
@@ -494,7 +492,6 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
         assert payload == {
             "settings": {
                 "radius_px": 4,
-                "theme_gradient_enabled": False,
                 "line_chart_style": "straight",
             }
         }
@@ -503,14 +500,13 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
             server,
             "POST",
             "/api/settings/interface",
-            {"radius_px": 6, "theme_gradient_enabled": True, "line_chart_style": "smooth"},
+            {"radius_px": 6, "line_chart_style": "smooth"},
             admin_headers,
         )
         assert status == 200
         assert payload == {
             "settings": {
                 "radius_px": 6,
-                "theme_gradient_enabled": True,
                 "line_chart_style": "smooth",
             }
         }
@@ -552,7 +548,6 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
         assert payload == {
             "settings": {
                 "radius_px": 4,
-                "theme_gradient_enabled": False,
                 "line_chart_style": "straight",
             }
         }
@@ -575,14 +570,13 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
             server,
             "POST",
             "/api/settings/interface",
-            {"radius_px": 12, "theme_gradient_enabled": False, "line_chart_style": "straight"},
+            {"radius_px": 12, "line_chart_style": "straight"},
             operator_headers,
         )
         assert status == 200
         assert payload == {
             "settings": {
                 "radius_px": 12,
-                "theme_gradient_enabled": False,
                 "line_chart_style": "straight",
             }
         }
@@ -594,7 +588,6 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
         assert payload == {
             "settings": {
                 "radius_px": 12,
-                "theme_gradient_enabled": False,
                 "line_chart_style": "straight",
             }
         }
@@ -606,10 +599,139 @@ def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp
         assert payload == {
             "settings": {
                 "radius_px": 6,
-                "theme_gradient_enabled": True,
                 "line_chart_style": "smooth",
             }
         }
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_theme_colors_http_allows_anonymous_read_and_protects_global_writes(tmp_path):
+    server = _start_auth_test_server(tmp_path / "config.json")
+    try:
+        status, payload, _ = _json_request(
+            server, "GET", "/api/settings/interface/theme-colors"
+        )
+        assert status == 200
+        assert payload == {
+            "colors": {
+                "system": {"vitality": "#3F6FAF", "calm": "#355F63"},
+                "personal": {"vitality": None, "calm": None},
+                "effective": {"vitality": "#3F6FAF", "calm": "#355F63"},
+            },
+            "capabilities": {"can_manage_system_theme_colors": False},
+        }
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+        )
+        assert status == 401
+        assert payload == {"error": "login required"}
+
+        status, admin_login, headers = _json_request(
+            server,
+            "POST",
+            "/api/auth/setup",
+            {"password_encrypted": _encrypted_password(server, "AdminPass123")},
+        )
+        assert status == 200
+        admin_cookie = headers["set-cookie"].split(";", 1)[0]
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+            {"Cookie": admin_cookie},
+        )
+        assert status == 403
+        assert payload == {"error": "invalid csrf token"}
+
+        admin_headers = {
+            "Cookie": admin_cookie,
+            "X-CSRF-Token": admin_login["csrf_token"],
+        }
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/users",
+            {
+                "username": "operator",
+                "role": "user",
+                "password_encrypted": _encrypted_password(server, "Operator123"),
+                "enabled": True,
+            },
+            admin_headers,
+        )
+        assert status == 200
+
+        status, operator_login, headers = _json_request(
+            server,
+            "POST",
+            "/api/auth/login",
+            {
+                "username": "operator",
+                "password_encrypted": _encrypted_password(server, "Operator123"),
+            },
+        )
+        assert status == 200
+        operator_headers = {
+            "Cookie": headers["set-cookie"].split(";", 1)[0],
+            "X-CSRF-Token": operator_login["csrf_token"],
+        }
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+            operator_headers,
+        )
+        assert status == 403
+        assert payload == {"error": "admin role required"}
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+            admin_headers,
+        )
+        assert status == 200
+        assert payload["colors"] == {
+            "system": {"vitality": "#ABCDEF", "calm": "#102030"},
+            "personal": {"vitality": None, "calm": None},
+            "effective": {"vitality": "#ABCDEF", "calm": "#102030"},
+        }
+        assert payload["capabilities"] == {"can_manage_system_theme_colors": True}
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#FFFFFF", "calm_theme_color": "invalid"},
+            admin_headers,
+        )
+        assert status == 400
+        assert payload == {"error": "calm_theme_color must be a #RRGGBB string"}
+
+        status, payload, _ = _json_request(
+            server,
+            "GET",
+            "/api/settings/interface/theme-colors",
+            None,
+            operator_headers,
+        )
+        assert status == 200
+        assert payload["colors"] == {
+            "system": {"vitality": "#ABCDEF", "calm": "#102030"},
+            "personal": {"vitality": None, "calm": None},
+            "effective": {"vitality": "#ABCDEF", "calm": "#102030"},
+        }
+        assert payload["capabilities"] == {"can_manage_system_theme_colors": False}
     finally:
         server.shutdown()
         server.server_close()
