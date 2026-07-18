@@ -5708,7 +5708,9 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "position: relative" in footer.group("body")
     assert "display: grid" in footer.group("body")
     assert "grid-template-columns: repeat(5, minmax(0, 1fr))" in footer.group("body")
-    assert "padding: 12px 16px" in footer.group("body")
+    assert "height: 58px" in footer.group("body")
+    assert "padding: 0 16px" in footer.group("body")
+    assert "align-items: center" in footer.group("body")
     assert "background: var(--surface-container-lowest)" in footer.group("body")
     assert "border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest))" in footer.group("body")
 

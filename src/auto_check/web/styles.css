@@ -3893,8 +3893,10 @@ th {
   z-index: 2;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
   flex: 0 0 auto;
-  padding: 12px 16px;
+  height: 58px;
+  padding: 0 16px;
   background: var(--surface-container-lowest);
   border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest));
 }
