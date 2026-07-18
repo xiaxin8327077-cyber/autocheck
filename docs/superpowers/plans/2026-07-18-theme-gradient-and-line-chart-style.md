@@ -18,6 +18,8 @@
 - 折线图风格只有 `straight` 和 `smooth`；默认、旧记录补值、接口失败回退和恢复默认均为 `straight`。
 - 直线折线隐藏空心数据点圆圈；平滑曲线保留现有圆圈。数值标签和 tooltip 命中区域始终保留。
 - 两种风格均跟随当前主题：渐变开启时使用主题渐变，关闭时使用主题纯色。多系列折线只从当前主题色派生固定深浅层级。
+- 渐变开关同时控制应用内容区底层和登录页背景；关闭时使用活力 `#EDF3FC/#E9F0FC`、沉稳 `#EBF1F3/#E7EEF1` 的内容区/登录页纯色底。
+- 登录页暗色与亮色使用完全相同的居中单卡片布局，暗色不得保留双栏或左侧功能介绍。
 - 除连接几何、圆圈可见性和主题驱动的折线颜色外，不改变图表数据、线宽、阴影、面积填充、标签、网格、图例、坐标轴、tooltip、动画或请求流程。
 - 成功绿、警告橙/黄、错误红及饼图、柱图等业务分类色保持独立。
 - 每个任务按 TDD 顺序执行：先补失败测试，确认失败原因正确，再写最小实现，再运行聚焦测试。
@@ -258,6 +260,7 @@ Require:
 - stale GET/POST results remain invalidated across edits, saves, logout and user switch;
 - failed save keeps the visible draft but not the saved snapshot;
 - leaving the page restores all three saved values.
+- the last successful gradient display cache is available to `login.html`; failed loads, saves or logins do not update it.
 
 Run `python -m pytest -q tests/test_web_static.py -k "interface or preference"`.
 
@@ -304,7 +307,7 @@ Commit the four task files as `feat: add appearance controls to interface settin
 
 ---
 
-## Task 5: Consolidate fixed theme colors and the global gradient switch
+## Task 5: Consolidate fixed theme colors, the gradient switch, and app background
 
 **Files:**
 
@@ -314,7 +317,7 @@ Commit the four task files as `feat: add appearance controls to interface settin
 
 ### Step 1: Write failing token and scope tests
 
-Assert the exact fixed solid/gradient values, `data-theme-gradient="true/false"`, absence of user color controls, and scoped high-emphasis selectors. Assert semantic status colors and non-line categorical chart colors remain independent.
+Assert the exact fixed solid/gradient values, `data-theme-gradient="true/false"`, absence of user color controls, and scoped high-emphasis selectors. Assert semantic status colors and non-line categorical chart colors remain independent. Require the application shell/content backdrop to consume the approved low-emphasis page-background token and switch through the same root attribute.
 
 Run `python -m pytest -q tests/test_web_static.py -k "theme or gradient or semantic"`.
 
@@ -338,9 +341,20 @@ Use a solid token for text/borders/focus and a fill token for backgrounds:
 
 Override the solid/gradient tokens for the calm theme with `#25676E` and the approved teal gradient.
 
+Add separate page-background tokens instead of reusing the full button fill:
+
+```css
+--theme-page-background-solid: #edf3fc;
+--theme-page-background-gradient: /* approved low-opacity blue/cyan/purple layers */;
+```
+
+The calm theme overrides the solid value with `#EBF1F3` and uses low-opacity teal layers. Dark solid content backgrounds are vitality `#121D36` and calm `#101C2E`; dark gradient mode uses the same theme stops at lower opacity over those bases.
+
 ### Step 3: Migrate only approved high-emphasis surfaces
 
 Apply the fill token to active primary navigation, primary/confirm buttons, active tabs/segments, non-semantic selected filters, non-semantic module icons and existing decorative accents. Do not touch semantic badges, report-process category colors, categorical chart series, error banners or destructive buttons. Preserve dimensions, radius, pointer behavior and disabled behavior.
+
+Apply the page-background token once at the root/application-shell layer behind `.main-content`; do not duplicate it per business page. Keep cards, tables and modal surfaces unchanged.
 
 ### Step 4: Apply preview state independently
 
@@ -350,7 +364,7 @@ function applyThemeGradient(enabled) {
 }
 ```
 
-Call it for load, live draft, reset, discard and auth reset. Theme or dark-mode switching must not overwrite the attribute.
+Call it for load, live draft, reset, discard and auth reset. Theme or dark-mode switching must not overwrite the attribute. Updating the attribute must immediately change accent surfaces, application background and chart redraw behavior.
 
 ### Step 5: Verify and commit
 
@@ -431,7 +445,61 @@ Commit the two task files as `feat: add themed selectable line chart geometry`.
 
 ---
 
-## Task 7: Close the two user-management radius gaps
+## Task 7: Apply the login background and unify light/dark layout
+
+**Files:**
+
+- Modify: `src/auto_check/web/login.html`
+- Modify: `src/auto_check/web/app.js`
+- Modify: `tests/test_web_static.py`
+
+### Step 1: Write failing login visual-state tests
+
+Require:
+
+- the pre-style bootstrap reads the most recent successful gradient cache, normalizes exact boolean values, and defaults to enabled;
+- the login root receives `data-theme-gradient="true/false"` before CSS renders;
+- vitality and calm login backgrounds have approved gradient and solid tokens; solid values are `#E9F0FC` and `#E7EEF1`;
+- decorative `.deco` colors derive from the current theme and are hidden when gradient is disabled;
+- failed login never updates interface-preference caches;
+- dark mode contains no `grid-template-columns: 1fr 1fr`, `max-width: 860px`, dark-only `min-height`, dark-only panel padding, or `.left-panel { display: flex; }` override;
+- both modes share the same container/card geometry and form order;
+- the dark logo, if used, occupies the same brand slot and dimensions as the light logo.
+
+Run `python -m pytest -q tests/test_web_static.py -k "login and (theme or gradient or layout)"`.
+
+Expected: FAIL because the current dark login uses a two-column layout and the login background does not read the gradient preference.
+
+### Step 2: Bootstrap the last successful visual preference
+
+Extend the existing pre-style radius bootstrap in `login.html` to also read the last successful gradient display cache and the most recently active user's local theme selection. Set root data attributes before `<style>` to avoid a flash. Do not call the protected interface-settings API before authentication.
+
+Only successful authenticated GET/POST in `app.js` may update the gradient display cache. Preserve the current rule that login failure cannot contaminate it.
+
+### Step 3: Add login background tokens
+
+Declare login equivalents for the main app tokens. Gradient mode uses low-opacity theme stops; light solid mode uses vitality `#E9F0FC` and calm `#E7EEF1`; dark solid mode uses vitality `#222A39` and calm `#202831`. Dark gradient mode uses the same theme family over those dark neutral bases. When gradient is disabled, hide the decorative background blobs so no unrelated pink/green gradient remains.
+
+### Step 4: Remove dark-only geometry
+
+Keep the light single-card geometry as the shared layout. Remove dark selectors that change display, grid, size, padding, margin, positioning or content visibility. Keep `.left-panel` out of layout in both modes. Render light/dark logo resources in the same `.light-brand` slot and switch only their visibility/resource without changing geometry.
+
+Dark selectors may change only color, background, border color, shadow color, logo resource visibility and browser autofill paint.
+
+### Step 5: Verify and commit
+
+Run:
+
+```powershell
+python -m pytest -q tests/test_web_static.py -k "login or interface or theme or gradient"
+git diff --check
+```
+
+Commit the three task files as `feat: unify login theme layout and background`.
+
+---
+
+## Task 8: Close the two user-management radius gaps
 
 **Files:**
 
@@ -478,7 +546,7 @@ Commit the two task files as `fix: apply user radius to omitted controls`.
 
 ---
 
-## Task 8: Update release documentation, verify, and package
+## Task 9: Update release documentation, verify, and package
 
 **Files:**
 
@@ -492,7 +560,7 @@ Commit the two task files as `fix: apply user radius to omitted controls`.
 
 ### Step 1: Update release-facing documentation
 
-Document fixed theme colors, one global gradient switch, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the two user-management radius gaps, per-user cross-device persistence, and `005` deployment order.
+Document fixed theme colors, one global gradient switch, application/login backgrounds, unified light/dark login layout, straight/smooth chart style with straight as default, theme-driven line colors, straight-mode hidden point circles, the two user-management radius gaps, per-user cross-device persistence, and `005` deployment order.
 
 Keep the in-app changelog concise:
 
@@ -545,6 +613,9 @@ Stage the listed docs, concise changelog/tests, and tracked executable if reposi
 - Radius, gradient and chart style save atomically for the authenticated user only.
 - Two users see independent settings across login and device changes.
 - Gradient switching immediately previews both themes and all line charts; no user color picker exists.
+- Gradient switching also changes the application backdrop and login background; solid mode contains no residual decorative gradient blobs.
+- Before authentication, login uses the last successfully cached gradient preference and defaults safely when absent/invalid.
+- Login light/dark modes share one centered single-card geometry; switching mode changes colors/resources only and does not move any content.
 - Straight mode uses direct line segments and hides visible point circles; labels and tooltip hits remain.
 - Smooth mode keeps the current curve tension and point circles.
 - Single-series fill follows the selected geometry exactly.
