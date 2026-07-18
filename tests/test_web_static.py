@@ -2930,6 +2930,9 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".pbc-upload-area",
         "#page-settings .metric-item",
         "#page-settings .db-validation-source-row",
+        "#page-settings .reconcile-schema-table",
+        "#page-settings .business-settings-note",
+        "#page-settings .business-field-group",
         ".flow-chain-config",
         ".config-item",
         "#page-settings .about-description",
@@ -3054,6 +3057,9 @@ def test_readme_documents_expanded_interface_radius_surface_coverage():
         "系统信息指标卡",
         "数据源与流程链配置行",
         "关于系统内容卡",
+        "对账表字段配置卡",
+        "对账业务维护说明条",
+        "对账业务字段表格分组",
     ):
         assert text in readme
 
