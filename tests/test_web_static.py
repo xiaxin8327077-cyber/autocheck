@@ -2009,6 +2009,38 @@ def test_v21_changelog_documents_interface_radius_concisely():
     assert 'const DEFAULT_VERSION = "v2.1";' in app_js
 
 
+def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
+    readme = _read(README_MD)
+    app_js = _read(APP_JS)
+
+    for text in [
+        "系统弹窗统一为轻量平衡风格",
+        "白色表面、细分隔线、克制阴影、统一标题栏、独立滚动内容区和固定操作区",
+        "确认、输入、信息、用户、数据源、人行导入与校验、流程工具弹窗保留各自适配业务内容的尺寸",
+        "历史详情按完整结果、新增差异、减少差异分组",
+        "绿、红、蓝色条区分",
+        "表头和内容继续保持居中",
+        "中性浅灰表头、透明描边状态",
+        "隐藏滚动条但保留滚动",
+        "恢复按钮与状态列居中",
+        "弹窗圆角继续跟随当前用户的界面设置",
+        "兼容默认太空、沉稳和暗色模式",
+    ]:
+        assert text in readme
+    assert "`v2.1` (2026-07-18) 主要变化：" in readme
+
+    current = re.search(
+        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)<div class="changelog-item">',
+        app_js,
+        re.S,
+    )
+    assert current is not None
+    assert '<span class="changelog-date">2026-07-18</span>' in current.group("body")
+    assert "系统优化及BUG修复。" in current.group("body")
+    assert "弹窗" not in current.group("body")
+    assert "历史详情" not in current.group("body")
+
+
 def test_changelog_and_readme_document_pbc_import_and_space_nav_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
@@ -2242,9 +2274,9 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
         "表字段配置保存失败弹框按缺失字段逐行展示",
         "自动对账表字段配置新增“标准中文名”输入框",
     ]
-    assert "`v2.1` (2026-07-02) 主要变化：" in readme
+    assert "`v2.1` (2026-07-18) 主要变化：" in readme
     assert '<span class="changelog-version">v2.1</span>' in app_js
-    assert '<span class="changelog-date">2026-07-02</span>' in app_js
+    assert '<span class="changelog-date">2026-07-18</span>' in app_js
     for text in change_items:
         assert text in readme
 
