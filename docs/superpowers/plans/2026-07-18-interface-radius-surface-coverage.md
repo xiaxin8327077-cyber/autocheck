@@ -111,7 +111,7 @@ Expected: FAIL；第一个测试报告新增选择器尚不在覆盖层，第二
 
 ---
 
-### Task 2: 实现精确 CSS 覆盖并同步 README
+#### Task 1 implementation: 实现精确 CSS 覆盖并同步 README
 
 **Files:**
 - Modify: `src/auto_check/web/styles.css:12073-12142`
@@ -120,7 +120,7 @@ Expected: FAIL；第一个测试报告新增选择器尚不在覆盖层，第二
 - Test: `tests/test_web_static.py`
 
 **Interfaces:**
-- Consumes: 现有根变量 `--ui-radius` 和 Task 1 的必需选择器契约。
+- Consumes: 现有根变量 `--ui-radius` 和本任务前半段新增的失败测试契约。
 - Produces: 所有截图指定矩形表面统一读取 `var(--ui-radius)`，且 README 当前功能与 v2.1 说明同步。
 
 - [ ] **Step 1: 把精确选择器加入集中式覆盖层**
@@ -225,7 +225,7 @@ git commit -m "fix: extend unified radius to highlighted surfaces"
 
 ---
 
-### Task 3: 登录页使用最后一次认证成功的圆角显示缓存
+### Task 2: 登录页使用最后一次认证成功的圆角显示缓存
 
 **Files:**
 - Modify: `src/auto_check/web/login.html:8-24`
@@ -417,7 +417,7 @@ git commit -m "feat: apply last user radius to login surfaces"
 
 ---
 
-### Task 4: 全量验证、重新打包与浏览器验收
+### Task 3: 全量验证、重新打包与浏览器验收
 
 **Files:**
 - Verify: `src/auto_check/web/styles.css`
@@ -428,7 +428,7 @@ git commit -m "feat: apply last user radius to login surfaces"
 - Modify: `dist/auto-check.exe`
 
 **Interfaces:**
-- Consumes: Task 2 已提交的主应用 CSS/测试/README，以及 Task 3 已提交的登录显示缓存。
+- Consumes: Task 1 已提交的主应用 CSS/测试/README，以及 Task 2 已提交的登录显示缓存。
 - Produces: 通过全量回归的新 Windows 可执行文件，以及 1px、4px、15px 下的可视验收结果。
 
 - [ ] **Step 1: 运行全量测试**
