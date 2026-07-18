@@ -2665,7 +2665,6 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
         'class="card settings-dashboard-card card-flow admin-only"',
         'class="card settings-dashboard-card card-business"',
         'class="card settings-dashboard-card card-datasource"',
-        'class="card settings-dashboard-card card-data admin-only"',
         'class="card settings-dashboard-card card-about"',
         'id="sysInfoBody"',
         'id="defaultSettingsBody"',
@@ -2680,14 +2679,31 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert 'id="themeBody"' not in settings_html
     system_info_pos = settings_html.index('class="card settings-dashboard-card card-system-info"')
     interface_pos = settings_html.index('class="card settings-dashboard-card card-interface"')
-    data_pos = settings_html.index('class="card settings-dashboard-card card-data admin-only"')
     default_pos = settings_html.index('class="card settings-dashboard-card card-default admin-only"')
     db_validation_pos = settings_html.index('class="card settings-dashboard-card card-db-validation admin-only"')
     flow_pos = settings_html.index('class="card settings-dashboard-card card-flow admin-only"')
     datasource_pos = settings_html.index('class="card settings-dashboard-card card-datasource admin-only"')
     business_pos = settings_html.index('class="card settings-dashboard-card card-business admin-only"')
     about_pos = settings_html.index('class="card settings-dashboard-card card-about"')
-    assert system_info_pos < interface_pos < data_pos < default_pos < db_validation_pos < flow_pos < datasource_pos < business_pos < about_pos
+    assert system_info_pos < interface_pos < default_pos < db_validation_pos < flow_pos < datasource_pos < business_pos < about_pos
+    for removed_data_management_markup in (
+        'class="card settings-dashboard-card card-data admin-only"',
+        'id="dataManageToggle"',
+        'id="dataManageBody"',
+        'id="clearHistoryBtn"',
+        'id="exportConfigBtn"',
+        'id="importConfigBtn"',
+        'id="importConfigFile"',
+    ):
+        assert removed_data_management_markup not in settings_html
+    for retained_data_management_handler in (
+        'setupCollapsible("dataManageToggle", "dataManageBody", "dataManageArrow");',
+        'document.getElementById("clearHistoryBtn")?.addEventListener("click", async () => {',
+        'document.getElementById("exportConfigBtn")?.addEventListener("click", async () => {',
+        'document.getElementById("importConfigBtn")?.addEventListener("click", () => {',
+        'document.getElementById("importConfigFile")?.addEventListener("change", async (e) => {',
+    ):
+        assert retained_data_management_handler in app_js
     assert 'id="businessSettingsBody" class="card-body settings-business-scroll"' in settings_html
     assert "settings-collapsed-card" not in settings_html
     assert "settings-collapsible-body" not in settings_html
@@ -2867,8 +2883,8 @@ def test_interface_settings_card_is_shared_and_has_one_exact_radius_slider():
 
     system_info_pos = settings_html.index('class="card settings-dashboard-card card-system-info"')
     interface_pos = settings_html.index('class="card settings-dashboard-card card-interface"')
-    data_pos = settings_html.index('class="card settings-dashboard-card card-data admin-only"')
-    assert system_info_pos < interface_pos < data_pos
+    default_pos = settings_html.index('class="card settings-dashboard-card card-default admin-only"')
+    assert system_info_pos < interface_pos < default_pos
 
 
 def test_user_radius_override_is_semantic_and_border_radius_only():
@@ -6021,8 +6037,9 @@ def test_regular_user_settings_are_limited_and_readonly_for_system_actions():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    for card in ["card-default", "card-db-validation", "card-data", "card-datasource", "card-business"]:
+    for card in ["card-default", "card-db-validation", "card-datasource", "card-business"]:
         assert f'class="card settings-dashboard-card {card} admin-only"' in html
+    assert 'class="card settings-dashboard-card card-data admin-only"' not in html
     assert 'class="card settings-dashboard-card card-interface"' in html
     assert 'class="card settings-dashboard-card card-interface admin-only"' not in html
     assert 'id="testAllConnBtn"' not in html

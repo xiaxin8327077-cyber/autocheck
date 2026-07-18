@@ -739,3 +739,26 @@ git log -5 --oneline
 ```
 
 Expected: 工作区干净；最近提交包含设计补充、主应用 CSS/测试/README 实现、登录显示缓存实现和 exe 刷新。
+
+## Task 7：隐藏系统设置“数据管理”卡并重新打包
+
+**Files:**
+- Modify: `src/auto_check/web/index.html`
+- Modify: `tests/test_web_static.py`
+- Modify: `README.md`
+- Modify: `src/auto_check/web/app.js`
+- Modify: `dist/auto-check.exe`
+
+**Scope:**
+- 系统设置不再展示整张“数据管理”卡，包括清理历史、导出配置和导入配置三个入口。
+- “默认设置”整张卡前移至原数据管理所在的顶部第三列，保留其全部控件、事件与功能。
+- 仅移除前端展示；保留既有后端接口和 JavaScript 处理逻辑，不改变系统功能实现。
+- 按用户明确要求，不运行自动化测试和浏览器验收；完成源码修改后直接重新打包。
+
+- [ ] **Step 1: 隐藏整张数据管理卡**
+
+从系统设置页面结构中移除该卡片的渲染，使“默认设置”整卡前移至原数据管理的顶部第三列，并更新静态结构断言、README 详细说明与应用内精简更新日志。
+
+- [ ] **Step 2: 刷新 Windows 可执行文件**
+
+仅停止可执行路径精确匹配当前 worktree `dist\\auto-check.exe` 的进程，随后运行打包脚本并提交源码与最终 exe。不得运行测试或浏览器验收。

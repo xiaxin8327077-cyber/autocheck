@@ -10285,7 +10285,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v2.1</span>
-        <span class="changelog-date">2026-07-02</span>
+        <span class="changelog-date">2026-07-18</span>
       </div>
               <ul>
         <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
