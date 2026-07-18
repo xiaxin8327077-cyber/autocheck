@@ -3341,10 +3341,15 @@ th {
   top: 0;
   z-index: 2;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--on-surface-variant);
-  background: var(--surface-container-high);
-  border-bottom: 1px solid var(--outline-variant);
+  font-weight: 500;
+  color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
+  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
+}
+
+[data-color-mode="dark"] th {
+  color: #cbd5e1;
+  background: rgba(30, 41, 59, 0.94);
 }
 
 .result-table tbody tr:hover { background: rgb(235 238 240 / 0.5); }
@@ -12171,6 +12176,25 @@ input.custom-input-native:disabled {
 [data-color-mode="dark"] .app-modal-shell .app-modal-footer {
   border-color: rgba(148, 163, 184, 0.24);
   background: #0f172a;
+}
+
+.app-modal-shell table th,
+.app-modal-shell .pbc-file-list-header,
+.app-modal-shell .db-validation-table-header,
+.app-modal-shell .flow-def-header {
+  color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest));
+  font-weight: 500;
+  background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low));
+  border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
+}
+
+[data-color-mode="dark"] .app-modal-shell table th,
+[data-color-mode="dark"] .app-modal-shell .pbc-file-list-header,
+[data-color-mode="dark"] .app-modal-shell .db-validation-table-header,
+[data-color-mode="dark"] .app-modal-shell .flow-def-header {
+  color: #cbd5e1;
+  background: rgba(30, 41, 59, 0.94);
+  border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest));
 }
 
 /* User interface radius preference: start */

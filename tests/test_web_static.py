@@ -3227,6 +3227,94 @@ def test_all_modal_footers_use_the_neutral_shared_surface():
     assert "background: #0f172a" in dark_footer.group("body")
 
 
+def test_modal_table_headers_match_history_tokens_without_layout_overrides():
+    css = _read(STYLES_CSS)
+
+    global_headers = re.search(r"(?m)^th\s*\{(?P<body>.*?)\}", css, re.S)
+    assert global_headers is not None
+    global_body = global_headers.group("body")
+    for preserved_declaration in (
+        "position: sticky",
+        "top: 0",
+        "z-index: 2",
+        "font-size: 12px",
+    ):
+        assert preserved_declaration in global_body
+    for visual_declaration in (
+        "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
+        "font-weight: 500",
+        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
+        "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
+    ):
+        assert visual_declaration in global_body
+
+    global_dark_headers = re.search(
+        r'(?m)^\[data-color-mode="dark"\] th\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert global_dark_headers is not None
+    assert "color: #cbd5e1" in global_dark_headers.group("body")
+    assert "background: rgba(30, 41, 59, 0.94)" in global_dark_headers.group("body")
+
+    shared_headers = re.search(
+        r"(?m)^\.app-modal-shell table th,\s*\n"
+        r"\.app-modal-shell \.pbc-file-list-header,\s*\n"
+        r"\.app-modal-shell \.db-validation-table-header,\s*\n"
+        r"\.app-modal-shell \.flow-def-header\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_headers is not None
+    shared_body = shared_headers.group("body")
+    for declaration in (
+        "color: color-mix(in srgb, var(--on-surface-variant) 50%, var(--surface-container-lowest))",
+        "font-weight: 500",
+        "background: color-mix(in srgb, var(--surface-container-lowest) 72%, var(--surface-container-low))",
+        "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
+    ):
+        assert declaration in shared_body
+    for layout_property in (
+        "text-align:",
+        "position:",
+        "top:",
+        "z-index:",
+        "padding:",
+        "width:",
+        "height:",
+        "display:",
+        "grid-template-columns:",
+        "!important",
+    ):
+        assert layout_property not in shared_body
+
+    shared_rule_start = css.index(".app-modal-shell table th,")
+    for modal_specific_selector in (
+        ".home-stat-modal-table th",
+        ".db-validation-history-table th",
+        ".flow-def-header th",
+    ):
+        assert css.index(modal_specific_selector) < shared_rule_start
+
+    dark_headers = re.search(
+        r'(?m)^\[data-color-mode="dark"\] \.app-modal-shell table th,\s*\n'
+        r'\[data-color-mode="dark"\] \.app-modal-shell \.pbc-file-list-header,\s*\n'
+        r'\[data-color-mode="dark"\] \.app-modal-shell \.db-validation-table-header,\s*\n'
+        r'\[data-color-mode="dark"\] \.app-modal-shell \.flow-def-header\s*'
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert dark_headers is not None
+    dark_body = dark_headers.group("body")
+    assert "color: #cbd5e1" in dark_body
+    assert "background: rgba(30, 41, 59, 0.94)" in dark_body
+    assert (
+        "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, "
+        "var(--surface-container-lowest))"
+    ) in dark_body
+
+
 def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
