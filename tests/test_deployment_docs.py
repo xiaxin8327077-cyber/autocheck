@@ -83,6 +83,46 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         assert expected in v21_radius_change
 
 
+def test_readme_documents_global_solid_themes_and_personal_line_style() -> None:
+    readme = _read(README)
+    current_features = readme.split("## 当前功能", 1)[1].split(
+        "## MySQL 应用库上线准备", 1
+    )[0]
+    latest_changes = readme.split("## 最新变更说明", 1)[1]
+    v21_changes = _changelog_version_block(latest_changes, "v2.1")
+
+    for expected in [
+        "#3F6FAF",
+        "#355F63",
+        "管理员",
+        "#RRGGBB",
+        "所见即所得",
+        "纯色",
+        "不使用渐变",
+        "浅色与暗色模式",
+        "语义",
+        "直线折线",
+        "平滑曲线",
+        "默认直线折线",
+        "登录页",
+        "同一居中布局",
+    ]:
+        assert expected in current_features
+
+    for expected in [
+        "全局纯色主题",
+        "#3F6FAF",
+        "#355F63",
+        "管理员",
+        "未来个人主题色",
+        "默认直线折线",
+        "平滑曲线",
+        "登录页",
+        "浅色与暗色模式",
+    ]:
+        assert expected in v21_changes
+
+
 def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> None:
     acceptance_sections = {
         README: next(
@@ -106,12 +146,14 @@ def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> 
     for acceptance in acceptance_sections.values():
         assert "原 20 张迁移目标表的数据行数" in acceptance
         assert "与迁移报告一致" in acceptance
-        assert "当前完整 36 张应用存储表结构" in acceptance
+        assert "当前完整 37 张应用存储表结构" in acceptance
         assert "004_user_interface_preferences.sql" in acceptance
-        assert "36 张目标表和迁移行数齐全" not in acceptance
+        assert "005_user_appearance_preferences.sql" in acceptance
+        assert "006_system_interface_preferences.sql" in acceptance
+        assert "37 张目标表和迁移行数齐全" not in acceptance
 
 
-def test_mysql_rollout_docs_require_004_and_36_table_sequence() -> None:
+def test_mysql_rollout_docs_require_004_through_006_and_37_table_sequence() -> None:
     for path in [README, MYSQL_STORAGE_DOC, DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
         scripts = [
@@ -119,8 +161,10 @@ def test_mysql_rollout_docs_require_004_and_36_table_sequence() -> None:
             "002_report_navigation.sql",
             "003_report_navigation_seed.sql",
             "004_user_interface_preferences.sql",
+            "005_user_appearance_preferences.sql",
+            "006_system_interface_preferences.sql",
         ]
-        assert "36 张" in text
+        assert "37 张" in text
         assert all(script in text for script in scripts)
         assert [text.index(script) for script in scripts] == sorted(
             text.index(script) for script in scripts
@@ -131,15 +175,52 @@ def test_mysql_rollout_docs_require_004_and_36_table_sequence() -> None:
     assert "每个用户" in mysql_doc
     assert "不设置外键" in mysql_doc
     assert "孤儿偏好" in mysql_doc
+    assert "system_interface_preferences" in mysql_doc
+    assert "绝不使用 `app_settings`" in mysql_doc
 
 
-def test_deployment_upgrade_docs_define_safe_manual_004_boundary() -> None:
+def test_deployment_upgrade_docs_define_safe_manual_004_through_006_boundary() -> None:
     for path in [DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
         assert "升级应用前" in text
         assert "CREATE TABLE IF NOT EXISTS" in text
+        assert "information_schema" in text
         assert "可重复执行" in text
         assert "不代表已在任何线上环境执行" in text
         assert "每个用户" in text
         assert "不设置外键" in text
         assert "孤儿偏好" in text
+
+
+def test_mysql_storage_doc_contains_complete_final_interface_preference_ddl() -> None:
+    mysql_doc = _read(MYSQL_STORAGE_DOC)
+    canonical = mysql_doc.split("## 三、界面偏好完整规范 DDL", 1)[1].split(
+        "## 四、配置示例", 1
+    )[0]
+
+    for expected in [
+        "CREATE TABLE `user_interface_preferences`",
+        "`user_id` VARCHAR(64) NOT NULL",
+        "`radius_px` TINYINT UNSIGNED NOT NULL DEFAULT 4",
+        "`line_chart_style` VARCHAR(16) NOT NULL DEFAULT 'straight'",
+        "`vitality_theme_color` CHAR(7) NULL",
+        "`calm_theme_color` CHAR(7) NULL",
+        "CONSTRAINT `chk_user_interface_radius_px` CHECK (`radius_px` BETWEEN 1 AND 15)",
+        "CONSTRAINT `chk_user_interface_line_chart_style` CHECK (`line_chart_style` IN ('straight', 'smooth'))",
+        "CONSTRAINT `chk_user_interface_vitality_theme_color`",
+        "CONSTRAINT `chk_user_interface_calm_theme_color`",
+        "CREATE TABLE `system_interface_preferences`",
+        "`id` TINYINT UNSIGNED NOT NULL",
+        "`vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3F6FAF'",
+        "`calm_theme_color` CHAR(7) NOT NULL DEFAULT '#355F63'",
+        "`updated_by` VARCHAR(64) NULL",
+        "CONSTRAINT `chk_system_interface_preferences_singleton` CHECK (`id` = 1)",
+        "CONSTRAINT `chk_system_interface_vitality_theme_color`",
+        "CONSTRAINT `chk_system_interface_calm_theme_color`",
+        "BINARY `vitality_theme_color` REGEXP '^#[0-9A-F]{6}$'",
+        "BINARY `calm_theme_color` REGEXP '^#[0-9A-F]{6}$'",
+    ]:
+        assert expected in canonical
+
+    assert "theme_gradient_enabled" not in canonical
+    assert "app_settings" not in canonical

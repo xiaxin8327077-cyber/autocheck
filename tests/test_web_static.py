@@ -2984,6 +2984,15 @@ def test_v21_changelog_documents_interface_radius_concisely():
     assert body.count("新增界面圆角个性化设置") == 1
     assert "1–15px" not in body
     assert "导航、卡片、按钮" not in body
+    for verbose_theme_detail in [
+        "全局纯色主题",
+        "主题色",
+        "折线图风格",
+        "#3F6FAF",
+        "#355F63",
+        "#RRGGBB",
+    ]:
+        assert verbose_theme_detail not in body
     assert 'const DEFAULT_VERSION = "v2.1";' in app_js
 
 
