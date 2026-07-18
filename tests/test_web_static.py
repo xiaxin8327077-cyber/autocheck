@@ -5545,7 +5545,8 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert footer is not None
     assert "flex: 0 0 auto" in footer.group("body")
     assert "position: relative" in footer.group("body")
-    assert "border-top" in footer.group("body")
+    assert "background: var(--surface-container-lowest)" in footer.group("body")
+    assert "border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest))" in footer.group("body")
 
     section = re.search(r"(?m)^\.history-section\s*\{(?P<body>.*?)\}", css, re.S)
     assert section is not None
@@ -5586,8 +5587,24 @@ def test_history_detail_modal_layout_keeps_tables_readable():
 
     summary_value = re.search(r"(?m)^\.history-summary-item strong\s*\{\s*min-width: 0;(?P<body>.*?)\}", css, re.S)
     assert summary_value is not None
+    assert "color: color-mix(in srgb, var(--on-surface) 90%, var(--surface-container-lowest))" in summary_value.group("body")
+    assert "font-weight: 500" in summary_value.group("body")
     assert "overflow-wrap: break-word" in summary_value.group("body")
     assert "word-break: normal" in summary_value.group("body")
+
+    summary_label = re.search(r"(?m)^\.history-summary-item span\s*\{(?P<body>.*?)\}", css, re.S)
+    assert summary_label is not None
+    assert "color: color-mix(in srgb, var(--on-surface-variant) 58%, var(--surface-container-lowest))" in summary_label.group("body")
+
+    section_title = re.search(r"(?m)^\.history-section-title\s*\{(?P<body>.*?)\}", css, re.S)
+    assert section_title is not None
+    assert "color: color-mix(in srgb, var(--on-surface) 90%, var(--surface-container-lowest))" in section_title.group("body")
+    assert "font-weight: 500" in section_title.group("body")
+
+    section_count = re.search(r"(?m)^\.history-section-title > span:last-child\s*\{(?P<body>.*?)\}", css, re.S)
+    assert section_count is not None
+    assert "color: color-mix(in srgb, var(--on-surface-variant) 40%, var(--surface-container-lowest))" in section_count.group("body")
+    assert "font-weight: 400" in section_count.group("body")
     assert '[data-color-mode="dark"] .history-summary-item' in css
     assert '[data-color-mode="dark"] .history-result-table td' in css
     assert '[data-color-mode="dark"] .history-result-table th' in css

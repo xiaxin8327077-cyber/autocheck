@@ -3897,8 +3897,8 @@ th {
   justify-content: flex-end;
   flex: 0 0 auto;
   padding: 12px 14px;
-  background: var(--surface-container-low);
-  border-top: 1px solid var(--outline-variant);
+  background: var(--surface-container-lowest);
+  border-top: 1px solid color-mix(in srgb, var(--outline-variant) 28%, var(--surface-container-lowest));
 }
 
 .history-detail-card .history-detail-footer .btn-primary {
@@ -3940,13 +3940,13 @@ th {
 }
 
 .history-summary-item span {
-  color: var(--on-surface-variant);
+  color: color-mix(in srgb, var(--on-surface-variant) 58%, var(--surface-container-lowest));
   background: transparent;
 }
 
 .history-summary-item strong {
   min-width: 0;
-  color: var(--on-surface);
+  color: color-mix(in srgb, var(--on-surface) 90%, var(--surface-container-lowest));
   font-weight: 500;
   overflow-wrap: break-word;
   word-break: normal;
@@ -4005,7 +4005,7 @@ th {
   border: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--on-surface);
+  color: color-mix(in srgb, var(--on-surface) 90%, var(--surface-container-lowest));
   background: transparent;
 }
 
@@ -4015,8 +4015,8 @@ th {
 
 .history-section-title > span:last-child {
   font-size: 12px;
-  font-weight: 500;
-  color: var(--on-surface-variant);
+  font-weight: 400;
+  color: color-mix(in srgb, var(--on-surface-variant) 40%, var(--surface-container-lowest));
 }
 
 .history-section-bar {
@@ -4064,7 +4064,7 @@ th {
 }
 
 [data-color-mode="dark"] .history-summary-item strong {
-  color: #f8fafc;
+  color: color-mix(in srgb, var(--on-surface) 88%, var(--surface-container-lowest));
 }
 
 .history-result-table td.money-cell {
@@ -4098,7 +4098,11 @@ th {
 }
 
 [data-color-mode="dark"] .history-summary-item span {
-  color: #cbd5e1;
+  color: color-mix(in srgb, var(--on-surface-variant) 62%, var(--surface-container-lowest));
+}
+
+[data-color-mode="dark"] .history-section-title > span:last-child {
+  color: color-mix(in srgb, var(--on-surface-variant) 58%, var(--surface-container-lowest));
 }
 
 [data-color-mode="dark"] .history-result-table th {
