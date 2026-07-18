@@ -8974,6 +8974,108 @@ input:focus, select:focus {
   text-align: right;
 }
 
+#page-settings .card-interface .setting-item--switch,
+#page-settings .card-interface .setting-item--line-style {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+#page-settings #interfaceThemeGradientToggle {
+  appearance: none;
+  position: relative;
+  width: 44px;
+  height: 24px;
+  margin: 0;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: var(--surface-container-high);
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+
+#page-settings #interfaceThemeGradientToggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--on-surface-variant);
+  transition: transform 0.18s ease, background-color 0.18s ease;
+}
+
+#page-settings #interfaceThemeGradientToggle:checked {
+  border-color: var(--secondary);
+  background: var(--secondary);
+}
+
+#page-settings #interfaceThemeGradientToggle:checked::after {
+  transform: translateX(20px);
+  background: var(--on-secondary);
+}
+
+#page-settings #interfaceThemeGradientToggle:focus-visible,
+#page-settings #interfaceLineChartStyle label:has(input:focus-visible) {
+  outline: 2px solid var(--secondary);
+  outline-offset: 3px;
+}
+
+#page-settings #interfaceThemeGradientToggle:disabled,
+#page-settings #interfaceLineChartStyle input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+#page-settings #interfaceLineChartStyle label:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+#page-settings #interfaceLineChartStyle {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: var(--surface-container-low);
+}
+
+#page-settings #interfaceLineChartStyle label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 11px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#page-settings #interfaceLineChartStyle label + label {
+  border-left: 1px solid var(--outline-variant);
+}
+
+#page-settings #interfaceLineChartStyle input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+}
+
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  color: var(--on-secondary);
+  background: var(--secondary);
+}
+
+[data-color-mode="dark"] #page-settings #interfaceLineChartStyle {
+  border-color: color-mix(in srgb, var(--secondary) 45%, var(--outline-variant));
+  background: var(--surface-container);
+}
+
+[data-color-mode="dark"] #page-settings #interfaceThemeGradientToggle:not(:checked) {
+  background: var(--surface-container);
+}
+
 #page-settings .card-interface .settings-actions {
   margin-top: auto;
 }

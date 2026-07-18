@@ -530,19 +530,28 @@ function applySavedUserTheme() {
 }
 
 // Interface radius start
-const DEFAULT_INTERFACE_RADIUS_PX = 4;
+const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({
+  radiusPx: 4,
+  themeGradientEnabled: false,
+  lineChartStyle: "straight",
+});
+const DEFAULT_INTERFACE_RADIUS_PX = DEFAULT_INTERFACE_PREFERENCES.radiusPx;
 const MIN_INTERFACE_RADIUS_PX = 1;
 const MAX_INTERFACE_RADIUS_PX = 15;
 const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;
 const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
+const LAST_INTERFACE_GRADIENT_CACHE_KEY = "autoCheckLastInterfaceThemeGradient";
 const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
 const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
+const interfaceThemeGradientToggle = document.getElementById("interfaceThemeGradientToggle");
+const interfaceLineChartStyleStraight = document.getElementById("interfaceLineChartStyleStraight");
+const interfaceLineChartStyleSmooth = document.getElementById("interfaceLineChartStyleSmooth");
 const interfaceSettingsStatus = document.getElementById("interfaceSettingsStatus");
 const saveInterfaceSettingsBtn = document.getElementById("saveInterfaceSettingsBtn");
 const resetInterfaceSettingsBtn = document.getElementById("resetInterfaceSettingsBtn");
 const interfaceRadiusState = {
-  savedRadiusPx: DEFAULT_INTERFACE_RADIUS_PX,
-  draftRadiusPx: DEFAULT_INTERFACE_RADIUS_PX,
+  savedPreferences: { ...DEFAULT_INTERFACE_PREFERENCES },
+  draftPreferences: { ...DEFAULT_INTERFACE_PREFERENCES },
   loaded: false,
   loadFailed: false,
   saving: false,
@@ -553,6 +562,22 @@ const interfaceRadiusState = {
   editRevision: 0,
   serverMutationRevision: 0,
 };
+
+function copyInterfacePreferences(preferences) {
+  return {
+    radiusPx: preferences.radiusPx,
+    themeGradientEnabled: preferences.themeGradientEnabled,
+    lineChartStyle: preferences.lineChartStyle,
+  };
+}
+
+function interfacePreferencesMatch(left, right) {
+  return (
+    left.radiusPx === right.radiusPx
+    && left.themeGradientEnabled === right.themeGradientEnabled
+    && left.lineChartStyle === right.lineChartStyle
+  );
+}
 
 function normalizeInterfaceRadius(radiusPx) {
   if (
@@ -565,12 +590,19 @@ function normalizeInterfaceRadius(radiusPx) {
   return DEFAULT_INTERFACE_RADIUS_PX;
 }
 
-function cacheAuthenticatedInterfaceRadius(radiusPx) {
-  const normalizedRadiusPx = normalizeInterfaceRadius(radiusPx);
+function cacheAuthenticatedInterfacePreferences(preferences) {
+  const normalizedRadiusPx = normalizeInterfaceRadius(preferences.radiusPx);
   try {
     localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));
+    localStorage.setItem(
+      LAST_INTERFACE_GRADIENT_CACHE_KEY,
+      preferences.themeGradientEnabled ? "true" : "false",
+    );
   } catch (_) {}
-  return normalizedRadiusPx;
+  return {
+    ...preferences,
+    radiusPx: normalizedRadiusPx,
+  };
 }
 
 function applyInterfaceRadius(radiusPx) {
@@ -579,21 +611,37 @@ function applyInterfaceRadius(radiusPx) {
   return normalizedRadiusPx;
 }
 
-function readInterfaceRadiusPayload(payload) {
+function applyInterfacePreferences(preferences) {
+  const normalizedRadiusPx = applyInterfaceRadius(preferences.radiusPx);
+  document.documentElement.dataset.themeGradient = String(preferences.themeGradientEnabled);
+  return {
+    ...preferences,
+    radiusPx: normalizedRadiusPx,
+  };
+}
+
+function readInterfacePreferencesPayload(payload) {
   const radiusPx = payload?.settings?.radius_px;
+  const themeGradientEnabled = payload?.settings?.theme_gradient_enabled;
+  const lineChartStyle = payload?.settings?.line_chart_style;
   if (
     !Number.isInteger(radiusPx)
     || radiusPx < MIN_INTERFACE_RADIUS_PX
     || radiusPx > MAX_INTERFACE_RADIUS_PX
+    || typeof themeGradientEnabled !== "boolean"
+    || !["straight", "smooth"].includes(lineChartStyle)
   ) {
-    throw new Error("界面圆角响应无效");
+    throw new Error("界面设置响应无效");
   }
-  return radiusPx;
+  return { radiusPx, themeGradientEnabled, lineChartStyle };
 }
 
 function syncInterfaceRadiusDirtyStatus() {
   interfaceRadiusState.statusText = (
-    interfaceRadiusState.draftRadiusPx === interfaceRadiusState.savedRadiusPx
+    interfacePreferencesMatch(
+      interfaceRadiusState.draftPreferences,
+      interfaceRadiusState.savedPreferences,
+    )
       ? "已保存"
       : "正在预览，尚未保存"
   );
@@ -602,11 +650,23 @@ function syncInterfaceRadiusDirtyStatus() {
 
 function renderInterfaceRadiusPreference() {
   if (interfaceRadiusSlider) {
-    interfaceRadiusSlider.value = String(interfaceRadiusState.draftRadiusPx);
+    interfaceRadiusSlider.value = String(interfaceRadiusState.draftPreferences.radiusPx);
     interfaceRadiusSlider.disabled = interfaceRadiusState.saving;
   }
   if (interfaceRadiusValue) {
-    interfaceRadiusValue.textContent = `${interfaceRadiusState.draftRadiusPx}px`;
+    interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;
+  }
+  if (interfaceThemeGradientToggle) {
+    interfaceThemeGradientToggle.checked = interfaceRadiusState.draftPreferences.themeGradientEnabled;
+    interfaceThemeGradientToggle.disabled = interfaceRadiusState.saving;
+  }
+  if (interfaceLineChartStyleStraight) {
+    interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";
+    interfaceLineChartStyleStraight.disabled = interfaceRadiusState.saving;
+  }
+  if (interfaceLineChartStyleSmooth) {
+    interfaceLineChartStyleSmooth.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "smooth";
+    interfaceLineChartStyleSmooth.disabled = interfaceRadiusState.saving;
   }
   if (interfaceSettingsStatus) {
     interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;
@@ -627,21 +687,21 @@ function resetInterfaceRadiusForAuthChange() {
   interfaceRadiusState.authRevision += 1;
   interfaceRadiusState.editRevision += 1;
   interfaceRadiusState.serverMutationRevision += 1;
-  interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
-  interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+  interfaceRadiusState.savedPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+  interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
   interfaceRadiusState.loaded = false;
   interfaceRadiusState.loadFailed = false;
   interfaceRadiusState.saving = false;
   interfaceRadiusState.statusText = "已保存";
-  applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
+  applyInterfacePreferences(DEFAULT_INTERFACE_PREFERENCES);
   renderInterfaceRadiusPreference();
   return interfaceRadiusState.authRevision;
 }
 
 function captureInterfaceRadiusPreference() {
   return {
-    savedRadiusPx: interfaceRadiusState.savedRadiusPx,
-    draftRadiusPx: interfaceRadiusState.draftRadiusPx,
+    savedPreferences: copyInterfacePreferences(interfaceRadiusState.savedPreferences),
+    draftPreferences: copyInterfacePreferences(interfaceRadiusState.draftPreferences),
     loaded: interfaceRadiusState.loaded,
     loadFailed: interfaceRadiusState.loadFailed,
     statusText: interfaceRadiusState.statusText,
@@ -655,13 +715,13 @@ function restoreInterfaceRadiusPreference(snapshot, expectedAuthRevision) {
   interfaceRadiusState.authRevision += 1;
   interfaceRadiusState.editRevision += 1;
   interfaceRadiusState.serverMutationRevision += 1;
-  interfaceRadiusState.savedRadiusPx = snapshot.savedRadiusPx;
-  interfaceRadiusState.draftRadiusPx = snapshot.draftRadiusPx;
+  interfaceRadiusState.savedPreferences = copyInterfacePreferences(snapshot.savedPreferences);
+  interfaceRadiusState.draftPreferences = copyInterfacePreferences(snapshot.draftPreferences);
   interfaceRadiusState.loaded = snapshot.loaded;
   interfaceRadiusState.loadFailed = snapshot.loadFailed;
   interfaceRadiusState.saving = false;
   interfaceRadiusState.statusText = snapshot.statusText;
-  applyInterfaceRadius(snapshot.draftRadiusPx);
+  applyInterfacePreferences(snapshot.draftPreferences);
   renderInterfaceRadiusPreference();
   return true;
 }
@@ -672,7 +732,10 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
   const editRevision = interfaceRadiusState.editRevision;
   const mutationRevision = interfaceRadiusState.serverMutationRevision;
   const hadUnsavedDraft = (
-    interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx
+    !interfacePreferencesMatch(
+      interfaceRadiusState.draftPreferences,
+      interfaceRadiusState.savedPreferences,
+    )
   );
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS);
@@ -684,14 +747,14 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     ) {
       return false;
     }
-    const radiusPx = readInterfaceRadiusPayload(payload);
-    interfaceRadiusState.savedRadiusPx = radiusPx;
+    const preferences = readInterfacePreferencesPayload(payload);
+    interfaceRadiusState.savedPreferences = copyInterfacePreferences(preferences);
     interfaceRadiusState.loaded = true;
     interfaceRadiusState.loadFailed = false;
-    cacheAuthenticatedInterfaceRadius(radiusPx);
+    cacheAuthenticatedInterfacePreferences(preferences);
     if (!hadUnsavedDraft && editRevision === interfaceRadiusState.editRevision) {
-      interfaceRadiusState.draftRadiusPx = radiusPx;
-      applyInterfaceRadius(radiusPx);
+      interfaceRadiusState.draftPreferences = copyInterfacePreferences(preferences);
+      applyInterfacePreferences(preferences);
     }
     syncInterfaceRadiusDirtyStatus();
     renderInterfaceRadiusPreference();
@@ -706,18 +769,18 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     const editedDuringRequest = editRevision !== interfaceRadiusState.editRevision;
     const preserveDraft = hadUnsavedDraft || editedDuringRequest;
     if (!interfaceRadiusState.loaded) {
-      interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
+      interfaceRadiusState.savedPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
       if (preserveDraft) {
         syncInterfaceRadiusDirtyStatus();
       } else {
-        interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
-        applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);
+        interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+        applyInterfacePreferences(DEFAULT_INTERFACE_PREFERENCES);
         interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";
       }
     } else if (editedDuringRequest) {
       syncInterfaceRadiusDirtyStatus();
     } else {
-      interfaceRadiusState.statusText = `加载失败，继续使用 ${interfaceRadiusState.draftRadiusPx}px`;
+      interfaceRadiusState.statusText = `加载失败，继续使用 ${interfaceRadiusState.draftPreferences.radiusPx}px`;
     }
     interfaceRadiusState.loadFailed = true;
     renderInterfaceRadiusPreference();
@@ -744,17 +807,21 @@ async function saveInterfaceRadiusPreference() {
   try {
     const payload = await api("/api/settings/interface", {
       method: "POST",
-      body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx }),
+      body: JSON.stringify({
+        radius_px: interfaceRadiusState.draftPreferences.radiusPx,
+        theme_gradient_enabled: interfaceRadiusState.draftPreferences.themeGradientEnabled,
+        line_chart_style: interfaceRadiusState.draftPreferences.lineChartStyle,
+      }),
     });
     if (!isCurrentRequest()) return false;
-    const savedRadiusPx = readInterfaceRadiusPayload(payload);
-    interfaceRadiusState.savedRadiusPx = savedRadiusPx;
-    interfaceRadiusState.draftRadiusPx = savedRadiusPx;
+    const savedPreferences = readInterfacePreferencesPayload(payload);
+    interfaceRadiusState.savedPreferences = copyInterfacePreferences(savedPreferences);
+    interfaceRadiusState.draftPreferences = copyInterfacePreferences(savedPreferences);
     interfaceRadiusState.loaded = true;
     interfaceRadiusState.loadFailed = false;
     interfaceRadiusState.statusText = "保存成功";
-    applyInterfaceRadius(savedRadiusPx);
-    cacheAuthenticatedInterfaceRadius(savedRadiusPx);
+    applyInterfacePreferences(savedPreferences);
+    cacheAuthenticatedInterfacePreferences(savedPreferences);
     return true;
   } catch (error) {
     if (!isCurrentRequest()) return false;
@@ -771,28 +838,56 @@ async function saveInterfaceRadiusPreference() {
 
 function discardUnsavedInterfaceRadius() {
   interfaceRadiusState.loadRequestId += 1;
-  const changed = interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx;
-  interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;
-  applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);
+  const changed = !interfacePreferencesMatch(
+    interfaceRadiusState.draftPreferences,
+    interfaceRadiusState.savedPreferences,
+  );
+  interfaceRadiusState.draftPreferences = copyInterfacePreferences(interfaceRadiusState.savedPreferences);
+  applyInterfacePreferences(interfaceRadiusState.savedPreferences);
   syncInterfaceRadiusDirtyStatus();
   renderInterfaceRadiusPreference();
   return changed;
 }
 
-interfaceRadiusSlider?.addEventListener("input", () => {
+function updateInterfacePreferenceDraft(change) {
   if (interfaceRadiusState.saving) return;
   interfaceRadiusState.editRevision += 1;
-  interfaceRadiusState.draftRadiusPx = normalizeInterfaceRadius(Number(interfaceRadiusSlider.value));
-  applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);
+  interfaceRadiusState.draftPreferences = {
+    ...interfaceRadiusState.draftPreferences,
+    ...change,
+  };
+  applyInterfacePreferences(interfaceRadiusState.draftPreferences);
   syncInterfaceRadiusDirtyStatus();
   renderInterfaceRadiusPreference();
+}
+
+interfaceRadiusSlider?.addEventListener("input", () => {
+  updateInterfacePreferenceDraft({
+    radiusPx: normalizeInterfaceRadius(Number(interfaceRadiusSlider.value)),
+  });
+});
+
+interfaceThemeGradientToggle?.addEventListener("input", () => {
+  updateInterfacePreferenceDraft({ themeGradientEnabled: interfaceThemeGradientToggle.checked });
+});
+
+interfaceLineChartStyleStraight?.addEventListener("input", () => {
+  if (interfaceLineChartStyleStraight.checked) {
+    updateInterfacePreferenceDraft({ lineChartStyle: "straight" });
+  }
+});
+
+interfaceLineChartStyleSmooth?.addEventListener("input", () => {
+  if (interfaceLineChartStyleSmooth.checked) {
+    updateInterfacePreferenceDraft({ lineChartStyle: "smooth" });
+  }
 });
 
 resetInterfaceSettingsBtn?.addEventListener("click", () => {
   if (interfaceRadiusState.saving) return;
   interfaceRadiusState.editRevision += 1;
-  interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;
-  applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);
+  interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+  applyInterfacePreferences(interfaceRadiusState.draftPreferences);
   syncInterfaceRadiusDirtyStatus();
   renderInterfaceRadiusPreference();
 });

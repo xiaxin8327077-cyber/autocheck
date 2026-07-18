@@ -51,6 +51,7 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         class FakeElement {
           constructor(value = "") {
             this.value = value;
+            this.checked = false;
             this.textContent = "";
             this.disabled = false;
             this.listeners = new Map();
@@ -75,6 +76,9 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         const elements = {
           interfaceRadiusSlider: new FakeElement("4"),
           interfaceRadiusValue: new FakeElement(),
+          interfaceThemeGradientToggle: new FakeElement(),
+          interfaceLineChartStyleStraight: new FakeElement("straight"),
+          interfaceLineChartStyleSmooth: new FakeElement("smooth"),
           interfaceSettingsStatus: new FakeElement(),
           saveInterfaceSettingsBtn: new FakeElement(),
           resetInterfaceSettingsBtn: new FakeElement(),
@@ -108,6 +112,8 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         const apiCalls = [];
         const toasts = [];
         const sessionStorageRemovals = [];
+        const storageValues = new Map();
+        const storageWrites = [];
         const authState = { csrfToken: "old-token", user: { id: "old-user", role: "admin" } };
         const USER_AVATAR_SESSION_KEY = "avatar-key";
         globalThis.window = {
@@ -115,6 +121,14 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         };
         globalThis.sessionStorage = {
           removeItem: (key) => sessionStorageRemovals.push(key),
+        };
+        globalThis.localStorage = {
+          getItem: (key) => storageValues.get(key) ?? null,
+          setItem: (key, value) => {
+            storageValues.set(key, String(value));
+            storageWrites.push({ key, value: String(value) });
+          },
+          removeItem: (key) => storageValues.delete(key),
         };
         let apiImpl = async () => ({ settings: { radius_px: 4 } });
         let fetchImpl = async () => ({
@@ -127,9 +141,23 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         });
         let confirmResult = true;
         let revealCount = 0;
+        let adaptLegacyRadiusResponses = true;
+        function legacyRadiusResponse(payload) {
+          const settings = payload?.settings;
+          if (!settings || !Object.hasOwn(settings, "radius_px")) return payload;
+          return {
+            ...payload,
+            settings: {
+              theme_gradient_enabled: false,
+              line_chart_style: "straight",
+              ...settings,
+            },
+          };
+        }
         async function api(path, options = {}) {
           apiCalls.push({ path, options });
-          return apiImpl(path, options);
+          const payload = await apiImpl(path, options);
+          return adaptLegacyRadiusResponses ? legacyRadiusResponse(payload) : payload;
         }
         async function fetch(path, options = {}) {
           return fetchImpl(path, options);
@@ -169,6 +197,8 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
           load: loadInterfaceRadiusPreference,
           save: saveInterfaceRadiusPreference,
           discard: discardUnsavedInterfaceRadius,
+          resetAuth: resetInterfaceRadiusForAuthChange,
+          useStrictResponses: () => { adaptLegacyRadiusResponses = false; },
           ensureAuthenticated,
           logout,
           authState,
@@ -176,6 +206,8 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
           cssVariables,
           apiCalls,
           toasts,
+          storageValues,
+          storageWrites,
           runAllTimers,
           timerCount: () => timers.size,
           revealCount: () => revealCount,
@@ -201,6 +233,198 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
     script_path = tmp_path / "interface_radius_state_machine.cjs"
     script_path.write_text(script, encoding="utf-8")
     subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_state_contract(tmp_path):
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert '<input id="interfaceThemeGradientToggle" type="checkbox" role="switch">' in html
+    assert (
+        '<div id="interfaceLineChartStyle" role="radiogroup" aria-label="折线图风格">'
+        in html
+    )
+    assert re.search(
+        r'<input id="interfaceLineChartStyleStraight" type="radio" '
+        r'name="interfaceLineChartStyle" value="straight" checked>',
+        html,
+    )
+    assert re.search(
+        r'<input id="interfaceLineChartStyleSmooth" type="radio" '
+        r'name="interfaceLineChartStyle" value="smooth">',
+        html,
+    )
+    assert re.findall(
+        r'<input[^>]+name="interfaceLineChartStyle"[^>]+value="([^"]+)"',
+        html,
+    ) == ["straight", "smooth"]
+    assert html.count('id="interfaceThemeGradientToggle"') == 1
+    assert html.index('value="straight" checked') < html.index('value="smooth"')
+    assert 'type="color"' not in html
+    assert "HEX" not in html
+    assert "tension" not in html.lower()
+
+    for selector in (
+        "#page-settings #interfaceThemeGradientToggle",
+        "#page-settings #interfaceLineChartStyle",
+        "#page-settings #interfaceLineChartStyle label:has(input:focus-visible)",
+        "#page-settings #interfaceLineChartStyle label:has(input:disabled)",
+        '[data-color-mode="dark"] #page-settings #interfaceLineChartStyle',
+    ):
+        assert selector in css
+
+    assert "同时控制活力和沉稳主题的主按钮、选中项和重点图标" in html
+    assert "统一控制系统折线图的数据点连接方式" in html
+
+    assert "const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({" in app_js
+    for field in (
+        "radiusPx: 4",
+        "themeGradientEnabled: false",
+        'lineChartStyle: "straight"',
+        "savedPreferences:",
+        "draftPreferences:",
+        "function readInterfacePreferencesPayload(payload)",
+        "function applyInterfacePreferences(preferences)",
+        "function cacheAuthenticatedInterfacePreferences(preferences)",
+    ):
+        assert field in app_js
+    assert "Object.defineProperties(interfaceRadiusState" not in app_js
+
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 4,
+          themeGradientEnabled: false,
+          lineChartStyle: "straight",
+        });
+        assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
+
+        h.elements.interfaceThemeGradientToggle.checked = true;
+        h.elements.interfaceThemeGradientToggle.dispatch("input");
+        assert.equal(h.state.draftPreferences.themeGradientEnabled, true);
+        assert.equal(document.documentElement.dataset.themeGradient, "true");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+
+        h.elements.interfaceLineChartStyleSmooth.checked = true;
+        h.elements.interfaceLineChartStyleSmooth.dispatch("input");
+        assert.equal(h.state.draftPreferences.lineChartStyle, "smooth");
+
+        let postBody = null;
+        apiImpl = async (_path, options) => {
+          postBody = JSON.parse(options.body);
+          return { settings: {
+            radius_px: 4,
+            theme_gradient_enabled: true,
+            line_chart_style: "smooth",
+          } };
+        };
+        assert.equal(await h.save(), true);
+        assert.deepEqual(postBody, {
+          radius_px: 4,
+          theme_gradient_enabled: true,
+          line_chart_style: "smooth",
+        });
+        assert.deepEqual(h.state.savedPreferences, h.state.draftPreferences);
+
+        h.elements.interfaceThemeGradientToggle.checked = false;
+        h.elements.interfaceThemeGradientToggle.dispatch("input");
+        h.elements.interfaceLineChartStyleStraight.checked = true;
+        h.elements.interfaceLineChartStyleStraight.dispatch("input");
+        h.elements.interfaceRadiusSlider.value = "8";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        apiImpl = async () => ({ settings: {} });
+        assert.equal(await h.save(), false);
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 4,
+          themeGradientEnabled: true,
+          lineChartStyle: "smooth",
+        });
+        assert.deepEqual(h.state.draftPreferences, {
+          radiusPx: 8,
+          themeGradientEnabled: false,
+          lineChartStyle: "straight",
+        });
+        assert.equal(h.state.statusText, "保存失败");
+
+        assert.equal(h.discard(), true);
+        assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
+        assert.equal(document.documentElement.dataset.themeGradient, "true");
+        """,
+    )
+
+
+def test_interface_preferences_strict_payloads_and_success_only_display_cache(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const radiusCacheKey = "autoCheckLastInterfaceRadius";
+        const gradientCacheKey = "autoCheckLastInterfaceThemeGradient";
+        h.useStrictResponses();
+
+        apiImpl = async () => ({ settings: {
+          radius_px: 7,
+          theme_gradient_enabled: true,
+          line_chart_style: "smooth",
+        } });
+        assert.equal(await h.load({ silent: true }), true);
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 7,
+          themeGradientEnabled: true,
+          lineChartStyle: "smooth",
+        });
+        assert.equal(h.storageValues.get(radiusCacheKey), "7");
+        assert.equal(h.storageValues.get(gradientCacheKey), "true");
+        assert.equal(h.storageWrites.length, 2);
+
+        const invalidPayloads = [
+          { radius_px: 7, theme_gradient_enabled: "true", line_chart_style: "smooth" },
+          { radius_px: 7, theme_gradient_enabled: true, line_chart_style: "curve" },
+          { radius_px: 7, theme_gradient_enabled: true },
+        ];
+        for (const settings of invalidPayloads) {
+          h.resetAuth();
+          apiImpl = async () => ({ settings });
+          assert.equal(await h.load({ silent: true }), false);
+          assert.deepEqual(h.state.savedPreferences, {
+            radiusPx: 4,
+            themeGradientEnabled: false,
+            lineChartStyle: "straight",
+          });
+          assert.equal(h.storageValues.get(radiusCacheKey), "7");
+          assert.equal(h.storageValues.get(gradientCacheKey), "true");
+          assert.equal(h.storageWrites.length, 2);
+        }
+
+        apiImpl = async () => { throw new Error("load failed"); };
+        assert.equal(await h.load({ silent: true }), false);
+        assert.equal(h.storageWrites.length, 2);
+
+        h.elements.interfaceThemeGradientToggle.checked = true;
+        h.elements.interfaceThemeGradientToggle.dispatch("input");
+        h.elements.interfaceLineChartStyleSmooth.checked = true;
+        h.elements.interfaceLineChartStyleSmooth.dispatch("input");
+        apiImpl = async () => ({ settings: {
+          radius_px: 4,
+          theme_gradient_enabled: 1,
+          line_chart_style: "smooth",
+        } });
+        assert.equal(await h.save(), false);
+        assert.equal(h.state.savedPreferences.themeGradientEnabled, false);
+        assert.equal(h.state.draftPreferences.themeGradientEnabled, true);
+        assert.equal(h.storageWrites.length, 2);
+
+        fetchImpl = async () => ({
+          ok: false,
+          json: async () => ({ authenticated: false }),
+        });
+        await assert.rejects(() => h.ensureAuthenticated(), /login required/);
+        assert.equal(h.storageWrites.length, 2);
+        """,
+    )
 
 
 def test_reason_filter_contains_all_current_reasons():
@@ -3686,12 +3910,12 @@ def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallb
     assert "requestId !== interfaceRadiusState.loadRequestId" in load_body
     assert "mutationRevision !== interfaceRadiusState.serverMutationRevision" in load_body
     assert "editRevision === interfaceRadiusState.editRevision" in load_body
-    assert "const radiusPx = readInterfaceRadiusPayload(payload);" in load_body
+    assert "const preferences = readInterfacePreferencesPayload(payload);" in load_body
     assert "} catch (error) {" in load_body
     assert "if (!interfaceRadiusState.loaded)" in load_body
-    assert "interfaceRadiusState.savedRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in load_body
-    assert "interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in load_body
-    assert "applyInterfaceRadius(DEFAULT_INTERFACE_RADIUS_PX);" in load_body
+    assert "interfaceRadiusState.savedPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };" in load_body
+    assert "interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };" in load_body
+    assert "applyInterfacePreferences(DEFAULT_INTERFACE_PREFERENCES);" in load_body
     assert "interfaceRadiusState.loadFailed = true;" in load_body
     assert 'interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";' in load_body
     assert "if (!silent)" in load_body
@@ -3709,13 +3933,13 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert block is not None
     body = block.group("body")
 
-    assert "const DEFAULT_INTERFACE_RADIUS_PX = 4;" in body
+    assert "const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({" in body
     assert "const MIN_INTERFACE_RADIUS_PX = 1;" in body
     assert "const MAX_INTERFACE_RADIUS_PX = 15;" in body
     assert "const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;" in body
     for state_line in [
-        "savedRadiusPx: DEFAULT_INTERFACE_RADIUS_PX",
-        "draftRadiusPx: DEFAULT_INTERFACE_RADIUS_PX",
+        "savedPreferences: { ...DEFAULT_INTERFACE_PREFERENCES }",
+        "draftPreferences: { ...DEFAULT_INTERFACE_PREFERENCES }",
         "loaded: false",
         "loadFailed: false",
         "saving: false",
@@ -3752,13 +3976,15 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "localStorage" not in apply_body
 
     strict_payload = re.search(
-        r"function readInterfaceRadiusPayload\(payload\) \{(?P<body>.*?)\n\}",
+        r"function readInterfacePreferencesPayload\(payload\) \{(?P<body>.*?)\n\}",
         body,
         re.S,
     )
     assert strict_payload is not None
     strict_body = strict_payload.group("body")
     assert "payload?.settings?.radius_px" in strict_body
+    assert "payload?.settings?.theme_gradient_enabled" in strict_body
+    assert "payload?.settings?.line_chart_style" in strict_body
     assert "!Number.isInteger(radiusPx)" in strict_body
     assert "radiusPx < MIN_INTERFACE_RADIUS_PX" in strict_body
     assert "radiusPx > MAX_INTERFACE_RADIUS_PX" in strict_body
@@ -3771,8 +3997,10 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     )
     assert render is not None
     render_body = render.group("body")
-    assert "interfaceRadiusSlider.value = String(interfaceRadiusState.draftRadiusPx);" in render_body
-    assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftRadiusPx}px`;" in render_body
+    assert "interfaceRadiusSlider.value = String(interfaceRadiusState.draftPreferences.radiusPx);" in render_body
+    assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;" in render_body
+    assert "interfaceThemeGradientToggle.checked = interfaceRadiusState.draftPreferences.themeGradientEnabled;" in render_body
+    assert 'interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";' in render_body
     assert "interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;" in render_body
     assert "interfaceRadiusSlider.disabled = interfaceRadiusState.saving;" in render_body
     assert "saveInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;" in render_body
@@ -3798,8 +4026,8 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert loader is not None
     load_body = loader.group("body")
     load_success_body, load_catch_body = load_body.split("} catch (error) {", 1)
-    assert "cacheAuthenticatedInterfaceRadius(radiusPx);" in load_success_body
-    assert "cacheAuthenticatedInterfaceRadius(" not in load_catch_body
+    assert "cacheAuthenticatedInterfacePreferences(preferences);" in load_success_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in load_catch_body
 
 
 def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
@@ -3819,15 +4047,24 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     )
     assert slider_handler is not None
     slider_body = slider_handler.group("body")
-    assert "if (interfaceRadiusState.saving) return;" in slider_body
-    assert "interfaceRadiusState.editRevision += 1;" in slider_body
+    assert "updateInterfacePreferenceDraft({" in slider_body
     assert "normalizeInterfaceRadius(Number(interfaceRadiusSlider.value))" in slider_body
-    assert "interfaceRadiusState.draftRadiusPx =" in slider_body
-    assert "applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);" in slider_body
-    assert "syncInterfaceRadiusDirtyStatus();" in slider_body
     assert "api(" not in slider_body
     assert "POST" not in slider_body
-    assert "cacheAuthenticatedInterfaceRadius(" not in slider_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in slider_body
+
+    draft_updater = re.search(
+        r"function updateInterfacePreferenceDraft\(change\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert draft_updater is not None
+    draft_body = draft_updater.group("body")
+    assert "if (interfaceRadiusState.saving) return;" in draft_body
+    assert "interfaceRadiusState.editRevision += 1;" in draft_body
+    assert "interfaceRadiusState.draftPreferences = {" in draft_body
+    assert "applyInterfacePreferences(interfaceRadiusState.draftPreferences);" in draft_body
+    assert "syncInterfaceRadiusDirtyStatus();" in draft_body
 
     reset_handler = re.search(
         r'resetInterfaceSettingsBtn\?\.addEventListener\("click", \(\) => \{(?P<body>.*?)\n\}\);',
@@ -3838,13 +4075,13 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     reset_body = reset_handler.group("body")
     assert "if (interfaceRadiusState.saving) return;" in reset_body
     assert "interfaceRadiusState.editRevision += 1;" in reset_body
-    assert "interfaceRadiusState.draftRadiusPx = DEFAULT_INTERFACE_RADIUS_PX;" in reset_body
-    assert "applyInterfaceRadius(interfaceRadiusState.draftRadiusPx);" in reset_body
+    assert "interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };" in reset_body
+    assert "applyInterfacePreferences(interfaceRadiusState.draftPreferences);" in reset_body
     assert "syncInterfaceRadiusDirtyStatus();" in reset_body
-    assert "interfaceRadiusState.savedRadiusPx" not in reset_body
+    assert "interfaceRadiusState.savedPreferences" not in reset_body
     assert "api(" not in reset_body
     assert "POST" not in reset_body
-    assert "cacheAuthenticatedInterfaceRadius(" not in reset_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in reset_body
 
     save = re.search(
         r"async function saveInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
@@ -3858,21 +4095,26 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     assert "interfaceRadiusState.saving = true;" in save_body
     assert 'api("/api/settings/interface", {' in save_body
     assert 'method: "POST"' in save_body
-    assert "body: JSON.stringify({ radius_px: interfaceRadiusState.draftRadiusPx })" in save_body
-    assert "const savedRadiusPx = readInterfaceRadiusPayload(payload);" in save_body
-    assert "interfaceRadiusState.savedRadiusPx = savedRadiusPx;" in save_body
-    assert "interfaceRadiusState.draftRadiusPx = savedRadiusPx;" in save_body
+    for payload_field in (
+        "radius_px: interfaceRadiusState.draftPreferences.radiusPx",
+        "theme_gradient_enabled: interfaceRadiusState.draftPreferences.themeGradientEnabled",
+        "line_chart_style: interfaceRadiusState.draftPreferences.lineChartStyle",
+    ):
+        assert payload_field in save_body
+    assert "const savedPreferences = readInterfacePreferencesPayload(payload);" in save_body
+    assert "interfaceRadiusState.savedPreferences = copyInterfacePreferences(savedPreferences);" in save_body
+    assert "interfaceRadiusState.draftPreferences = copyInterfacePreferences(savedPreferences);" in save_body
     assert 'interfaceRadiusState.statusText = "保存成功";' in save_body
-    assert "applyInterfaceRadius(savedRadiusPx);" in save_body
-    assert "cacheAuthenticatedInterfaceRadius(savedRadiusPx);" in save_body
+    assert "applyInterfacePreferences(savedPreferences);" in save_body
+    assert "cacheAuthenticatedInterfacePreferences(savedPreferences);" in save_body
     assert "} catch (error) {" in save_body
     assert "} finally {" in save_body
     catch_body = save_body.split("} catch (error) {", 1)[1].split("} finally {", 1)[0]
     assert 'interfaceRadiusState.statusText = "保存失败";' in catch_body
-    assert "interfaceRadiusState.savedRadiusPx =" not in catch_body
-    assert "interfaceRadiusState.draftRadiusPx =" not in catch_body
-    assert "applyInterfaceRadius(" not in catch_body
-    assert "cacheAuthenticatedInterfaceRadius(" not in catch_body
+    assert "interfaceRadiusState.savedPreferences =" not in catch_body
+    assert "interfaceRadiusState.draftPreferences =" not in catch_body
+    assert "applyInterfacePreferences(" not in catch_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in catch_body
     finally_body = save_body.split("} finally {", 1)[1]
     assert "interfaceRadiusState.saving = false;" in finally_body
     assert "renderInterfaceRadiusPreference();" in finally_body
@@ -3884,9 +4126,9 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     )
     assert discard is not None
     discard_body = discard.group("body")
-    assert "interfaceRadiusState.draftRadiusPx !== interfaceRadiusState.savedRadiusPx" in discard_body
-    assert "interfaceRadiusState.draftRadiusPx = interfaceRadiusState.savedRadiusPx;" in discard_body
-    assert "applyInterfaceRadius(interfaceRadiusState.savedRadiusPx);" in discard_body
+    assert "!interfacePreferencesMatch(" in discard_body
+    assert "interfaceRadiusState.draftPreferences = copyInterfacePreferences(interfaceRadiusState.savedPreferences);" in discard_body
+    assert "applyInterfacePreferences(interfaceRadiusState.savedPreferences);" in discard_body
     assert "syncInterfaceRadiusDirtyStatus();" in discard_body
     assert "renderInterfaceRadiusPreference();" in discard_body
     assert "api(" not in discard_body
@@ -3948,11 +4190,15 @@ def test_interface_radius_settings_use_server_authority_with_login_display_cache
     body = block.group("body")
 
     assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in body
-    assert "function cacheAuthenticatedInterfaceRadius(radiusPx)" in body
+    assert 'const LAST_INTERFACE_GRADIENT_CACHE_KEY = "autoCheckLastInterfaceThemeGradient";' in body
+    assert "function cacheAuthenticatedInterfacePreferences(preferences)" in body
     assert "localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));" in body
+    assert "localStorage.setItem(" in body
+    assert "LAST_INTERFACE_GRADIENT_CACHE_KEY" in body
     assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
     assert "localStorage.removeItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
     assert app_js.count("localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY") == 1
+    assert app_js.count("LAST_INTERFACE_GRADIENT_CACHE_KEY") == 2
     assert "autoCheckRadius" not in app_js
 
 
@@ -3968,13 +4214,13 @@ def test_interface_radius_node_keeps_new_draft_when_older_get_finishes(tmp_path)
         await flushMicrotasks();
         h.elements.interfaceRadiusSlider.value = "9";
         h.elements.interfaceRadiusSlider.dispatch("input");
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
 
         getRequest.resolve({ settings: { radius_px: 4 } });
         assert.equal(await loading, true);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
         assert.equal(h.state.statusText, "正在预览，尚未保存");
         assert.equal(h.elements.interfaceSettingsStatus.textContent, "正在预览，尚未保存");
@@ -3999,15 +4245,15 @@ def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload
         };
 
         assert.equal(h.state.loaded, false);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         const staleSuccessLoading = h.load({ silent: false });
         await flushMicrotasks();
         h.elements.interfaceRadiusSlider.value = "9";
         h.elements.interfaceRadiusSlider.dispatch("input");
         assert.equal(h.discard(), true);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.state.loaded, false);
         assert.equal(h.state.loadFailed, false);
         assert.equal(h.state.statusText, "已保存");
@@ -4015,8 +4261,8 @@ def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload
 
         oldSuccess.resolve({ settings: { radius_px: 6 } });
         assert.equal(await staleSuccessLoading, false);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.state.loaded, false);
         assert.equal(h.state.loadFailed, false);
         assert.equal(h.state.statusText, "已保存");
@@ -4024,8 +4270,8 @@ def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload
         assert.equal(h.toasts.length, 0);
 
         assert.equal(await h.load({ silent: false }), true);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 6);
         assert.equal(h.state.loaded, true);
         assert.equal(h.cssVariables.get("--ui-radius"), "6px");
 
@@ -4036,8 +4282,8 @@ def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload
         assert.equal(h.discard(), true);
         oldFailure.reject(new Error("stale load failed"));
         assert.equal(await staleFailureLoading, false);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 6);
         assert.equal(h.state.loaded, true);
         assert.equal(h.state.loadFailed, false);
         assert.equal(h.state.statusText, "已保存");
@@ -4045,8 +4291,8 @@ def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload
         assert.equal(h.toasts.length, 0);
 
         assert.equal(await h.load({ silent: false }), true);
-        assert.equal(h.state.savedRadiusPx, 7);
-        assert.equal(h.state.draftRadiusPx, 7);
+        assert.equal(h.state.savedPreferences.radiusPx, 7);
+        assert.equal(h.state.draftPreferences.radiusPx, 7);
         assert.equal(h.state.loaded, true);
         assert.equal(h.cssVariables.get("--ui-radius"), "7px");
         assert.equal(h.toasts.length, 0);
@@ -4075,8 +4321,8 @@ def test_interface_radius_node_ignores_get_that_predates_successful_save(tmp_pat
 
         getRequest.resolve({ settings: { radius_px: 4 } });
         await loading;
-        assert.equal(h.state.savedRadiusPx, 9);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 9);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
         assert.equal(h.state.statusText, "保存成功");
         """,
@@ -4095,19 +4341,25 @@ def test_interface_radius_node_disables_and_guards_draft_controls_while_saving(t
         h.elements.interfaceRadiusSlider.dispatch("input");
         const saving = h.save();
         assert.equal(h.elements.interfaceRadiusSlider.disabled, true);
+        assert.equal(h.elements.interfaceThemeGradientToggle.disabled, true);
+        assert.equal(h.elements.interfaceLineChartStyleStraight.disabled, true);
+        assert.equal(h.elements.interfaceLineChartStyleSmooth.disabled, true);
         assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, true);
 
         h.elements.interfaceRadiusSlider.value = "8";
         h.elements.interfaceRadiusSlider.dispatch("input");
         h.elements.resetInterfaceSettingsBtn.dispatch("click");
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
 
         postRequest.resolve({ settings: { radius_px: 9 } });
         assert.equal(await saving, true);
-        assert.equal(h.state.savedRadiusPx, 9);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 9);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.elements.interfaceRadiusSlider.disabled, false);
+        assert.equal(h.elements.interfaceThemeGradientToggle.disabled, false);
+        assert.equal(h.elements.interfaceLineChartStyleStraight.disabled, false);
+        assert.equal(h.elements.interfaceLineChartStyleSmooth.disabled, false);
         assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, false);
         """,
     )
@@ -4120,7 +4372,7 @@ def test_interface_radius_node_derives_saved_status_when_draft_returns_to_baseli
         const h = radiusHarness;
 
         h.elements.resetInterfaceSettingsBtn.dispatch("click");
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.state.statusText, "已保存");
         assert.equal(h.elements.interfaceSettingsStatus.textContent, "已保存");
 
@@ -4129,7 +4381,7 @@ def test_interface_radius_node_derives_saved_status_when_draft_returns_to_baseli
         assert.equal(h.state.statusText, "正在预览，尚未保存");
         h.elements.interfaceRadiusSlider.value = "4";
         h.elements.interfaceRadiusSlider.dispatch("input");
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.state.statusText, "已保存");
         assert.equal(h.elements.interfaceSettingsStatus.textContent, "已保存");
         """,
@@ -4169,8 +4421,8 @@ def test_interface_radius_node_times_out_get_without_real_waiting(tmp_path):
         assert.equal(settled, true);
         assert.equal(result, false);
         assert.equal(h.timerCount(), 0);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
         assert.equal(h.state.statusText, "加载失败，当前使用默认 4px");
         assert.equal(h.toasts.length, 1);
@@ -4195,8 +4447,8 @@ def test_interface_radius_node_preserves_new_draft_when_current_get_fails(tmp_pa
         assert.equal(await loading, false);
         assert.equal(h.state.loaded, false);
         assert.equal(h.state.loadFailed, true);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
         assert.equal(h.state.statusText, "正在预览，尚未保存");
         assert.equal(h.toasts.length, 1);
@@ -4215,8 +4467,8 @@ def test_interface_radius_node_rejects_invalid_get_payload_as_load_failure(tmp_p
         assert.equal(result, false);
         assert.equal(h.state.loaded, false);
         assert.equal(h.state.loadFailed, true);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
         assert.equal(h.state.statusText, "加载失败，当前使用默认 4px");
         assert.equal(h.toasts.length, 0);
@@ -4237,8 +4489,8 @@ def test_interface_radius_node_rejects_invalid_post_without_losing_draft(tmp_pat
 
         const result = await h.save();
         assert.equal(result, false);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
         assert.equal(h.state.statusText, "保存失败");
         assert.equal(h.elements.interfaceSettingsStatus.textContent, "保存失败");
@@ -4268,8 +4520,8 @@ def test_interface_radius_auth_boundary_logout_resets_immediately_and_invalidate
         const loggingOut = h.logout();
         await flushMicrotasks();
 
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.state.loaded, false);
         assert.equal(h.state.loadFailed, false);
         assert.equal(h.state.saving, false);
@@ -4278,8 +4530,8 @@ def test_interface_radius_auth_boundary_logout_resets_immediately_and_invalidate
 
         oldGet.resolve({ settings: { radius_px: 12 } });
         assert.equal(await oldLoading, false);
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
 
         logoutRequest.resolve({});
@@ -4295,9 +4547,16 @@ def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path)
         tmp_path,
         """
         const h = radiusHarness;
-        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        h.useStrictResponses();
+        apiImpl = async () => ({ settings: {
+          radius_px: 8,
+          theme_gradient_enabled: true,
+          line_chart_style: "smooth",
+        } });
         assert.equal(await h.load({ silent: true }), true);
         assert.equal(h.cssVariables.get("--ui-radius"), "8px");
+        assert.equal(h.storageValues.get("autoCheckLastInterfaceThemeGradient"), "true");
+        assert.equal(h.storageWrites.length, 2);
 
         const oldGet = deferred();
         const newGet = deferred();
@@ -4313,22 +4572,38 @@ def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path)
         await flushMicrotasks();
 
         assert.equal(h.authState.user.id, "new-user");
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.state.loaded, false);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
         assert.equal(h.revealCount(), 0);
 
-        oldGet.resolve({ settings: { radius_px: 12 } });
+        oldGet.resolve({ settings: {
+          radius_px: 12,
+          theme_gradient_enabled: true,
+          line_chart_style: "smooth",
+        } });
         assert.equal(await oldLoading, false);
-        assert.equal(h.state.savedRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.storageValues.get("autoCheckLastInterfaceThemeGradient"), "true");
+        assert.equal(h.storageWrites.length, 2);
 
-        newGet.resolve({ settings: { radius_px: 6 } });
+        newGet.resolve({ settings: {
+          radius_px: 6,
+          theme_gradient_enabled: false,
+          line_chart_style: "straight",
+        } });
         await authenticating;
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 6);
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 6,
+          themeGradientEnabled: false,
+          lineChartStyle: "straight",
+        });
+        assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
         assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.storageValues.get("autoCheckLastInterfaceThemeGradient"), "false");
+        assert.equal(h.storageWrites.length, 4);
         assert.equal(h.revealCount(), 1);
         """,
     )
@@ -4341,13 +4616,13 @@ def test_interface_radius_node_keeps_dirty_draft_when_get_starts_after_edit(tmp_
         const h = radiusHarness;
         h.elements.interfaceRadiusSlider.value = "9";
         h.elements.interfaceRadiusSlider.dispatch("input");
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
 
         apiImpl = async () => ({ settings: { radius_px: 6 } });
         assert.equal(await h.load({ silent: false }), true);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
         assert.equal(h.state.statusText, "正在预览，尚未保存");
         """,
@@ -4382,8 +4657,8 @@ def test_interface_radius_node_rejects_get_started_while_post_is_pending(tmp_pat
 
         postRequest.reject(new Error("save failed"));
         assert.equal(await saving, false);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
         assert.equal(h.cssVariables.get("--ui-radius"), "9px");
         assert.equal(h.state.statusText, "保存失败");
         """,
@@ -4426,16 +4701,16 @@ def test_interface_radius_auth_reset_invalidates_old_post_success_and_finally(tm
 
         oldPost.resolve({ settings: { radius_px: 9 } });
         assert.equal(await oldSaving, false);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 7);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 7);
         assert.equal(h.cssVariables.get("--ui-radius"), "7px");
         assert.equal(h.state.saving, true);
         assert.equal(h.toasts.length, 0);
 
         newPost.resolve({ settings: { radius_px: 7 } });
         assert.equal(await newSaving, true);
-        assert.equal(h.state.savedRadiusPx, 7);
-        assert.equal(h.state.draftRadiusPx, 7);
+        assert.equal(h.state.savedPreferences.radiusPx, 7);
+        assert.equal(h.state.draftPreferences.radiusPx, 7);
         assert.equal(h.state.saving, false);
         """,
     )
@@ -4465,8 +4740,8 @@ def test_interface_radius_auth_reset_invalidates_old_post_failure(tmp_path):
 
         oldPost.reject(new Error("old user save failed"));
         assert.equal(await oldSaving, false);
-        assert.equal(h.state.savedRadiusPx, 6);
-        assert.equal(h.state.draftRadiusPx, 6);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 6);
         assert.equal(h.cssVariables.get("--ui-radius"), "6px");
         assert.equal(h.state.statusText, "已保存");
         assert.equal(h.state.saving, false);
@@ -4480,10 +4755,19 @@ def test_interface_radius_logout_failure_restores_dirty_snapshot(tmp_path):
         tmp_path,
         """
         const h = radiusHarness;
-        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        h.useStrictResponses();
+        apiImpl = async () => ({ settings: {
+          radius_px: 8,
+          theme_gradient_enabled: true,
+          line_chart_style: "smooth",
+        } });
         assert.equal(await h.load({ silent: true }), true);
         h.elements.interfaceRadiusSlider.value = "9";
         h.elements.interfaceRadiusSlider.dispatch("input");
+        h.elements.interfaceThemeGradientToggle.checked = false;
+        h.elements.interfaceThemeGradientToggle.dispatch("input");
+        h.elements.interfaceLineChartStyleStraight.checked = true;
+        h.elements.interfaceLineChartStyleStraight.dispatch("input");
 
         const logoutRequest = deferred();
         apiImpl = async (path) => {
@@ -4492,14 +4776,22 @@ def test_interface_radius_logout_failure_restores_dirty_snapshot(tmp_path):
         };
         const loggingOut = h.logout();
         await flushMicrotasks();
-        assert.equal(h.state.savedRadiusPx, 4);
-        assert.equal(h.state.draftRadiusPx, 4);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
         assert.equal(h.cssVariables.get("--ui-radius"), "4px");
 
         logoutRequest.reject(new Error("logout failed"));
         await loggingOut;
-        assert.equal(h.state.savedRadiusPx, 8);
-        assert.equal(h.state.draftRadiusPx, 9);
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 8,
+          themeGradientEnabled: true,
+          lineChartStyle: "smooth",
+        });
+        assert.deepEqual(h.state.draftPreferences, {
+          radiusPx: 9,
+          themeGradientEnabled: false,
+          lineChartStyle: "straight",
+        });
         assert.equal(h.state.loaded, true);
         assert.equal(h.state.loadFailed, false);
         assert.equal(h.state.saving, false);

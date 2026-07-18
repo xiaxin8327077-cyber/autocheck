@@ -1206,6 +1206,19 @@
                   <output id="interfaceRadiusValue">4px</output>
                   <span class="setting-hint">导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角</span>
                 </label>
+                <label class="setting-item setting-item--switch" for="interfaceThemeGradientToggle">
+                  <span class="setting-label">使用主题渐变</span>
+                  <input id="interfaceThemeGradientToggle" type="checkbox" role="switch">
+                  <span class="setting-hint">同时控制活力和沉稳主题的主按钮、选中项和重点图标</span>
+                </label>
+                <div class="setting-item setting-item--line-style">
+                  <span class="setting-label">折线图风格</span>
+                  <div id="interfaceLineChartStyle" role="radiogroup" aria-label="折线图风格">
+                    <label><input id="interfaceLineChartStyleStraight" type="radio" name="interfaceLineChartStyle" value="straight" checked>直线折线</label>
+                    <label><input id="interfaceLineChartStyleSmooth" type="radio" name="interfaceLineChartStyle" value="smooth">平滑曲线</label>
+                  </div>
+                  <span class="setting-hint">统一控制系统折线图的数据点连接方式</span>
+                </div>
                 <div class="settings-actions">
                   <button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm">保存界面设置</button>
                   <button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
