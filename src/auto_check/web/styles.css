@@ -12096,6 +12096,8 @@ input.custom-input-native:disabled {
 .flow-toast,
 .top-nav-status,
 .dark-mode-toggle,
+.sidebar-footer .status,
+#page-report-navigation .report-nav-refresh-button,
 .history-summary-item,
 .history-count-item,
 .history-section,
