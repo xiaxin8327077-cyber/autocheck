@@ -36,7 +36,7 @@ def test_system_interface_preferences_schema_is_guarded_and_contains_no_seed_dml
     assert normalized_sql.count(";") == 1
     assert "CREATE TABLE IF NOT EXISTS `system_interface_preferences`" in sql
     assert "`id` TINYINT UNSIGNED NOT NULL" in sql
-    assert "`vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3F6FAF'" in sql
+    assert "`vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3466D9'" in sql
     assert "`calm_theme_color` CHAR(7) NOT NULL DEFAULT '#355F63'" in sql
     assert "`updated_by` VARCHAR(64) NULL" in sql
     assert "`updated_at` DATETIME(6) NOT NULL" in sql
@@ -73,9 +73,9 @@ def test_system_interface_preferences_sqlalchemy_table_matches_unsigned_singleto
 
 
 def test_system_theme_models_and_normalization_are_strict_and_immutable():
-    assert SystemInterfacePreferences() == SystemInterfacePreferences("#3F6FAF", "#355F63", None)
-    assert EffectiveThemeColors() == EffectiveThemeColors("#3F6FAF", "#355F63")
-    assert normalize_theme_color("#3f6faf") == "#3F6FAF"
+    assert SystemInterfacePreferences() == SystemInterfacePreferences("#3466D9", "#355F63", None)
+    assert EffectiveThemeColors() == EffectiveThemeColors("#3466D9", "#355F63")
+    assert normalize_theme_color("#3466d9") == "#3466D9"
     assert normalize_theme_color(None, allow_none=True) is None
 
     with pytest.raises(ValueError, match=r"#RRGGBB"):
@@ -99,7 +99,7 @@ def test_malformed_system_fields_fall_back_independently():
     connection.tables["system_interface_preferences"].append(
         {
             "id": 1,
-            "vitality_theme_color": "#3f6faf",
+            "vitality_theme_color": "#3466d9",
             "calm_theme_color": "#112233",
             "updated_by": "admin-id",
             "updated_at": None,
@@ -107,7 +107,7 @@ def test_malformed_system_fields_fall_back_independently():
     )
 
     assert load_system_interface_preferences(connection) == SystemInterfacePreferences(
-        "#3F6FAF", "#112233", "admin-id"
+        "#3466D9", "#112233", "admin-id"
     )
 
 

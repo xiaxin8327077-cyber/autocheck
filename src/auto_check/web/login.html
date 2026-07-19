@@ -26,16 +26,14 @@
     </script>
     <script id="initialLoginThemeColorScript">
       (() => {
-        const LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY = "autoCheckLastEffectiveThemeColors";
         const DEFAULT_EFFECTIVE_THEME_COLORS = Object.freeze({
-          vitality: "#3F6FAF",
+          vitality: "#3466D9",
           calm: "#355F63",
         });
-        const PAGE_BACKGROUND_BASES = Object.freeze({
-          vitality: Object.freeze({ light: "#F8FAFC", dark: "#07111F" }),
-          calm: Object.freeze({ light: "#F7FAFC", dark: "#121318" }),
+        const LOGIN_PAGE_BACKGROUNDS = Object.freeze({
+          light: "radial-gradient(circle at 10% 14%, rgba(52, 102, 217, 0.17), transparent 46%), radial-gradient(circle at 98% 94%, rgba(255, 189, 56, 0.08), transparent 30%), linear-gradient(135deg, #EEF4FF 0%, #F8FAFC 58%, #FFFAF4 100%)",
+          dark: "radial-gradient(circle at 10% 14%, rgba(106, 164, 255, 0.16), transparent 46%), radial-gradient(circle at 98% 94%, rgba(217, 135, 17, 0.07), transparent 30%), linear-gradient(135deg, #111D35 0%, #141B29 58%, #211D18 100%)",
         });
-        const PAGE_BACKGROUND_MIX = Object.freeze({ light: 0.07, dark: 0.12 });
         const root = document.documentElement;
         let effectiveColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
 
@@ -93,22 +91,16 @@
         }
 
         function selectedThemeKey() {
-          try {
-            const activeUserKey = localStorage.getItem("autoCheckThemeUserKey") || "";
-            const userTheme = activeUserKey
-              ? localStorage.getItem(`autoCheckTheme:${activeUserKey}`)
-              : localStorage.getItem("autoCheckTheme");
-            return userTheme === "light" ? "calm" : "vitality";
-          } catch (_) {
-            return "vitality";
-          }
+          return "vitality";
         }
 
         function derivePalette(accent, mode, themeKey) {
           const surface = mode === "dark" ? "#121318" : "#F7FAFC";
-          const onAccent = contrastRatio(accent, "#000000") >= contrastRatio(accent, "#FFFFFF")
-            ? "#000000"
-            : "#FFFFFF";
+          const blackContrast = contrastRatio(accent, "#000000");
+          const whiteContrast = contrastRatio(accent, "#FFFFFF");
+          const onAccent = whiteContrast >= 4.5 || whiteContrast >= blackContrast
+            ? "#FFFFFF"
+            : "#000000";
           const readableTarget = mode === "dark" ? "#FFFFFF" : "#000000";
           let readableAccent = accent;
           for (let step = 1; contrastRatio(readableAccent, surface) < 4.5 && step <= 100; step += 1) {
@@ -119,25 +111,21 @@
             accent,
             onAccent,
             readableAccent,
+            gradientEnd: accent === "#3466D9" ? "#6AA4FF" : mixHex(accent, "#FFFFFF", 0.36),
             accentSoft: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${mode === "dark" ? "0.20" : "0.12"})`,
             focusRing: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${mode === "dark" ? "0.38" : "0.28"})`,
-            pageBackground: mixHex(
-              PAGE_BACKGROUND_BASES[themeKey][mode],
-              accent,
-              PAGE_BACKGROUND_MIX[mode],
-            ),
+            pageBackground: LOGIN_PAGE_BACKGROUNDS[mode],
           };
         }
 
-        function applyColors(colors = effectiveColors) {
-          effectiveColors = {
-            vitality: normalizeThemeHex(colors?.vitality) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality,
-            calm: normalizeThemeHex(colors?.calm) || DEFAULT_EFFECTIVE_THEME_COLORS.calm,
-          };
+        function applyColors() {
+          effectiveColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
           const themeKey = selectedThemeKey();
           const mode = root.getAttribute("data-login-theme") === "dark" ? "dark" : "light";
           const palette = derivePalette(effectiveColors[themeKey], mode, themeKey);
           root.style.setProperty("--theme-accent", palette.accent);
+          root.style.setProperty("--theme-accent-gradient-end", palette.gradientEnd);
+          root.style.setProperty("--theme-accent-gradient", `linear-gradient(90deg, ${palette.accent} 0%, ${palette.gradientEnd} 100%)`);
           root.style.setProperty("--theme-on-accent", palette.onAccent);
           root.style.setProperty("--theme-accent-readable", palette.readableAccent);
           root.style.setProperty("--theme-accent-soft", palette.accentSoft);
@@ -146,59 +134,11 @@
           return palette;
         }
 
-        function loadCachedColors() {
-          try {
-            const cached = JSON.parse(localStorage.getItem(LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY) || "{}");
-            return {
-              vitality: normalizeThemeHex(cached?.vitality) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality,
-              calm: normalizeThemeHex(cached?.calm) || DEFAULT_EFFECTIVE_THEME_COLORS.calm,
-            };
-          } catch (_) {
-            return { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-          }
-        }
-
-        async function refresh() {
-          try {
-            const response = await fetch("/api/settings/interface/theme-colors");
-            if (!response.ok) return false;
-            const payload = await response.json();
-            const source = payload?.colors?.system || payload?.colors?.effective;
-            if (!source || typeof source !== "object") return false;
-            applyColors({
-              vitality: normalizeThemeHex(source.vitality) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality,
-              calm: normalizeThemeHex(source.calm) || DEFAULT_EFFECTIVE_THEME_COLORS.calm,
-            });
-            return true;
-          } catch (_) {
-            return false;
-          }
-        }
-
-        function cacheSuccessful() {
-          const cached = {
-            vitality: normalizeThemeHex(effectiveColors.vitality),
-            calm: normalizeThemeHex(effectiveColors.calm),
-          };
-          if (!cached.vitality || !cached.calm) return false;
-          try {
-            localStorage.setItem(LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY, JSON.stringify(cached));
-          } catch (_) {}
-          return true;
-        }
-
-        try {
-          root.setAttribute(
-            "data-login-theme",
-            localStorage.getItem("autoCheckLoginTheme") === "dark" ? "dark" : "light",
-          );
-        } catch (_) {}
-        applyColors(loadCachedColors());
+        root.setAttribute("data-login-theme", "light");
+        applyColors();
         window.autoCheckLoginThemeColors = {
           apply: applyColors,
           reapply: () => applyColors(effectiveColors),
-          refresh,
-          cacheSuccessful,
           colors: () => ({ ...effectiveColors }),
         };
       })();
@@ -206,12 +146,17 @@
     <style>
       :root {
         --ui-radius: 4px;
-        --theme-accent: #3F6FAF;
+        --theme-accent: #3466D9;
+        --theme-accent-gradient-end: #6AA4FF;
+        --theme-accent-gradient: linear-gradient(90deg, #3466D9 0%, #6AA4FF 100%);
         --theme-on-accent: #FFFFFF;
-        --theme-accent-readable: #294B78;
-        --theme-accent-soft: rgba(63, 111, 175, 0.12);
-        --theme-focus-ring: rgba(63, 111, 175, 0.28);
-        --theme-page-background: #F3F7FB;
+        --theme-accent-readable: #3466D9;
+        --theme-accent-soft: rgba(52, 102, 217, 0.12);
+        --theme-focus-ring: rgba(52, 102, 217, 0.28);
+        --theme-page-background:
+          radial-gradient(circle at 10% 14%, rgba(52, 102, 217, 0.17), transparent 46%),
+          radial-gradient(circle at 98% 94%, rgba(255, 189, 56, 0.08), transparent 30%),
+          linear-gradient(135deg, #EEF4FF 0%, #F8FAFC 58%, #FFFAF4 100%);
         --surface: rgba(255, 255, 255, 0.88);
         --field-surface: #FFFFFF;
         --shadow-light: #ffffff;
@@ -316,7 +261,31 @@
         margin-bottom: 14px;
       }
 
-      .light-brand::before {
+      @keyframes lightBrandBubbleFloat {
+        0%, 10% { transform: translate3d(-28px, 7px, 0) scale(1); }
+        16% { transform: translate3d(-25px, -2px, 0) scale(1.002, 0.999); }
+        24% { transform: translate3d(-18px, -14px, 0) scale(0.998, 1.004); }
+        32% { transform: translate3d(-8px, -22px, 0) scale(0.994, 1.008); }
+        40% { transform: translate3d(4px, -12px, 0) scale(0.998, 1.004); }
+        48% { transform: translate3d(12px, 0, 0) scale(1.004, 0.998); }
+        56% { transform: translate3d(22px, 7px, 0) scale(1.008, 0.996); }
+        64% { transform: translate3d(32px, 0, 0) scale(1.004, 0.998); }
+        72% { transform: translate3d(40px, -12px, 0) scale(0.998, 1.004); }
+        80% { transform: translate3d(52px, -22px, 0) scale(0.994, 1.008); }
+        86% { transform: translate3d(58px, -16px, 0) scale(0.996, 1.006); }
+        91% { transform: translate3d(63px, -5px, 0) scale(1.002, 0.999); }
+        96%, 100% { transform: translate3d(68px, 7px, 0) scale(1); }
+      }
+
+      @keyframes lightBrandBubbleWarmth {
+        0%, 22% { opacity: 0; }
+        42% { opacity: 0.22; }
+        68% { opacity: 0.38; }
+        96%, 100% { opacity: 0.46; }
+      }
+
+      .light-brand::before,
+      .light-brand::after {
         content: "";
         position: absolute;
         width: 150px;
@@ -326,8 +295,21 @@
         z-index: 0;
         border-radius: 50%;
         pointer-events: none;
-        background: var(--theme-accent-soft);
-        box-shadow: 0 24px 54px var(--theme-accent-soft);
+        transform-origin: center;
+        will-change: transform, opacity;
+        animation: lightBrandBubbleFloat 14s linear infinite alternate;
+      }
+
+      .light-brand::before {
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(6, 182, 212, 0.12), rgba(124, 58, 237, 0.16));
+        box-shadow: 0 24px 54px rgba(37, 99, 235, 0.13);
+      }
+
+      .light-brand::after {
+        background: linear-gradient(135deg, rgba(245, 158, 11, 0.34), rgba(250, 204, 21, 0.28), rgba(251, 191, 36, 0.22));
+        box-shadow: 0 16px 36px rgba(217, 119, 6, 0.13);
+        opacity: 0;
+        animation: lightBrandBubbleFloat 14s linear infinite alternate, lightBrandBubbleWarmth 14s linear infinite alternate;
       }
 
       .login-brand-logo {
@@ -499,6 +481,7 @@
         border-radius: 14px;
         color: var(--theme-on-accent);
         background: var(--theme-accent);
+        background-image: var(--theme-accent-gradient);
         cursor: pointer;
         font-size: 17px;
         font-weight: 700;
@@ -517,6 +500,7 @@
       :root[data-login-theme="dark"] .login-btn {
         color: var(--theme-on-accent);
         background: var(--theme-accent);
+        background-image: var(--theme-accent-gradient);
         box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
       }
 
@@ -597,7 +581,6 @@
     </style>
   </head>
   <body>
-    <button class="theme-toggle" id="loginThemeToggle" type="button" title="切换明暗模式" aria-label="切换明暗模式">☾</button>
     <div class="login-container">
       <div class="right-panel">
         <div class="light-brand">
@@ -631,7 +614,6 @@
           <button class="login-btn" id="loginSubmit" type="submit">登录</button>
           <div class="login-message" id="loginMessage" role="status"></div>
         </form>
-        <div class="login-footer">还没有账户？<a href="#" id="contactAdminLink">去联系管理员</a></div>
         <div class="divider">
           <div class="divider-line"></div>
           <span class="divider-text">其他登录方式</span>
@@ -658,7 +640,6 @@
       const message = document.getElementById("loginMessage");
       const submitBtn = document.getElementById("loginSubmit");
       const forgotPasswordBtn = document.getElementById("forgotPasswordBtn");
-      const contactAdminLink = document.getElementById("contactAdminLink");
       const rememberLogin = document.getElementById("rememberLogin");
       const REMEMBERED_USERNAME_KEY = "autoCheckRememberedUsername";
       const MAIN_ENTRY_ANIMATION_KEY = "autoCheckMainEntryAnimation";
@@ -668,14 +649,11 @@
       let loginSubmitting = false;
 
       function applyTheme(theme) {
-        const normalized = theme === "dark" ? "dark" : "light";
+        const normalized = "light";
         root.setAttribute("data-login-theme", normalized);
-        themeToggle.textContent = normalized === "dark" ? "☀" : "☾";
-        loginBrandLogo.src = normalized === "dark"
-          ? "/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"
-          : "/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal";
+        loginBrandLogo.src = "/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal";
         window.autoCheckLoginThemeColors.reapply();
-        localStorage.setItem("autoCheckLoginTheme", normalized);
+        localStorage.removeItem("autoCheckLoginTheme");
       }
 
       function togglePasswordVisibility() {
@@ -756,9 +734,6 @@
         submitBtn.textContent = setupRequired ? "初始化并登录" : "登录";
       }
 
-      themeToggle.addEventListener("click", () => {
-        applyTheme(root.getAttribute("data-login-theme") === "dark" ? "light" : "dark");
-      });
       passwordToggle.addEventListener("click", togglePasswordVisibility);
 
       form.addEventListener("submit", async (event) => {
@@ -795,7 +770,6 @@
               body: JSON.stringify({ username, password_encrypted: encryptedPassword }),
             });
           }
-          window.autoCheckLoginThemeColors.cacheSuccessful();
           setMessage("登录成功，正在进入系统。", "success");
           if (!setupRequired) saveRememberedUsername(username);
           refreshUserAvatarVariant();
@@ -817,10 +791,6 @@
       forgotPasswordBtn.addEventListener("click", () => {
         setMessage("暂不支持找回密码，请联系系统管理员重置。", "error");
       });
-      contactAdminLink.addEventListener("click", (event) => {
-        event.preventDefault();
-        setMessage("请联系系统管理员创建或重置账号。", "error");
-      });
 
       document.querySelectorAll(".social-btn").forEach((button) => {
         button.addEventListener("click", () => {
@@ -829,7 +799,6 @@
       });
 
       applyTheme(localStorage.getItem("autoCheckLoginTheme") || "light");
-      window.autoCheckLoginThemeColors.refresh();
       loadAuthState().catch((error) => setMessage(error.message, "error"));
     </script>
   </body>

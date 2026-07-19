@@ -66,13 +66,12 @@ def test_semantic_button_inventory_classifies_key_static_and_dynamic_actions():
     app_js = _read(APP_JS)
 
     static_actions = {
-        "stopRunBtn": ("warning", "solid"),
+        "stopRunBtn": ("danger", "solid"),
         "pbcClearFilesBtn": ("danger", "weak"),
         "pbcFinishBtn": ("success", "solid"),
         "dbValidationDownloadBtn": ("neutral", "weak"),
-        "flowCancelBtn": ("warning", "weak"),
+        "flowCancelBtn": ("danger", "solid"),
         "resetInterfaceSettingsBtn": ("warning", "weak"),
-        "resetSystemThemeColorsBtn": ("warning", "weak"),
         "resetSettingsBtn": ("warning", "weak"),
         "userModalCancel": ("neutral", "weak"),
         "userModalSave": ("primary", "solid"),
@@ -84,7 +83,7 @@ def test_semantic_button_inventory_classifies_key_static_and_dynamic_actions():
         assert f'data-action-variant="{variant}"' in button.group(0), element_id
 
     for required_fragment in [
-        'class="user-icon-action edit-user" data-action-tone="neutral" data-action-variant="weak"',
+        'class="user-icon-action edit-user" data-action-tone="primary" data-action-variant="weak"',
         'class="user-icon-action toggle-user" data-action-tone="${enabled ? "warning" : "success"}" data-action-variant="weak"',
         'class="user-icon-action delete-user" data-action-tone="danger" data-action-variant="weak"',
         'class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak"',
@@ -105,7 +104,8 @@ def test_show_confirm_normalizes_and_resets_explicit_action_tone():
         app_js.index("function showPrompt", app_js.index("function showConfirm(title, message, options = {})"))
     ]
     assert 'const allowedTones = new Set(["primary", "danger", "warning", "success"]);' in confirm_body
-    assert 'const tone = allowedTones.has(options.tone) ? options.tone : "primary";' in confirm_body
+    assert 'const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";' in confirm_body
+    assert 'const tone = requestedTone === "danger" ? "danger" : "primary";' in confirm_body
     assert "okBtn.dataset.actionTone = tone;" in confirm_body
     assert 'okBtn.dataset.actionVariant = "solid";' in confirm_body
     assert "delete okBtn.dataset.actionTone;" in confirm_body
@@ -536,7 +536,7 @@ def _run_system_theme_color_node_scenario(tmp_path: Path, scenario_source: str) 
     subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
 
 
-def test_canceled_theme_gradient_contract_is_absent_from_frontend():
+def test_configurable_theme_gradient_contract_is_absent_and_fixed_logo_gradient_is_present():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
@@ -549,43 +549,46 @@ def test_canceled_theme_gradient_contract_is_absent_from_frontend():
         "data-theme-gradient",
         "themeGradient",
         "autoCheckLastInterfaceThemeGradient",
-        "--theme-accent-gradient",
-        "--theme-page-background-gradient",
     ):
         assert canceled_token not in frontend
+    for fixed_token in (
+        "#3466D9",
+        "#6AA4FF",
+        "--theme-accent-gradient",
+    ):
+        assert fixed_token in frontend
 
 
-def test_solid_theme_palette_runtime_normalizes_and_guarantees_contrast(tmp_path):
+def test_fixed_logo_theme_palette_runtime_normalizes_and_guarantees_contrast(tmp_path):
     _run_theme_color_node_scenario(
         tmp_path,
         r"""
-        assert.equal(normalizeThemeHex("#3f6faf"), "#3F6FAF");
+        assert.equal(normalizeThemeHex("#3466d9"), "#3466D9");
         assert.equal(normalizeThemeHex("#fff"), null);
         assert.equal(normalizeThemeHex("rgb(63, 111, 175)"), null);
 
-        const lightPalette = deriveThemePalette("#3F6FAF", "light");
-        assert.equal(lightPalette.accent, "#3F6FAF");
+        const lightPalette = deriveThemePalette("#3466D9", "light");
+        assert.equal(lightPalette.accent, "#3466D9");
+        assert.equal(lightPalette.gradientEnd, "#6AA4FF");
         assert.ok(["#000000", "#FFFFFF"].includes(lightPalette.onAccent));
         assert.ok(
           contrastRatio(lightPalette.accent, lightPalette.onAccent)
             >= contrastRatio(lightPalette.accent, lightPalette.onAccent === "#000000" ? "#FFFFFF" : "#000000")
         );
         assert.ok(contrastRatio(lightPalette.readableAccent, "#F7FAFC") >= 4.5);
-        assert.match(lightPalette.focusRing, /^rgba\(63, 111, 175, 0\.\d+\)$/);
+        assert.match(lightPalette.focusRing, /^rgba\(52, 102, 217, 0\.\d+\)$/);
 
-        const darkPalette = deriveThemePalette("#3F6FAF", "dark");
-        assert.equal(darkPalette.accent, "#3F6FAF");
+        const darkPalette = deriveThemePalette("#3466D9", "dark");
+        assert.equal(darkPalette.accent, "#3466D9");
         assert.ok(contrastRatio(darkPalette.readableAccent, "#121318") >= 4.5);
 
-        const applied = applyEffectiveThemeColors({
-          vitality: "#3f6faf",
-          calm: "#355f63",
-        });
+        const applied = applyEffectiveThemeColors({ vitality: "#FFFFFF", calm: "#000000" });
         assert.deepEqual(applied.colors, {
-          vitality: "#3F6FAF",
+          vitality: "#3466D9",
           calm: "#355F63",
         });
-        assert.equal(cssVariables.get("--theme-accent"), "#3F6FAF");
+        assert.equal(cssVariables.get("--theme-accent"), "#3466D9");
+        assert.equal(cssVariables.get("--theme-accent-gradient-end"), "#6AA4FF");
         assert.equal(cssVariables.get("--theme-on-accent"), applied.palette.onAccent);
         assert.equal(cssVariables.get("--theme-accent-readable"), applied.palette.readableAccent);
         assert.equal(cssVariables.get("--theme-focus-ring"), applied.palette.focusRing);
@@ -593,13 +596,13 @@ def test_solid_theme_palette_runtime_normalizes_and_guarantees_contrast(tmp_path
         attributes.set("data-theme", "light");
         attributes.set("data-color-mode", "dark");
         const calmApplied = applyEffectiveThemeColors(applied.colors);
-        assert.equal(calmApplied.palette.accent, "#355F63");
+        assert.equal(calmApplied.palette.accent, "#3466D9");
         assert.ok(contrastRatio(calmApplied.palette.readableAccent, "#121318") >= 4.5);
         """,
     )
 
 
-def test_theme_and_dark_mode_switches_reapply_effective_solid_colors():
+def test_theme_and_dark_mode_helpers_force_the_single_light_theme():
     app_js = _read(APP_JS)
     commit_theme = re.search(
         r"function commitTheme\(theme\) \{(?P<body>.*?)\n\}",
@@ -613,32 +616,31 @@ def test_theme_and_dark_mode_switches_reapply_effective_solid_colors():
     )
     assert commit_theme is not None
     assert apply_dark_mode is not None
+    assert 'document.documentElement.setAttribute("data-theme", "space-tech");' in commit_theme.group("body")
+    assert 'document.documentElement.setAttribute("data-color-mode", "light");' in apply_dark_mode.group("body")
     for body in (commit_theme.group("body"), apply_dark_mode.group("body")):
         assert "applyEffectiveThemeColors(effectiveThemeColors);" in body
 
 
-def test_solid_theme_runtime_derives_one_page_background_for_each_mode(tmp_path):
+def test_fixed_theme_runtime_derives_the_page_background(tmp_path):
     _run_theme_color_node_scenario(
         tmp_path,
         r"""
         const light = applyEffectiveThemeColors({
-          vitality: "#3F6FAF",
+          vitality: "#3466D9",
           calm: "#355F63",
         });
         assert.match(light.palette.pageBackground, /^#[0-9A-F]{6}$/);
         assert.equal(cssVariables.get("--theme-page-background"), light.palette.pageBackground);
         assert.notEqual(light.palette.pageBackground, light.palette.accent);
 
-        attributes.set("data-color-mode", "dark");
-        const dark = applyEffectiveThemeColors(light.colors);
-        assert.match(dark.palette.pageBackground, /^#[0-9A-F]{6}$/);
-        assert.equal(cssVariables.get("--theme-page-background"), dark.palette.pageBackground);
-        assert.notEqual(dark.palette.pageBackground, light.palette.pageBackground);
+        assert.equal(light.colors.vitality, "#3466D9");
+        assert.equal(light.palette.gradientEnd, "#6AA4FF");
         """,
     )
 
 
-def test_theme_emphasis_surfaces_use_solid_tokens_without_header_leakage():
+def test_theme_emphasis_surfaces_use_fixed_gradient_without_header_leakage():
     css = _read(STYLES_CSS)
 
     for selector in (
@@ -657,7 +659,6 @@ def test_theme_emphasis_surfaces_use_solid_tokens_without_header_leakage():
     solid_contract = css[solid_contract_start:solid_contract_end]
     assert "background: var(--theme-accent);" in solid_contract
     assert "color: var(--theme-on-accent);" in solid_contract
-    assert "linear-gradient" not in solid_contract
     assert "radial-gradient" not in solid_contract
     for protected_selector in (" th,", " th {", "\nth {", "thead", ".table-header", ".app-modal-shell"):
         assert protected_selector not in solid_contract
@@ -718,61 +719,27 @@ def test_theme_surface_contract_does_not_change_protected_header_or_modal_rules(
     assert "thead" not in theme_contract
 
 
-def test_system_theme_color_controls_are_capability_driven_text_inputs():
+def test_removed_system_theme_color_controls_stay_absent_from_settings_runtime():
     html = _read(INDEX_HTML)
-    css = _read(STYLES_CSS)
     app_js = _read(APP_JS)
-    section = re.search(
-        r'<section id="systemThemeColorsSection"(?P<attrs>[^>]*)>(?P<body>.*?)</section>',
-        html,
-        re.S,
-    )
-    assert section is not None
-    assert "hidden" in section.group("attrs")
-    body = section.group("body")
-    for field, swatch, error in (
-        (
-            "systemVitalityThemeColor",
-            "systemVitalityThemeColorSwatch",
-            "systemVitalityThemeColorError",
-        ),
-        (
-            "systemCalmThemeColor",
-            "systemCalmThemeColorSwatch",
-            "systemCalmThemeColorError",
-        ),
+    frontend = html + "\n" + app_js
+    for removed_token in (
+        "systemThemeColorsSection",
+        "systemVitalityThemeColor",
+        "systemCalmThemeColor",
+        "saveSystemThemeColorsBtn",
+        "resetSystemThemeColorsBtn",
+        "loadSystemThemeColors",
+        "saveSystemThemeColors",
+        "can_manage_system_theme_colors",
+        "System theme colors start",
     ):
-        assert re.search(
-            rf'<input id="{field}" type="text"[^>]*maxlength="7"[^>]*>',
-            body,
-        )
-        assert f'aria-describedby="{error}"' in body
-        assert f'id="{swatch}"' in body
-        assert f'id="{error}"' in body
-    assert 'id="saveSystemThemeColorsBtn"' in body
-    assert 'id="resetSystemThemeColorsBtn"' in body
-    assert 'id="systemThemeColorsStatus"' in body
-    assert 'type="color"' not in html
-    assert "admin-only" not in section.group("attrs")
-    assert "can_manage_system_theme_colors" in app_js
-    state_block = re.search(
-        r"// System theme colors start(?P<body>.*?)// System theme colors end",
-        app_js,
-        re.S,
-    )
-    assert state_block is not None
-    assert 'authState.user?.role === "admin"' not in state_block.group("body")
-    assert "data-role" not in state_block.group("body")
-    for selector in (
-        "#page-settings .system-theme-colors",
-        "#page-settings .system-theme-color-input",
-        "#page-settings .system-theme-color-swatch",
-        "#page-settings .system-theme-color-error",
-    ):
-        assert selector in css
+        assert removed_token not in frontend
+    assert 'vitality: "#3466D9"' in app_js
+    assert 'gradientEnd: accent === "#3466D9" ? "#6AA4FF"' in app_js
 
 
-def test_system_theme_color_valid_preview_normalization_and_atomic_save(tmp_path):
+def _obsolete_system_theme_color_valid_preview_normalization_and_atomic_save(tmp_path):
     _run_system_theme_color_node_scenario(
         tmp_path,
         r"""
@@ -835,7 +802,7 @@ def test_system_theme_color_valid_preview_normalization_and_atomic_save(tmp_path
     )
 
 
-def test_system_theme_color_invalid_input_reset_failure_and_leave_discard(tmp_path):
+def _obsolete_system_theme_color_invalid_input_reset_failure_and_leave_discard(tmp_path):
     _run_system_theme_color_node_scenario(
         tmp_path,
         r"""
@@ -893,7 +860,7 @@ def test_system_theme_color_invalid_input_reset_failure_and_leave_discard(tmp_pa
     )
 
 
-def test_system_theme_color_state_rejects_stale_get_post_and_auth_revisions(tmp_path):
+def _obsolete_system_theme_color_state_rejects_stale_get_post_and_auth_revisions(tmp_path):
     _run_system_theme_color_node_scenario(
         tmp_path,
         r"""
@@ -984,7 +951,7 @@ def test_system_theme_color_state_rejects_stale_get_post_and_auth_revisions(tmp_
     )
 
 
-def test_system_theme_colors_integrate_with_settings_navigation_and_auth_boundaries():
+def _obsolete_system_theme_colors_integrate_with_settings_navigation_and_auth_boundaries():
     app_js = _read(APP_JS)
     ensure_authenticated = re.search(
         r"async function ensureAuthenticated\(\) \{(?P<body>.*?)\n\}",
@@ -1045,11 +1012,10 @@ def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_s
         "#page-settings #interfaceLineChartStyle",
         "#page-settings #interfaceLineChartStyle label:has(input:focus-visible)",
         "#page-settings #interfaceLineChartStyle label:has(input:disabled)",
-        '[data-color-mode="dark"] #page-settings #interfaceLineChartStyle',
     ):
         assert selector in css
 
-    assert "统一控制系统折线图的数据点连接方式" in html
+    assert "统一控制系统折线图的数据点连接方式" not in html
 
     assert "const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({" in app_js
     for field in (
@@ -1337,7 +1303,7 @@ def test_cards_hover_glow_tracks_theme_palette_instead_of_dark_shadow():
         assert "var(--card-hover-glow)" in rule_body
         assert "#38bdf8" not in rule_body
         assert "rgba(0, 0, 0" not in rule_body
-    assert "卡片悬停在活力主题使用淡蓝光晕、沉稳主题使用深绿色柔和光晕" in readme
+    assert "悬停光晕" not in readme
 
 
 def test_export_to_excel_includes_processing_script_column_after_detail():
@@ -1821,8 +1787,7 @@ def test_smart_reconcile_parent_uses_theme_specific_toggle_and_hover_behavior():
     assert 'if (group.classList.contains("nav-group")) setNavGroupOpen(group, active);' not in app_js
     assert app_js.count("group.contains(document.activeElement)") >= 2
     assert app_js.count("document.activeElement.blur();") >= 2
-    assert "沉稳主题点击父菜单展开或收回" in readme
-    assert "活力主题悬浮显示二级菜单，点击父菜单进入“对数总览”" in readme
+    assert "当前唯一启用的浅色主题中，悬浮父菜单显示二级菜单，点击父菜单进入“对数总览”" in readme
     assert "系统优化及BUG修复。" in app_js
 
 
@@ -2631,7 +2596,7 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
         re.S,
     )
     assert home_glass_hover_shadow is not None
-    assert "box-shadow: var(--space-panel-hover-shadow) !important;" in home_glass_hover_shadow.group("body")
+    assert "box-shadow: var(--space-panel-shadow) !important;" in home_glass_hover_shadow.group("body")
     assert "首页调整为自动对数概览工作台" in readme
     assert "对数质量和差异类型分布不再展示统计期数" in readme
     assert "高频差异项目继续展示实际统计期数" in readme
@@ -2792,7 +2757,8 @@ def test_latest_history_results_load_by_default_and_last_run_time_is_retained():
     app_js = _read(APP_JS)
 
     assert "function formatDisplayTime(value)" in app_js
-    assert 'return String(value).replace("T", " ")' in app_js
+    assert 'return String(value)' in app_js
+    assert '.replace(/\.\d+(?=(?:Z|[+-]\\d{2}:?\\d{2})?$)/, "")' in app_js
     assert 'const displayTime = formatDisplayTime(value || "");' in app_js
     assert "if (!displayTime) return;" in app_js
     assert "latestRunAt = displayTime;" in app_js
@@ -3005,13 +2971,13 @@ def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
         "白色表面、细分隔线、克制阴影、统一标题栏、独立滚动内容区和固定操作区",
         "确认、输入、信息、用户、数据源、人行导入与校验、流程工具弹窗保留各自适配业务内容的尺寸",
         "历史详情按完整结果、新增差异、减少差异分组",
-        "绿、红、蓝色条区分",
+        "主题蓝、红、绿色条区分",
         "表头和内容继续保持居中",
         "中性浅灰表头、透明描边状态",
         "隐藏滚动条但保留滚动",
         "恢复按钮与状态列居中",
         "弹窗圆角继续跟随当前用户的界面设置",
-        "兼容默认太空、沉稳和暗色模式",
+        "当前唯一启用的浅色主题",
     ]:
         assert text in readme
     assert "`v2.1` (2026-07-18) 主要变化：" in readme
@@ -3194,7 +3160,7 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
     assert 'class="brand-wordmark-main">监管智核</span>' in html
     assert 'class="brand-wordmark-sub">监管报送核验平台</span>' in html
     assert 'src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
-    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' in login_html
+    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' not in login_html
     assert 'alt="监管智核 Logo"' in html
     assert "准星" not in html
     assert "准星" not in login_html
@@ -3890,13 +3856,13 @@ def test_interface_settings_card_is_shared_and_has_one_exact_radius_slider():
     card_html = interface_card.group("body")
     assert "admin-only" not in interface_card.group(0)
     assert "<h3>界面设置</h3>" in card_html
-    assert "<p>自定义当前账号的系统圆角</p>" in card_html
+    assert "<p>配置系统圆角和折线图风格</p>" in card_html
     assert '<input id="interfaceRadiusSlider" type="range" min="1" max="15" step="1" value="4" />' in card_html
     assert '<output id="interfaceRadiusValue">4px</output>' in card_html
     assert '<span id="interfaceSettingsStatus" role="status">已保存</span>' in card_html
-    assert '<button id="saveInterfaceSettingsBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存界面设置</button>' in card_html
+    assert '<button id="saveInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存界面设置</button>' in card_html
     assert '<button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>' in card_html
-    assert "导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角" in card_html
+    assert "导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角" not in card_html
     assert html.count('id="interfaceRadiusSlider"') == 1
     assert len(re.findall(r'<input[^>]+id="interfaceRadiusSlider"[^>]*>', html)) == 1
 
@@ -4125,9 +4091,7 @@ def test_readme_documents_expanded_interface_radius_surface_coverage():
         "统计失败提示条",
         "右上角通知",
         "顶部版本标签",
-        "暗色切换按钮外壳",
-        "侧栏状态消息框",
-        "报送导航刷新按钮",
+        "流程浮动通知",
         "历史详情与执行历史表格外框",
         "结果详情分区",
         "结果状态标签",
@@ -4690,14 +4654,13 @@ def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallb
     assert ensure_auth is not None
     auth_body = ensure_auth.group("body")
     reset_call = "resetInterfaceRadiusForAuthChange();"
-    load_call = "loadInterfaceRadiusPreference({ silent: true }),"
+    load_call = "await loadInterfaceRadiusPreference({ silent: true });"
     assert reset_call in auth_body
     assert load_call in auth_body
     assert auth_body.index(reset_call) < auth_body.index('authState.csrfToken = payload.csrf_token || "";')
     assert auth_body.index(reset_call) < auth_body.index("authState.user = payload.user || null;")
     assert auth_body.index("authState.user = payload.user || null;") < auth_body.index(load_call)
     assert auth_body.index("document.documentElement.dataset.role") < auth_body.index(load_call)
-    assert auth_body.index(load_call) < auth_body.index("activateThemeUserStorage();")
     assert auth_body.index(load_call) < auth_body.index("applySavedUserTheme();")
     assert auth_body.index(load_call) < auth_body.index("revealAuthenticatedApp();")
 
@@ -4808,10 +4771,11 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;" in render_body
     assert 'interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";' in render_body
     assert "interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;" in render_body
-    assert "interfaceRadiusSlider.disabled = interfaceRadiusState.saving;" in render_body
-    assert "saveInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;" in render_body
-    assert 'saveInterfaceSettingsBtn.classList.toggle("loading", interfaceRadiusState.saving);' in render_body
-    assert "resetInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;" in render_body
+    assert "const saving = interfaceRadiusState.saving;" in render_body
+    assert "interfaceRadiusSlider.disabled = saving;" in render_body
+    assert "saveInterfaceSettingsBtn.disabled = saving;" in render_body
+    assert 'saveInterfaceSettingsBtn.classList.toggle("loading", saving);' in render_body
+    assert "resetInterfaceSettingsBtn.disabled = saving;" in render_body
     assert "interfaceRadiusState.statusText =" not in render_body
 
     api_paths = set(re.findall(r'["\'](/api/[^"\']+)["\']', body))
@@ -4947,7 +4911,7 @@ def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
     switch_body = switch_page.group("body")
     assert 'if (previousPage === "settings" && name !== "settings") {' in switch_body
     assert "discardUnsavedInterfaceRadius();" in switch_body
-    assert "discardUnsavedSystemThemeColors();" in switch_body
+    assert "discardUnsavedSystemThemeColors();" not in switch_body
     assert switch_body.index("discardUnsavedInterfaceRadius();") < switch_body.index(
         "document.documentElement.setAttribute('data-page', name);"
     )
@@ -5731,7 +5695,7 @@ def test_home_chart_line_style_normalization_and_geometry_are_shared(tmp_path):
     subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
 
 
-def test_home_chart_renderers_use_solid_effective_theme_palette_and_style_points():
+def test_home_chart_renderers_use_logo_gradients_and_style_points():
     app_js = _read(APP_JS)
     single_chart = app_js[
         app_js.index("function drawGlassChart(") :
@@ -5750,13 +5714,15 @@ def test_home_chart_renderers_use_solid_effective_theme_palette_and_style_points
         assert "const lineStyle = currentLineChartStyle();" in body
         assert "traceChartLine(ctx, drawPts, lineStyle, curveBounds);" in body
         assert 'if (lineStyle === "smooth"' in body
-        assert "createLinearGradient" not in body
+        assert "createLinearGradient" in body
 
     assert "ctx.fillStyle = palette.areaFill;" in single_chart
-    assert "ctx.strokeStyle = palette.primary;" in single_chart
-    assert "ctx.strokeStyle = metric.strokeColor;" in multi_chart
-    assert 'color: "#f59e0b"' not in app_js
-    assert 'endColor: "#ef4444"' not in app_js
+    assert "lineGradient.addColorStop(0, palette.primary);" in single_chart
+    assert "lineGradient.addColorStop(1, palette.gradientEnd);" in single_chart
+    assert "if (metric.gradientEnd)" in multi_chart
+    assert "metricPaint.addColorStop(0, metric.strokeColor);" in multi_chart
+    assert "metricPaint.addColorStop(1, metric.gradientEnd);" in multi_chart
+    assert 'gradientEnd: "#FFBD38"' in app_js
 
 
 def test_home_chart_theme_and_line_style_redraw_cached_data_without_refetch():
@@ -5811,91 +5777,15 @@ def test_space_tech_theme_has_structural_top_navigation_and_switching():
     assert 'class="top-nav"' in html
     for page in ["home", "auto-check", "history", "settings"]:
         assert re.search(rf'class="[^"]*\btop-nav-item\b[^"]*" data-page="{page}"', html)
-    assert html.count('data-theme-toggle-logo') == 2
-    assert 'class="brand-theme-toggle sidebar-brand-theme-toggle"' in html
-    assert 'class="brand-theme-toggle top-nav-mark"' in html
-    assert 'aria-label="切换主题"' in html
+    assert 'data-theme-toggle-logo' not in html
+    assert 'aria-label="切换主题"' not in html
     assert 'name="theme"' not in html
-    assert 'name="theme" value="dark"' not in html
-    assert 'name="theme" value="auto"' not in html
-
-    for text in [
-        'theme === "space-tech"',
-        'document.documentElement.setAttribute("data-theme", "space-tech")',
-        "function syncNavState",
-        "topNavItems",
-        "async function saveAndApplyTheme",
-        "function runThemeShellTransition",
-        "function applyThemeWithTransition",
-        "document.startViewTransition",
-        "function getNextTheme",
-        "function toggleThemeFromLogo",
-        "theme-shell-transitioning",
-        "theme-shell-to-space-tech",
-        "theme-shell-to-light",
-        "theme-shell-view-transitioning",
-        'document.querySelectorAll("[data-theme-toggle-logo]")',
-    ]:
-        assert text in app_js
-    assert 'document.querySelectorAll(".theme-option")' not in app_js
-
-    for selector in [
-        '[data-theme="space-tech"] .top-nav',
-        '[data-theme="space-tech"] .sidebar',
-        '[data-theme="space-tech"] .main-content',
-        '[data-theme="space-tech"] .top-nav-status',
-        '.theme-shell-transitioning .sidebar',
-        '.theme-shell-transitioning .top-nav',
-        '.theme-shell-transitioning .main-content',
-        '.theme-shell-to-space-tech .sidebar',
-        '.theme-shell-to-space-tech .top-nav',
-        '.theme-shell-to-space-tech .main-content',
-        '.theme-shell-to-light .sidebar',
-        '.theme-shell-to-light .top-nav',
-        '.theme-shell-to-light .main-content',
-        '.theme-shell-view-transitioning .main-content',
-        '@keyframes sidebarToTopNav',
-        '@keyframes topNavToSidebar',
-        '@keyframes mainContentExpandLeft',
-        '@keyframes mainContentContractRight',
-        '::view-transition-old(root)',
-        '::view-transition-new(root)',
-        '@keyframes themeViewOldToSpace',
-        '@keyframes themeViewNewToLight',
-    ]:
-        assert selector in css
-
-    main_transition = re.search(r"\.theme-shell-transitioning \.main-content\s*\{(?P<body>.*?)\}", css, re.S)
-    shell_transition = re.search(
-        r"\.theme-shell-transitioning \.sidebar,\s*"
-        r"\.theme-shell-transitioning \.top-nav\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    expand_keyframes = re.search(r"@keyframes mainContentExpandLeft\s*\{(?P<body>.*?)\n\}", css, re.S)
-    contract_keyframes = re.search(r"@keyframes mainContentContractRight\s*\{(?P<body>.*?)\n\}", css, re.S)
-    assert shell_transition is not None
-    assert main_transition is not None
-    assert expand_keyframes is not None
-    assert contract_keyframes is not None
-    assert "display: flex !important" not in shell_transition.group("body")
-    assert "will-change: transform, opacity" in main_transition.group("body")
-    assert "margin-left" not in main_transition.group("body")
-    assert "margin-left" not in expand_keyframes.group("body")
-    assert "margin-left" not in contract_keyframes.group("body")
-    assert "scaleX" not in expand_keyframes.group("body")
-    assert "scaleX" not in contract_keyframes.group("body")
-    assert "translate3d(220px, 0, 0)" in expand_keyframes.group("body")
-    assert "translate3d(-220px, 0, 0)" in contract_keyframes.group("body")
-    view_transition_live_rule = re.search(
-        r"\.theme-shell-view-transitioning \.sidebar,\s*"
-        r"\.theme-shell-view-transitioning \.top-nav,\s*"
-        r"\.theme-shell-view-transitioning \.main-content\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert view_transition_live_rule is not None
-    assert "animation: none !important" in view_transition_live_rule.group("body")
+    assert 'document.documentElement.setAttribute("data-theme", "space-tech")' in app_js
+    assert 'document.documentElement.setAttribute("data-color-mode", "light")' in app_js
+    assert "function syncNavState" in app_js
+    assert "topNavItems" in app_js
+    assert '[data-theme="space-tech"] .top-nav' in css
+    assert '[data-theme="space-tech"] .main-content' in css
 
     top_nav_brand = re.search(r'\[data-theme="space-tech"\] \.top-nav-brand\s*\{(?P<body>.*?)\}', css, re.S)
     assert top_nav_brand is not None
@@ -5940,7 +5830,8 @@ def test_space_tech_top_navigation_centers_pages_and_keeps_actions_right():
     assert 'data-page="report-navigation"' in tabs.group("body")
     assert 'id="topDarkModeToggle"' not in tabs.group("body")
     assert 'id="topUserMenu"' not in tabs.group("body")
-    assert actions.group("body").index('id="topDarkModeToggle"') < actions.group("body").index('id="topUserMenu"')
+    assert 'id="topDarkModeToggle"' not in actions.group("body")
+    assert 'id="topUserMenu"' in actions.group("body")
 
     top_nav_rule = re.search(r'\[data-theme="space-tech"\] \.top-nav\s*\{(?P<body>.*?)\}', css, re.S)
     tabs_rule = re.search(r'\[data-theme="space-tech"\] \.top-nav-tabs\s*\{(?P<body>.*?)\}', css, re.S)
@@ -5952,7 +5843,7 @@ def test_space_tech_top_navigation_centers_pages_and_keeps_actions_right():
     assert "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)" in top_nav_rule.group("body")
     assert "justify-self: center" in tabs_rule.group("body")
     assert "justify-self: end" in actions_rule.group("body")
-    assert "活力主题顶部菜单相对整条导航栏居中" in readme
+    assert "当前唯一启用的亮色活力主题" in readme
     assert "系统优化及BUG修复。" in app_js
 
 
@@ -6023,21 +5914,21 @@ def test_theme_is_saved_per_user_without_updating_global_defaults():
     assert 'api("/api/settings/defaults"' not in save_dark.group("body")
 
 
-def test_theme_is_applied_before_stylesheet_and_keeps_local_boot_cache():
+def test_fixed_theme_is_applied_before_stylesheet_and_radius_cache_stays_out_of_boot_script():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
 
     assert 'id="initialThemeScript"' in html
     assert html.index('id="initialThemeScript"') < html.index('href="/styles.css"')
-    for text in ["autoCheckTheme", "autoCheckDarkMode", "data-theme", "data-color-mode"]:
+    for text in ["data-theme", "data-color-mode"]:
         assert text in html
-
-    assert "function syncThemeBootCache" in app_js
-    assert 'const activeThemeUser = localStorage.getItem("autoCheckThemeUserKey") || "";' in html
-    assert 'localStorage.setItem(themeKey, defaultSettings.theme)' in app_js
-    assert 'localStorage.setItem(darkModeKey, defaultSettings.darkMode)' in app_js
-    assert 'localStorage.removeItem("autoCheckTheme")' not in app_js
-    assert 'localStorage.removeItem("autoCheckDarkMode")' not in app_js
+    initial_script = html[html.index('id="initialThemeScript"'):html.index('</script>', html.index('id="initialThemeScript"'))]
+    assert 'setAttribute("data-theme", "space-tech")' in initial_script
+    assert 'setAttribute("data-color-mode", "light")' in initial_script
+    assert "autoCheckTheme" not in initial_script
+    assert "autoCheckDarkMode" not in initial_script
+    assert "autoCheckLastInterfaceRadius" not in initial_script
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in app_js
 
 
 def test_latest_result_detail_list_is_restored_from_local_snapshot_before_history_fetch():
@@ -6303,7 +6194,7 @@ def test_toast_deduplicates_same_message_and_type():
     assert "messageEl.textContent = message;" in body
 
 
-def test_login_page_uses_one_solid_centered_layout_in_light_and_dark_modes():
+def test_login_page_uses_fixed_light_centered_layout_with_login_only_background():
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
 
     assert "<title>监管智核</title>" in login_html
@@ -6322,8 +6213,9 @@ def test_login_page_uses_one_solid_centered_layout_in_light_and_dark_modes():
     assert 'document.getElementById("loginTitle").textContent = titleText;' in login_html
     assert 'document.getElementById("loginSubtitle").textContent = subtitleText;' in login_html
     assert 'class="deco deco-1"' not in login_html
-    assert "linear-gradient" not in login_html
-    assert "radial-gradient" not in login_html
+    assert "--theme-page-background:" in login_html
+    assert "radial-gradient" in login_html
+    assert "linear-gradient(135deg, #EEF4FF 0%, #F8FAFC 58%, #FFFAF4 100%)" in login_html
     assert "background: var(--theme-page-background);" in login_html
     assert "max-width: 440px;" in login_html
     assert "padding: 34px 32px 34px;" in login_html
@@ -6331,14 +6223,13 @@ def test_login_page_uses_one_solid_centered_layout_in_light_and_dark_modes():
     assert "margin-bottom: 14px;" in login_html
     assert "width: min(360px, 100%);" in login_html
     assert "margin: 0;" in login_html
-    assert "还没有账户？" in login_html
-    assert "去联系管理员" in login_html
+    assert "还没有账户？" not in login_html
+    assert "去联系管理员" not in login_html
     assert 'class="forgot-password"' in login_html
-    assert 'id="loginThemeToggle"' in login_html
+    assert 'id="loginThemeToggle"' not in login_html
     assert "max-width: 860px;" not in login_html
     assert "min-height: 500px;" not in login_html
     assert "grid-template-columns" not in login_html
-    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' in login_html
     assert 'class="title brand-wordmark' not in login_html
     assert '<html lang="zh-CN" data-login-theme="light">' in login_html
     assert ':root[data-login-theme="dark"] .form-input:-webkit-autofill' in login_html
@@ -6347,12 +6238,20 @@ def test_login_page_uses_one_solid_centered_layout_in_light_and_dark_modes():
     assert '"/api/auth/login"' in login_html
     assert '"/api/auth/setup"' in login_html
     assert "暂不支持" in login_html
+    assert 'const normalized = "light";' in login_html
+    assert 'root.setAttribute("data-login-theme", normalized);' in login_html
+    assert 'localStorage.removeItem("autoCheckLoginTheme");' in login_html
 
 
-def test_login_page_brand_uses_one_solid_theme_bubble_and_equal_logo_geometry():
+def test_login_page_brand_restores_animated_blue_and_orange_bubbles():
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
     light_brand = re.search(r"\.light-brand\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
     light_brand_circle = re.search(r"\.light-brand::before\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
+    light_brand_warm_circle = re.search(
+        r"\.light-brand::after\s*\{(?P<body>\s*background:.*?)\n      \}",
+        login_html,
+        re.S,
+    )
     login_logo = re.search(r"\.login-brand-logo\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
 
     assert light_brand is not None
@@ -6362,11 +6261,14 @@ def test_login_page_brand_uses_one_solid_theme_bubble_and_equal_logo_geometry():
     assert "align-items: center;" in light_brand_body
     assert light_brand_circle is not None
     circle_body = light_brand_circle.group("body")
-    assert "background: var(--theme-accent-soft);" in circle_body
-    assert "linear-gradient" not in login_html
+    assert "linear-gradient" in circle_body
+    assert "animation: lightBrandBubbleFloat" in login_html
+    assert light_brand_warm_circle is not None
+    assert "linear-gradient" in light_brand_warm_circle.group("body")
+    assert "lightBrandBubbleWarmth" in light_brand_warm_circle.group("body")
     assert login_logo is not None
     assert "z-index: 1;" in login_logo.group("body")
-    assert 'loginBrandLogo.src = normalized === "dark"' in login_html
+    assert 'loginBrandLogo.src = "/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal";' in login_html
 
 
 def test_login_page_light_default_password_copy_and_eye_toggle_are_stable():
@@ -7029,20 +6931,20 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "function historyDetailRow(innerHtml)" not in app_js
     assert "function renderHistoryDetailLoading(id)" in app_js
     assert "function renderHistoryDetailContent(run)" in app_js
-    assert "function renderHistoryDetailFooter(run)" in app_js
+    assert "function renderHistoryDetailFooter(run)" not in app_js
     assert "function showHistoryDetailModal(id)" in app_js
     assert 'showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });' in app_js
-    assert "footerContent: renderHistoryDetailFooter(history)" in app_js
+    assert 'detailActionLabel: "恢复到结果页"' in app_js
+    assert "onDetailAction: async () =>" in app_js
+    assert "await restoreHistoryRun(history);" in app_js
     assert "rowHtml += historyDetailRow" not in app_js
     assert 'class="history-main-row"' in app_js
     assert 'class="history-detail-row"' not in app_js
     assert 'class="history-detail-title"' not in app_js
     assert 'class="btn-close close-history-detail"' not in app_js
     assert 'class="btn-outline btn-xs restore-history"' not in app_js
-    assert 'class="btn-primary btn-sm restore-history-detail"' in app_js
     assert 'id="infoFooter"' in html
     assert 'class="app-modal-footer history-detail-footer"' in html
-    assert 'document.querySelector("#infoFooter .restore-history-detail")' in app_js
     assert 'const footerEl = document.getElementById("infoFooter");' in app_js
     assert 'footerEl.innerHTML = options.footerContent || "";' in app_js
     assert 'footerEl.hidden = !options.footerContent;' in app_js
@@ -7088,7 +6990,6 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
 
     assert ".history-detail-card" in css
     assert ".history-detail-card .history-detail" in css
-    assert ".modal-info.modal-info--history-detail > .history-detail-footer" in css
     assert ".modal-info.modal-info--history-detail" in css
     assert "[data-color-mode=\"dark\"] .history-detail-card" in css
     assert "var(--surface-container-lowest)" in css
@@ -7145,34 +7046,6 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "overflow: auto" in detail.group("body")
 
     assert html.index('id="infoBody"') < html.index('id="infoFooter"')
-    footer = re.search(
-        r"(?m)^\.modal-info\.modal-info--history-detail > \.history-detail-footer\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert footer is not None
-    assert "flex: 0 0 auto" in footer.group("body")
-    assert "position: relative" in footer.group("body")
-    assert "display: grid" in footer.group("body")
-    assert "grid-template-columns: repeat(5, minmax(0, 1fr))" in footer.group("body")
-    assert "height: 58px" in footer.group("body")
-    assert "min-height: 58px" in footer.group("body")
-    assert "width: 100%" in footer.group("body")
-    assert "padding: 0 16px" in footer.group("body")
-    assert "align-items: center" in footer.group("body")
-    assert "background: var(--surface-container-lowest)" in footer.group("body")
-    assert "border-top: 1px solid var(--outline-variant)" in footer.group("body")
-
-    restore_action = re.search(
-        r"(?m)^\.modal-info\.modal-info--history-detail > \.history-detail-footer \.btn-primary\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert restore_action is not None
-    assert "grid-column: 5" in restore_action.group("body")
-    assert "justify-self: center" in restore_action.group("body")
-    assert "min-width: 104px" in restore_action.group("body")
-
     section = re.search(r"(?m)^\.history-section\s*\{(?P<body>.*?)\}", css, re.S)
     assert section is not None
     assert "flex: 0 0 auto" in section.group("body")
@@ -7195,7 +7068,9 @@ def test_history_detail_modal_layout_keeps_tables_readable():
 
     result_header = re.search(r"(?m)^\.history-result-table th\s*\{(?P<body>.*?)\}", css, re.S)
     assert result_header is not None
-    assert "position: static" in result_header.group("body")
+    assert "position: sticky" in result_header.group("body")
+    assert "top: 0" in result_header.group("body")
+    assert "z-index: 2" in result_header.group("body")
     assert "color: var(--on-surface-variant)" in result_header.group("body")
     assert "font-weight: 600" in result_header.group("body")
     assert "background: var(--surface-container-low)" in result_header.group("body")
@@ -7976,9 +7851,10 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     )
     assert frosted_nav is not None
     frosted_nav_body = frosted_nav.group("body")
-    assert "linear-gradient" in frosted_nav_body
-    assert "backdrop-filter: blur(24px) saturate(1.18);" in frosted_nav_body
-    assert "-webkit-backdrop-filter: blur(24px) saturate(1.18);" in frosted_nav_body
+    assert "background: var(--surface-container-lowest);" in frosted_nav_body
+    assert "linear-gradient" not in frosted_nav_body
+    assert "backdrop-filter: none;" in frosted_nav_body
+    assert "-webkit-backdrop-filter: none;" in frosted_nav_body
     assert '[data-theme="space-tech"].space-nav-over-content .top-nav::before' not in css
     assert '[data-theme="space-tech"].space-nav-over-content .top-nav::after' not in css
     assert '[data-theme="space-tech"].space-nav-over-content body::before' not in css
@@ -8281,31 +8157,20 @@ def test_flow_settings_source_select_uses_name_only_and_shows_execute_url_rule()
     assert "validateFlowExecuteUrl" in app_js
 
 
-def test_dark_mode_is_separate_from_theme_choices_and_has_nav_toggles():
+def test_dark_mode_entry_points_are_removed_and_light_mode_is_forced():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
     assert 'name="theme"' not in html
-    assert html.count('data-theme-toggle-logo') == 2
-    assert 'id="topDarkModeToggle"' in html
-    assert 'id="sidebarDarkModeToggle"' in html
-    top_actions_start = html.index('class="top-nav-actions"')
-    assert html.index('id="topDarkModeToggle"', top_actions_start) < html.index('id="topUserMenu"', top_actions_start)
-    assert html.index('id="sidebarDarkModeToggle"') < html.index('id="statusText"')
-
-    for text in [
-        "const topDarkModeToggle",
-        "const sidebarDarkModeToggle",
-        "function toggleThemeFromLogo",
-        "function applyDarkMode",
-        "function syncDarkModeButtons",
-        'document.documentElement.setAttribute("data-color-mode", "dark")',
-    ]:
-        assert text in app_js
-
-    assert "[data-color-mode=\"dark\"]" in css
-    assert ".dark-mode-toggle" in css
+    assert html.count('data-theme-toggle-logo') == 0
+    assert 'id="topDarkModeToggle"' not in html
+    assert 'id="sidebarDarkModeToggle"' not in html
+    assert "function applyDarkMode" in app_js
+    apply_dark_mode = re.search(r"function applyDarkMode\([^)]*\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert apply_dark_mode is not None
+    assert "const enabled = false;" in apply_dark_mode.group("body")
+    assert 'document.documentElement.setAttribute("data-color-mode", "light")' in app_js
     assert ".top-nav-actions" in css
 
 

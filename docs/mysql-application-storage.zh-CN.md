@@ -10,11 +10,11 @@
 
 界面偏好分为两层：
 
-- `user_interface_preferences` 按每个用户保存圆角和折线图风格，并预留两个可空的未来个人主题色；当前版本不向普通用户开放个人主题色写入。
-- `system_interface_preferences` 保存管理员维护的系统级活力/沉稳纯色主题。默认值分别为 `#3F6FAF` 和 `#355F63`。
-- 每个主题色独立按“有效个人覆盖色 → 有效系统色 → 代码默认色”解析，未来开放个人主题色后只影响本人。
+- `user_interface_preferences` 按每个用户保存圆角和折线图风格；两个可空的个人主题色字段仅作为历史结构兼容字段保留，当前版本不开放写入入口。
+- `system_interface_preferences` 作为独立兼容表保留系统级主题色及审计信息，默认值为 `#3466D9` 和 `#355F63`；当前前端不读取该表，也不提供自定义主题色入口。
+- `user_interface_preferences` 中的两个个人主题色字段不属于当前界面能力，当前前端不解析也不应用这些字段，且不得据此提供自定义主题色入口。
 - 系统主题色绝不使用 `app_settings` 保存；不得把主题色字段、默认值或管理接口迁回该旧逻辑。
-- 当前主题为纯色渲染，不提供也不存储渐变开关或渐变配置；浅色与暗色模式的文字、图标和焦点色由应用根据主题色自动派生可读颜色。
+- 当前界面仅保留亮色活力主题，固定使用 Logo 蓝渐变 `#3466D9` 到 `#6AA4FF`，不提供自定义主题色或渐变开关；沉稳主题和暗色模式入口已移除。空心按钮、可点击文字和身份标签使用纯蓝文字/边框，不使用渐变；悬浮反馈不使用主题光晕，仅保留主题色描边和轻微位移。登录页强制使用浅色布局，只有页面背景使用其自身的浅蓝到少量浅橙渐变，并沿用用户最近一次成功登录保存的圆角。
 
 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
 
@@ -34,7 +34,7 @@
 
 建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产数据或凭据。`004` 和 `006` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 通过 `information_schema.COLUMNS` 与 `information_schema.TABLE_CONSTRAINTS` 判断字段和约束是否存在后再升级。三个脚本可按顺序重复执行，不会重复建表、重复加列或删除现有数据；如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
 
-`user_interface_preferences` 不设置外键；用户删除后，孤儿偏好由应用在用户数据变更事务中清理。`006` 只创建表，不预插入 `id=1` 记录；应用在记录不存在时使用代码默认色，管理员首次保存时原子 upsert 唯一记录。
+`user_interface_preferences` 不设置外键；用户删除后，孤儿偏好由应用在用户数据变更事务中清理。`006` 只创建表，不预插入 `id=1` 记录；当前前端不依赖该记录，后端兼容接口在记录不存在时使用代码默认色，并在显式调用保存接口时原子 upsert 唯一记录。
 
 从已完成 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`，再部署新程序。本文仅说明初始化和升级步骤，不代表已在任何线上环境执行。
 
@@ -64,7 +64,7 @@ CREATE TABLE `user_interface_preferences` (
 ```sql
 CREATE TABLE `system_interface_preferences` (
   `id` TINYINT UNSIGNED NOT NULL COMMENT '固定主键，仅允许 1',
-  `vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3F6FAF' COMMENT '系统活力主题色，格式 #RRGGBB',
+  `vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3466D9' COMMENT '系统活力主题色，格式 #RRGGBB',
   `calm_theme_color` CHAR(7) NOT NULL DEFAULT '#355F63' COMMENT '系统沉稳主题色，格式 #RRGGBB',
   `updated_by` VARCHAR(64) NULL COMMENT '最后修改管理员用户 ID',
   `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
@@ -73,7 +73,7 @@ CREATE TABLE `system_interface_preferences` (
   CONSTRAINT `chk_system_interface_vitality_theme_color` CHECK (REGEXP_LIKE(`vitality_theme_color`, '^#[0-9A-F]{6}$', 'c')),
   CONSTRAINT `chk_system_interface_calm_theme_color` CHECK (REGEXP_LIKE(`calm_theme_color`, '^#[0-9A-F]{6}$', 'c'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='系统界面偏好表：保存全局纯色主题配置。';
+  COMMENT='系统界面偏好表：保留全局主题色兼容配置。';
 ```
 
 数据约束和运行规则：
@@ -81,9 +81,9 @@ CREATE TABLE `system_interface_preferences` (
 - `radius_px` 仅允许 `1`–`15`，默认 `4`。
 - `line_chart_style` 仅允许 `straight` 或 `smooth`，默认 `straight`。
 - 主题色只接受完整六位 `#RRGGBB`。接口允许输入小写，但持久化前统一转为大写；数据库约束只接受大写。
-- 两个个人主题色允许 `NULL`，用于未来逐用户覆盖；本版本的圆角/折线保存不得覆盖它们。
-- 系统表只允许 `id=1`；系统默认色为活力 `#3F6FAF`、沉稳 `#355F63`，同时记录 `updated_by` 和 `updated_at`。
-- 管理员当前可以在“系统设置→界面设置”同时维护两个系统色；普通用户只消费最终生效色。
+- 两个个人主题色允许 `NULL`，仅作为历史结构兼容字段保留；本版本的圆角/折线保存不得覆盖已有兼容值，前端也不得读取或应用它们。
+- 系统表只允许 `id=1`；兼容默认色为 `#3466D9`、`#355F63`，同时记录 `updated_by` 和 `updated_at`。
+- 当前“系统设置→界面设置”只维护用户圆角和折线图风格：圆角范围为 `1`–`15`、默认 `4`，折线默认使用 `straight` 直线样式；不展示主题色输入、主题切换或渐变开关。固定 Logo 蓝渐变由前端样式令牌统一提供。
 
 ## 四、配置示例
 
@@ -128,8 +128,8 @@ python scripts\export_sqlite_to_mysql.py `
 - `app_schema_version` 当前版本为 `1`。
 - 当前完整 37 张应用存储表结构齐全，且已按顺序应用 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`。
 - `user_interface_preferences` 包含圆角、折线图风格和两个可空个人主题色；主键、默认值、范围/枚举/HEX 检查约束符合本节完整 DDL，现有行数在结构升级前后保持一致。
-- `system_interface_preferences` 包含唯一行约束、两个系统色默认值/HEX 约束、最后修改人和更新时间；首次管理员保存前允许零行，不应出现 `id<>1` 或多余记录。
-- 主题设置中不存在渐变字段；系统主题色不写入 `app_settings`。
+- `system_interface_preferences` 包含唯一行约束、两个兼容色默认值/HEX 约束、最后修改人和更新时间；允许零行，不应出现 `id<>1` 或多余记录。
+- 界面设置中不存在自定义主题色或渐变开关；兼容主题色也不写入 `app_settings`。
 - 迁移报告中 SQLite `integrity_check` 为 `ok`，外键异常数为 `0`。
 - 原 20 张迁移目标表的数据行数与迁移报告一致，并确认 `total_exported_rows` 与运维执行后的 MySQL 行数抽查结果相符。
 - 数据源、用户、自动对数历史、人行逐笔校验历史和流程链历史都能从 MySQL 正常读取。

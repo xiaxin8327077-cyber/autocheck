@@ -83,7 +83,7 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         assert expected in v21_radius_change
 
 
-def test_readme_documents_global_solid_themes_and_personal_line_style() -> None:
+def test_readme_documents_fixed_logo_theme_and_personal_line_style() -> None:
     readme = _read(README)
     current_features = readme.split("## 当前功能", 1)[1].split(
         "## MySQL 应用库上线准备", 1
@@ -92,33 +92,29 @@ def test_readme_documents_global_solid_themes_and_personal_line_style() -> None:
     v21_changes = _changelog_version_block(latest_changes, "v2.1")
 
     for expected in [
-        "#3F6FAF",
-        "#355F63",
-        "管理员",
-        "#RRGGBB",
-        "所见即所得",
-        "纯色",
-        "不使用渐变",
-        "浅色与暗色模式",
-        "语义",
+        "#3466D9",
+        "#6AA4FF",
+        "固定采用 Logo 蓝",
+        "不再提供自定义主题色入口",
+        "语义颜色",
+        "每期执行次数折线使用 Logo 橙色渐变",
         "直线折线",
         "平滑曲线",
         "默认直线折线",
         "登录页",
-        "同一居中布局",
+        "强制浅色",
     ]:
         assert expected in current_features
 
     for expected in [
-        "全局纯色主题",
-        "#3F6FAF",
-        "#355F63",
-        "管理员",
-        "未来个人主题色",
+        "固定 Logo 蓝渐变",
+        "#3466D9",
+        "#6AA4FF",
+        "移除系统设置中的自定义主题色入口",
         "默认直线折线",
         "平滑曲线",
         "登录页",
-        "浅色与暗色模式",
+        "强制浅色",
     ]:
         assert expected in v21_changes
 
@@ -211,7 +207,7 @@ def test_mysql_storage_doc_contains_complete_final_interface_preference_ddl() ->
         "CONSTRAINT `chk_user_interface_calm_theme_color`",
         "CREATE TABLE `system_interface_preferences`",
         "`id` TINYINT UNSIGNED NOT NULL",
-        "`vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3F6FAF'",
+        "`vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3466D9'",
         "`calm_theme_color` CHAR(7) NOT NULL DEFAULT '#355F63'",
         "`updated_by` VARCHAR(64) NULL",
         "CONSTRAINT `chk_system_interface_preferences_singleton` CHECK (`id` = 1)",

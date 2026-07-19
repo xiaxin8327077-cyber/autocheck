@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from .storage_user_interface_preferences import UserInterfacePreferences
 
 
-DEFAULT_VITALITY_THEME_COLOR = "#3F6FAF"
+DEFAULT_VITALITY_THEME_COLOR = "#3466D9"
 DEFAULT_CALM_THEME_COLOR = "#355F63"
 THEME_COLOR_PATTERN = re.compile(r"^#[0-9A-F]{6}$")
 

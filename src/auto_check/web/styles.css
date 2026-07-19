@@ -36,10 +36,12 @@
   --card-hover-shadow: rgba(22, 101, 52, 0.10);
   --card-hover-shadow-soft: rgba(22, 101, 52, 0.07);
   --card-hover-shadow-strong: rgba(22, 101, 52, 0.12);
-  --theme-accent: #3F6FAF;
+  --theme-accent: #3466D9;
+  --theme-accent-gradient-end: #6AA4FF;
+  --theme-accent-gradient: linear-gradient(90deg, #3466D9 0%, #6AA4FF 100%);
   --theme-on-accent: #FFFFFF;
-  --theme-accent-readable: #3F6FAF;
-  --theme-focus-ring: rgba(63, 111, 175, 0.28);
+  --theme-accent-readable: #3466D9;
+  --theme-focus-ring: rgba(52, 102, 217, 0.28);
   --theme-page-background: #EEF4F8;
   --ui-radius: 4px;
   background: var(--theme-page-background);
@@ -199,14 +201,11 @@
 }
 
 [data-theme="space-tech"].space-nav-over-content .top-nav {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(239, 248, 255, 0.78) 62%, rgba(239, 248, 255, 0.46) 100%),
-    radial-gradient(circle at 18% 0%, rgba(59, 130, 246, 0.18), transparent 42%),
-    radial-gradient(circle at 86% 0%, rgba(6, 182, 212, 0.14), transparent 38%);
-  border-color: rgba(148, 163, 184, 0.50);
-  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(24px) saturate(1.18);
-  -webkit-backdrop-filter: blur(24px) saturate(1.18);
+  background: var(--surface-container-lowest);
+  border-color: var(--outline-variant);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 [data-theme="space-tech"] .main-content {
@@ -4046,9 +4045,9 @@ th {
   flex: 0 0 auto;
 }
 
-.history-section--complete .history-section-bar { background: #22c55e; }
+.history-section--complete .history-section-bar { background: var(--theme-accent); }
 .history-section--added .history-section-bar { background: #ef4444; }
-.history-section--removed .history-section-bar { background: #3b82f6; }
+.history-section--removed .history-section-bar { background: #22c55e; }
 
 .history-section-table {
   overflow-x: auto;
@@ -4067,8 +4066,9 @@ th {
 }
 
 .history-result-table th {
-  position: static;
-  z-index: auto;
+  position: sticky;
+  top: 0;
+  z-index: 2;
   color: var(--on-surface-variant);
   font-weight: 600;
   background: var(--surface-container-low);
@@ -4098,7 +4098,7 @@ th {
   justify-content: center;
   min-height: 20px;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--ui-radius) !important;
   border: 1px solid var(--outline-variant);
   background: transparent;
   color: var(--on-surface-variant);
@@ -4706,7 +4706,7 @@ input:focus, select:focus {
   height: 40px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: var(--ui-radius);
   flex-shrink: 0;
 }
 
@@ -5455,7 +5455,7 @@ input:focus, select:focus {
   min-width: 86px;
   min-height: 36px;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--ui-radius);
   font-size: 13px;
   font-weight: 700;
 }
@@ -5866,7 +5866,7 @@ input:focus, select:focus {
 
 .tool-card-icon {
   width: 52px; height: 52px;
-  border-radius: 12px;
+  border-radius: var(--ui-radius);
   display: flex; align-items: center; justify-content: center;
   transition: all 0.3s ease;
   font-size: 24px;
@@ -5874,7 +5874,7 @@ input:focus, select:focus {
 
 .tool-card-badge {
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--ui-radius);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 1px;
@@ -6212,7 +6212,7 @@ input:focus, select:focus {
 .db-validation-history-count-link {
   border: 0;
   background: transparent;
-  color: var(--secondary, #0ea5e9);
+  color: var(--theme-accent-readable);
   cursor: pointer;
   font: inherit;
   font-weight: 700;
@@ -8970,7 +8970,62 @@ input:focus, select:focus {
 #page-settings #interfaceRadiusSlider {
   width: 100%;
   min-width: 0;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  box-shadow: none;
   accent-color: var(--secondary);
+}
+
+#page-settings #interfaceRadiusSlider::-webkit-slider-runnable-track {
+  height: 6px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent) 0,
+    var(--theme-accent-gradient-end) var(--range-progress, 21.43%),
+    var(--outline-variant) var(--range-progress, 21.43%) 100%
+  );
+}
+
+#page-settings #interfaceRadiusSlider::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: var(--theme-accent);
+  background-image: var(--theme-accent-gradient);
+  box-shadow: 0 0 0 2px var(--surface-container-lowest), 0 1px 4px rgb(15 23 42 / 0.18);
+}
+
+#page-settings #interfaceRadiusSlider::-moz-range-track {
+  height: 6px;
+  border: 0;
+  border-radius: var(--ui-radius) !important;
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent) 0,
+    var(--theme-accent-gradient-end) var(--range-progress, 21.43%),
+    var(--outline-variant) var(--range-progress, 21.43%) 100%
+  );
+}
+
+#page-settings #interfaceRadiusSlider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--theme-accent);
+  background-image: var(--theme-accent-gradient);
+  box-shadow: 0 0 0 2px var(--surface-container-lowest);
 }
 
 #page-settings #interfaceRadiusValue {
@@ -9791,7 +9846,7 @@ input:focus, select:focus {
   height: 42px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: var(--ui-radius);
   background: var(--secondary-container);
   color: var(--on-secondary-container);
   font-size: 18px;
@@ -10109,8 +10164,9 @@ input:focus, select:focus {
   min-height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--secondary-container);
-  color: var(--on-secondary-container);
+  border: 1px solid color-mix(in srgb, var(--theme-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
+  color: var(--theme-accent-readable);
   font-size: 12px;
   font-weight: 800;
 }
@@ -10140,13 +10196,15 @@ input:focus, select:focus {
 }
 
 .role-badge--admin {
-  background: var(--secondary-container);
-  color: var(--on-secondary-container);
+  border: 1px solid color-mix(in srgb, var(--theme-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
+  color: var(--theme-accent-readable);
 }
 
 .role-badge--user {
-  background: var(--secondary-container);
-  color: var(--on-secondary-container);
+  border: 1px solid color-mix(in srgb, var(--theme-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--theme-accent) 12%, transparent);
+  color: var(--theme-accent-readable);
 }
 
 .user-status-badge.enabled {
@@ -10184,7 +10242,7 @@ input:focus, select:focus {
   display: inline-grid;
   place-items: center;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--ui-radius);
   background: transparent;
   cursor: pointer;
   font-size: 15px;
@@ -10415,7 +10473,7 @@ input:focus, select:focus {
 }
 
 .user-enable-switch.on {
-  background: var(--success, #10b981);
+  background: var(--theme-accent);
 }
 
 .user-enable-switch.on::after {
@@ -11123,7 +11181,7 @@ input.custom-input-native:disabled {
   z-index: 10000;
   overflow: hidden auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
   border: 1px solid rgba(59, 130, 246, 0.30);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.95);
@@ -12179,7 +12237,44 @@ input.custom-input-native:disabled {
 
 [data-theme="space-tech"] #page-home .glass-card:hover,
 [data-theme="space-tech"] #page-home .glass-stat-card:hover {
-  box-shadow: var(--space-panel-hover-shadow) !important;
+  box-shadow: var(--space-panel-shadow) !important;
+}
+
+/* Reconciliation overview: hover only emphasizes the border, without an edge glow. */
+#page-home .glass-card:hover {
+  box-shadow: 0 4px 24px rgba(37, 103, 110, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+
+#page-home .glass-stat-card:hover {
+  box-shadow: 0 4px 20px rgba(37, 103, 110, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.7) !important;
+}
+
+/* User management uses the same hover convention: border emphasis, no glow. */
+#page-settings .settings-dashboard-card:hover {
+  transform: translateY(-2px) !important;
+}
+
+#page-users .user-stat-card:hover {
+  border: 1px solid var(--theme-accent) !important;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06) !important;
+}
+
+#page-users .user-filter-bar:hover {
+  border: 1px solid var(--theme-accent) !important;
+  box-shadow: none !important;
+}
+
+#page-users .user-table-card:hover {
+  border: 1px solid var(--theme-accent) !important;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.08) !important;
+}
+
+[data-theme="space-tech"] #page-home .glass-card:hover,
+[data-theme="space-tech"] #page-home .glass-stat-card:hover,
+[data-theme="space-tech"] #page-users .user-stat-card:hover,
+[data-theme="space-tech"] #page-users .user-filter-bar:hover,
+[data-theme="space-tech"] #page-users .user-table-card:hover {
+  box-shadow: var(--space-panel-shadow) !important;
 }
 
 /* ===== Shared balanced modal visual system ===== */
@@ -12631,6 +12726,7 @@ input.custom-date-input,
 .custom-select-trigger,
 .custom-select-dropdown,
 .custom-date-dropdown {
+  border-color: var(--outline-variant);
   color: var(--on-surface);
   background: var(--surface-container-lowest);
 }
@@ -12838,3 +12934,611 @@ input.custom-input-native:disabled {
   background: currentColor;
 }
 /* Semantic action buttons: end */
+
+/* Light-only interface follow-up */
+#page-settings .card-icon {
+  border-radius: var(--ui-radius);
+}
+
+.info-detail-action {
+  border-color: var(--theme-accent-readable);
+  color: var(--theme-accent-readable);
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent);
+}
+
+.info-detail-action:hover {
+  border-color: var(--theme-accent);
+  color: var(--theme-accent-readable);
+  background: color-mix(in srgb, var(--theme-accent) 14%, transparent);
+}
+
+/* Theme consistency follow-up fixes */
+.brand-theme-toggle {
+  cursor: default;
+}
+
+.top-nav-item:not(.active):hover,
+.top-nav-group:not(.active) > .top-nav-group-toggle:hover,
+.top-nav-subitem:not(.active):hover,
+.nav-item:not(.active):hover,
+.nav-group:not(.active) > .nav-group-toggle:hover {
+  color: var(--theme-accent-readable);
+}
+
+.run-log-toggle-icon,
+.run-log-time,
+.result-filter-clear,
+.about-links a,
+.about-links a:hover {
+  color: var(--theme-accent-readable);
+}
+
+.wave-progress-bar {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent) 0%,
+    color-mix(in srgb, var(--theme-accent) 72%, transparent) 58%,
+    color-mix(in srgb, var(--theme-accent) 34%, transparent) 100%
+  );
+  box-shadow: 0 0 12px var(--theme-focus-ring);
+}
+
+#flowModal input[type="checkbox"],
+#dbValidationModal input[type="checkbox"] {
+  accent-color: var(--theme-accent);
+}
+
+#pbcModal [data-action-tone="neutral"][data-action-variant="weak"],
+#dbValidationModal [data-action-tone="neutral"][data-action-variant="weak"],
+#flowModal [data-action-tone="neutral"][data-action-variant="weak"] {
+  border: 1px solid var(--outline-variant);
+  color: var(--on-surface-variant);
+  background: var(--surface-container-lowest);
+  box-shadow: none;
+}
+
+#flowModal #flowCancelBtn[data-action-tone="danger"]:not(:disabled) {
+  border-color: var(--action-danger);
+  color: var(--action-on-danger);
+  background: var(--action-danger);
+}
+
+#page-settings [data-action-tone="primary"][data-action-variant="solid"] {
+  border-color: var(--theme-accent);
+  color: var(--theme-on-accent);
+  background: var(--theme-accent);
+}
+
+#page-settings [data-action-tone="primary"][data-action-variant="weak"] {
+  border-color: var(--theme-accent-readable);
+  color: var(--theme-accent-readable);
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent);
+}
+
+#page-settings #interfaceRadiusSlider {
+  accent-color: var(--theme-accent);
+}
+
+#page-settings #interfaceLineChartStyle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+#page-settings #interfaceLineChartStyle label {
+  justify-content: center;
+  width: 100%;
+}
+
+#page-settings #interfaceLineChartStyle label:has(input:focus-visible) {
+  outline-color: var(--theme-accent-readable);
+}
+
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  color: var(--theme-on-accent);
+  background: var(--theme-accent);
+}
+
+#page-settings .interface-settings-body {
+  gap: 16px;
+}
+
+#page-settings .interface-setting-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+#page-settings .interface-setting-grid .setting-item {
+  align-content: start;
+}
+
+#page-settings .interface-radius-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  grid-column: 1 / -1;
+}
+
+#page-settings .system-theme-colors--compact {
+  grid-template-columns: minmax(210px, 1fr) minmax(190px, 280px);
+  align-items: end;
+  gap: 18px;
+  padding: 0 0 16px;
+  border-top: 0;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+#page-settings .system-theme-colors--compact .system-theme-colors-heading {
+  min-width: 0;
+}
+
+#page-settings .system-theme-colors--compact .system-theme-color-grid {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+#page-settings .system-theme-colors--compact .system-theme-color-field {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+}
+
+#page-settings .system-theme-colors--compact .system-theme-color-field > .setting-label {
+  white-space: nowrap;
+}
+
+#page-settings .system-theme-color-control {
+  grid-template-columns: minmax(0, 1fr) 36px;
+  min-width: 0;
+}
+
+#page-settings .system-theme-color-input {
+  width: 100%;
+  max-width: 170px;
+}
+
+#page-settings .system-theme-color-swatch {
+  overflow: hidden;
+  color: transparent;
+  font-size: 0;
+  line-height: 0;
+}
+
+#page-settings .system-theme-color-error {
+  grid-column: 2;
+}
+
+.modal-info .modal-body .changelog-version {
+  color: var(--theme-accent-readable);
+}
+
+.reconcile-schema-toggle {
+  border-color: var(--theme-accent-readable);
+  color: var(--theme-accent-readable);
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent);
+}
+
+@media (max-width: 760px) {
+  #page-settings .interface-setting-grid,
+  #page-settings .system-theme-colors--compact {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Theme-colored fills consistently use the Logo blue gradient. */
+.top-nav-item.active,
+.top-nav-group.active > .top-nav-group-toggle,
+:root[data-page="report-navigation"] .top-nav-item[data-page="report-navigation"],
+:root[data-page="home"] .top-nav-item[data-page="home"],
+:root:not([data-page]) .top-nav-item[data-page="report-navigation"],
+:root[data-page="auto-check"] .top-nav-item[data-page="auto-check"],
+:root[data-page="history"] .top-nav-item[data-page="history"],
+:root[data-page="tools"] .top-nav-item[data-page="tools"],
+:root[data-page="settings"] .top-nav-item[data-page="settings"],
+:root[data-page="users"] .top-nav-item[data-page="users"],
+:root[data-page="local-storage"] .top-nav-item[data-page="local-storage"],
+.nav-item.active,
+.nav-group.active > .nav-group-toggle,
+.btn-primary,
+[data-action-tone="primary"][data-action-variant="solid"],
+.trend-quick-btn.active,
+#page-local-storage .local-storage-tab.active,
+#page-local-storage .local-storage-page-size button.active,
+#page-settings #interfaceLineChartStyle label:has(input:checked),
+#page-report-navigation .report-nav-filter-chips .active,
+#page-report-navigation .report-nav-action-button,
+.custom-date-day.active,
+.user-enable-switch.on,
+.current-user-badge,
+.role-badge--admin,
+.role-badge--user,
+.custom-select-option.active,
+.history-section--complete .history-section-bar,
+#page-report-navigation .report-nav-period-label::before,
+#page-settings .card-icon-blue,
+#page-settings .card-icon-cyan,
+#page-settings .card-icon-green,
+#page-settings .card-icon-orange,
+#page-settings .card-icon-purple,
+#page-settings .card-icon-pink {
+  background-color: var(--theme-accent) !important;
+  background-image: var(--theme-accent-gradient) !important;
+}
+
+.current-user-badge,
+.role-badge--admin,
+.role-badge--user,
+.custom-select-option.active {
+  border-color: transparent;
+  color: var(--theme-on-accent) !important;
+}
+
+.top-nav-item.active,
+.top-nav-group.active > .top-nav-group-toggle,
+.nav-item.active,
+.nav-group.active > .nav-group-toggle,
+.btn-primary,
+[data-action-tone="primary"][data-action-variant="solid"],
+#page-report-navigation .report-nav-action-button {
+  box-shadow: 0 6px 16px var(--theme-focus-ring);
+}
+
+.btn-primary:hover:not(:disabled),
+[data-action-tone="primary"]:hover:not(:disabled),
+.info-detail-action:hover,
+.reconcile-schema-toggle:hover,
+.custom-date-nav:hover,
+.custom-date-actions button:hover {
+  filter: brightness(0.96);
+}
+
+/* Keep only the primary action solid; secondary actions use outline/ghost hierarchy. */
+[data-action-tone="primary"][data-action-variant="weak"],
+.info-detail-action,
+.reconcile-schema-toggle {
+  border-color: var(--theme-accent-readable) !important;
+  color: var(--theme-accent-readable) !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  filter: none;
+}
+
+[data-action-tone="neutral"][data-action-variant="weak"] {
+  border-color: var(--outline-variant) !important;
+  color: var(--on-surface-variant) !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+#dbValidationCloseBtn,
+#flowChainEditorCancel,
+#confirmCancel,
+#promptCancel,
+#reportNavCardMaintenanceCancel,
+#userModalCancel {
+  border-color: transparent !important;
+  color: var(--on-surface-variant) !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.custom-date-nav,
+.custom-date-actions button {
+  color: var(--theme-accent-readable) !important;
+  background: color-mix(in srgb, var(--theme-accent) 10%, var(--surface-container-lowest)) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.custom-date-nav,
+.custom-date-day,
+.custom-date-actions button {
+  border-radius: var(--ui-radius) !important;
+}
+
+.current-user-badge,
+.role-badge--admin,
+.role-badge--user {
+  border-color: color-mix(in srgb, var(--theme-accent) 28%, transparent) !important;
+  color: var(--theme-accent-readable) !important;
+  background: color-mix(in srgb, var(--theme-accent) 10%, transparent) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+#page-settings .btn-sm {
+  height: 32px;
+  min-height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+/* Interface line-style choices stay outlined, including the selected option. */
+#page-settings #interfaceLineChartStyle {
+  gap: 10px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+#page-settings #interfaceLineChartStyle label,
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: transparent !important;
+  background-image: none !important;
+}
+
+#page-settings #interfaceLineChartStyle label + label {
+  border-left: 1px solid var(--outline-variant);
+}
+
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  border-color: var(--theme-accent);
+  color: var(--theme-accent-readable) !important;
+  box-shadow: none;
+}
+
+#page-settings #interfaceRadiusSlider::-webkit-slider-thumb {
+  border: 2px solid var(--theme-accent);
+  background: var(--surface-container-lowest);
+  background-image: none;
+}
+
+#page-settings #interfaceRadiusSlider::-moz-range-thumb {
+  border: 2px solid var(--theme-accent);
+  background: var(--surface-container-lowest);
+  background-image: none;
+}
+
+/* System settings card icons use the outlined visual hierarchy. */
+#page-settings .card-icon {
+  border: 1px solid var(--outline-variant) !important;
+  color: var(--theme-accent-readable) !important;
+  background: var(--surface-container) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* Match result/history header separators to the user-management table. */
+#page-auto-check .result-table > thead > tr > th,
+#page-history .history-table > thead > tr > th {
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+/* Keep user-edit and modal secondary actions visibly outlined. */
+#userModalCancel,
+#dbValidationCloseBtn {
+  border: 1px solid var(--outline-variant) !important;
+  color: var(--on-surface-variant) !important;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.db-validation-history-count-link,
+#page-report-navigation .report-nav-period-label,
+#page-report-navigation .report-nav-period-chevron,
+.run-log-toggle-icon,
+.run-log-time,
+.result-filter-clear,
+.about-links a,
+.modal-info .modal-body .changelog-version,
+.custom-date-head strong,
+.top-nav-item:not(.active):hover,
+.top-nav-group:not(.active) > .top-nav-group-toggle:hover,
+.top-nav-subitem:not(.active):hover,
+.nav-item:not(.active):hover,
+.nav-group:not(.active) > .nav-group-toggle:hover {
+  color: transparent !important;
+  background-image: var(--theme-accent-gradient);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+/* Safe gradient hierarchy: gradient surfaces/borders with always-readable solid text. */
+[data-action-tone="primary"][data-action-variant="weak"],
+.info-detail-action,
+.reconcile-schema-toggle,
+#newConfigBtn,
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  border: 1px solid transparent !important;
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background:
+    linear-gradient(90deg, rgba(52, 102, 217, 0.10), rgba(106, 164, 255, 0.18)) padding-box,
+    linear-gradient(var(--surface-container-lowest), var(--surface-container-lowest)) padding-box,
+    var(--theme-accent-gradient) border-box !important;
+  box-shadow: none !important;
+}
+
+#page-users .user-filter-pill {
+  border: 1px solid var(--outline-variant) !important;
+  color: var(--on-surface-variant) !important;
+  -webkit-text-fill-color: var(--on-surface-variant) !important;
+  background: var(--surface-container-lowest) !important;
+  background-image: none !important;
+}
+
+#page-users .user-filter-pill.active {
+  border-color: var(--theme-accent) !important;
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background: color-mix(in srgb, var(--theme-accent) 8%, var(--surface-container-lowest)) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.current-user-badge,
+.role-badge--admin,
+.role-badge--user {
+  border: 1px solid transparent !important;
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background:
+    linear-gradient(90deg, rgba(52, 102, 217, 0.10), rgba(106, 164, 255, 0.10)) padding-box,
+    linear-gradient(var(--surface-container-lowest), var(--surface-container-lowest)) padding-box,
+    var(--theme-accent-gradient) border-box !important;
+  box-shadow: none !important;
+}
+
+/* Keep the control surface readable; only the text layer receives the gradient. */
+.theme-gradient-text {
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .theme-gradient-text {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+    background-image: var(--theme-accent-gradient) !important;
+    background-clip: text !important;
+    -webkit-background-clip: text !important;
+  }
+}
+
+.role-badge-icon {
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+}
+
+#page-users .user-filter-pill .theme-gradient-text,
+#page-users .user-filter-pill > span {
+  color: inherit !important;
+  -webkit-text-fill-color: inherit !important;
+  background: none !important;
+  background-image: none !important;
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  #page-users .user-filter-pill.active > span {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+    background-image: var(--theme-accent-gradient) !important;
+    background-clip: text !important;
+    -webkit-background-clip: text !important;
+  }
+}
+
+/* User row actions share the same borderless tinted icon treatment. */
+#page-users .user-actions .edit-user {
+  border: 0 !important;
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* Use the same theme palette in settings, with more weight on its deep-blue end. */
+#page-settings {
+  --settings-accent-gradient: linear-gradient(90deg, #3466D9 0%, #3466D9 58%, #6AA4FF 100%);
+}
+
+#page-settings .theme-gradient-text {
+  background-image: var(--settings-accent-gradient) !important;
+}
+
+#page-settings [data-action-tone="primary"][data-action-variant="weak"],
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  background:
+    linear-gradient(90deg, rgba(52, 102, 217, 0.08), rgba(106, 164, 255, 0.12)) padding-box,
+    linear-gradient(var(--surface-container-lowest), var(--surface-container-lowest)) padding-box,
+    var(--settings-accent-gradient) border-box !important;
+}
+
+/* Bridge the visual gap so the pointer can travel from the top username to logout. */
+.user-menu--top .user-menu-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -9px;
+  height: 9px;
+}
+
+/* Confirmation cancellation remains a visible neutral secondary action. */
+#confirmCancel,
+#promptCancel,
+#reportNavCardMaintenanceCancel {
+  border: 1px solid var(--outline-variant) !important;
+  color: var(--on-surface-variant) !important;
+  -webkit-text-fill-color: var(--on-surface-variant) !important;
+  background: var(--surface-container-lowest) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  border-radius: var(--ui-radius) !important;
+}
+
+/* Final hierarchy: gradients are reserved for solid primary surfaces only. */
+.theme-gradient-text,
+.db-validation-history-count-link,
+#page-report-navigation .report-nav-period-label,
+#page-report-navigation .report-nav-period-chevron,
+.run-log-toggle-icon,
+.run-log-time,
+.result-filter-clear,
+.about-links a,
+.modal-info .modal-body .changelog-version,
+.custom-date-head strong,
+.top-nav-item:not(.active):hover,
+.top-nav-group:not(.active) > .top-nav-group-toggle:hover,
+.top-nav-subitem:not(.active):hover,
+.nav-item:not(.active):hover,
+.nav-group:not(.active) > .nav-group-toggle:hover {
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background: none !important;
+  background-image: none !important;
+  background-clip: border-box !important;
+  -webkit-background-clip: border-box !important;
+}
+
+[data-action-tone="primary"][data-action-variant="weak"]:not(.user-icon-action),
+.info-detail-action,
+.reconcile-schema-toggle,
+#newConfigBtn,
+#page-settings #interfaceLineChartStyle label:has(input:checked) {
+  border: 1px solid var(--theme-accent) !important;
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background: color-mix(in srgb, var(--theme-accent) 5%, var(--surface-container-lowest)) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.current-user-badge,
+.role-badge--admin,
+.role-badge--user {
+  border: 1px solid color-mix(in srgb, var(--theme-accent) 38%, var(--outline-variant)) !important;
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background: color-mix(in srgb, var(--theme-accent) 8%, var(--surface-container-lowest)) !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+#page-users .user-filter-pill.active > span {
+  color: var(--theme-accent-readable) !important;
+  -webkit-text-fill-color: var(--theme-accent-readable) !important;
+  background: none !important;
+  background-image: none !important;
+  background-clip: border-box !important;
+  -webkit-background-clip: border-box !important;
+}
+
+#page-users .user-actions .edit-user {
+  border: 0 !important;
+  background: color-mix(in srgb, var(--theme-accent) 8%, transparent) !important;
+  background-image: none !important;
+}

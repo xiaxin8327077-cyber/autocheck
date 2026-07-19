@@ -413,14 +413,10 @@ async function ensureAuthenticated() {
     throw new Error("login required");
   }
   resetInterfaceRadiusForAuthChange();
-  resetSystemThemeColorsForAuthChange();
   authState.csrfToken = payload.csrf_token || "";
   authState.user = payload.user || null;
   document.documentElement.dataset.role = authState.user?.role === "admin" ? "admin" : "user";
-  await Promise.all([
-    loadInterfaceRadiusPreference({ silent: true }),
-    loadSystemThemeColors({ silent: true }),
-  ]);
+  await loadInterfaceRadiusPreference({ silent: true });
   activateThemeUserStorage();
   applySavedUserTheme();
   updateCurrentUsername();
@@ -438,7 +434,7 @@ function getSavedSettings() {
 }
 
 function normalizeTheme(theme) {
-  return ["light", "space-tech"].includes(theme) ? theme : "space-tech";
+  return "space-tech";
 }
 
 function normalizeDarkMode(darkMode) {
@@ -524,20 +520,17 @@ function withSavedUserTheme(settings = {}) {
 
 function applySavedUserTheme() {
   const savedTheme = getSavedTheme();
-  const savedDarkMode = getSavedDarkMode();
   if (savedTheme) {
     defaultSettings.theme = normalizeTheme(savedTheme);
     applyTheme(defaultSettings.theme);
   }
-  if (savedDarkMode) {
-    defaultSettings.darkMode = normalizeDarkMode(savedDarkMode);
-    applyDarkMode(defaultSettings.darkMode);
-  }
+  defaultSettings.darkMode = "false";
+  applyDarkMode("false");
 }
 
 // Theme color runtime start
 const DEFAULT_EFFECTIVE_THEME_COLORS = Object.freeze({
-  vitality: "#3F6FAF",
+  vitality: "#3466D9",
   calm: "#355F63",
 });
 const THEME_PALETTE_SURFACES = Object.freeze({
@@ -616,7 +609,9 @@ function deriveThemePalette(value, mode = "light", pageBase = null) {
   const surface = THEME_PALETTE_SURFACES[colorMode];
   const blackContrast = contrastRatio(accent, "#000000");
   const whiteContrast = contrastRatio(accent, "#FFFFFF");
-  const onAccent = blackContrast >= whiteContrast ? "#000000" : "#FFFFFF";
+  const onAccent = whiteContrast >= 4.5 || whiteContrast >= blackContrast
+    ? "#FFFFFF"
+    : "#000000";
   const readableTarget = colorMode === "dark" ? "#FFFFFF" : "#000000";
   let readableAccent = accent;
   for (let step = 1; contrastRatio(readableAccent, surface) < 4.5 && step <= 100; step += 1) {
@@ -628,6 +623,7 @@ function deriveThemePalette(value, mode = "light", pageBase = null) {
     accent,
     onAccent,
     readableAccent,
+    gradientEnd: accent === "#3466D9" ? "#6AA4FF" : mixThemeHex(accent, "#FFFFFF", 0.36),
     focusRing: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${colorMode === "dark" ? "0.38" : "0.28"})`,
     pageBackground: mixThemeHex(
       normalizedPageBase,
@@ -637,13 +633,10 @@ function deriveThemePalette(value, mode = "light", pageBase = null) {
   };
 }
 
-function applyEffectiveThemeColors(colors = effectiveThemeColors) {
-  effectiveThemeColors = {
-    vitality: normalizeThemeHex(colors?.vitality) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality,
-    calm: normalizeThemeHex(colors?.calm) || DEFAULT_EFFECTIVE_THEME_COLORS.calm,
-  };
+function applyEffectiveThemeColors() {
+  effectiveThemeColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
   const root = document.documentElement;
-  const themeKey = root.getAttribute("data-theme") === "space-tech" ? "vitality" : "calm";
+  const themeKey = "vitality";
   const colorMode = root.getAttribute("data-color-mode") === "dark" ? "dark" : "light";
   const palette = deriveThemePalette(
     effectiveThemeColors[themeKey],
@@ -651,424 +644,32 @@ function applyEffectiveThemeColors(colors = effectiveThemeColors) {
     THEME_PAGE_BACKGROUND_BASES[themeKey][colorMode],
   );
   root.style.setProperty("--theme-accent", palette.accent);
+  root.style.setProperty("--theme-accent-gradient-end", palette.gradientEnd);
+  root.style.setProperty("--theme-accent-gradient", `linear-gradient(90deg, ${palette.accent} 0%, ${palette.gradientEnd} 100%)`);
   root.style.setProperty("--theme-on-accent", palette.onAccent);
   root.style.setProperty("--theme-accent-readable", palette.readableAccent);
   root.style.setProperty("--theme-focus-ring", palette.focusRing);
   root.style.setProperty("--theme-page-background", palette.pageBackground);
+  const accentRgb = themeHexToRgb(palette.accent);
+  if (accentRgb) {
+    const accentChannel = `${accentRgb.red}, ${accentRgb.green}, ${accentRgb.blue}`;
+    root.style.setProperty("--card-hover-glow", palette.accent);
+    root.style.setProperty("--card-hover-shadow", `rgba(${accentChannel}, 0.10)`);
+    root.style.setProperty("--card-hover-shadow-soft", `rgba(${accentChannel}, 0.07)`);
+    root.style.setProperty("--card-hover-shadow-strong", `rgba(${accentChannel}, 0.14)`);
+    root.style.setProperty(
+      "--space-panel-hover-shadow",
+      colorMode === "dark"
+        ? `inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(${accentChannel}, 0.24), 0 0 24px rgba(${accentChannel}, 0.20)`
+        : `inset 0 1px 0 rgba(255, 255, 255, 0.56), 0 0 0 1px rgba(${accentChannel}, 0.20), 0 0 24px rgba(${accentChannel}, 0.16)`,
+    );
+  }
   if (typeof refreshHomeChartsForTheme === "function") refreshHomeChartsForTheme();
   return { colors: { ...effectiveThemeColors }, palette };
 }
 
 applyEffectiveThemeColors(effectiveThemeColors);
 // Theme color runtime end
-
-// System theme colors start
-const LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY = "autoCheckLastEffectiveThemeColors";
-const systemThemeColorsSection = document.getElementById("systemThemeColorsSection");
-const systemVitalityThemeColor = document.getElementById("systemVitalityThemeColor");
-const systemCalmThemeColor = document.getElementById("systemCalmThemeColor");
-const systemVitalityThemeColorSwatch = document.getElementById("systemVitalityThemeColorSwatch");
-const systemCalmThemeColorSwatch = document.getElementById("systemCalmThemeColorSwatch");
-const systemVitalityThemeColorError = document.getElementById("systemVitalityThemeColorError");
-const systemCalmThemeColorError = document.getElementById("systemCalmThemeColorError");
-const systemThemeColorsStatus = document.getElementById("systemThemeColorsStatus");
-const saveSystemThemeColorsBtn = document.getElementById("saveSystemThemeColorsBtn");
-const resetSystemThemeColorsBtn = document.getElementById("resetSystemThemeColorsBtn");
-const systemThemeColorState = {
-  savedColors: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
-  savedEffectiveColors: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
-  draftColors: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
-  lastValidDraft: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
-  rawInputs: { ...DEFAULT_EFFECTIVE_THEME_COLORS },
-  errors: { vitality: "", calm: "" },
-  canManage: false,
-  loaded: false,
-  loadFailed: false,
-  loading: false,
-  saving: false,
-  dirty: false,
-  statusText: "已保存",
-  loadRequestId: 0,
-  saveRequestId: 0,
-  authRevision: 0,
-  editRevision: 0,
-  serverMutationRevision: 0,
-};
-
-function copyThemeColors(colors) {
-  return { vitality: colors.vitality, calm: colors.calm };
-}
-
-function themeColorsMatch(left, right) {
-  return left.vitality === right.vitality && left.calm === right.calm;
-}
-
-function normalizeSystemThemeColorInput(value) {
-  if (typeof value !== "string") return null;
-  const normalized = value.toUpperCase();
-  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : null;
-}
-
-function readSystemThemeColorsPayload(payload) {
-  const system = {
-    vitality: normalizeThemeHex(payload?.colors?.system?.vitality),
-    calm: normalizeThemeHex(payload?.colors?.system?.calm),
-  };
-  const effective = {
-    vitality: normalizeThemeHex(payload?.colors?.effective?.vitality),
-    calm: normalizeThemeHex(payload?.colors?.effective?.calm),
-  };
-  const capability = payload?.capabilities?.can_manage_system_theme_colors;
-  if (
-    !system.vitality
-    || !system.calm
-    || !effective.vitality
-    || !effective.calm
-    || typeof capability !== "boolean"
-  ) {
-    throw new Error("主题色响应无效");
-  }
-  return { system, effective, canManage: capability };
-}
-
-function cacheEffectiveThemeColors(colors) {
-  const cached = {
-    vitality: normalizeThemeHex(colors?.vitality),
-    calm: normalizeThemeHex(colors?.calm),
-  };
-  if (!cached.vitality || !cached.calm) return false;
-  try {
-    localStorage.setItem(LAST_EFFECTIVE_THEME_COLORS_CACHE_KEY, JSON.stringify(cached));
-  } catch (_) {}
-  return true;
-}
-
-function systemThemeColorDraftIsValid() {
-  return !systemThemeColorState.errors.vitality && !systemThemeColorState.errors.calm;
-}
-
-function syncSystemThemeColorDirtyStatus({ preserveStatus = false } = {}) {
-  const normalizedRaw = {
-    vitality: normalizeSystemThemeColorInput(systemThemeColorState.rawInputs.vitality),
-    calm: normalizeSystemThemeColorInput(systemThemeColorState.rawInputs.calm),
-  };
-  systemThemeColorState.dirty = (
-    !normalizedRaw.vitality
-    || !normalizedRaw.calm
-    || !themeColorsMatch(normalizedRaw, systemThemeColorState.savedColors)
-  );
-  if (!preserveStatus) {
-    systemThemeColorState.statusText = systemThemeColorState.dirty
-      ? (systemThemeColorDraftIsValid() ? "正在预览，尚未保存" : "请检查颜色格式")
-      : "已保存";
-  }
-  return systemThemeColorState.dirty;
-}
-
-function renderSystemThemeColors() {
-  if (systemThemeColorsSection) {
-    systemThemeColorsSection.hidden = !systemThemeColorState.canManage;
-  }
-  const controls = {
-    vitality: {
-      input: systemVitalityThemeColor,
-      swatch: systemVitalityThemeColorSwatch,
-      error: systemVitalityThemeColorError,
-    },
-    calm: {
-      input: systemCalmThemeColor,
-      swatch: systemCalmThemeColorSwatch,
-      error: systemCalmThemeColorError,
-    },
-  };
-  Object.entries(controls).forEach(([key, control]) => {
-    if (control.input) {
-      control.input.value = systemThemeColorState.rawInputs[key];
-      control.input.disabled = (
-        !systemThemeColorState.canManage
-        || systemThemeColorState.loading
-        || systemThemeColorState.saving
-      );
-      control.input.setAttribute?.(
-        "aria-invalid",
-        systemThemeColorState.errors[key] ? "true" : "false",
-      );
-    }
-    if (control.swatch) {
-      control.swatch.style.backgroundColor = systemThemeColorState.lastValidDraft[key];
-      control.swatch.value = systemThemeColorState.lastValidDraft[key];
-    }
-    if (control.error) {
-      control.error.textContent = systemThemeColorState.errors[key];
-      control.error.hidden = !systemThemeColorState.errors[key];
-    }
-  });
-  if (systemThemeColorsStatus) {
-    systemThemeColorsStatus.textContent = systemThemeColorState.statusText;
-  }
-  if (saveSystemThemeColorsBtn) {
-    saveSystemThemeColorsBtn.disabled = (
-      !systemThemeColorState.canManage
-      || systemThemeColorState.loading
-      || systemThemeColorState.saving
-      || !systemThemeColorState.dirty
-      || !systemThemeColorDraftIsValid()
-    );
-    saveSystemThemeColorsBtn.classList.toggle("loading", systemThemeColorState.saving);
-    saveSystemThemeColorsBtn.textContent = systemThemeColorState.saving
-      ? "保存中..."
-      : "保存全局主题色";
-  }
-  if (resetSystemThemeColorsBtn) {
-    resetSystemThemeColorsBtn.disabled = (
-      !systemThemeColorState.canManage
-      || systemThemeColorState.loading
-      || systemThemeColorState.saving
-    );
-  }
-}
-
-function setSystemThemeColorStateFromPayload(parsed, { preserveDraft = false } = {}) {
-  systemThemeColorState.savedColors = copyThemeColors(parsed.system);
-  systemThemeColorState.savedEffectiveColors = copyThemeColors(parsed.effective);
-  systemThemeColorState.canManage = parsed.canManage;
-  systemThemeColorState.loaded = true;
-  systemThemeColorState.loadFailed = false;
-  cacheEffectiveThemeColors(parsed.effective);
-  if (!preserveDraft || !parsed.canManage) {
-    systemThemeColorState.draftColors = copyThemeColors(parsed.system);
-    systemThemeColorState.lastValidDraft = copyThemeColors(parsed.system);
-    systemThemeColorState.rawInputs = copyThemeColors(parsed.system);
-    systemThemeColorState.errors = { vitality: "", calm: "" };
-    applyEffectiveThemeColors(parsed.effective);
-  }
-  syncSystemThemeColorDirtyStatus();
-}
-
-function updateSystemThemeColorDraft(key, value) {
-  if (systemThemeColorState.saving || !systemThemeColorState.canManage) return;
-  const normalized = normalizeSystemThemeColorInput(value);
-  systemThemeColorState.editRevision += 1;
-  systemThemeColorState.rawInputs[key] = value;
-  if (normalized) {
-    systemThemeColorState.draftColors[key] = normalized;
-    systemThemeColorState.lastValidDraft[key] = normalized;
-    systemThemeColorState.errors[key] = "";
-    applyEffectiveThemeColors(systemThemeColorState.lastValidDraft);
-  } else {
-    systemThemeColorState.errors[key] = "请输入完整的 #RRGGBB 色值";
-  }
-  syncSystemThemeColorDirtyStatus();
-  renderSystemThemeColors();
-}
-
-function normalizeSystemThemeColorField(key) {
-  const normalized = normalizeSystemThemeColorInput(systemThemeColorState.rawInputs[key]);
-  if (!normalized) return false;
-  systemThemeColorState.rawInputs[key] = normalized;
-  systemThemeColorState.draftColors[key] = normalized;
-  systemThemeColorState.lastValidDraft[key] = normalized;
-  syncSystemThemeColorDirtyStatus();
-  renderSystemThemeColors();
-  return true;
-}
-
-async function loadSystemThemeColors({ silent = false } = {}) {
-  if (systemThemeColorState.saving) return false;
-  const requestId = ++systemThemeColorState.loadRequestId;
-  const authRevision = systemThemeColorState.authRevision;
-  const editRevision = systemThemeColorState.editRevision;
-  const mutationRevision = systemThemeColorState.serverMutationRevision;
-  const hadUnsavedDraft = systemThemeColorState.dirty;
-  systemThemeColorState.loading = true;
-  renderSystemThemeColors();
-  const isCurrentRequest = () => (
-    requestId === systemThemeColorState.loadRequestId
-    && authRevision === systemThemeColorState.authRevision
-    && mutationRevision === systemThemeColorState.serverMutationRevision
-  );
-  try {
-    const payload = await api("/api/settings/interface/theme-colors");
-    if (!isCurrentRequest()) return false;
-    const parsed = readSystemThemeColorsPayload(payload);
-    const preserveDraft = (
-      parsed.canManage
-      && (hadUnsavedDraft || editRevision !== systemThemeColorState.editRevision)
-    );
-    setSystemThemeColorStateFromPayload(parsed, { preserveDraft });
-    return true;
-  } catch (error) {
-    if (!isCurrentRequest()) return false;
-    systemThemeColorState.loadFailed = true;
-    systemThemeColorState.statusText = "加载失败，继续使用当前主题色";
-    if (!silent) showToast(`全局主题色加载失败: ${error.message}`, "error");
-    return false;
-  } finally {
-    if (isCurrentRequest()) {
-      systemThemeColorState.loading = false;
-      renderSystemThemeColors();
-    }
-  }
-}
-
-async function saveSystemThemeColors() {
-  if (
-    systemThemeColorState.saving
-    || !systemThemeColorState.canManage
-    || !systemThemeColorState.dirty
-    || !systemThemeColorDraftIsValid()
-  ) {
-    return false;
-  }
-  const requestId = ++systemThemeColorState.saveRequestId;
-  const authRevision = systemThemeColorState.authRevision;
-  systemThemeColorState.serverMutationRevision += 1;
-  const mutationRevision = systemThemeColorState.serverMutationRevision;
-  const submittedColors = copyThemeColors(systemThemeColorState.draftColors);
-  const isCurrentRequest = () => (
-    requestId === systemThemeColorState.saveRequestId
-    && authRevision === systemThemeColorState.authRevision
-    && mutationRevision === systemThemeColorState.serverMutationRevision
-  );
-  systemThemeColorState.saving = true;
-  systemThemeColorState.statusText = "保存中...";
-  renderSystemThemeColors();
-  try {
-    const payload = await api("/api/settings/interface/theme-colors", {
-      method: "POST",
-      body: JSON.stringify({
-        vitality_theme_color: submittedColors.vitality,
-        calm_theme_color: submittedColors.calm,
-      }),
-    });
-    if (!isCurrentRequest()) return false;
-    const parsed = readSystemThemeColorsPayload(payload);
-    setSystemThemeColorStateFromPayload(parsed);
-    systemThemeColorState.statusText = "保存成功";
-    applyEffectiveThemeColors(parsed.effective);
-    return true;
-  } catch (error) {
-    if (!isCurrentRequest()) return false;
-    systemThemeColorState.statusText = "保存失败";
-    syncSystemThemeColorDirtyStatus({ preserveStatus: true });
-    showToast(`全局主题色保存失败: ${error.message}`, "error");
-    return false;
-  } finally {
-    if (isCurrentRequest()) {
-      systemThemeColorState.saving = false;
-      renderSystemThemeColors();
-    }
-  }
-}
-
-function resetSystemThemeColorDraft() {
-  if (systemThemeColorState.saving || !systemThemeColorState.canManage) return false;
-  systemThemeColorState.editRevision += 1;
-  systemThemeColorState.draftColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.lastValidDraft = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.rawInputs = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.errors = { vitality: "", calm: "" };
-  applyEffectiveThemeColors(systemThemeColorState.lastValidDraft);
-  syncSystemThemeColorDirtyStatus();
-  renderSystemThemeColors();
-  return true;
-}
-
-function discardUnsavedSystemThemeColors() {
-  systemThemeColorState.loadRequestId += 1;
-  const changed = systemThemeColorState.dirty;
-  systemThemeColorState.editRevision += 1;
-  systemThemeColorState.draftColors = copyThemeColors(systemThemeColorState.savedColors);
-  systemThemeColorState.lastValidDraft = copyThemeColors(systemThemeColorState.savedColors);
-  systemThemeColorState.rawInputs = copyThemeColors(systemThemeColorState.savedColors);
-  systemThemeColorState.errors = { vitality: "", calm: "" };
-  applyEffectiveThemeColors(systemThemeColorState.savedEffectiveColors);
-  syncSystemThemeColorDirtyStatus();
-  renderSystemThemeColors();
-  return changed;
-}
-
-function resetSystemThemeColorsForAuthChange() {
-  systemThemeColorState.loadRequestId += 1;
-  systemThemeColorState.saveRequestId += 1;
-  systemThemeColorState.authRevision += 1;
-  systemThemeColorState.editRevision += 1;
-  systemThemeColorState.serverMutationRevision += 1;
-  systemThemeColorState.savedColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.savedEffectiveColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.draftColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.lastValidDraft = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.rawInputs = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
-  systemThemeColorState.errors = { vitality: "", calm: "" };
-  systemThemeColorState.canManage = false;
-  systemThemeColorState.loaded = false;
-  systemThemeColorState.loadFailed = false;
-  systemThemeColorState.loading = false;
-  systemThemeColorState.saving = false;
-  systemThemeColorState.dirty = false;
-  systemThemeColorState.statusText = "已保存";
-  applyEffectiveThemeColors(DEFAULT_EFFECTIVE_THEME_COLORS);
-  renderSystemThemeColors();
-  return systemThemeColorState.authRevision;
-}
-
-function captureSystemThemeColors() {
-  return {
-    savedColors: copyThemeColors(systemThemeColorState.savedColors),
-    savedEffectiveColors: copyThemeColors(systemThemeColorState.savedEffectiveColors),
-    draftColors: copyThemeColors(systemThemeColorState.draftColors),
-    lastValidDraft: copyThemeColors(systemThemeColorState.lastValidDraft),
-    rawInputs: copyThemeColors(systemThemeColorState.rawInputs),
-    errors: { ...systemThemeColorState.errors },
-    canManage: systemThemeColorState.canManage,
-    loaded: systemThemeColorState.loaded,
-    loadFailed: systemThemeColorState.loadFailed,
-    dirty: systemThemeColorState.dirty,
-    statusText: systemThemeColorState.statusText,
-  };
-}
-
-function restoreSystemThemeColors(snapshot, expectedAuthRevision) {
-  if (expectedAuthRevision !== systemThemeColorState.authRevision) return false;
-  systemThemeColorState.loadRequestId += 1;
-  systemThemeColorState.saveRequestId += 1;
-  systemThemeColorState.authRevision += 1;
-  systemThemeColorState.editRevision += 1;
-  systemThemeColorState.serverMutationRevision += 1;
-  systemThemeColorState.savedColors = copyThemeColors(snapshot.savedColors);
-  systemThemeColorState.savedEffectiveColors = copyThemeColors(snapshot.savedEffectiveColors);
-  systemThemeColorState.draftColors = copyThemeColors(snapshot.draftColors);
-  systemThemeColorState.lastValidDraft = copyThemeColors(snapshot.lastValidDraft);
-  systemThemeColorState.rawInputs = copyThemeColors(snapshot.rawInputs);
-  systemThemeColorState.errors = { ...snapshot.errors };
-  systemThemeColorState.canManage = snapshot.canManage;
-  systemThemeColorState.loaded = snapshot.loaded;
-  systemThemeColorState.loadFailed = snapshot.loadFailed;
-  systemThemeColorState.loading = false;
-  systemThemeColorState.saving = false;
-  systemThemeColorState.dirty = snapshot.dirty;
-  systemThemeColorState.statusText = snapshot.statusText;
-  applyEffectiveThemeColors(snapshot.dirty ? snapshot.lastValidDraft : snapshot.savedEffectiveColors);
-  renderSystemThemeColors();
-  return true;
-}
-
-systemVitalityThemeColor?.addEventListener("input", () => {
-  updateSystemThemeColorDraft("vitality", systemVitalityThemeColor.value);
-});
-systemCalmThemeColor?.addEventListener("input", () => {
-  updateSystemThemeColorDraft("calm", systemCalmThemeColor.value);
-});
-systemVitalityThemeColor?.addEventListener("blur", () => {
-  normalizeSystemThemeColorField("vitality");
-});
-systemCalmThemeColor?.addEventListener("blur", () => {
-  normalizeSystemThemeColorField("calm");
-});
-saveSystemThemeColorsBtn?.addEventListener("click", saveSystemThemeColors);
-resetSystemThemeColorsBtn?.addEventListener("click", resetSystemThemeColorDraft);
-renderSystemThemeColors();
-// System theme colors end
 
 // Interface radius start
 const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({
@@ -1194,31 +795,39 @@ function syncInterfaceRadiusDirtyStatus() {
 }
 
 function renderInterfaceRadiusPreference() {
+  const saving = interfaceRadiusState.saving;
   if (interfaceRadiusSlider) {
     interfaceRadiusSlider.value = String(interfaceRadiusState.draftPreferences.radiusPx);
-    interfaceRadiusSlider.disabled = interfaceRadiusState.saving;
+    const sliderMin = Number(interfaceRadiusSlider.min);
+    const sliderMax = Number(interfaceRadiusSlider.max);
+    const sliderValue = Number(interfaceRadiusSlider.value);
+    const sliderProgress = sliderMax > sliderMin
+      ? ((sliderValue - sliderMin) / (sliderMax - sliderMin)) * 100
+      : 0;
+    interfaceRadiusSlider.style?.setProperty?.("--range-progress", `${sliderProgress}%`);
+    interfaceRadiusSlider.disabled = saving;
   }
   if (interfaceRadiusValue) {
     interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;
   }
   if (interfaceLineChartStyleStraight) {
     interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";
-    interfaceLineChartStyleStraight.disabled = interfaceRadiusState.saving;
+    interfaceLineChartStyleStraight.disabled = saving;
   }
   if (interfaceLineChartStyleSmooth) {
     interfaceLineChartStyleSmooth.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "smooth";
-    interfaceLineChartStyleSmooth.disabled = interfaceRadiusState.saving;
+    interfaceLineChartStyleSmooth.disabled = saving;
   }
   if (interfaceSettingsStatus) {
     interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;
   }
   if (saveInterfaceSettingsBtn) {
-    saveInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;
-    saveInterfaceSettingsBtn.classList.toggle("loading", interfaceRadiusState.saving);
-    saveInterfaceSettingsBtn.textContent = interfaceRadiusState.saving ? "保存中..." : "保存界面设置";
+    saveInterfaceSettingsBtn.disabled = saving;
+    saveInterfaceSettingsBtn.classList.toggle("loading", saving);
+    saveInterfaceSettingsBtn.textContent = saving ? "保存中..." : "保存界面设置";
   }
   if (resetInterfaceSettingsBtn) {
-    resetInterfaceSettingsBtn.disabled = interfaceRadiusState.saving;
+    resetInterfaceSettingsBtn.disabled = saving;
   }
 }
 
@@ -1605,7 +1214,6 @@ async function loadSettingsPageData() {
   await Promise.all([
     loadPageSection("系统信息", loadSystemInfo),
     loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false })),
-    loadPageSection("全局主题色", () => loadSystemThemeColors({ silent: false })),
     loadPageSection("数据源配置", loadConfigList),
     loadPageSection("逐笔校验配置", loadDbValidationSettings),
     loadPageSection("流程执行配置", loadFlowSettings),
@@ -1666,7 +1274,6 @@ async function switchPage(name, options = {}) {
   }
   if (previousPage === "settings" && name !== "settings") {
     discardUnsavedInterfaceRadius();
-    discardUnsavedSystemThemeColors();
   }
   document.documentElement.setAttribute('data-page', name);
   syncNavState(name);
@@ -2214,26 +1821,17 @@ async function logout() {
   const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？", { tone: "warning" });
   if (!confirmed) return;
   const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
-  const systemThemeColorsSnapshot = captureSystemThemeColors();
   const logoutAuthRevision = resetInterfaceRadiusForAuthChange();
-  const logoutThemeAuthRevision = resetSystemThemeColorsForAuthChange();
   try {
     await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   } catch (error) {
     const restoredInterface = restoreInterfaceRadiusPreference(interfaceRadiusSnapshot, logoutAuthRevision);
-    const restoredThemeColors = restoreSystemThemeColors(
-      systemThemeColorsSnapshot,
-      logoutThemeAuthRevision,
-    );
-    if (restoredInterface || restoredThemeColors) {
+    if (restoredInterface) {
       showToast(error.message, "error");
     }
     return;
   }
-  if (
-    logoutAuthRevision !== interfaceRadiusState.authRevision
-    || logoutThemeAuthRevision !== systemThemeColorState.authRevision
-  ) return;
+  if (logoutAuthRevision !== interfaceRadiusState.authRevision) return;
   authState.csrfToken = "";
   try { sessionStorage.removeItem(USER_AVATAR_SESSION_KEY); } catch (_) {}
   window.location.href = "/login.html";
@@ -2429,7 +2027,7 @@ function renderUsers() {
       <td>${escapeHtml(user.last_login_at ? formatDisplayTime(user.last_login_at) : "-")}</td>
       <td class="user-actions-cell">
         <div class="user-actions">
-          <button class="user-icon-action edit-user" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${canEdit ? "编辑" : adminLockedTitle}" ${canEdit ? "" : "disabled"}>✏️</button>
+          <button class="user-icon-action edit-user" data-action-tone="primary" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${canEdit ? "编辑" : adminLockedTitle}" ${canEdit ? "" : "disabled"}>✏️</button>
           <button class="user-icon-action toggle-user" data-action-tone="${enabled ? "warning" : "success"}" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可停用" : (!canEdit ? adminLockedTitle : (enabled ? "停用" : "启用"))}" ${toggleDisabled ? "disabled" : ""}>${enabled ? "⏸️" : "▶️"}</button>
           <button class="user-icon-action delete-user" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可删除" : (!canEdit ? adminLockedTitle : "删除")}" ${deleteDisabled ? "disabled" : ""}>🗑️</button>
         </div>
@@ -2878,7 +2476,10 @@ function formatLastRunTime() {
 
 function formatDisplayTime(value) {
   if (!value) return "";
-  return String(value).replace("T", " ");
+  return String(value)
+    .replace("T", " ")
+    .replace(/\.\d+(?=(?:Z|[+-]\d{2}:?\d{2})?$)/, "")
+    .replace(/Z$/, "");
 }
 
 function normalizeExecutorDisplayName(value, fallback = "未知执行人") {
@@ -2998,6 +2599,16 @@ function formatMoney(v) {
   const n = Number(String(v));
   if (!Number.isFinite(n)) return String(v);
   return n.toLocaleString("zh-CN", { maximumFractionDigits: 8 });
+}
+
+function formatAmount(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const n = Number(String(v).replaceAll(",", ""));
+  if (!Number.isFinite(n)) return String(v);
+  return n.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function escapeHtml(v) {
@@ -3251,8 +2862,8 @@ function renderCustomDatePicker(input) {
     <div class="custom-date-weekdays">${CUSTOM_DATE_WEEKDAYS.map((day) => `<span>${day}</span>`).join("")}</div>
     <div class="custom-date-days">${cells}</div>
     <div class="custom-date-actions">
-      <button type="button" data-date-action="clear">清除</button>
-      <button type="button" data-date-action="today">今天</button>
+      <button type="button" data-date-action="clear"><span class="theme-gradient-text">清除</span></button>
+      <button type="button" data-date-action="today"><span class="theme-gradient-text">今天</span></button>
     </div>
   `;
 }
@@ -3536,10 +3147,10 @@ function renderResults() {
       <td><button class="expand-btn" data-index="${gi}">+</button></td>
       <td class="result-project-code">${escapeHtml(item.project_code)}</td>
       <td>${escapeHtml(item.project_name)}</td>
-      <td class="money-cell">${formatMoney(item.valuation_asset_total)}</td>
-      <td class="money-cell">${formatMoney(item.asset_total)}</td>
-      <td class="money-cell">${formatMoney(item.liability_equity_total)}</td>
-      <td class="money-cell ${diff ? "money-cell--error" : ""}">${formatMoney(item.difference)}</td>
+      <td class="money-cell">${formatAmount(item.valuation_asset_total)}</td>
+      <td class="money-cell">${formatAmount(item.asset_total)}</td>
+      <td class="money-cell">${formatAmount(item.liability_equity_total)}</td>
+      <td class="money-cell ${diff ? "money-cell--error" : ""}">${formatAmount(item.difference)}</td>
       <td>${escapeHtml(item.difference_reason || "")}</td>
       <td style="text-align:center">${renderStatusBadge(item.match_status)}</td>
     </tr>
@@ -3569,11 +3180,19 @@ function displayDetailLabel(label) {
   return label === "zf_detail 资产合计" ? "资负报表资产合计" : label;
 }
 
+function isAmountDisplayLabel(label) {
+  return /金额|余额|资产合计|负债及权益合计/.test(String(label || ""));
+}
+
+function formatResultDetailValue(label, value) {
+  return isAmountDisplayLabel(label) ? formatAmount(value) : String(value ?? "");
+}
+
 function renderDetails(ds) {
   if (!ds.length) return '<div class="detail">无明细</div>';
   return `<div class="detail">${ds.map((s) => {
-    const rows = (s.rows || []).map((r) => `<div class="detail-item"><span>${escapeHtml(displayDetailLabel(r.label))}</span><strong>${escapeHtml(r.value)}</strong></div>`).join("");
-    const tbl = s.table ? `<table class="detail-table"><thead><tr>${s.table.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${(s.table.rows || []).map((r) => `<tr>${r.map((c) => `<td class="money-cell">${escapeHtml(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "";
+    const rows = (s.rows || []).map((r) => `<div class="detail-item"><span>${escapeHtml(displayDetailLabel(r.label))}</span><strong>${escapeHtml(formatResultDetailValue(r.label, r.value))}</strong></div>`).join("");
+    const tbl = s.table ? `<table class="detail-table"><thead><tr>${s.table.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${(s.table.rows || []).map((r) => `<tr>${r.map((c, index) => `<td class="money-cell">${escapeHtml(formatResultDetailValue(s.table.headers[index], c))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "";
     return `<div class="detail-block"><div class="detail-heading"><strong>${escapeHtml(s.title)}</strong></div><div class="detail-content">${rows}${tbl}</div></div>`;
   }).join("")}</div>`;
 }
@@ -4518,11 +4137,10 @@ async function showHistoryDetailModal(id) {
     showInfo("历史详情", renderHistoryDetailContent(history), {
       modalClass: "modal-info--history-detail",
       closeOnBackdrop: false,
-      footerContent: renderHistoryDetailFooter(history),
-    });
-    document.querySelector("#infoFooter .restore-history-detail")?.addEventListener("click", async () => {
-      await restoreHistoryRun(history);
-      document.getElementById("infoClose")?.click();
+      detailActionLabel: "恢复到结果页",
+      onDetailAction: async () => {
+        await restoreHistoryRun(history);
+      },
     });
     return history;
   } catch (e) {
@@ -4552,10 +4170,6 @@ function renderHistoryDetailContent(run) {
       </div>
     </div>
   `;
-}
-
-function renderHistoryDetailFooter(run) {
-  return `<button type="button" class="btn-primary btn-sm restore-history-detail" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>`;
 }
 
 function renderHistoryDetailLoading(id) {
@@ -4597,7 +4211,7 @@ function historyResultTable(items) {
       return `<tr>
         <td>${escapeHtml(item.project_code)}</td>
         <td>${escapeHtml(item.project_name)}</td>
-        <td class="money-cell">${formatMoney(item.difference)}</td>
+        <td class="money-cell">${formatAmount(item.difference)}</td>
         <td>${escapeHtml(item.difference_reason || "")}</td>
         <td><span class="history-status ${statusClass}">${escapeHtml(status)}</span></td>
       </tr>`;
@@ -5200,7 +4814,7 @@ function renderReconcileSchemaForm(schema = {}, dataSources = reconcileSchemaDat
             <strong>${escapeHtml(displayName)}</strong>
             <span>${escapeHtml(meta.key)}</span>
           </div>
-          <button type="button" class="btn-outline btn-xs reconcile-schema-toggle" data-key="${escapeHtml(meta.key)}">展开字段</button>
+          <button type="button" class="btn-outline btn-xs reconcile-schema-toggle" data-action-tone="primary" data-action-variant="weak" data-key="${escapeHtml(meta.key)}">展开字段</button>
         </div>
         <div class="reconcile-schema-table-grid">
           <label class="setting-item">
@@ -5978,12 +5592,14 @@ function traceChartLine(ctx, points, style, bounds = null) {
 function canvasThemePalette() {
   const primary = normalizeThemeHex(cssRootValue("--theme-accent"))
     || DEFAULT_EFFECTIVE_THEME_COLORS.vitality;
+  const gradientEnd = normalizeThemeHex(cssRootValue("--theme-accent-gradient-end")) || "#6AA4FF";
   const readable = normalizeThemeHex(cssRootValue("--theme-accent-readable")) || primary;
   const isDark = document.documentElement.getAttribute("data-color-mode") === "dark";
   const secondary = mixThemeHex(primary, isDark ? "#FFFFFF" : "#000000", 0.24);
   const rgb = themeHexToRgb(primary);
   return {
     primary,
+    gradientEnd,
     secondary,
     readable,
     areaFill: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${isDark ? "0.18" : "0.14"})`,
@@ -5995,8 +5611,8 @@ function canvasThemePalette() {
 function applyChartLegendPalette(palette) {
   const firstRun = document.querySelector(".trend-legend-dot--first-run");
   const runs = document.querySelector(".trend-legend-dot--runs");
-  if (firstRun) firstRun.style.background = palette.primary;
-  if (runs) runs.style.background = palette.secondary;
+  if (firstRun) firstRun.style.background = `linear-gradient(90deg, ${palette.primary}, ${palette.gradientEnd})`;
+  if (runs) runs.style.background = "linear-gradient(90deg, #D98711, #FFBD38)";
 }
 
 function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tooltipItems = []) {
@@ -6082,9 +5698,12 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
       ctx.fillStyle = palette.areaFill;
       ctx.fill();
 
-      // Solid themed line
+      // Logo-blue themed line
       traceChartLine(ctx, drawPts, lineStyle, curveBounds);
-      ctx.strokeStyle = palette.primary;
+      const lineGradient = ctx.createLinearGradient(pad.left, 0, w - pad.right, 0);
+      lineGradient.addColorStop(0, palette.primary);
+      lineGradient.addColorStop(1, palette.gradientEnd);
+      ctx.strokeStyle = lineGradient;
       ctx.lineWidth = 2.5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -6199,7 +5818,9 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
       ...item,
       values: (item.values || []).map((value) => Number(value || 0)),
       maxVal: Math.max(...(item.values || []).map((value) => Number(value || 0)), 1),
-      strokeColor: index % 2 === 0 ? palette.primary : palette.secondary,
+      strokeColor: item.color || (index % 2 === 0 ? palette.primary : "#D98711"),
+      gradientEnd: item.gradientEnd || null,
+      shadowColor: item.shadow || (index % 2 === 0 ? palette.primaryShadow : "rgba(217, 135, 17, 0.24)"),
     }))
     .filter((item) => item.values.length);
   if (!series.length) return;
@@ -6306,13 +5927,19 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
     series.forEach((metric) => {
       const pts = pointsFor(metric);
       const drawPts = pts.slice(0, Math.max(2, drawCount));
+      let metricPaint = metric.strokeColor;
+      if (metric.gradientEnd) {
+        metricPaint = ctx.createLinearGradient(pad.left, 0, w - pad.right, 0);
+        metricPaint.addColorStop(0, metric.strokeColor);
+        metricPaint.addColorStop(1, metric.gradientEnd);
+      }
       if (drawPts.length >= 2) {
         traceChartLine(ctx, drawPts, lineStyle, curveBounds);
-        ctx.strokeStyle = metric.strokeColor;
+        ctx.strokeStyle = metricPaint;
         ctx.lineWidth = 2.4;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
-        ctx.shadowColor = palette.primaryShadow;
+        ctx.shadowColor = metric.shadowColor;
         ctx.shadowBlur = 5;
         ctx.stroke();
         ctx.shadowBlur = 0;
@@ -6324,14 +5951,14 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
             ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
             ctx.fillStyle = "#fff";
             ctx.fill();
-            ctx.strokeStyle = metric.strokeColor;
+            ctx.strokeStyle = metricPaint;
             ctx.lineWidth = 2;
             ctx.stroke();
           }
         });
       }
       if (progress >= 1 && showLabels && labels.length <= 12) {
-        ctx.fillStyle = palette.readable;
+        ctx.fillStyle = metricPaint;
         ctx.font = "bold 11px 'Microsoft YaHei',sans-serif";
         ctx.textAlign = "center";
         pts.forEach((point) => {
@@ -6383,6 +6010,7 @@ function trendFirstRunMetricStyle() {
   const palette = canvasThemePalette();
   return {
     color: palette.primary,
+    gradientEnd: palette.gradientEnd,
     shadow: palette.primaryShadow,
   };
 }
@@ -7693,12 +7321,16 @@ async function renderTrendChart({ refreshData = true } = {}) {
         name: "每期差异个数",
         values: firstRunValues,
         color: firstRunStyle.color,
+        gradientEnd: firstRunStyle.gradientEnd,
         shadow: firstRunStyle.shadow,
         integerValues: true,
       },
       {
         name: "每期执行次数",
         values: executionValues,
+        color: "#D98711",
+        gradientEnd: "#FFBD38",
+        shadow: "rgba(217, 135, 17, 0.24)",
         integerValues: true,
       },
     ], labels, renderTrendAnimId, showLabels);
@@ -8079,7 +7711,8 @@ function showConfirm(title, message, options = {}) {
     const okBtn = document.getElementById("confirmOk");
     const cancelBtn = document.getElementById("confirmCancel");
     const allowedTones = new Set(["primary", "danger", "warning", "success"]);
-    const tone = allowedTones.has(options.tone) ? options.tone : "primary";
+    const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";
+    const tone = requestedTone === "danger" ? "danger" : "primary";
 
     titleEl.textContent = title;
     messageEl.textContent = message;
@@ -10779,9 +10412,8 @@ function loadTheme() {
   const theme = normalizeTheme(getSavedTheme() || defaultSettings.theme || "space-tech");
   defaultSettings.theme = theme;
   applyTheme(theme);
-  const darkMode = normalizeDarkMode(getSavedDarkMode() || defaultSettings.darkMode || "false");
-  defaultSettings.darkMode = darkMode;
-  applyDarkMode(darkMode);
+  defaultSettings.darkMode = "false";
+  applyDarkMode("false");
 }
 
 const THEME_SHELL_TRANSITION_MS = 560;
@@ -10877,12 +10509,8 @@ function syncDarkModeButtons(enabled) {
 }
 
 function applyDarkMode(darkMode) {
-  const enabled = String(darkMode) === "true";
-  if (enabled) {
-    document.documentElement.setAttribute("data-color-mode", "dark");
-  } else {
-    document.documentElement.setAttribute("data-color-mode", "light");
-  }
+  const enabled = false;
+  document.documentElement.setAttribute("data-color-mode", "light");
   applyEffectiveThemeColors(effectiveThemeColors);
   syncDarkModeButtons(enabled);
 }

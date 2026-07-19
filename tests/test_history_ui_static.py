@@ -18,7 +18,9 @@ def test_history_detail_uses_info_modal_and_shared_close_button():
     assert "function showHistoryDetailModal(id)" in js
     assert 'modalClass: "modal-info--history-detail"' in js
     assert 'id="infoFooter"' in html
-    assert 'document.querySelector("#infoFooter .restore-history-detail")' in js
+    assert 'id="infoDetailAction"' in html
+    assert 'detailActionLabel: "恢复到结果页"' in js
+    assert "onDetailAction: async () => {" in js
     assert "selectedHistoryId = \"\"" in js
 
     start = js.index("function renderHistoryDetailContent(run)")

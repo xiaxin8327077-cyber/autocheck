@@ -616,9 +616,9 @@ def test_theme_colors_http_allows_anonymous_read_and_protects_global_writes(tmp_
         assert status == 200
         assert payload == {
             "colors": {
-                "system": {"vitality": "#3F6FAF", "calm": "#355F63"},
+                "system": {"vitality": "#3466D9", "calm": "#355F63"},
                 "personal": {"vitality": None, "calm": None},
-                "effective": {"vitality": "#3F6FAF", "calm": "#355F63"},
+                "effective": {"vitality": "#3466D9", "calm": "#355F63"},
             },
             "capabilities": {"can_manage_system_theme_colors": False},
         }
@@ -655,6 +655,16 @@ def test_theme_colors_http_allows_anonymous_read_and_protects_global_writes(tmp_
             "Cookie": admin_cookie,
             "X-CSRF-Token": admin_login["csrf_token"],
         }
+        status, payload, _ = _json_request(
+            server,
+            "GET",
+            "/api/settings/interface/theme-colors",
+            None,
+            admin_headers,
+        )
+        assert status == 200
+        assert payload["capabilities"] == {"can_manage_system_theme_colors": True}
+
         status, payload, _ = _json_request(
             server,
             "POST",

@@ -3065,7 +3065,13 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             self._handle_auth(method, path)
             return
         if method == "GET" and path == "/api/settings/interface/theme-colors":
-            status, payload = self.router.handle(method, path, None, current_user=None)
+            optional_session = self._authenticated_session()
+            status, payload = self.router.handle(
+                method,
+                path,
+                None,
+                current_user=_session_user(optional_session),
+            )
             self._send_json(status, payload)
             return
         session = self._authenticated_session()

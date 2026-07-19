@@ -852,9 +852,9 @@ def test_theme_colors_api_allows_anonymous_defaults(tmp_path):
         200,
         {
             "colors": {
-                "system": {"vitality": "#3F6FAF", "calm": "#355F63"},
+                "system": {"vitality": "#3466D9", "calm": "#355F63"},
                 "personal": {"vitality": None, "calm": None},
-                "effective": {"vitality": "#3F6FAF", "calm": "#355F63"},
+                "effective": {"vitality": "#3466D9", "calm": "#355F63"},
             },
             "capabilities": {"can_manage_system_theme_colors": False},
         },
@@ -982,7 +982,7 @@ def test_theme_colors_api_rejects_invalid_pair_atomically(
     shared_application_database.connection.tables["system_interface_preferences"].append(
         {
             "id": 1,
-            "vitality_theme_color": "#3F6FAF",
+            "vitality_theme_color": "#3466D9",
             "calm_theme_color": "#355F63",
             "updated_by": "admin-old",
         }
@@ -1000,7 +1000,7 @@ def test_theme_colors_api_rejects_invalid_pair_atomically(
     assert shared_application_database.connection.tables["system_interface_preferences"] == [
         {
             "id": 1,
-            "vitality_theme_color": "#3F6FAF",
+            "vitality_theme_color": "#3466D9",
             "calm_theme_color": "#355F63",
             "updated_by": "admin-old",
         }

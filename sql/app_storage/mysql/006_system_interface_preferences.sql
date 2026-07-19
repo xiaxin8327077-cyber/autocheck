@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS `system_interface_preferences` (
   `id` TINYINT UNSIGNED NOT NULL COMMENT '固定主键，仅允许 1',
-  `vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3F6FAF' COMMENT '系统活力主题色，格式 #RRGGBB',
+  `vitality_theme_color` CHAR(7) NOT NULL DEFAULT '#3466D9' COMMENT '系统活力主题色，格式 #RRGGBB',
   `calm_theme_color` CHAR(7) NOT NULL DEFAULT '#355F63' COMMENT '系统沉稳主题色，格式 #RRGGBB',
   `updated_by` VARCHAR(64) NULL COMMENT '最后修改管理员用户 ID',
   `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
