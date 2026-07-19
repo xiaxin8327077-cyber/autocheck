@@ -21,6 +21,7 @@
 - 未保存时离开系统设置页面，界面恢复为上次已保存值。
 - 偏好按用户保存在 MySQL，同一账号跨浏览器、跨设备同步。
 - 弹窗外壳以及弹窗中的按钮、输入框、日期框、数字框和下拉框纳入覆盖范围。
+- 登录页使用本机上一次成功读取或保存的用户圆角作为显示缓存；首次使用、缓存缺失或缓存非法时使用默认 4px。
 
 ## 3. 目标与非目标
 
@@ -37,7 +38,6 @@
 
 - 不修改自动对数、报送导航、人行导入、逐笔校验、流程工具、历史记录、用户管理等业务逻辑及请求参数。
 - 不修改权限判断、按钮可用状态、表单值、焦点逻辑、键盘操作、页面切换和弹窗开关行为。
-- 不修改登录页圆角。
 - 不把圆形头像、状态点、图表节点改成普通圆角矩形。
 - 不修改胶囊徽标、进度条、复选框、单选框、滑块轨道和手柄。
 - 不调整颜色、阴影、间距、字体或主题切换逻辑。
@@ -191,7 +191,6 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 
 ### 7.3 明确排除
 
-- 登录页。
 - 圆形头像、状态点、图表节点和圆形刷新按钮。
 - 胶囊徽标、标签、进度条及用于完整胶囊形态的 `999px` 圆角。
 - 复选框、单选框、滑块轨道和滑块手柄。
@@ -285,3 +284,130 @@ CREATE TABLE IF NOT EXISTS `user_interface_preferences` (
 - 偏好读取或保存失败不会阻塞主要业务功能。
 - 圆角值为 1px 或 15px 时，按钮、表单、下拉面板和弹窗仍能正常点击、输入、选择和关闭。
 - MySQL 结构校验、全量测试和必要打包均通过。
+
+## 12. 2026-07-18 截图指定矩形表面补充覆盖
+
+### 12.1 范围与原则
+
+在原有导航、主卡片、弹窗、矩形按钮和表单控件覆盖基础上，补充用户截图红框指定的矩形子卡片、列表外框、表格外框和上传区域。全部目标继续读取同一个 `--ui-radius`，范围、默认值、预览、保存和用户隔离行为不变。
+
+本次补充仍然只改变界面显示：不修改 HTML 结构、JavaScript 事件、业务请求、API、数据库、权限、表单值、焦点顺序或点击区域。集中式覆盖层中仍然只允许声明 `border-radius`。
+
+### 12.2 精确选择器清单
+
+以下选择器加入现有 `/* User interface radius preference: start/end */` 覆盖层：
+
+- 报送导航鱼骨详情卡：`#page-report-navigation .report-nav-branch-panel`
+- 报送日期分组卡：`#page-report-navigation .report-nav-batch`
+- 注意事项单条卡片：`#page-report-navigation .report-nav-todo`
+- 报送导航加载、无快照及统计失败提示条：`#page-report-navigation .report-nav-load-state`
+- 统计趋势周期分段选择器外壳：`.trend-quick-btns`（内部 `.trend-quick-btn` 已由现有矩形按钮规则覆盖）
+- 注意事项筛选标签：`#page-report-navigation .report-nav-filter-chips span`
+- 报送导航手工刷新按钮外壳：`#page-report-navigation .report-nav-refresh-button`
+- 右上角成功、警告、错误和普通通知外壳：`.toast`
+- 流程后台执行右下角浮动通知外壳：`.flow-toast`
+- 活力主题顶部版本号及临时状态标签：`.top-nav-status`
+- 暗色模式切换按钮外壳：`.dark-mode-toggle`
+- 侧栏运行时状态消息框：`.sidebar-footer .status`
+- 历史详情摘要信息卡：`.history-summary-item`
+- 历史详情差异计数卡：`.history-count-item`
+- 历史详情结果区块：`.history-section`
+- 对数结果页展开详情分区：`.detail-block`
+- 对数结果页展开详情键值信息框：`.detail-item`
+- 对数结果页匹配状态标签：`.status-badge`
+- 流程执行的流程链列表外框：`.flow-chain-list`
+- 流程执行的已选流程摘要外框：`.flow-chain-selection-summary`
+- 流程执行日志外框：`.flow-run-panel:last-child #flowLog`
+- 流程执行历史表格外框：`.flow-history-table-wrap`
+- 逐笔校验执行历史表格外框：`.db-validation-history-table-wrap`
+- 人行一键导入上传区：`.pbc-upload-area`
+- 系统信息指标卡：`#page-settings .metric-item`
+- 逐笔校验数据源配置行：`#page-settings .db-validation-source-row`
+- 对账表字段配置卡：`#page-settings .reconcile-schema-table`
+- 对账业务维护说明条：`#page-settings .business-settings-note`
+- 对账业务字段表格分组外框：`#page-settings .business-field-group`
+- 流程链配置行：`.flow-chain-config`
+- 数据源配置行：`.config-item`
+- 关于系统简介卡：`#page-settings .about-description`
+- 关于系统主要功能卡：`#page-settings .about-features`
+- 关于系统技术栈卡：`#page-settings .about-tech`
+
+使用以上逐项选择器，不改为全局 `button`、`table`、`[class*=item]`、`[class*=card]` 或后代通配规则，避免把未指定元素意外纳入全局圆角。
+
+### 12.3 保持原形的内部元素
+
+- 暗色模式切换按钮只调整外壳；内部月亮图形及其状态表现保持原样。
+- 流程链条目中的复选框保持原样。
+- 表格数据行、表头单元格和分隔线不逐行增加圆角；只调整截图指定的表格外框或结果区块外框。
+- 圆形图标、头像、状态点、图表节点、普通胶囊徽标、普通标签、进度条、滑块轨道与手柄、单选框和 SVG 内部形状继续排除；用户明确补充的注意事项筛选标签除外。
+
+### 12.4 测试与验收
+
+- 静态测试必须逐项断言 12.2 的选择器存在于集中式覆盖层。
+- 报送导航提示条仅调整外框圆角，`.ready` 隐藏状态、`.error` 颜色以及统计失败处理逻辑保持不变。
+- 通知只调整 `.toast` 和 `.flow-toast` 外壳；通知图标、流程进度条和关闭按钮保持原样，通知出现、消失、展开和自动关闭行为不变。
+- `.top-nav-status` 只调整外壳圆角；版本文字、临时状态消息、宽度和入场动画保持不变。
+- `.dark-mode-toggle` 从禁止清单移入必需清单；其内部图形不加入覆盖层。
+- `.status-badge` 是用户截图明确指定的结果页例外，使用统一圆角替代固定 `999px`；其他胶囊徽标和标签继续保持原样。
+- `.trend-quick-btns` 只调整分段选择器的背景外壳；既有 `.trend-quick-btn` 继续调整各矩形按钮，选中态、范围切换和图表刷新逻辑不变。
+- `#page-report-navigation .report-nav-filter-chips span` 是用户截图明确指定的筛选标签例外；筛选数量、选中态颜色和点击逻辑不变。
+- `#page-report-navigation .report-nav-refresh-button` 从特殊形状排除清单移入必需清单；只调整按钮外壳，内部刷新 SVG、旋转动画、冷却倒计时和刷新请求逻辑不变。
+- `.sidebar-footer .status` 只调整“主题已保存”等运行时消息外框；文字、恢复定时器和入场动画不变。顶部同类消息继续由既有 `.top-nav-status` 覆盖。
+- 对账业务设置仅调整 `.reconcile-schema-table`、`.business-settings-note` 和 `.business-field-group` 三类页面内矩形外框；表单值、字段展开、业务表格行和保存逻辑不变。
+- 用户已明确暂停弹窗检查，因为后续将单独改造弹窗；本轮不继续新增数据源弹窗、流程链编辑弹窗或其他弹窗内部选择器。
+- `.detail-block` 和 `.detail-item` 只调整外框圆角；详情内容、表格行、展开收起和分页行为保持不变。
+- 覆盖层属性审计继续断言每个规则只有 `border-radius`。
+- 在 1px、4px、15px 下抽查截图对应区域，并覆盖默认太空主题和暗色模式。
+- 抽查流程选择、历史查看、文件选择/拖拽入口、数据源编辑、暗色切换等原交互仍可正常使用。
+- `README.md` 的详细版本说明补充上述矩形表面覆盖；应用内更新日志继续使用既有“系统优化及BUG修复”精简口径，不展开界面细节。
+- 运行前端静态测试、全量 `pytest`、`git diff --check`，并刷新 `dist/auto-check.exe`。
+
+## 13. 2026-07-18 登录页圆角补充设计
+
+### 13.1 登录前取值边界
+
+登录页出现时没有已认证的当前用户，不能直接读取 `GET /api/settings/interface`，也不应新增登录前按用户名查询偏好的接口。登录页因此读取本机上一次成功认证后获取的圆角显示缓存；该缓存只用于登录前显示，不是偏好权威来源。
+
+缓存键固定为 `autoCheckLastInterfaceRadius`，值为 1 至 15 的整数。读取规则为：
+
+- 缓存存在且是 1 至 15 的整数时，设置登录页根变量 `--ui-radius`。
+- 缓存缺失、越界、无法解析或浏览器存储不可用时，使用默认 4px。
+- 登录失败、偏好 GET 失败、未保存滑块预览和“恢复默认”草稿均不得写缓存。
+- 已认证主界面成功读取数据库偏好后写缓存。
+- 用户显式保存且 POST 成功后，用服务端返回的规范值更新缓存。
+- 同一台电脑更换账号时，登录页先显示上一个成功用户的值；新账号认证并成功读取自己的数据库偏好后立即覆盖。MySQL 仍是登录后唯一权威来源。
+
+不缓存用户 ID、用户名或偏好映射，不新增 Cookie、预认证偏好 API 或数据库字段。
+
+### 13.2 登录页覆盖范围
+
+登录页在自身内联样式中定义 `--ui-radius: 4px`，并只让以下矩形表面读取该变量：
+
+- 浅色登录卡片：`.right-panel`
+- 暗色双栏登录外框：`:root[data-login-theme="dark"] .login-container`
+- 用户名、密码和初始化确认密码输入框：`.form-input`
+- 登录/初始化提交按钮：`.login-btn`
+
+以上规则只覆盖 `border-radius`。登录主题切换按钮、密码显示按钮、“记住我”复选框、装饰圆形、暗色功能卡、社交登录按钮及 Logo 内部形状保持原样。
+
+### 13.3 启动与同步顺序
+
+1. `login.html` 在首屏样式生效前读取 `autoCheckLastInterfaceRadius`，校验后写入登录页 `--ui-radius`；失败回退 4px。
+2. 登录提交、密码加密、认证响应和跳转流程保持不变。
+3. 主应用完成认证后调用现有偏好 GET。
+4. GET 成功时先按现有逻辑应用数据库值，再把相同规范值写入显示缓存。
+5. POST 保存成功时应用服务端返回值并更新显示缓存。
+6. 退出到登录页或下次打开登录页时使用最后一次成功缓存。
+
+缓存写入必须包裹异常保护；浏览器禁用本地存储时不得影响主应用显示、登录、偏好读取或偏好保存。
+
+### 13.4 测试与验收
+
+- 静态测试断言登录页默认 `--ui-radius: 4px`，且 13.2 的四类精确选择器读取 `var(--ui-radius)`。
+- 测试缓存规范化：1 和 15 可用；0、16、浮点、布尔语义字符串、空值及不可解析内容回退 4。
+- 测试缓存只在认证后偏好 GET 成功和 POST 成功路径写入；拖动预览、恢复默认草稿、GET/POST 失败和登录失败不写入。
+- 将原先“圆角不得使用 localStorage”的宽泛断言收敛为：只允许固定键 `autoCheckLastInterfaceRadius` 作为非权威显示缓存，禁止其他 radius 键和按用户映射。
+- 在浅色和暗色登录页分别验证 1px、4px、15px；卡片、输入框和提交按钮一致，复选框、密码眼睛按钮、主题按钮和装饰圆形不变。
+- 验证清除缓存后登录页为 4px；成功进入主应用后从 MySQL 读取当前账号值并覆盖缓存。
+- README 详细说明登录页使用本机上一次成功用户的圆角；应用内更新日志继续使用“系统优化及BUG修复”精简口径。
+- 全量测试和 Windows 打包要求不变。

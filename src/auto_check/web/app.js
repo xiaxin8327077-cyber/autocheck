@@ -251,6 +251,8 @@ let selectedChartDate = "";
 let renderChartAnimId = null;
 let renderTrendAnimId = null;
 let homeChartsNeedThemeRefresh = false;
+let homeChartHistoryCache = null;
+let homeChartHistoryRequest = null;
 let homeChartsResizeTimer = null;
 const HOME_CHARTS_RESIZE_DEBOUNCE_MS = 160;
 const HOME_CHARTS_LOW_EFFECTS_RESIZE_DEBOUNCE_MS = 320;
@@ -410,9 +412,11 @@ async function ensureAuthenticated() {
     window.location.href = "/login.html";
     throw new Error("login required");
   }
+  resetInterfaceRadiusForAuthChange();
   authState.csrfToken = payload.csrf_token || "";
   authState.user = payload.user || null;
   document.documentElement.dataset.role = authState.user?.role === "admin" ? "admin" : "user";
+  await loadInterfaceRadiusPreference({ silent: true });
   activateThemeUserStorage();
   applySavedUserTheme();
   updateCurrentUsername();
@@ -430,7 +434,7 @@ function getSavedSettings() {
 }
 
 function normalizeTheme(theme) {
-  return ["light", "space-tech"].includes(theme) ? theme : "space-tech";
+  return "space-tech";
 }
 
 function normalizeDarkMode(darkMode) {
@@ -516,16 +520,525 @@ function withSavedUserTheme(settings = {}) {
 
 function applySavedUserTheme() {
   const savedTheme = getSavedTheme();
-  const savedDarkMode = getSavedDarkMode();
   if (savedTheme) {
     defaultSettings.theme = normalizeTheme(savedTheme);
     applyTheme(defaultSettings.theme);
   }
-  if (savedDarkMode) {
-    defaultSettings.darkMode = normalizeDarkMode(savedDarkMode);
-    applyDarkMode(defaultSettings.darkMode);
+  defaultSettings.darkMode = "false";
+  applyDarkMode("false");
+}
+
+// Theme color runtime start
+const DEFAULT_EFFECTIVE_THEME_COLORS = Object.freeze({
+  vitality: "#3466D9",
+  calm: "#355F63",
+});
+const THEME_PALETTE_SURFACES = Object.freeze({
+  light: "#F7FAFC",
+  dark: "#121318",
+});
+const THEME_PAGE_BACKGROUND_BASES = Object.freeze({
+  vitality: Object.freeze({ light: "#F8FAFC", dark: "#07111F" }),
+  calm: Object.freeze({ light: "#F7FAFC", dark: "#121318" }),
+});
+const THEME_PAGE_BACKGROUND_MIX = Object.freeze({ light: 0.07, dark: 0.12 });
+let effectiveThemeColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+
+function normalizeThemeHex(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(normalized) ? normalized : null;
+}
+
+function themeHexToRgb(value) {
+  const normalized = normalizeThemeHex(value);
+  if (!normalized) return null;
+  return {
+    red: Number.parseInt(normalized.slice(1, 3), 16),
+    green: Number.parseInt(normalized.slice(3, 5), 16),
+    blue: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function themeRgbToHex({ red, green, blue }) {
+  const channel = (value) => Math.max(0, Math.min(255, Math.round(value)))
+    .toString(16)
+    .padStart(2, "0")
+    .toUpperCase();
+  return `#${channel(red)}${channel(green)}${channel(blue)}`;
+}
+
+function themeRelativeLuminance(value) {
+  const rgb = themeHexToRgb(value);
+  if (!rgb) return 0;
+  const linearize = (channel) => {
+    const srgb = channel / 255;
+    return srgb <= 0.04045
+      ? srgb / 12.92
+      : ((srgb + 0.055) / 1.055) ** 2.4;
+  };
+  return (
+    (0.2126 * linearize(rgb.red))
+    + (0.7152 * linearize(rgb.green))
+    + (0.0722 * linearize(rgb.blue))
+  );
+}
+
+function contrastRatio(first, second) {
+  const firstLuminance = themeRelativeLuminance(first);
+  const secondLuminance = themeRelativeLuminance(second);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function mixThemeHex(from, to, ratio) {
+  const start = themeHexToRgb(from);
+  const end = themeHexToRgb(to);
+  const weight = Math.max(0, Math.min(1, ratio));
+  return themeRgbToHex({
+    red: start.red + ((end.red - start.red) * weight),
+    green: start.green + ((end.green - start.green) * weight),
+    blue: start.blue + ((end.blue - start.blue) * weight),
+  });
+}
+
+function deriveThemePalette(value, mode = "light", pageBase = null) {
+  const accent = normalizeThemeHex(value) || DEFAULT_EFFECTIVE_THEME_COLORS.vitality;
+  const colorMode = mode === "dark" ? "dark" : "light";
+  const surface = THEME_PALETTE_SURFACES[colorMode];
+  const blackContrast = contrastRatio(accent, "#000000");
+  const whiteContrast = contrastRatio(accent, "#FFFFFF");
+  const onAccent = whiteContrast >= 4.5 || whiteContrast >= blackContrast
+    ? "#FFFFFF"
+    : "#000000";
+  const readableTarget = colorMode === "dark" ? "#FFFFFF" : "#000000";
+  let readableAccent = accent;
+  for (let step = 1; contrastRatio(readableAccent, surface) < 4.5 && step <= 100; step += 1) {
+    readableAccent = mixThemeHex(accent, readableTarget, step / 100);
+  }
+  const rgb = themeHexToRgb(accent);
+  const normalizedPageBase = normalizeThemeHex(pageBase) || surface;
+  return {
+    accent,
+    onAccent,
+    readableAccent,
+    gradientEnd: accent === "#3466D9" ? "#6AA4FF" : mixThemeHex(accent, "#FFFFFF", 0.36),
+    focusRing: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${colorMode === "dark" ? "0.38" : "0.28"})`,
+    pageBackground: mixThemeHex(
+      normalizedPageBase,
+      accent,
+      THEME_PAGE_BACKGROUND_MIX[colorMode],
+    ),
+  };
+}
+
+function applyEffectiveThemeColors() {
+  effectiveThemeColors = { ...DEFAULT_EFFECTIVE_THEME_COLORS };
+  const root = document.documentElement;
+  const themeKey = "vitality";
+  const colorMode = root.getAttribute("data-color-mode") === "dark" ? "dark" : "light";
+  const palette = deriveThemePalette(
+    effectiveThemeColors[themeKey],
+    colorMode,
+    THEME_PAGE_BACKGROUND_BASES[themeKey][colorMode],
+  );
+  root.style.setProperty("--theme-accent", palette.accent);
+  root.style.setProperty("--theme-accent-gradient-end", palette.gradientEnd);
+  root.style.setProperty("--theme-accent-gradient", `linear-gradient(90deg, ${palette.accent} 0%, ${palette.gradientEnd} 100%)`);
+  root.style.setProperty("--theme-on-accent", palette.onAccent);
+  root.style.setProperty("--theme-accent-readable", palette.readableAccent);
+  root.style.setProperty("--theme-focus-ring", palette.focusRing);
+  root.style.setProperty("--theme-page-background", palette.pageBackground);
+  const accentRgb = themeHexToRgb(palette.accent);
+  if (accentRgb) {
+    const accentChannel = `${accentRgb.red}, ${accentRgb.green}, ${accentRgb.blue}`;
+    root.style.setProperty("--card-hover-glow", palette.accent);
+    root.style.setProperty("--card-hover-shadow", `rgba(${accentChannel}, 0.10)`);
+    root.style.setProperty("--card-hover-shadow-soft", `rgba(${accentChannel}, 0.07)`);
+    root.style.setProperty("--card-hover-shadow-strong", `rgba(${accentChannel}, 0.14)`);
+    root.style.setProperty(
+      "--space-panel-hover-shadow",
+      colorMode === "dark"
+        ? `inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 1px rgba(${accentChannel}, 0.24), 0 0 24px rgba(${accentChannel}, 0.20)`
+        : `inset 0 1px 0 rgba(255, 255, 255, 0.56), 0 0 0 1px rgba(${accentChannel}, 0.20), 0 0 24px rgba(${accentChannel}, 0.16)`,
+    );
+  }
+  if (typeof refreshHomeChartsForTheme === "function") refreshHomeChartsForTheme();
+  return { colors: { ...effectiveThemeColors }, palette };
+}
+
+applyEffectiveThemeColors(effectiveThemeColors);
+// Theme color runtime end
+
+// Interface radius start
+const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({
+  radiusPx: 4,
+  lineChartStyle: "straight",
+});
+const DEFAULT_INTERFACE_RADIUS_PX = DEFAULT_INTERFACE_PREFERENCES.radiusPx;
+const MIN_INTERFACE_RADIUS_PX = 1;
+const MAX_INTERFACE_RADIUS_PX = 15;
+const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;
+const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";
+let appliedLineChartStyle = DEFAULT_INTERFACE_PREFERENCES.lineChartStyle;
+const interfaceRadiusSlider = document.getElementById("interfaceRadiusSlider");
+const interfaceRadiusValue = document.getElementById("interfaceRadiusValue");
+const interfaceLineChartStyleStraight = document.getElementById("interfaceLineChartStyleStraight");
+const interfaceLineChartStyleSmooth = document.getElementById("interfaceLineChartStyleSmooth");
+const interfaceSettingsStatus = document.getElementById("interfaceSettingsStatus");
+const saveInterfaceSettingsBtn = document.getElementById("saveInterfaceSettingsBtn");
+const resetInterfaceSettingsBtn = document.getElementById("resetInterfaceSettingsBtn");
+const interfaceRadiusState = {
+  savedPreferences: { ...DEFAULT_INTERFACE_PREFERENCES },
+  draftPreferences: { ...DEFAULT_INTERFACE_PREFERENCES },
+  loaded: false,
+  loadFailed: false,
+  saving: false,
+  statusText: "已保存",
+  loadRequestId: 0,
+  saveRequestId: 0,
+  authRevision: 0,
+  editRevision: 0,
+  serverMutationRevision: 0,
+};
+
+function copyInterfacePreferences(preferences) {
+  return {
+    radiusPx: preferences.radiusPx,
+    lineChartStyle: preferences.lineChartStyle,
+  };
+}
+
+function interfacePreferencesMatch(left, right) {
+  return (
+    left.radiusPx === right.radiusPx
+    && left.lineChartStyle === right.lineChartStyle
+  );
+}
+
+function normalizeInterfaceRadius(radiusPx) {
+  if (
+    Number.isInteger(radiusPx)
+    && radiusPx >= MIN_INTERFACE_RADIUS_PX
+    && radiusPx <= MAX_INTERFACE_RADIUS_PX
+  ) {
+    return radiusPx;
+  }
+  return DEFAULT_INTERFACE_RADIUS_PX;
+}
+
+function normalizeLineChartStyle(value) {
+  return value === "smooth" ? "smooth" : "straight";
+}
+
+function currentLineChartStyle() {
+  return normalizeLineChartStyle(appliedLineChartStyle);
+}
+
+function cacheAuthenticatedInterfacePreferences(preferences) {
+  const normalizedRadiusPx = normalizeInterfaceRadius(preferences.radiusPx);
+  try {
+    localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));
+  } catch (_) {}
+  return {
+    ...preferences,
+    radiusPx: normalizedRadiusPx,
+  };
+}
+
+function applyInterfaceRadius(radiusPx) {
+  const normalizedRadiusPx = normalizeInterfaceRadius(radiusPx);
+  document.documentElement.style.setProperty("--ui-radius", `${normalizedRadiusPx}px`);
+  return normalizedRadiusPx;
+}
+
+function applyInterfacePreferences(preferences) {
+  const normalizedRadiusPx = applyInterfaceRadius(preferences.radiusPx);
+  const normalizedLineChartStyle = normalizeLineChartStyle(preferences.lineChartStyle);
+  const styleChanged = normalizedLineChartStyle !== appliedLineChartStyle;
+  appliedLineChartStyle = normalizedLineChartStyle;
+  if (styleChanged && typeof refreshHomeChartsForTheme === "function") {
+    refreshHomeChartsForTheme();
+  }
+  return {
+    ...preferences,
+    radiusPx: normalizedRadiusPx,
+    lineChartStyle: normalizedLineChartStyle,
+  };
+}
+
+function readInterfacePreferencesPayload(payload) {
+  const radiusPx = payload?.settings?.radius_px;
+  const lineChartStyle = payload?.settings?.line_chart_style;
+  if (
+    !Number.isInteger(radiusPx)
+    || radiusPx < MIN_INTERFACE_RADIUS_PX
+    || radiusPx > MAX_INTERFACE_RADIUS_PX
+    || !["straight", "smooth"].includes(lineChartStyle)
+  ) {
+    throw new Error("界面设置响应无效");
+  }
+  return { radiusPx, lineChartStyle };
+}
+
+function syncInterfaceRadiusDirtyStatus() {
+  interfaceRadiusState.statusText = (
+    interfacePreferencesMatch(
+      interfaceRadiusState.draftPreferences,
+      interfaceRadiusState.savedPreferences,
+    )
+      ? "已保存"
+      : "正在预览，尚未保存"
+  );
+  return interfaceRadiusState.statusText;
+}
+
+function renderInterfaceRadiusPreference() {
+  const saving = interfaceRadiusState.saving;
+  if (interfaceRadiusSlider) {
+    interfaceRadiusSlider.value = String(interfaceRadiusState.draftPreferences.radiusPx);
+    const sliderMin = Number(interfaceRadiusSlider.min);
+    const sliderMax = Number(interfaceRadiusSlider.max);
+    const sliderValue = Number(interfaceRadiusSlider.value);
+    const sliderProgress = sliderMax > sliderMin
+      ? ((sliderValue - sliderMin) / (sliderMax - sliderMin)) * 100
+      : 0;
+    interfaceRadiusSlider.style?.setProperty?.("--range-progress", `${sliderProgress}%`);
+    interfaceRadiusSlider.disabled = saving;
+  }
+  if (interfaceRadiusValue) {
+    interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;
+  }
+  if (interfaceLineChartStyleStraight) {
+    interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";
+    interfaceLineChartStyleStraight.disabled = saving;
+  }
+  if (interfaceLineChartStyleSmooth) {
+    interfaceLineChartStyleSmooth.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "smooth";
+    interfaceLineChartStyleSmooth.disabled = saving;
+  }
+  if (interfaceSettingsStatus) {
+    interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;
+  }
+  if (saveInterfaceSettingsBtn) {
+    saveInterfaceSettingsBtn.disabled = saving;
+    saveInterfaceSettingsBtn.classList.toggle("loading", saving);
+    saveInterfaceSettingsBtn.textContent = saving ? "保存中..." : "保存界面设置";
+  }
+  if (resetInterfaceSettingsBtn) {
+    resetInterfaceSettingsBtn.disabled = saving;
   }
 }
+
+function resetInterfaceRadiusForAuthChange() {
+  interfaceRadiusState.loadRequestId += 1;
+  interfaceRadiusState.saveRequestId += 1;
+  interfaceRadiusState.authRevision += 1;
+  interfaceRadiusState.editRevision += 1;
+  interfaceRadiusState.serverMutationRevision += 1;
+  interfaceRadiusState.savedPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+  interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+  interfaceRadiusState.loaded = false;
+  interfaceRadiusState.loadFailed = false;
+  interfaceRadiusState.saving = false;
+  interfaceRadiusState.statusText = "已保存";
+  applyInterfacePreferences(DEFAULT_INTERFACE_PREFERENCES);
+  renderInterfaceRadiusPreference();
+  return interfaceRadiusState.authRevision;
+}
+
+function captureInterfaceRadiusPreference() {
+  return {
+    savedPreferences: copyInterfacePreferences(interfaceRadiusState.savedPreferences),
+    draftPreferences: copyInterfacePreferences(interfaceRadiusState.draftPreferences),
+    loaded: interfaceRadiusState.loaded,
+    loadFailed: interfaceRadiusState.loadFailed,
+    statusText: interfaceRadiusState.statusText,
+  };
+}
+
+function restoreInterfaceRadiusPreference(snapshot, expectedAuthRevision) {
+  if (expectedAuthRevision !== interfaceRadiusState.authRevision) return false;
+  interfaceRadiusState.loadRequestId += 1;
+  interfaceRadiusState.saveRequestId += 1;
+  interfaceRadiusState.authRevision += 1;
+  interfaceRadiusState.editRevision += 1;
+  interfaceRadiusState.serverMutationRevision += 1;
+  interfaceRadiusState.savedPreferences = copyInterfacePreferences(snapshot.savedPreferences);
+  interfaceRadiusState.draftPreferences = copyInterfacePreferences(snapshot.draftPreferences);
+  interfaceRadiusState.loaded = snapshot.loaded;
+  interfaceRadiusState.loadFailed = snapshot.loadFailed;
+  interfaceRadiusState.saving = false;
+  interfaceRadiusState.statusText = snapshot.statusText;
+  applyInterfacePreferences(snapshot.draftPreferences);
+  renderInterfaceRadiusPreference();
+  return true;
+}
+
+async function loadInterfaceRadiusPreference({ silent = false } = {}) {
+  if (interfaceRadiusState.saving) return false;
+  const requestId = ++interfaceRadiusState.loadRequestId;
+  const editRevision = interfaceRadiusState.editRevision;
+  const mutationRevision = interfaceRadiusState.serverMutationRevision;
+  const hadUnsavedDraft = (
+    !interfacePreferencesMatch(
+      interfaceRadiusState.draftPreferences,
+      interfaceRadiusState.savedPreferences,
+    )
+  );
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS);
+  try {
+    const payload = await api("/api/settings/interface", { signal: abortController.signal });
+    if (
+      requestId !== interfaceRadiusState.loadRequestId
+      || mutationRevision !== interfaceRadiusState.serverMutationRevision
+    ) {
+      return false;
+    }
+    const preferences = readInterfacePreferencesPayload(payload);
+    interfaceRadiusState.savedPreferences = copyInterfacePreferences(preferences);
+    interfaceRadiusState.loaded = true;
+    interfaceRadiusState.loadFailed = false;
+    cacheAuthenticatedInterfacePreferences(preferences);
+    if (!hadUnsavedDraft && editRevision === interfaceRadiusState.editRevision) {
+      interfaceRadiusState.draftPreferences = copyInterfacePreferences(preferences);
+      applyInterfacePreferences(preferences);
+    }
+    syncInterfaceRadiusDirtyStatus();
+    renderInterfaceRadiusPreference();
+    return true;
+  } catch (error) {
+    if (
+      requestId !== interfaceRadiusState.loadRequestId
+      || mutationRevision !== interfaceRadiusState.serverMutationRevision
+    ) {
+      return false;
+    }
+    const editedDuringRequest = editRevision !== interfaceRadiusState.editRevision;
+    const preserveDraft = hadUnsavedDraft || editedDuringRequest;
+    if (!interfaceRadiusState.loaded) {
+      interfaceRadiusState.savedPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+      if (preserveDraft) {
+        syncInterfaceRadiusDirtyStatus();
+      } else {
+        interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+        applyInterfacePreferences(DEFAULT_INTERFACE_PREFERENCES);
+        interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";
+      }
+    } else if (editedDuringRequest) {
+      syncInterfaceRadiusDirtyStatus();
+    } else {
+      interfaceRadiusState.statusText = `加载失败，继续使用 ${interfaceRadiusState.draftPreferences.radiusPx}px`;
+    }
+    interfaceRadiusState.loadFailed = true;
+    renderInterfaceRadiusPreference();
+    if (!silent) showToast(`界面设置加载失败: ${error.message}`, "error");
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function saveInterfaceRadiusPreference() {
+  if (interfaceRadiusState.saving) return false;
+  const requestId = ++interfaceRadiusState.saveRequestId;
+  const authRevision = interfaceRadiusState.authRevision;
+  interfaceRadiusState.serverMutationRevision += 1;
+  const mutationRevision = interfaceRadiusState.serverMutationRevision;
+  const isCurrentRequest = () => (
+    requestId === interfaceRadiusState.saveRequestId
+    && authRevision === interfaceRadiusState.authRevision
+    && mutationRevision === interfaceRadiusState.serverMutationRevision
+  );
+  interfaceRadiusState.saving = true;
+  renderInterfaceRadiusPreference();
+  try {
+    const payload = await api("/api/settings/interface", {
+      method: "POST",
+      body: JSON.stringify({
+        radius_px: interfaceRadiusState.draftPreferences.radiusPx,
+        line_chart_style: interfaceRadiusState.draftPreferences.lineChartStyle,
+      }),
+    });
+    if (!isCurrentRequest()) return false;
+    const savedPreferences = readInterfacePreferencesPayload(payload);
+    interfaceRadiusState.savedPreferences = copyInterfacePreferences(savedPreferences);
+    interfaceRadiusState.draftPreferences = copyInterfacePreferences(savedPreferences);
+    interfaceRadiusState.loaded = true;
+    interfaceRadiusState.loadFailed = false;
+    interfaceRadiusState.statusText = "保存成功";
+    applyInterfacePreferences(savedPreferences);
+    cacheAuthenticatedInterfacePreferences(savedPreferences);
+    return true;
+  } catch (error) {
+    if (!isCurrentRequest()) return false;
+    interfaceRadiusState.statusText = "保存失败";
+    showToast(`界面设置保存失败: ${error.message}`, "error");
+    return false;
+  } finally {
+    if (isCurrentRequest()) {
+      interfaceRadiusState.saving = false;
+      renderInterfaceRadiusPreference();
+    }
+  }
+}
+
+function discardUnsavedInterfaceRadius() {
+  interfaceRadiusState.loadRequestId += 1;
+  const changed = !interfacePreferencesMatch(
+    interfaceRadiusState.draftPreferences,
+    interfaceRadiusState.savedPreferences,
+  );
+  interfaceRadiusState.draftPreferences = copyInterfacePreferences(interfaceRadiusState.savedPreferences);
+  applyInterfacePreferences(interfaceRadiusState.savedPreferences);
+  syncInterfaceRadiusDirtyStatus();
+  renderInterfaceRadiusPreference();
+  return changed;
+}
+
+function updateInterfacePreferenceDraft(change) {
+  if (interfaceRadiusState.saving) return;
+  interfaceRadiusState.editRevision += 1;
+  interfaceRadiusState.draftPreferences = {
+    ...interfaceRadiusState.draftPreferences,
+    ...change,
+  };
+  applyInterfacePreferences(interfaceRadiusState.draftPreferences);
+  syncInterfaceRadiusDirtyStatus();
+  renderInterfaceRadiusPreference();
+}
+
+interfaceRadiusSlider?.addEventListener("input", () => {
+  updateInterfacePreferenceDraft({
+    radiusPx: normalizeInterfaceRadius(Number(interfaceRadiusSlider.value)),
+  });
+});
+
+interfaceLineChartStyleStraight?.addEventListener("input", () => {
+  if (interfaceLineChartStyleStraight.checked) {
+    updateInterfacePreferenceDraft({ lineChartStyle: "straight" });
+  }
+});
+
+interfaceLineChartStyleSmooth?.addEventListener("input", () => {
+  if (interfaceLineChartStyleSmooth.checked) {
+    updateInterfacePreferenceDraft({ lineChartStyle: "smooth" });
+  }
+});
+
+resetInterfaceSettingsBtn?.addEventListener("click", () => {
+  if (interfaceRadiusState.saving) return;
+  interfaceRadiusState.editRevision += 1;
+  interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };
+  applyInterfacePreferences(interfaceRadiusState.draftPreferences);
+  syncInterfaceRadiusDirtyStatus();
+  renderInterfaceRadiusPreference();
+});
+
+saveInterfaceSettingsBtn?.addEventListener("click", saveInterfaceRadiusPreference);
+// Interface radius end
 
 function updateSpaceTopNavFrost() {
   if (!topNav) return;
@@ -700,6 +1213,7 @@ async function loadToolsPageData() {
 async function loadSettingsPageData() {
   await Promise.all([
     loadPageSection("系统信息", loadSystemInfo),
+    loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false })),
     loadPageSection("数据源配置", loadConfigList),
     loadPageSection("逐笔校验配置", loadDbValidationSettings),
     loadPageSection("流程执行配置", loadFlowSettings),
@@ -758,6 +1272,9 @@ async function switchPage(name, options = {}) {
     showToast("普通用户无权访问用户管理", "error");
     name = "report-navigation";
   }
+  if (previousPage === "settings" && name !== "settings") {
+    discardUnsavedInterfaceRadius();
+  }
   document.documentElement.setAttribute('data-page', name);
   syncNavState(name);
   const nextHash = `#${name}`;
@@ -767,9 +1284,15 @@ async function switchPage(name, options = {}) {
   if (name === "settings") loadSettingsPageData();
   if (name === "users") await loadUsers();
   if (name === "report-navigation") await loadReportNavigation();
-  if (name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)) {
-    homeChartsNeedThemeRefresh = false;
-    renderHomeStats(); renderChart(); renderTrendChart();
+  if (name === "home") {
+    const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();
+    if (refreshData) {
+      homeChartsNeedThemeRefresh = false;
+      renderHomeStats(); renderChart(); renderTrendChart();
+    } else if (homeChartsNeedThemeRefresh) {
+      homeChartsNeedThemeRefresh = false;
+      redrawHomeChartsFromCache();
+    }
   }
   if (name === "auto-check" && previousPage !== "auto-check") showResultListReturnLoading();
 }
@@ -1231,7 +1754,7 @@ reportNavSchedules?.addEventListener("dblclick", async (event) => {
     showToast("请输入 YYYY-MM-DD 格式的日期", "error");
     return;
   }
-  const confirmed = await showConfirm("修改报送日期", `确认将报送日期修改为 ${nextDate} 吗？`);
+  const confirmed = await showConfirm("修改报送日期", `确认将报送日期修改为 ${nextDate} 吗？`, { tone: "warning" });
   if (!confirmed) return;
   try {
     const result = await api(`/api/report-navigation/schedules/${encodeURIComponent(target.dataset.scheduleProcess)}`, {
@@ -1257,6 +1780,7 @@ async function handleReportNavigationManualAction(stepRow) {
   const confirmed = await showConfirm(
     isCancel ? "撤销手工完成" : "标记步骤完成",
     isCancel ? "撤销后将恢复该步骤最近一次自动统计状态，确认继续吗？" : "确认将该步骤手工标记为已完成吗？",
+    { tone: isCancel ? "warning" : "success" },
   );
   if (!confirmed) return;
   stepRow.classList.add("busy");
@@ -1294,14 +1818,20 @@ async function encryptPasswordForTransport(password) {
 }
 
 async function logout() {
-  const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？");
+  const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？", { tone: "warning" });
   if (!confirmed) return;
+  const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
+  const logoutAuthRevision = resetInterfaceRadiusForAuthChange();
   try {
     await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
   } catch (error) {
-    showToast(error.message, "error");
+    const restoredInterface = restoreInterfaceRadiusPreference(interfaceRadiusSnapshot, logoutAuthRevision);
+    if (restoredInterface) {
+      showToast(error.message, "error");
+    }
     return;
   }
+  if (logoutAuthRevision !== interfaceRadiusState.authRevision) return;
   authState.csrfToken = "";
   try { sessionStorage.removeItem(USER_AVATAR_SESSION_KEY); } catch (_) {}
   window.location.href = "/login.html";
@@ -1497,9 +2027,9 @@ function renderUsers() {
       <td>${escapeHtml(user.last_login_at ? formatDisplayTime(user.last_login_at) : "-")}</td>
       <td class="user-actions-cell">
         <div class="user-actions">
-          <button class="user-icon-action edit-user" data-id="${escapeHtml(user.id || "")}" title="${canEdit ? "编辑" : adminLockedTitle}" ${canEdit ? "" : "disabled"}>✏️</button>
-          <button class="user-icon-action toggle-user" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可停用" : (!canEdit ? adminLockedTitle : (enabled ? "停用" : "启用"))}" ${toggleDisabled ? "disabled" : ""}>${enabled ? "⏸️" : "▶️"}</button>
-          <button class="user-icon-action delete-user" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可删除" : (!canEdit ? adminLockedTitle : "删除")}" ${deleteDisabled ? "disabled" : ""}>🗑️</button>
+          <button class="user-icon-action edit-user" data-action-tone="primary" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${canEdit ? "编辑" : adminLockedTitle}" ${canEdit ? "" : "disabled"}>✏️</button>
+          <button class="user-icon-action toggle-user" data-action-tone="${enabled ? "warning" : "success"}" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可停用" : (!canEdit ? adminLockedTitle : (enabled ? "停用" : "启用"))}" ${toggleDisabled ? "disabled" : ""}>${enabled ? "⏸️" : "▶️"}</button>
+          <button class="user-icon-action delete-user" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(user.id || "")}" title="${isInitialAdmin ? "初始管理员不可删除" : (!canEdit ? adminLockedTitle : "删除")}" ${deleteDisabled ? "disabled" : ""}>🗑️</button>
         </div>
       </td>
     </tr>`;
@@ -1707,7 +2237,7 @@ async function deleteUser(targetUser) {
     showToast("初始管理员不可删除", "warning");
     return;
   }
-  const confirmed = await showConfirm("删除用户", `确定删除用户 ${targetUser.username} 吗？`);
+  const confirmed = await showConfirm("删除用户", `确定删除用户 ${targetUser.username} 吗？`, { tone: "danger" });
   if (!confirmed) return;
   try {
     const userId = targetUser.id;
@@ -1725,7 +2255,11 @@ async function toggleUserEnabled(targetUser) {
     return;
   }
   const nextEnabled = targetUser.enabled === false;
-  const confirmed = await showConfirm(nextEnabled ? "启用用户" : "停用用户", `确认${nextEnabled ? "启用" : "停用"}用户 ${targetUser.username} 吗？`);
+  const confirmed = await showConfirm(
+    nextEnabled ? "启用用户" : "停用用户",
+    `确认${nextEnabled ? "启用" : "停用"}用户 ${targetUser.username} 吗？`,
+    { tone: nextEnabled ? "success" : "warning" },
+  );
   if (!confirmed) return;
   try {
     const userId = targetUser.id;
@@ -1942,7 +2476,10 @@ function formatLastRunTime() {
 
 function formatDisplayTime(value) {
   if (!value) return "";
-  return String(value).replace("T", " ");
+  return String(value)
+    .replace("T", " ")
+    .replace(/\.\d+(?=(?:Z|[+-]\d{2}:?\d{2})?$)/, "")
+    .replace(/Z$/, "");
 }
 
 function normalizeExecutorDisplayName(value, fallback = "未知执行人") {
@@ -2062,6 +2599,16 @@ function formatMoney(v) {
   const n = Number(String(v));
   if (!Number.isFinite(n)) return String(v);
   return n.toLocaleString("zh-CN", { maximumFractionDigits: 8 });
+}
+
+function formatAmount(v) {
+  if (v === null || v === undefined || v === "") return "";
+  const n = Number(String(v).replaceAll(",", ""));
+  if (!Number.isFinite(n)) return String(v);
+  return n.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function escapeHtml(v) {
@@ -2315,8 +2862,8 @@ function renderCustomDatePicker(input) {
     <div class="custom-date-weekdays">${CUSTOM_DATE_WEEKDAYS.map((day) => `<span>${day}</span>`).join("")}</div>
     <div class="custom-date-days">${cells}</div>
     <div class="custom-date-actions">
-      <button type="button" data-date-action="clear">清除</button>
-      <button type="button" data-date-action="today">今天</button>
+      <button type="button" data-date-action="clear"><span class="theme-gradient-text">清除</span></button>
+      <button type="button" data-date-action="today"><span class="theme-gradient-text">今天</span></button>
     </div>
   `;
 }
@@ -2600,10 +3147,10 @@ function renderResults() {
       <td><button class="expand-btn" data-index="${gi}">+</button></td>
       <td class="result-project-code">${escapeHtml(item.project_code)}</td>
       <td>${escapeHtml(item.project_name)}</td>
-      <td class="money-cell">${formatMoney(item.valuation_asset_total)}</td>
-      <td class="money-cell">${formatMoney(item.asset_total)}</td>
-      <td class="money-cell">${formatMoney(item.liability_equity_total)}</td>
-      <td class="money-cell ${diff ? "money-cell--error" : ""}">${formatMoney(item.difference)}</td>
+      <td class="money-cell">${formatAmount(item.valuation_asset_total)}</td>
+      <td class="money-cell">${formatAmount(item.asset_total)}</td>
+      <td class="money-cell">${formatAmount(item.liability_equity_total)}</td>
+      <td class="money-cell ${diff ? "money-cell--error" : ""}">${formatAmount(item.difference)}</td>
       <td>${escapeHtml(item.difference_reason || "")}</td>
       <td style="text-align:center">${renderStatusBadge(item.match_status)}</td>
     </tr>
@@ -2633,11 +3180,19 @@ function displayDetailLabel(label) {
   return label === "zf_detail 资产合计" ? "资负报表资产合计" : label;
 }
 
+function isAmountDisplayLabel(label) {
+  return /金额|余额|资产合计|负债及权益合计/.test(String(label || ""));
+}
+
+function formatResultDetailValue(label, value) {
+  return isAmountDisplayLabel(label) ? formatAmount(value) : String(value ?? "");
+}
+
 function renderDetails(ds) {
   if (!ds.length) return '<div class="detail">无明细</div>';
   return `<div class="detail">${ds.map((s) => {
-    const rows = (s.rows || []).map((r) => `<div class="detail-item"><span>${escapeHtml(displayDetailLabel(r.label))}</span><strong>${escapeHtml(r.value)}</strong></div>`).join("");
-    const tbl = s.table ? `<table class="detail-table"><thead><tr>${s.table.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${(s.table.rows || []).map((r) => `<tr>${r.map((c) => `<td class="money-cell">${escapeHtml(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "";
+    const rows = (s.rows || []).map((r) => `<div class="detail-item"><span>${escapeHtml(displayDetailLabel(r.label))}</span><strong>${escapeHtml(formatResultDetailValue(r.label, r.value))}</strong></div>`).join("");
+    const tbl = s.table ? `<table class="detail-table"><thead><tr>${s.table.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${(s.table.rows || []).map((r) => `<tr>${r.map((c, index) => `<td class="money-cell">${escapeHtml(formatResultDetailValue(s.table.headers[index], c))}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "";
     return `<div class="detail-block"><div class="detail-heading"><strong>${escapeHtml(s.title)}</strong></div><div class="detail-content">${rows}${tbl}</div></div>`;
   }).join("")}</div>`;
 }
@@ -3546,7 +4101,7 @@ function renderHistoryList() {
       ? `<td class="admin-only">${escapeHtml(formatHistorySourceName(run))}</td>`
       : "";
     const deleteAction = canManageHistory()
-      ? `<button class="btn-outline btn-xs btn-danger delete-history" data-id="${escapeHtml(run.id)}">删除</button>`
+      ? `<button class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(run.id)}">删除</button>`
       : "";
     return `<tr class="history-main-row" data-history-id="${escapeHtml(run.id)}">
       <td>${escapeHtml(run.run_date)}</td>
@@ -3558,7 +4113,7 @@ function renderHistoryList() {
       <td class="money-cell history-added">${escapeHtml(formatHistoryDiffCount(run, "added_count", { unit: false }))}</td>
       <td class="money-cell history-removed">${escapeHtml(formatHistoryDiffCount(run, "removed_count", { unit: false }))}</td>
       <td class="history-actions">
-        <button class="btn-outline btn-xs view-history" data-id="${escapeHtml(run.id)}">查看</button>
+        <button class="btn-outline btn-xs view-history" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(run.id)}">查看</button>
         ${deleteAction}
       </td>
     </tr>`;
@@ -3579,10 +4134,13 @@ async function showHistoryDetailModal(id) {
   showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });
   try {
     const history = await loadHistoryDetail(id);
-    showInfo("历史详情", renderHistoryDetailContent(history), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });
-    document.querySelector("#infoBody .restore-history-detail")?.addEventListener("click", async () => {
-      await restoreHistoryRun(history);
-      document.getElementById("infoClose")?.click();
+    showInfo("历史详情", renderHistoryDetailContent(history), {
+      modalClass: "modal-info--history-detail",
+      closeOnBackdrop: false,
+      detailActionLabel: "恢复到结果页",
+      onDetailAction: async () => {
+        await restoreHistoryRun(history);
+      },
     });
     return history;
   } catch (e) {
@@ -3600,19 +4158,15 @@ function renderHistoryDetailContent(run) {
   return `
     <div class="history-detail-card">
       <div class="history-detail">
-    <div class="history-summary-grid">
-      ${historySummaryItem("报告期", run.run_date)}
-      ${historySummaryItem("执行人", historyExecutorName(run))}
-      ${historySummaryItem("执行时间", run.run_at)}
-      ${historySummaryItem("基准记录", historyBaselineText(run))}
-    </div>
-    ${historyDetailCounts(run)}
-    ${historySection("本次新增差异", historyDiffItems(run, "added_results"))}
-    ${historySection("本次减少差异", historyDiffItems(run, "removed_results"))}
-    ${historySection("本次完整核对结果", run.results || [])}
-      </div>
-      <div class="history-detail-footer">
-        <button type="button" class="btn-primary btn-sm restore-history-detail" data-id="${escapeHtml(run.id || "")}">恢复到结果页</button>
+        <div class="history-summary-grid">
+          ${historySummaryItem("报告期", run.run_date)}
+          ${historySummaryItem("执行人", historyExecutorName(run))}
+          ${historySummaryItem("执行时间", run.run_at)}
+          ${historySummaryItem("基准记录", historyBaselineText(run))}
+        </div>
+        ${historySection("本次完整核对结果", run.results || [], "complete")}
+        ${historySection("本次新增差异", historyDiffItems(run, "added_results"), "added")}
+        ${historySection("本次减少差异", historyDiffItems(run, "removed_results"), "removed")}
       </div>
     </div>
   `;
@@ -3634,41 +4188,34 @@ function historySummaryItem(label, value) {
   return `<div class="history-summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
 }
 
-function historyDetailCounts(run) {
-  return `<div class="history-detail-counts">
-    ${historyCountItem("本次新增差异", historyHasBaseline(run) ? (run.added_results || []) : null)}
-    ${historyCountItem("本次减少差异", historyHasBaseline(run) ? (run.removed_results || []) : null)}
-    ${historyCountItem("本次完整核对结果", run.results || [])}
-  </div>`;
-}
-
-function historyCountItem(label, items) {
-  if (items === null) {
-    return `<div class="history-count-item"><span>${escapeHtml(label)}</span><strong>-</strong></div>`;
-  }
-  return `<div class="history-count-item"><span>${escapeHtml(label)}</span><strong>${formatMoney(items.length)} 条</strong></div>`;
-}
-
-function historySection(title, items) {
+function historySection(title, items, tone) {
   if (!items.length) return "";
-  const sectionClass = `${title === "本次完整核对结果" ? " history-section--full-results" : ""}${items.length > 10 ? " history-section--scroll" : ""}`;
-  return `<div class="history-section${sectionClass}">
-    <div class="history-section-title">${escapeHtml(title)} <span>${items.length} 条</span></div>
+  const scrollClass = items.length > 10 ? " history-section--scroll" : "";
+  return `<section class="history-section history-section--${tone}${scrollClass}">
+    <div class="history-section-title">
+      <span class="history-section-bar" aria-hidden="true"></span>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${formatMoney(items.length)} 条</span>
+    </div>
     <div class="history-section-table">${historyResultTable(items)}</div>
-  </div>`;
+  </section>`;
 }
 
 function historyResultTable(items) {
   if (!items.length) return '<div class="history-empty">无</div>';
   return `<table class="detail-table history-result-table">
     <thead><tr><th>项目编号</th><th>项目名称</th><th>差异金额</th><th>差异类型</th><th>状态</th></tr></thead>
-    <tbody>${items.map((item) => `<tr>
-      <td>${escapeHtml(item.project_code)}</td>
-      <td>${escapeHtml(item.project_name)}</td>
-      <td class="money-cell">${formatMoney(item.difference)}</td>
-      <td>${escapeHtml(item.difference_reason || "")}</td>
-      <td>${escapeHtml(item.match_status || "")}</td>
-    </tr>`).join("")}</tbody>
+    <tbody>${items.map((item) => {
+      const status = String(item.match_status || "");
+      const statusClass = status === "已解释" ? "history-status--done" : "history-status--pending";
+      return `<tr>
+        <td>${escapeHtml(item.project_code)}</td>
+        <td>${escapeHtml(item.project_name)}</td>
+        <td class="money-cell">${formatAmount(item.difference)}</td>
+        <td>${escapeHtml(item.difference_reason || "")}</td>
+        <td><span class="history-status ${statusClass}">${escapeHtml(status)}</span></td>
+      </tr>`;
+    }).join("")}</tbody>
   </table>`;
 }
 
@@ -3751,7 +4298,7 @@ historyBody?.addEventListener("click", async (e) => {
         setStatus("普通用户无权删除历史记录");
         return;
       }
-      const confirmed = await showConfirm("删除历史记录", "确定删除这条历史记录吗？");
+      const confirmed = await showConfirm("删除历史记录", "确定删除这条历史记录吗？", { tone: "danger" });
       if (!confirmed) return;
       await api("/api/history", { method: "DELETE", body: JSON.stringify({ id }) });
       if ((selectedHistory && selectedHistory.id === id) || selectedHistoryId === String(id || "")) {
@@ -4153,8 +4700,8 @@ function renderConfigList() {
       <span class="config-item-name">${escapeHtml(c.name)}</span>
       <span class="config-item-info">${escapeHtml(c.db_type || "")}/${escapeHtml(c.host || "")}:${escapeHtml(c.port || "")} | ${escapeHtml(c.database || "")}${c.schema ? ` / ${escapeHtml(c.schema)}` : ""}</span>
       <div class="config-item-actions">
-        <button class="btn-outline btn-xs edit-cfg" data-id="${escapeHtml(c.id || "")}">编辑</button>
-        <button class="btn-outline btn-xs btn-danger del-cfg" data-id="${escapeHtml(c.id || "")}">删除</button>
+        <button class="btn-outline btn-xs edit-cfg" data-action-tone="neutral" data-action-variant="weak" data-id="${escapeHtml(c.id || "")}">编辑</button>
+        <button class="btn-outline btn-xs btn-danger del-cfg" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(c.id || "")}">删除</button>
       </div>
     </div>
   `).join("");
@@ -4165,7 +4712,7 @@ function renderConfigList() {
   }));
   configList.querySelectorAll(".del-cfg").forEach((b) => b.addEventListener("click", async () => {
     const cfg = allConfigs.find((c) => c.id === b.dataset.id);
-    const confirmed = await showConfirm("删除数据源", `确定删除“${cfg?.name || b.dataset.id}”吗？`);
+    const confirmed = await showConfirm("删除数据源", `确定删除“${cfg?.name || b.dataset.id}”吗？`, { tone: "danger" });
     if (!confirmed) return;
     try { await api("/api/configs", { method: "DELETE", body: JSON.stringify({ id: b.dataset.id }) }); loadConfigList(); setStatus("已删除"); } catch (e) { setStatus(e.message); }
   }));
@@ -4267,7 +4814,7 @@ function renderReconcileSchemaForm(schema = {}, dataSources = reconcileSchemaDat
             <strong>${escapeHtml(displayName)}</strong>
             <span>${escapeHtml(meta.key)}</span>
           </div>
-          <button type="button" class="btn-outline btn-xs reconcile-schema-toggle" data-key="${escapeHtml(meta.key)}">展开字段</button>
+          <button type="button" class="btn-outline btn-xs reconcile-schema-toggle" data-action-tone="primary" data-action-variant="weak" data-key="${escapeHtml(meta.key)}">展开字段</button>
         </div>
         <div class="reconcile-schema-table-grid">
           <label class="setting-item">
@@ -4918,7 +5465,7 @@ saveReconcileSchemaBtn?.addEventListener("click", async () => {
 });
 
 initReconcileSchemaFromFileBtn?.addEventListener("click", async () => {
-  const confirmed = await showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？");
+  const confirmed = await showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？", { tone: "warning" });
   if (!confirmed) return;
   if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "初始化中...";
   if (initReconcileSchemaFromFileBtn) initReconcileSchemaFromFileBtn.disabled = true;
@@ -5031,6 +5578,43 @@ function smoothCurveThrough(ctx, pts, tension = 0.35, bounds = null) {
   }
 }
 
+function traceChartLine(ctx, points, style, bounds = null) {
+  if (points.length < 2) return;
+  if (normalizeLineChartStyle(style) === "straight") {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    points.slice(1).forEach((point) => ctx.lineTo(point.x, point.y));
+    return;
+  }
+  smoothCurveThrough(ctx, points, 0.35, bounds);
+}
+
+function canvasThemePalette() {
+  const primary = normalizeThemeHex(cssRootValue("--theme-accent"))
+    || DEFAULT_EFFECTIVE_THEME_COLORS.vitality;
+  const gradientEnd = normalizeThemeHex(cssRootValue("--theme-accent-gradient-end")) || "#6AA4FF";
+  const readable = normalizeThemeHex(cssRootValue("--theme-accent-readable")) || primary;
+  const isDark = document.documentElement.getAttribute("data-color-mode") === "dark";
+  const secondary = mixThemeHex(primary, isDark ? "#FFFFFF" : "#000000", 0.24);
+  const rgb = themeHexToRgb(primary);
+  return {
+    primary,
+    gradientEnd,
+    secondary,
+    readable,
+    areaFill: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${isDark ? "0.18" : "0.14"})`,
+    primaryShadow: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, 0.20)`,
+    grid: `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${isDark ? "0.20" : "0.12"})`,
+  };
+}
+
+function applyChartLegendPalette(palette) {
+  const firstRun = document.querySelector(".trend-legend-dot--first-run");
+  const runs = document.querySelector(".trend-legend-dot--runs");
+  if (firstRun) firstRun.style.background = `linear-gradient(90deg, ${palette.primary}, ${palette.gradientEnd})`;
+  if (runs) runs.style.background = "linear-gradient(90deg, #D98711, #FFBD38)";
+}
+
 function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tooltipItems = []) {
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -5042,14 +5626,9 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
 
-  const isSpace = document.documentElement.getAttribute("data-theme") === "space-tech";
   const isDark = document.documentElement.getAttribute("data-color-mode") === "dark";
-  const lineColor = isSpace ? (isDark ? "#2563eb" : "#3b82f6") : "#25676e";
-  const lineEnd = isSpace ? (isDark ? "#7c3aed" : "#8b5cf6") : "#abeaf2";
-  const lineMid = isSpace ? "#06b6d4" : null;
-  const areaColor = isSpace ? (isDark ? "rgba(37,99,235," : "rgba(59,130,246,") : "rgba(37,103,110,";
-  const dotStroke = lineColor;
-  const valColor = lineColor;
+  const palette = canvasThemePalette();
+  const lineStyle = currentLineChartStyle();
 
   let hoverPt = null;
   canvas.onmousemove = (e) => {
@@ -5086,7 +5665,7 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
     ctx.clearRect(0, 0, w, h);
 
     // Grid
-    ctx.strokeStyle = "rgba(37,103,110,0.1)";
+    ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 0.8;
     for (let i = 0; i <= 4; i++) {
       const y = pad.top + (i / 4) * ph;
@@ -5112,43 +5691,37 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
     if (drawPts.length >= 2) {
       const curveBounds = { top: pad.top, bottom: pad.top + ph };
       // Area fill
-      const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, areaColor + "0.22)");
-      grad.addColorStop(1, areaColor + "0.02)");
-      ctx.beginPath();
-      smoothCurveThrough(ctx, drawPts, 0.35, curveBounds);
+      traceChartLine(ctx, drawPts, lineStyle, curveBounds);
       ctx.lineTo(drawPts[drawPts.length - 1].x, pad.top + ph);
       ctx.lineTo(drawPts[0].x, pad.top + ph);
       ctx.closePath();
-      ctx.fillStyle = grad;
+      ctx.fillStyle = palette.areaFill;
       ctx.fill();
 
-      // Line gradient
-      const lineGrad = ctx.createLinearGradient(0, 0, w, 0);
-      lineGrad.addColorStop(0, lineColor);
-      if (lineMid) lineGrad.addColorStop(0.5, lineMid);
-      lineGrad.addColorStop(1, lineEnd);
-      ctx.beginPath();
-      smoothCurveThrough(ctx, drawPts, 0.35, curveBounds);
-      ctx.strokeStyle = lineGrad;
+      // Logo-blue themed line
+      traceChartLine(ctx, drawPts, lineStyle, curveBounds);
+      const lineGradient = ctx.createLinearGradient(pad.left, 0, w - pad.right, 0);
+      lineGradient.addColorStop(0, palette.primary);
+      lineGradient.addColorStop(1, palette.gradientEnd);
+      ctx.strokeStyle = lineGradient;
       ctx.lineWidth = 2.5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      ctx.shadowColor = areaColor + "0.2)";
+      ctx.shadowColor = palette.primaryShadow;
       ctx.shadowBlur = 6;
       ctx.stroke();
       ctx.shadowBlur = 0;
     }
 
-    // Data points (draw for all progress, including single point)
-    if (drawPts.length >= 1) {
+    // Smooth mode keeps visible points; straight mode keeps only invisible hit targets.
+    if (lineStyle === "smooth" && drawPts.length >= 1) {
       drawPts.forEach((p, i) => {
         if (pts.length <= 2 || i % 2 === 0 || i === drawPts.length - 1) {
           ctx.beginPath();
           ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
           ctx.fillStyle = "#fff";
           ctx.fill();
-          ctx.strokeStyle = dotStroke;
+          ctx.strokeStyle = palette.primary;
           ctx.lineWidth = 2;
           ctx.stroke();
         }
@@ -5167,7 +5740,7 @@ function drawGlassChart(canvas, values, labels, animRef, showLabels = true, tool
 
     // Value labels on all points
     if (progress >= 1 && showLabels) {
-      ctx.fillStyle = valColor;
+      ctx.fillStyle = palette.readable;
       ctx.font = "bold 12px 'Microsoft YaHei',sans-serif";
       ctx.textAlign = "center";
       pts.forEach((p) => {
@@ -5236,12 +5809,18 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
   canvas.style.height = h + "px";
   const ctx = canvas.getContext("2d");
   ctx.scale(dpr, dpr);
+  const palette = canvasThemePalette();
+  const lineStyle = currentLineChartStyle();
+  applyChartLegendPalette(palette);
 
   const series = seriesList
-    .map((item) => ({
+    .map((item, index) => ({
       ...item,
       values: (item.values || []).map((value) => Number(value || 0)),
       maxVal: Math.max(...(item.values || []).map((value) => Number(value || 0)), 1),
+      strokeColor: item.color || (index % 2 === 0 ? palette.primary : "#D98711"),
+      gradientEnd: item.gradientEnd || null,
+      shadowColor: item.shadow || (index % 2 === 0 ? palette.primaryShadow : "rgba(217, 135, 17, 0.24)"),
     }))
     .filter((item) => item.values.length);
   if (!series.length) return;
@@ -5331,7 +5910,7 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
     if (animRef && animRef.cancel) { stopped = true; cancelAnimationFrame(animId); return; }
     ctx.clearRect(0, 0, w, h);
 
-    ctx.strokeStyle = "rgba(37,103,110,0.1)";
+    ctx.strokeStyle = palette.grid;
     ctx.lineWidth = 0.8;
     for (let i = 0; i <= 4; i++) {
       const y = pad.top + (i / 4) * ph;
@@ -5348,34 +5927,38 @@ function drawGlassMultiMetricChart(canvas, seriesList, labels, animRef, showLabe
     series.forEach((metric) => {
       const pts = pointsFor(metric);
       const drawPts = pts.slice(0, Math.max(2, drawCount));
+      let metricPaint = metric.strokeColor;
+      if (metric.gradientEnd) {
+        metricPaint = ctx.createLinearGradient(pad.left, 0, w - pad.right, 0);
+        metricPaint.addColorStop(0, metric.strokeColor);
+        metricPaint.addColorStop(1, metric.gradientEnd);
+      }
       if (drawPts.length >= 2) {
-        const grad = ctx.createLinearGradient(0, 0, w, 0);
-        grad.addColorStop(0, metric.color);
-        grad.addColorStop(1, metric.endColor || metric.color);
-        ctx.beginPath();
-        smoothCurveThrough(ctx, drawPts, 0.35, curveBounds);
-        ctx.strokeStyle = grad;
+        traceChartLine(ctx, drawPts, lineStyle, curveBounds);
+        ctx.strokeStyle = metricPaint;
         ctx.lineWidth = 2.4;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
-        ctx.shadowColor = metric.shadow || "rgba(59,130,246,0.18)";
+        ctx.shadowColor = metric.shadowColor;
         ctx.shadowBlur = 5;
         ctx.stroke();
         ctx.shadowBlur = 0;
       }
-      drawPts.forEach((point, index) => {
-        if (labels.length <= 8 || index % Math.ceil(labels.length / 8) === 0 || index === drawPts.length - 1) {
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
-          ctx.fillStyle = "#fff";
-          ctx.fill();
-          ctx.strokeStyle = metric.color;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      });
+      if (lineStyle === "smooth") {
+        drawPts.forEach((point, index) => {
+          if (labels.length <= 8 || index % Math.ceil(labels.length / 8) === 0 || index === drawPts.length - 1) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = "#fff";
+            ctx.fill();
+            ctx.strokeStyle = metricPaint;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        });
+      }
       if (progress >= 1 && showLabels && labels.length <= 12) {
-        ctx.fillStyle = metric.color;
+        ctx.fillStyle = metricPaint;
         ctx.font = "bold 11px 'Microsoft YaHei',sans-serif";
         ctx.textAlign = "center";
         pts.forEach((point) => {
@@ -5424,19 +6007,21 @@ function cssRootValue(name, fallback = "") {
 }
 
 function trendFirstRunMetricStyle() {
-  const isSpaceTheme = document.documentElement.getAttribute("data-theme") === "space-tech";
-  if (isSpaceTheme) {
-    return {
-      color: "#3b82f6",
-      endColor: "#06b6d4",
-      shadow: "rgba(59,130,246,0.22)",
-    };
-  }
+  const palette = canvasThemePalette();
   return {
-    color: cssRootValue("--secondary", "#25676e"),
-    endColor: cssRootValue("--on-secondary-container", "#2a6b73"),
-    shadow: "rgba(37,103,110,0.22)",
+    color: palette.primary,
+    gradientEnd: palette.gradientEnd,
+    shadow: palette.primaryShadow,
   };
+}
+
+function redrawHomeChartsFromCache() {
+  if (!homeChartHistoryCache && !homeChartHistoryRequest) {
+    homeChartsNeedThemeRefresh = true;
+    return;
+  }
+  renderChart({ refreshData: false });
+  renderTrendChart({ refreshData: false });
 }
 
 function refreshHomeChartsForTheme() {
@@ -5445,8 +6030,7 @@ function refreshHomeChartsForTheme() {
     return;
   }
   homeChartsNeedThemeRefresh = false;
-  renderChart();
-  renderTrendChart();
+  redrawHomeChartsFromCache();
 }
 
 async function getReconcileBusinessSourceName() {
@@ -5954,8 +6538,7 @@ function scheduleHomeChartsResize() {
   homeChartsResizeTimer = window.setTimeout(() => {
     homeChartsResizeTimer = null;
     if (document.documentElement.getAttribute("data-page") !== "home") return;
-    renderChart();
-    renderTrendChart();
+    redrawHomeChartsFromCache();
   }, visualEffectsEnabled() ? HOME_CHARTS_RESIZE_DEBOUNCE_MS : HOME_CHARTS_LOW_EFFECTS_RESIZE_DEBOUNCE_MS);
 }
 
@@ -6583,7 +7166,25 @@ async function renderHomeStats() {
   }
 }
 
-async function renderChart() {
+async function loadHomeChartHistory({ refreshData = true } = {}) {
+  if (!refreshData && Array.isArray(homeChartHistoryCache)) {
+    return homeChartHistoryCache;
+  }
+  if (homeChartHistoryRequest) return homeChartHistoryRequest;
+  const request = api("/api/history")
+    .then((payload) => {
+      homeChartHistoryCache = Array.isArray(payload?.history) ? payload.history : [];
+      return homeChartHistoryCache;
+    });
+  homeChartHistoryRequest = request;
+  try {
+    return await request;
+  } finally {
+    if (homeChartHistoryRequest === request) homeChartHistoryRequest = null;
+  }
+}
+
+async function renderChart({ refreshData = true } = {}) {
   const container = document.getElementById("chartContainer");
   const infoEl = document.getElementById("chartInfo");
   const emptyEl = document.getElementById("chartEmpty");
@@ -6592,8 +7193,7 @@ async function renderChart() {
   setChartLoadingState(container, true);
 
   try {
-    const historyData = await api("/api/history");
-    const runs = historyData.history || [];
+    const runs = await loadHomeChartHistory({ refreshData });
     if (!runs.length) {
       setChartEmptyState(container, canvas, emptyEl, true, "暂无核对数据");
       infoEl.textContent = "";
@@ -6655,7 +7255,7 @@ async function renderChart() {
 
 /* ===== Home Trend Chart (multi metrics per date) ===== */
 
-async function renderTrendChart() {
+async function renderTrendChart({ refreshData = true } = {}) {
   const container = document.getElementById("trendContainer");
   const infoEl = document.getElementById("trendInfo");
   const emptyEl = document.getElementById("trendEmpty");
@@ -6664,8 +7264,7 @@ async function renderTrendChart() {
   setChartLoadingState(container, true);
 
   try {
-    const historyData = await api("/api/history");
-    const runs = historyData.history || [];
+    const runs = await loadHomeChartHistory({ refreshData });
     if (!runs.length) {
       setChartEmptyState(container, canvas, emptyEl, true, "暂无核对数据");
       infoEl.textContent = "全部数据源";
@@ -6722,16 +7321,16 @@ async function renderTrendChart() {
         name: "每期差异个数",
         values: firstRunValues,
         color: firstRunStyle.color,
-        endColor: firstRunStyle.endColor,
+        gradientEnd: firstRunStyle.gradientEnd,
         shadow: firstRunStyle.shadow,
         integerValues: true,
       },
       {
         name: "每期执行次数",
         values: executionValues,
-        color: "#f59e0b",
-        endColor: "#ef4444",
-        shadow: "rgba(245,158,11,0.22)",
+        color: "#D98711",
+        gradientEnd: "#FFBD38",
+        shadow: "rgba(217, 135, 17, 0.24)",
         integerValues: true,
       },
     ], labels, renderTrendAnimId, showLabels);
@@ -7104,16 +7703,21 @@ setupCollapsible("aboutToggle", "aboutBody", "aboutArrow");
 renderBusinessSettings();
 
 // Confirm modal
-function showConfirm(title, message) {
+function showConfirm(title, message, options = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById("confirmModal");
     const titleEl = document.getElementById("confirmTitle");
     const messageEl = document.getElementById("confirmMessage");
     const okBtn = document.getElementById("confirmOk");
     const cancelBtn = document.getElementById("confirmCancel");
+    const allowedTones = new Set(["primary", "danger", "warning", "success"]);
+    const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";
+    const tone = requestedTone === "danger" ? "danger" : "primary";
 
     titleEl.textContent = title;
     messageEl.textContent = message;
+    okBtn.dataset.actionTone = tone;
+    okBtn.dataset.actionVariant = "solid";
     modal.hidden = false;
 
     const cleanup = () => {
@@ -7121,6 +7725,8 @@ function showConfirm(title, message) {
       setTimeout(() => {
         modal.hidden = true;
         modal.classList.remove("closing");
+        delete okBtn.dataset.actionTone;
+        delete okBtn.dataset.actionVariant;
       }, 200);
     };
 
@@ -7206,6 +7812,7 @@ function showInfo(title, content, options = {}) {
   const modal = document.getElementById("infoModal");
   const titleEl = document.getElementById("infoTitle");
   const bodyEl = document.getElementById("infoBody");
+  const footerEl = document.getElementById("infoFooter");
   const closeBtn = document.getElementById("infoClose");
   const detailAction = document.getElementById("infoDetailAction");
   const infoBox = modal.querySelector(".modal-info");
@@ -7214,6 +7821,10 @@ function showInfo(title, content, options = {}) {
 
   titleEl.textContent = title;
   bodyEl.innerHTML = content;
+  if (footerEl) {
+    footerEl.innerHTML = options.footerContent || "";
+    footerEl.hidden = !options.footerContent;
+  }
   if (detailAction) {
     detailAction.hidden = true;
     detailAction.onclick = null;
@@ -7374,7 +7985,8 @@ document.getElementById("resetSettingsBtn")?.addEventListener("click", resetSett
 document.getElementById("clearHistoryBtn")?.addEventListener("click", async () => {
   const confirmed = await showConfirm(
     "清理历史记录",
-    "确定要清理所有历史记录吗？此操作不可恢复。"
+    "确定要清理所有历史记录吗？此操作不可恢复。",
+    { tone: "danger" },
   );
   if (!confirmed) return;
 
@@ -8122,9 +8734,9 @@ function renderFlowSelectedSteps() {
       <span class="flow-step-index">${index + 1}</span>
       <span class="flow-selected-step-name" title="${escapeHtml(step.name || step.flow_id)}${step.flow_id && step.name ? ' (ID: ' + escapeHtml(step.flow_id) + ')' : ''}">${escapeHtml(step.name || step.flow_id)}</span>
       <div class="flow-selected-step-actions">
-        <button type="button" class="btn-icon" data-action="move-step-up" title="上移" ${index === 0 ? "disabled" : ""}>↑</button>
-        <button type="button" class="btn-icon" data-action="move-step-down" title="下移" ${index === flowChainEditorSelectedSteps.length - 1 ? "disabled" : ""}>↓</button>
-        <button type="button" class="btn-icon" data-action="remove-selected-step" title="移除">×</button>
+        <button type="button" class="btn-icon" data-action="move-step-up" data-action-tone="neutral" data-action-variant="weak" title="上移" ${index === 0 ? "disabled" : ""}>↑</button>
+        <button type="button" class="btn-icon" data-action="move-step-down" data-action-tone="neutral" data-action-variant="weak" title="下移" ${index === flowChainEditorSelectedSteps.length - 1 ? "disabled" : ""}>↓</button>
+        <button type="button" class="btn-icon" data-action="remove-selected-step" data-action-tone="danger" data-action-variant="weak" title="移除">×</button>
       </div>
     </div>
   `).join("");
@@ -8184,7 +8796,7 @@ function _renderFlowDefinitionTable(flows) {
           <div class="flow-def-row">
             <span class="flow-def-name">${escapeHtml(flow.name || "-")}</span>
             <div class="flow-def-action">
-              <button type="button" class="btn-outline btn-sm" data-action="add-flow-definition" data-flow-id="${escapeHtml(flow.flow_id)}" data-flow-name="${escapeHtml(flow.name || "")}" ${selected ? "disabled" : ""}>${selected ? "已加入" : "加入"}</button>
+              <button type="button" class="btn-outline btn-sm" data-action="add-flow-definition" data-action-tone="primary" data-action-variant="weak" data-flow-id="${escapeHtml(flow.flow_id)}" data-flow-name="${escapeHtml(flow.name || "")}" ${selected ? "disabled" : ""}>${selected ? "已加入" : "加入"}</button>
             </div>
           </div>
         `;
@@ -8815,8 +9427,8 @@ function renderFlowChainSettings(chains = []) {
           <strong>${escapeHtml(chain.name || `流程链${index + 1}`)}</strong>
         </div>
         <div class="flow-chain-config-actions">
-          <button type="button" class="btn-outline btn-sm" data-action="edit-chain">编辑</button>
-          <button type="button" class="btn-outline btn-sm flow-chain-remove" data-action="remove-chain">删除</button>
+          <button type="button" class="btn-outline btn-sm" data-action="edit-chain" data-action-tone="neutral" data-action-variant="weak">编辑</button>
+          <button type="button" class="btn-outline btn-sm flow-chain-remove" data-action="remove-chain" data-action-tone="danger" data-action-variant="weak">删除</button>
         </div>
       </div>
     `;
@@ -9288,7 +9900,7 @@ pbcNextBtn?.addEventListener("click", async () => {
   if (pbcNextBtn.disabled) return;
   if (pbcCurrentStep === 1) goToStep(2);
   else if (pbcCurrentStep === 2) {
-    const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？");
+    const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？", { tone: "primary" });
     if (!confirmed) return;
     goToStep(3);
   }
@@ -9401,7 +10013,7 @@ function renderPbcFileList() {
         <div class="pbc-file-list-row">
           <span class="pbc-file-name">${escapeHtml(file.name || upload.name)}</span>
           <span class="pbc-file-cols">${(file.columns || []).length} 列</span>
-          <span><button class="pbc-file-remove-btn" data-idx="${idx}">&times;</button></span>
+          <span><button class="pbc-file-remove-btn" data-action-tone="danger" data-action-variant="weak" data-idx="${idx}">&times;</button></span>
         </div>
       `);
     });
@@ -9547,7 +10159,7 @@ function renderPbcMappings() {
         <option value="">不导入</option>
         ${targetOptions}
       </select>
-      <button class="pbc-mapping-action ${canRestore ? "pbc-mapping-restore" : "pbc-mapping-remove"}" data-index="${index}" data-action="${canRestore ? "restore" : "remove"}" title="${canRestore ? "还原自动映射" : "移除列"}">
+      <button class="pbc-mapping-action ${canRestore ? "pbc-mapping-restore" : "pbc-mapping-remove"}" data-action-tone="${canRestore ? "neutral" : "danger"}" data-action-variant="weak" data-index="${index}" data-action="${canRestore ? "restore" : "remove"}" title="${canRestore ? "还原自动映射" : "移除列"}">
         ${canRestore
           ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>'
           : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'}
@@ -9800,9 +10412,8 @@ function loadTheme() {
   const theme = normalizeTheme(getSavedTheme() || defaultSettings.theme || "space-tech");
   defaultSettings.theme = theme;
   applyTheme(theme);
-  const darkMode = normalizeDarkMode(getSavedDarkMode() || defaultSettings.darkMode || "false");
-  defaultSettings.darkMode = darkMode;
-  applyDarkMode(darkMode);
+  defaultSettings.darkMode = "false";
+  applyDarkMode("false");
 }
 
 const THEME_SHELL_TRANSITION_MS = 560;
@@ -9843,8 +10454,8 @@ function commitTheme(theme) {
   } else {
     document.documentElement.setAttribute("data-theme", "light");
   }
+  applyEffectiveThemeColors(effectiveThemeColors);
   updateSpaceTopNavFrost();
-  refreshHomeChartsForTheme();
 }
 
 function applyThemeWithTransition(theme) {
@@ -9898,12 +10509,9 @@ function syncDarkModeButtons(enabled) {
 }
 
 function applyDarkMode(darkMode) {
-  const enabled = String(darkMode) === "true";
-  if (enabled) {
-    document.documentElement.setAttribute("data-color-mode", "dark");
-  } else {
-    document.documentElement.setAttribute("data-color-mode", "light");
-  }
+  const enabled = false;
+  document.documentElement.setAttribute("data-color-mode", "light");
+  applyEffectiveThemeColors(effectiveThemeColors);
   syncDarkModeButtons(enabled);
 }
 
@@ -10005,12 +10613,13 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v2.1</span>
-        <span class="changelog-date">2026-07-02</span>
+        <span class="changelog-date">2026-07-18</span>
       </div>
               <ul>
         <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
         <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
+        <li>新增界面圆角个性化设置。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
     </div>

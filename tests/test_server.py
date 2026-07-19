@@ -669,6 +669,362 @@ def test_default_settings_api_persists_across_router_instances(tmp_path):
     }
 
 
+def test_interface_settings_api_defaults_upserts_and_isolates_current_users(
+    tmp_path, shared_application_database
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    first_user = {"id": "user-1", "role": "user"}
+    second_user = {"id": "user-2", "role": "admin"}
+
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=first_user
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 4,
+                "line_chart_style": "straight",
+            }
+        },
+    )
+
+    assert router.handle(
+        "POST",
+        "/api/settings/interface",
+        {
+            "radius_px": 7,
+            "line_chart_style": "smooth",
+            "vitality_theme_color": "#FFFFFF",
+            "calm_theme_color": "#000000",
+            "user_id": "user-2",
+        },
+        current_user=first_user,
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 7,
+                "line_chart_style": "smooth",
+            }
+        },
+    )
+    assert router.handle(
+        "POST",
+        "/api/settings/interface",
+        {"radius_px": 9, "line_chart_style": "straight"},
+        current_user=first_user,
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 9,
+                "line_chart_style": "straight",
+            }
+        },
+    )
+
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=first_user
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 9,
+                "line_chart_style": "straight",
+            }
+        },
+    )
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=second_user
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": 4,
+                "line_chart_style": "straight",
+            }
+        },
+    )
+    assert [
+        (row["user_id"], row["radius_px"])
+        for row in shared_application_database.connection.tables["user_interface_preferences"]
+    ] == [("user-1", 9)]
+    assert shared_application_database.connection.tables["user_interface_preferences"][0][
+        "vitality_theme_color"
+    ] is None
+    assert shared_application_database.connection.tables["user_interface_preferences"][0][
+        "calm_theme_color"
+    ] is None
+
+
+@pytest.mark.parametrize(("radius_px", "line_chart_style"), [(1, "straight"), (15, "smooth")])
+def test_interface_settings_api_accepts_boundary_values(
+    tmp_path, radius_px, line_chart_style
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    current_user = {"id": "user-1", "role": "user"}
+
+    assert router.handle(
+        "POST",
+        "/api/settings/interface",
+        {
+            "radius_px": radius_px,
+            "line_chart_style": line_chart_style,
+        },
+        current_user=current_user,
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": radius_px,
+                "line_chart_style": line_chart_style,
+            }
+        },
+    )
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=current_user
+    ) == (
+        200,
+        {
+            "settings": {
+                "radius_px": radius_px,
+                "line_chart_style": line_chart_style,
+            }
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        pytest.param({"radius_px": 0, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="below-minimum"),
+        pytest.param({"radius_px": 16, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="above-maximum"),
+        pytest.param({"radius_px": 1.5, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="float"),
+        pytest.param({"radius_px": True, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-true"),
+        pytest.param({"radius_px": False, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-false"),
+        pytest.param({"radius_px": None, "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-null"),
+        pytest.param({"line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-missing"),
+        pytest.param({"radius_px": "4", "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="numeric-string"),
+        pytest.param({"radius_px": "bad", "line_chart_style": "straight"}, "radius_px must be an integer between 1 and 15", id="radius-string"),
+        pytest.param({"radius_px": 4, "line_chart_style": "curve"}, "line_chart_style must be one of: smooth, straight", id="line-style-curve"),
+        pytest.param({"radius_px": 4, "line_chart_style": "STRAIGHT"}, "line_chart_style must be one of: smooth, straight", id="line-style-uppercase"),
+        pytest.param({"radius_px": 4, "line_chart_style": 1}, "line_chart_style must be one of: smooth, straight", id="line-style-integer"),
+        pytest.param({"radius_px": 4, "line_chart_style": None}, "line_chart_style must be one of: smooth, straight", id="line-style-null"),
+        pytest.param({"radius_px": 4}, "line_chart_style must be one of: smooth, straight", id="line-style-missing"),
+        pytest.param([1], "radius_px must be an integer between 1 and 15", id="body-list"),
+        pytest.param("bad", "radius_px must be an integer between 1 and 15", id="body-string"),
+        pytest.param(1, "radius_px must be an integer between 1 and 15", id="body-integer"),
+        pytest.param(True, "radius_px must be an integer between 1 and 15", id="body-boolean"),
+    ],
+)
+def test_interface_settings_api_rejects_invalid_values_without_writing(
+    tmp_path, shared_application_database, body, error
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/interface",
+        body,
+        current_user={"id": "user-1", "role": "user"},
+    )
+
+    assert status == 400
+    assert payload == {"error": error}
+    assert shared_application_database.connection.tables["user_interface_preferences"] == []
+
+
+@pytest.mark.parametrize("current_user", [None, {}, {"id": ""}])
+def test_interface_settings_api_requires_current_user_id(tmp_path, current_user):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    assert router.handle(
+        "GET", "/api/settings/interface", None, current_user=current_user
+    ) == (401, {"error": "login required"})
+
+
+def test_theme_colors_api_allows_anonymous_defaults(tmp_path):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    assert router.handle(
+        "GET", "/api/settings/interface/theme-colors", None
+    ) == (
+        200,
+        {
+            "colors": {
+                "system": {"vitality": "#3466D9", "calm": "#355F63"},
+                "personal": {"vitality": None, "calm": None},
+                "effective": {"vitality": "#3466D9", "calm": "#355F63"},
+            },
+            "capabilities": {"can_manage_system_theme_colors": False},
+        },
+    )
+
+
+def test_theme_colors_api_resolves_personal_overrides_per_field_and_user(
+    tmp_path, shared_application_database
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    shared_application_database.connection.tables["system_interface_preferences"].append(
+        {
+            "id": 1,
+            "vitality_theme_color": "#123456",
+            "calm_theme_color": "#654321",
+            "updated_by": "admin-1",
+        }
+    )
+    shared_application_database.connection.tables["user_interface_preferences"].extend(
+        [
+            {
+                "user_id": "user-1",
+                "radius_px": 4,
+                "line_chart_style": "straight",
+                "vitality_theme_color": "#ABCDEF",
+                "calm_theme_color": None,
+            },
+            {
+                "user_id": "user-2",
+                "radius_px": 4,
+                "line_chart_style": "straight",
+                "vitality_theme_color": None,
+                "calm_theme_color": "#FEDCBA",
+            },
+        ]
+    )
+
+    status, first = router.handle(
+        "GET",
+        "/api/settings/interface/theme-colors",
+        None,
+        current_user={"id": "user-1", "role": "user"},
+    )
+    assert status == 200
+    assert first == {
+        "colors": {
+            "system": {"vitality": "#123456", "calm": "#654321"},
+            "personal": {"vitality": "#ABCDEF", "calm": None},
+            "effective": {"vitality": "#ABCDEF", "calm": "#654321"},
+        },
+        "capabilities": {"can_manage_system_theme_colors": False},
+    }
+
+    status, second = router.handle(
+        "GET",
+        "/api/settings/interface/theme-colors",
+        None,
+        current_user={"id": "user-2", "role": "admin"},
+    )
+    assert status == 200
+    assert second["colors"]["personal"] == {"vitality": None, "calm": "#FEDCBA"}
+    assert second["colors"]["effective"] == {
+        "vitality": "#123456",
+        "calm": "#FEDCBA",
+    }
+    assert second["capabilities"] == {"can_manage_system_theme_colors": True}
+
+
+def test_theme_colors_api_admin_save_normalizes_both_colors_and_records_updater(
+    tmp_path, shared_application_database
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    admin = {"id": "admin-1", "role": "admin"}
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/interface/theme-colors",
+        {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+        current_user=admin,
+    )
+
+    assert status == 200
+    assert payload == {
+        "colors": {
+            "system": {"vitality": "#ABCDEF", "calm": "#102030"},
+            "personal": {"vitality": None, "calm": None},
+            "effective": {"vitality": "#ABCDEF", "calm": "#102030"},
+        },
+        "capabilities": {"can_manage_system_theme_colors": True},
+    }
+    assert shared_application_database.connection.tables["system_interface_preferences"] == [
+        {
+            "id": 1,
+            "vitality_theme_color": "#ABCDEF",
+            "calm_theme_color": "#102030",
+            "updated_by": "admin-1",
+            "updated_at": shared_application_database.connection.tables[
+                "system_interface_preferences"
+            ][0]["updated_at"],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        (
+            {"vitality_theme_color": "bad", "calm_theme_color": "#102030"},
+            "vitality_theme_color must be a #RRGGBB string",
+        ),
+        (
+            {"vitality_theme_color": "#ABCDEF", "calm_theme_color": "#12345G"},
+            "calm_theme_color must be a #RRGGBB string",
+        ),
+        (
+            {"vitality_theme_color": "#ABCDEF"},
+            "calm_theme_color must be a #RRGGBB string",
+        ),
+    ],
+)
+def test_theme_colors_api_rejects_invalid_pair_atomically(
+    tmp_path, shared_application_database, body, error
+):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+    shared_application_database.connection.tables["system_interface_preferences"].append(
+        {
+            "id": 1,
+            "vitality_theme_color": "#3466D9",
+            "calm_theme_color": "#355F63",
+            "updated_by": "admin-old",
+        }
+    )
+
+    status, payload = router.handle(
+        "POST",
+        "/api/settings/interface/theme-colors",
+        body,
+        current_user={"id": "admin-1", "role": "admin"},
+    )
+
+    assert status == 400
+    assert payload == {"error": error}
+    assert shared_application_database.connection.tables["system_interface_preferences"] == [
+        {
+            "id": 1,
+            "vitality_theme_color": "#3466D9",
+            "calm_theme_color": "#355F63",
+            "updated_by": "admin-old",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("current_user", "expected"),
+    [
+        (None, (401, {"error": "login required"})),
+        ({"id": "user-1", "role": "user"}, (403, {"error": "admin role required"})),
+    ],
+)
+def test_theme_colors_api_write_requires_admin(tmp_path, current_user, expected):
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    assert router.handle(
+        "POST",
+        "/api/settings/interface/theme-colors",
+        {"vitality_theme_color": "#ABCDEF", "calm_theme_color": "#102030"},
+        current_user=current_user,
+    ) == expected
+
+
 def test_reconcile_schema_settings_api_saves_and_initializes_from_yaml_template(tmp_path):
     config_path = tmp_path / "config.json"
     save_store(

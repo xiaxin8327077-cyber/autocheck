@@ -8,11 +8,8 @@
     <script id="initialThemeScript">
       (() => {
         try {
-          const activeThemeUser = localStorage.getItem("autoCheckThemeUserKey") || "";
-          const theme = (activeThemeUser && localStorage.getItem(`autoCheckTheme:${activeThemeUser}`)) || localStorage.getItem("autoCheckTheme");
-          const darkMode = (activeThemeUser && localStorage.getItem(`autoCheckDarkMode:${activeThemeUser}`)) || localStorage.getItem("autoCheckDarkMode");
-          document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "space-tech");
-          document.documentElement.setAttribute("data-color-mode", darkMode === "true" ? "dark" : "light");
+          document.documentElement.setAttribute("data-theme", "space-tech");
+          document.documentElement.setAttribute("data-color-mode", "light");
         } catch (_) {
           document.documentElement.setAttribute("data-theme", "space-tech");
           document.documentElement.setAttribute("data-color-mode", "light");
@@ -24,9 +21,9 @@
   <body>
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <button class="brand-theme-toggle sidebar-brand-theme-toggle" type="button" data-theme-toggle-logo title="切换主题" aria-label="切换主题">
+        <span class="brand-theme-toggle sidebar-brand-theme-toggle">
           <img class="brand-icon" src="/assets/logo-full.svg" alt="监管智核 Logo" />
-        </button>
+        </span>
         <h1 class="brand-wordmark brand-wordmark--stack">
           <span class="brand-wordmark-main">监管智核</span>
           <span class="brand-wordmark-sub">监管报送核验平台</span>
@@ -64,9 +61,6 @@
       </nav>
       <div class="sidebar-footer">
         <div class="sidebar-footer-main">
-          <button id="sidebarDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
-            <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
-          </button>
           <span class="status" id="statusText">v2.1</span>
         </div>
         <div class="user-menu user-menu--sidebar" id="sidebarUserMenu">
@@ -83,9 +77,9 @@
 
     <header class="top-nav">
       <div class="top-nav-brand">
-        <button class="brand-theme-toggle top-nav-mark" type="button" data-theme-toggle-logo title="切换主题" aria-label="切换主题">
+        <span class="brand-theme-toggle top-nav-mark">
           <img src="/assets/favicon-64x64.svg" alt="监管智核 Logo" />
-        </button>
+        </span>
         <span class="brand-wordmark top-nav-wordmark">
           <span class="brand-wordmark-main">监管智核</span>
           <span class="brand-wordmark-sub">监管报送核验平台</span>
@@ -110,9 +104,6 @@
         <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
       </nav>
       <div class="top-nav-actions">
-        <button id="topDarkModeToggle" class="dark-mode-toggle" type="button" title="切换暗色模式" aria-label="切换暗色模式">
-          <span class="dark-mode-icon" aria-hidden="true">&#x263D;</span>
-        </button>
         <div class="user-menu user-menu--top" id="topUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
             <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
@@ -365,10 +356,10 @@
             <div class="date-picker">
               <input id="runDate" type="date" />
             </div>
-            <button id="runBtn" type="button" class="btn-primary">
+            <button id="runBtn" type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid">
               <span class="btn-icon">&#8635;</span> 开始
             </button>
-            <button id="stopRunBtn" type="button" class="btn-stop" title="停止执行" hidden>
+            <button id="stopRunBtn" type="button" class="btn-stop" data-action-tone="danger" data-action-variant="solid" title="停止执行" hidden>
               <span class="stop-icon"></span>
             </button>
             <div class="run-progress" id="waveProgressContainer" hidden>
@@ -428,7 +419,7 @@
                 </select>
                 <button id="clearStatusFilter" class="filter-clear-button" type="button" aria-label="清除状态筛选">&times;</button>
               </span>
-              <button class="btn-primary" id="exportBtn"><span class="btn-icon" aria-hidden="true">&#8681;</span><span data-export-label>导出</span></button>
+              <button class="btn-primary" id="exportBtn" data-action-tone="primary" data-action-variant="solid"><span class="btn-icon" aria-hidden="true">&#8681;</span><span data-export-label>导出</span></button>
               <span class="export-progress" id="exportProgress" hidden>
                 <span class="loading-spinner export-progress-spinner" aria-hidden="true"></span>
                 <span id="exportProgressText">准备导出...</span>
@@ -511,7 +502,7 @@
                   <button id="clearHistoryExecutorFilter" class="filter-clear-button" type="button" aria-label="清除执行人筛选">&times;</button>
                 </span>
               </label>
-              <button id="historyRefreshBtn" type="button" class="btn-outline btn-sm">刷新</button>
+              <button id="historyRefreshBtn" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">刷新</button>
             </div>
           </div>
           <div class="table-wrap history-table-wrap">
@@ -605,15 +596,14 @@
       </section>
 
       <!-- PBC 导入弹窗 -->
-      <div class="pbc-modal-overlay" id="pbcModalOverlay">
-        <div class="pbc-modal" id="pbcModal">
-          <button class="pbc-modal-close" id="pbcModalClose">
+      <div class="app-modal-overlay pbc-modal-overlay" id="pbcModalOverlay">
+        <div class="app-modal-shell pbc-modal" id="pbcModal">
+          <button class="app-modal-close pbc-modal-close" id="pbcModalClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
 
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon">&#x1F4E5;</div>
               <div>
                 <h2>一键导入</h2>
                 <p>上传数据文件，自动映射列，一键完成数据库导入</p>
@@ -697,7 +687,7 @@
                       </select>
                     </label>
                   </div>
-                  <button id="pbcLoadMappingsBtn" type="button" class="pbc-btn pbc-btn--outline">
+                  <button id="pbcLoadMappingsBtn" type="button" class="pbc-btn pbc-btn--outline" data-action-tone="neutral" data-action-variant="weak">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
                     读取目标列并自动映射
                   </button>
@@ -751,34 +741,33 @@
           </div>
 
           <!-- Footer buttons -->
-          <div class="pbc-modal-footer" id="pbcModalFooter">
-            <button type="button" class="pbc-btn pbc-btn--secondary" id="pbcPrevBtn" hidden>上一步</button>
+          <div class="app-modal-footer pbc-modal-footer" id="pbcModalFooter">
+            <button type="button" class="pbc-btn pbc-btn--secondary" id="pbcPrevBtn" data-action-tone="neutral" data-action-variant="weak" hidden>上一步</button>
             <div class="pbc-modal-footer-actions">
               <span class="pbc-upload-summary" id="pbcUploadSummary" hidden>共 0 个文件</span>
-              <button type="button" class="pbc-btn pbc-btn--ghost" id="pbcClearFilesBtn" disabled>一键清空</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcNextBtn">下一步</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcRetryBtn" hidden>重试</button>
+              <button type="button" class="pbc-btn pbc-btn--ghost" id="pbcClearFilesBtn" data-action-tone="danger" data-action-variant="weak" disabled>一键清空</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcNextBtn" data-action-tone="primary" data-action-variant="solid">下一步</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="pbcRetryBtn" data-action-tone="primary" data-action-variant="solid" hidden>重试</button>
             </div>
-            <button type="button" class="pbc-btn pbc-btn--success" id="pbcFinishBtn" hidden>完成</button>
+            <button type="button" class="pbc-btn pbc-btn--success" id="pbcFinishBtn" data-action-tone="success" data-action-variant="solid" hidden>完成</button>
           </div>
         </div>
       </div>
 
       <!-- 数据库校验弹窗 -->
-      <div class="pbc-modal-overlay db-validation-modal-overlay" id="dbValidationModalOverlay">
-        <div class="pbc-modal db-validation-modal" id="dbValidationModal">
-          <button class="pbc-modal-close" id="dbValidationModalClose">
+      <div class="app-modal-overlay pbc-modal-overlay db-validation-modal-overlay" id="dbValidationModalOverlay">
+        <div class="app-modal-shell pbc-modal db-validation-modal" id="dbValidationModal">
+          <button class="app-modal-close pbc-modal-close" id="dbValidationModalClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
 
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon db-validation-modal-icon">&#128202;</div>
               <div>
                 <h2>人行逐笔校验引擎</h2>
                 <p>选择逐笔表数据源和报告期，校验完成后下载 Excel</p>
               </div>
-              <button type="button" class="pbc-btn pbc-btn--secondary db-validation-history-btn" id="dbValidationHistoryBtn">执行历史</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary db-validation-history-btn" id="dbValidationHistoryBtn" data-action-tone="neutral" data-action-variant="weak">执行历史</button>
             </div>
           </div>
 
@@ -835,32 +824,32 @@
             </div>
           </div>
 
-          <div class="pbc-modal-footer">
+          <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="dbValidationStatus"></span>
             <div class="pbc-modal-footer-actions">
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationRulesDocBtn">下载规则说明</button>
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationCloseBtn">关闭</button>
-              <button type="button" class="pbc-btn pbc-btn--success" id="dbValidationDownloadBtn" disabled>下载结果</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="dbValidationStartBtn">开始校验</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationRulesDocBtn" data-action-tone="neutral" data-action-variant="weak">下载规则说明</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="dbValidationCloseBtn" data-action-tone="neutral" data-action-variant="weak">关闭</button>
+              <button type="button" class="pbc-btn pbc-btn--success" id="dbValidationDownloadBtn" data-action-tone="neutral" data-action-variant="weak" disabled>下载结果</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="dbValidationStartBtn" data-action-tone="primary" data-action-variant="solid">开始校验</button>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="pbc-modal-overlay db-validation-history-overlay" id="dbValidationHistoryOverlay">
-        <div class="pbc-modal db-validation-history-modal">
-          <button class="pbc-modal-close" id="dbValidationHistoryClose">
+      <div class="app-modal-overlay pbc-modal-overlay db-validation-history-overlay" id="dbValidationHistoryOverlay">
+        <div class="app-modal-shell pbc-modal db-validation-history-modal">
+          <button class="app-modal-close pbc-modal-close" id="dbValidationHistoryClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon db-validation-modal-icon">&#128202;</div>
               <div>
                 <h2>执行历史</h2>
                 <p>查看每次数据库校验执行记录，并下载对应结果 Excel</p>
               </div>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="db-validation-history-table-wrap">
             <table class="result-table db-validation-history-table">
               <thead>
@@ -879,22 +868,22 @@
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       </div>
 
-      <div class="pbc-modal-overlay flow-modal-overlay" id="flowModalOverlay">
-        <div class="pbc-modal flow-modal" id="flowModal">
-          <button class="pbc-modal-close" id="flowModalClose">
+      <div class="app-modal-overlay pbc-modal-overlay flow-modal-overlay" id="flowModalOverlay">
+        <div class="app-modal-shell pbc-modal flow-modal" id="flowModal">
+          <button class="app-modal-close pbc-modal-close" id="flowModalClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
               <div>
                 <h2>流程执行</h2>
                 <p>选择已配置的流程链，按顺序执行并等待每个流程结束</p>
               </div>
-              <button type="button" class="pbc-btn pbc-btn--secondary flow-history-btn" id="flowHistoryBtn">执行记录</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary flow-history-btn" id="flowHistoryBtn" data-action-tone="neutral" data-action-variant="weak">执行记录</button>
             </div>
           </div>
           <div class="flow-run-grid">
@@ -930,31 +919,31 @@
               </div>
             </div>
           </div>
-          <div class="pbc-modal-footer">
+          <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="flowStatus"></span>
             <div class="pbc-modal-footer-actions">
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" disabled>停止</button>
-              <button type="button" class="pbc-btn pbc-btn--ghost" id="flowBgRunBtn" hidden>后台运行</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="flowStartBtn">开始执行</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowCancelBtn" data-action-tone="danger" data-action-variant="solid" disabled>停止</button>
+              <button type="button" class="pbc-btn pbc-btn--ghost" id="flowBgRunBtn" data-action-tone="neutral" data-action-variant="weak" hidden>后台运行</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="flowStartBtn" data-action-tone="primary" data-action-variant="solid">开始执行</button>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="pbc-modal-overlay flow-history-overlay" id="flowHistoryOverlay">
-        <div class="pbc-modal flow-history-modal">
-          <button class="pbc-modal-close" id="flowHistoryClose">
+      <div class="app-modal-overlay pbc-modal-overlay flow-history-overlay" id="flowHistoryOverlay">
+        <div class="app-modal-shell pbc-modal flow-history-modal">
+          <button class="app-modal-close pbc-modal-close" id="flowHistoryClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
               <div>
                 <h2>流程执行记录</h2>
                 <p>查看手工执行记录</p>
               </div>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="flow-history-table-wrap">
             <table class="result-table flow-history-table">
               <thead>
@@ -973,23 +962,24 @@
               </tbody>
             </table>
           </div>
+          </div>
         </div>
       </div>
 
-      <div class="pbc-modal-overlay flow-chain-editor-overlay" id="flowChainEditorOverlay">
-        <div class="pbc-modal flow-chain-editor-modal">
-          <button class="pbc-modal-close" id="flowChainEditorClose">
+      <div class="app-modal-overlay pbc-modal-overlay flow-chain-editor-overlay" id="flowChainEditorOverlay">
+        <div class="app-modal-shell pbc-modal flow-chain-editor-modal">
+          <button class="app-modal-close pbc-modal-close" id="flowChainEditorClose">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
-          <div class="pbc-modal-header">
+          <div class="app-modal-header pbc-modal-header">
             <div class="pbc-modal-header-left">
-              <div class="pbc-modal-icon flow-modal-icon">&#128257;</div>
               <div>
                 <h2 id="flowChainEditorTitle">新增流程链</h2>
                 <p>配置链路名称和流程执行顺序</p>
               </div>
             </div>
           </div>
+          <div class="app-modal-body pbc-modal-body">
           <div class="flow-chain-editor-body">
             <div class="flow-chain-editor-grid">
               <label class="modal-field">
@@ -1005,12 +995,12 @@
               <section class="flow-step-builder-panel">
                 <div class="flow-step-builder-head">
                   <strong>可选流程</strong>
-                  <button type="button" class="btn-outline btn-sm" id="flowDefinitionRefreshBtn">刷新</button>
+                  <button type="button" class="btn-outline btn-sm" id="flowDefinitionRefreshBtn" data-action-tone="neutral" data-action-variant="weak">刷新</button>
                 </div>
                 <input id="flowDefinitionSearch" class="setting-input" placeholder="搜索流程名称或 flow_id" />
                 <div class="flow-manual-add">
                   <input id="flowManualFlowId" class="setting-input" placeholder="输入 flow_id 直接添加" />
-                  <button type="button" class="btn-outline btn-sm" id="addManualFlowBtn">添加</button>
+                  <button type="button" class="btn-outline btn-sm" id="addManualFlowBtn" data-action-tone="primary" data-action-variant="solid">添加</button>
                 </div>
                 <p class="flow-definition-limit-hint" id="flowDefinitionLimitHint" hidden></p>
                 <div class="flow-definition-table" id="flowDefinitionTable">
@@ -1026,11 +1016,12 @@
               </section>
             </div>
           </div>
-          <div class="pbc-modal-footer">
+          </div>
+          <div class="app-modal-footer pbc-modal-footer">
             <span class="modal-status" id="flowChainEditorStatus"></span>
             <div class="pbc-modal-footer-actions">
-              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel">取消</button>
-              <button type="button" class="pbc-btn pbc-btn--primary" id="flowChainEditorSave">保存链路</button>
+              <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
+              <button type="button" class="pbc-btn pbc-btn--primary" id="flowChainEditorSave" data-action-tone="primary" data-action-variant="solid">保存链路</button>
             </div>
           </div>
         </div>
@@ -1046,8 +1037,8 @@
               <p>管理员可维护系统登录账号、角色和启用状态。</p>
             </div>
             <div class="user-toolbar-actions">
-              <button id="exportUsersBtn" type="button" class="btn-outline" data-export-users-btn>📥 导出列表</button>
-              <button id="newUserBtn" type="button" class="btn-primary" data-new-user-btn>+ 新建用户</button>
+              <button id="exportUsersBtn" type="button" class="btn-outline" data-action-tone="neutral" data-action-variant="weak" data-export-users-btn>📥 导出列表</button>
+              <button id="newUserBtn" type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid" data-new-user-btn>+ 新建用户</button>
             </div>
           </div>
 
@@ -1083,15 +1074,15 @@
               <option value="disabled">已停用</option>
             </select>
             <div class="user-filter-pills" aria-label="用户筛选">
-              <button type="button" class="user-filter-pill active" data-user-filter="all">全部 <span id="userFilterAllCount">0</span></button>
-              <button type="button" class="user-filter-pill" data-user-filter="admin">管理员 <span id="userFilterAdminCount">0</span></button>
-              <button type="button" class="user-filter-pill" data-user-filter="user">普通用户 <span id="userFilterUserCount">0</span></button>
-              <button type="button" class="user-filter-pill" data-user-filter="enabled">已启用 <span id="userFilterEnabledCount">0</span></button>
-              <button type="button" class="user-filter-pill" data-user-filter="disabled">已停用 <span id="userFilterDisabledCount">0</span></button>
+              <button type="button" class="user-filter-pill active" data-user-filter="all"><span class="user-filter-label">全部</span> <span id="userFilterAllCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="admin"><span class="user-filter-label">管理员</span> <span id="userFilterAdminCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="user"><span class="user-filter-label">普通用户</span> <span id="userFilterUserCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="enabled"><span class="user-filter-label">已启用</span> <span id="userFilterEnabledCount">0</span></button>
+              <button type="button" class="user-filter-pill" data-user-filter="disabled"><span class="user-filter-label">已停用</span> <span id="userFilterDisabledCount">0</span></button>
             </div>
             <div class="user-filter-actions-space">
-              <button type="button" class="btn-outline" data-export-users-btn>📥 导出列表</button>
-              <button type="button" class="btn-primary" data-new-user-btn>+ 新建用户</button>
+              <button type="button" class="btn-outline" data-action-tone="neutral" data-action-variant="weak" data-export-users-btn>📥 导出列表</button>
+              <button type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid" data-new-user-btn>+ 新建用户</button>
             </div>
           </div>
 
@@ -1184,45 +1175,42 @@
                   </div>
                 </div>
                 <div class="sys-info-actions">
-                  <button id="refreshInfoBtn" type="button" class="btn-outline btn-sm admin-action">刷新信息</button>
+                  <button id="refreshInfoBtn" type="button" class="btn-outline btn-sm admin-action" data-action-tone="primary" data-action-variant="weak">刷新信息</button>
                 </div>
                 <div id="sysInfoFeedback" class="sys-info-feedback" hidden></div>
               </div>
             </section>
 
-            <!-- 数据管理 -->
-            <section class="card settings-dashboard-card card-data admin-only">
-              <div class="card-header" id="dataManageToggle">
-                <div class="card-icon card-icon-orange">&#128451;</div>
+            <!-- 界面设置 -->
+            <section class="card settings-dashboard-card card-interface">
+              <div class="card-header">
+                <div class="card-icon card-icon-purple">&#9698;</div>
                 <div class="card-title">
-                  <h3>数据管理</h3>
-                  <p>清理历史、导入和导出配置</p>
+                  <h3>界面设置</h3>
+                  <p>配置系统圆角和折线图风格</p>
                 </div>
               </div>
-              <div class="card-body" id="dataManageBody">
-                <div class="data-manage-grid">
-                  <div class="data-manage-item">
-                    <div class="data-manage-info">
-                      <h4>清理历史记录</h4>
-                      <p>删除所有核对历史记录，释放存储空间</p>
+              <div class="card-body interface-settings-body">
+                <div class="interface-setting-grid">
+                  <label class="setting-item setting-item--radius">
+                    <span class="setting-label">系统圆角</span>
+                    <span class="interface-radius-control">
+                      <input id="interfaceRadiusSlider" type="range" min="1" max="15" step="1" value="4" />
+                      <output id="interfaceRadiusValue">4px</output>
+                    </span>
+                  </label>
+                  <div class="setting-item setting-item--line-style">
+                    <span class="setting-label">折线图风格</span>
+                    <div id="interfaceLineChartStyle" role="radiogroup" aria-label="折线图风格">
+                      <label><input id="interfaceLineChartStyleStraight" type="radio" name="interfaceLineChartStyle" value="straight" checked>直线折线</label>
+                      <label><input id="interfaceLineChartStyleSmooth" type="radio" name="interfaceLineChartStyle" value="smooth">平滑曲线</label>
                     </div>
-                    <button id="clearHistoryBtn" type="button" class="btn-danger btn-sm">清理</button>
                   </div>
-                  <div class="data-manage-item">
-                    <div class="data-manage-info">
-                      <h4>导出配置</h4>
-                      <p>将所有数据源配置导出为 JSON 文件</p>
-                    </div>
-                    <button id="exportConfigBtn" type="button" class="btn-outline btn-sm">导出</button>
-                  </div>
-                  <div class="data-manage-item">
-                    <div class="data-manage-info">
-                      <h4>导入配置</h4>
-                      <p>从 JSON 文件导入数据源配置</p>
-                    </div>
-                    <button id="importConfigBtn" type="button" class="btn-outline btn-sm">导入</button>
-                    <input type="file" id="importConfigFile" accept=".json" hidden />
-                  </div>
+                </div>
+                <div class="settings-actions">
+                  <button id="saveInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存界面设置</button>
+                  <button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>
+                  <span id="interfaceSettingsStatus" role="status">已保存</span>
                 </div>
               </div>
             </section>
@@ -1267,8 +1255,8 @@
                   </label>
                 </div>
                 <div class="settings-actions">
-                  <button id="saveSettingsBtn" type="button" class="btn-primary btn-sm">保存设置</button>
-                  <button id="resetSettingsBtn" type="button" class="btn-outline btn-sm">恢复默认</button>
+                  <button id="saveSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存设置</button>
+                  <button id="resetSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>
                 </div>
               </div>
             </section>
@@ -1352,8 +1340,8 @@
                   </div>
                 </div>
                 <div class="settings-actions">
-                  <button id="saveDbValidationSettingsBtn" type="button" class="btn-primary btn-sm">保存配置</button>
-                  <button id="dbValidationRefreshFieldMappingBtn" type="button" class="btn-outline btn-sm">刷新逐笔字段映射</button>
+                  <button id="saveDbValidationSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存配置</button>
+                  <button id="dbValidationRefreshFieldMappingBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">刷新逐笔字段映射</button>
                   <span class="modal-status" id="dbValidationSettingsStatus"></span>
                 </div>
               </div>
@@ -1397,11 +1385,11 @@
                 </div>
                 <div class="flow-chain-settings-header">
                   <strong>流程链</strong>
-                  <button id="addFlowChainBtn" type="button" class="btn-outline btn-sm">新增链路</button>
+                  <button id="addFlowChainBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">新增链路</button>
                 </div>
                 <div class="flow-chain-settings-list" id="flowChainSettingsList"></div>
                 <div class="settings-actions">
-                  <button id="saveFlowSettingsBtn" type="button" class="btn-primary btn-sm">保存配置</button>
+                  <button id="saveFlowSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存配置</button>
                   <span class="modal-status" id="flowSettingsStatus"></span>
                 </div>
               </div>
@@ -1420,7 +1408,7 @@
               </div>
               <div class="card-body" id="configBody">
                 <div class="config-toolbar">
-                  <button id="newConfigBtn" type="button" class="btn-primary btn-sm">+ 新建数据源</button>
+                  <button id="newConfigBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">+ 新建数据源</button>
                 </div>
                 <div class="config-list" id="configList">
                   <p class="placeholder-text">暂无数据源配置</p>
@@ -1438,8 +1426,8 @@
                   <p>配置自动对账表字段，并查看对数逻辑字段</p>
                 </div>
                 <div class="card-header-actions reconcile-schema-header-actions">
-                  <button id="initReconcileSchemaFromFileBtn" type="button" class="btn-outline btn-sm">根据配置文件初始化配置</button>
-                  <button id="saveReconcileSchemaBtn" type="button" class="btn-outline btn-sm">保存表字段配置</button>
+                  <button id="initReconcileSchemaFromFileBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">根据配置文件初始化配置</button>
+                  <button id="saveReconcileSchemaBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存表字段配置</button>
                   <span class="modal-status" id="reconcileSchemaStatus"></span>
                 </div>
               </div>
@@ -1505,85 +1493,85 @@
       </section>
 
       <!-- 确认弹窗 -->
-      <div class="modal-overlay" id="confirmModal" hidden>
-        <div class="modal modal-confirm">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="confirmModal" hidden>
+        <div class="app-modal-shell modal modal-confirm">
+          <div class="app-modal-header modal-header">
             <h3 id="confirmTitle">确认操作</h3>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <p id="confirmMessage">确定要执行此操作吗？</p>
           </div>
-          <div class="modal-footer">
-            <button class="btn-outline" id="confirmCancel">取消</button>
-            <button id="confirmOk" class="btn-confirm-primary">确定</button>
+          <div class="app-modal-footer modal-footer">
+            <button class="btn-outline" id="confirmCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="confirmOk" class="btn-confirm-primary" data-action-tone="primary" data-action-variant="solid">确定</button>
           </div>
         </div>
       </div>
 
       <!-- 输入弹窗 -->
-      <div class="modal-overlay" id="promptModal" hidden>
-        <div class="modal modal-confirm modal-prompt" tabindex="-1">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="promptModal" hidden>
+        <div class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1">
+          <div class="app-modal-header modal-header">
             <h3 id="promptTitle">请输入</h3>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <p id="promptMessage">请输入内容</p>
             <input id="promptInput" class="prompt-input" autocomplete="off" />
             <div id="promptDateControl" hidden class="prompt-date-control">
               <input id="promptDateInput" class="prompt-input" type="date" autocomplete="off" />
             </div>
           </div>
-          <div class="modal-footer">
-            <button class="btn-outline" id="promptCancel">取消</button>
-            <button id="promptOk" class="btn-confirm-primary">确定</button>
+          <div class="app-modal-footer modal-footer">
+            <button class="btn-outline" id="promptCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="promptOk" class="btn-confirm-primary" data-action-tone="primary" data-action-variant="solid">确定</button>
           </div>
         </div>
       </div>
 
       <!-- 信息弹窗 -->
-      <div class="modal-overlay" id="infoModal" hidden>
-        <div class="modal modal-info">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="infoModal" hidden>
+        <div class="app-modal-shell modal modal-info">
+          <div class="app-modal-header modal-header">
             <div class="modal-title-row">
               <h3 id="infoTitle">信息</h3>
               <button class="info-detail-action" id="infoDetailAction" type="button" hidden>查看明细</button>
             </div>
-            <button class="btn-close" id="infoClose">&times;</button>
+            <button class="app-modal-close btn-close" id="infoClose">&times;</button>
           </div>
-          <div class="modal-body" id="infoBody">
+          <div class="app-modal-body modal-body" id="infoBody">
           </div>
+          <div class="app-modal-footer history-detail-footer" id="infoFooter" hidden></div>
         </div>
       </div>
 
       <!-- 报送导航治理统计维护弹窗 -->
-      <div class="modal-overlay" id="reportNavCardMaintenanceModal" hidden>
-        <div class="modal modal-confirm report-nav-card-maintenance-modal">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="reportNavCardMaintenanceModal" hidden>
+        <div class="app-modal-shell modal modal-confirm report-nav-card-maintenance-modal">
+          <div class="app-modal-header modal-header">
             <h3 id="reportNavCardMaintenanceTitle">维护治理统计</h3>
-            <button class="btn-close" id="reportNavCardMaintenanceClose" type="button">&times;</button>
+            <button class="app-modal-close btn-close" id="reportNavCardMaintenanceClose" type="button">&times;</button>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <p class="report-nav-card-maintenance-help">请一次填写四个统计周期的已完成和未完成数量。</p>
             <div class="report-nav-card-maintenance-grid" id="reportNavCardMaintenanceGrid"></div>
           </div>
-          <div class="modal-footer">
-            <button class="btn-outline" id="reportNavCardMaintenanceCancel" type="button">取消</button>
-            <button class="btn-confirm-primary" id="reportNavCardMaintenanceSave" type="button">保存</button>
+          <div class="app-modal-footer modal-footer">
+            <button class="btn-outline" id="reportNavCardMaintenanceCancel" type="button" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button class="btn-confirm-primary" id="reportNavCardMaintenanceSave" type="button" data-action-tone="primary" data-action-variant="solid">保存</button>
           </div>
         </div>
       </div>
 
       <!-- 用户管理弹窗 -->
-      <div class="modal-overlay" id="userModal" hidden>
-        <div class="modal user-modal">
-          <div class="modal-header user-modal-header">
+      <div class="app-modal-overlay modal-overlay" id="userModal" hidden>
+        <div class="app-modal-shell modal user-modal">
+          <div class="app-modal-header modal-header user-modal-header">
             <div class="user-modal-title">
-              <span class="user-modal-icon" id="userModalIcon" aria-hidden="true">👥</span>
               <h3 id="userModalTitle">新建用户</h3>
             </div>
-            <button class="btn-close user-modal-close" id="userModalClose" type="button">&times;</button>
+            <button class="app-modal-close btn-close user-modal-close" id="userModalClose" type="button">&times;</button>
           </div>
-          <div class="modal-body user-modal-body">
+          <div class="app-modal-body modal-body user-modal-body">
             <input id="userId" type="hidden" />
             <div class="user-modal-form">
               <label class="user-form-group">
@@ -1631,22 +1619,22 @@
               </div>
             </div>
           </div>
-          <div class="modal-footer user-modal-footer">
+          <div class="app-modal-footer modal-footer user-modal-footer">
             <span class="modal-status" id="userModalStatus"></span>
-            <button id="userModalCancel" type="button" class="btn-outline btn-sm">取消</button>
-            <button id="userModalSave" type="button" class="btn-primary btn-sm">确定</button>
+            <button id="userModalCancel" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="userModalSave" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">确定</button>
           </div>
         </div>
       </div>
 
       <!-- 配置弹窗 -->
-      <div class="modal-overlay" id="configModal" hidden>
-        <div class="modal">
-          <div class="modal-header">
+      <div class="app-modal-overlay modal-overlay" id="configModal" hidden>
+        <div class="app-modal-shell modal">
+          <div class="app-modal-header modal-header">
             <h3 id="modalTitle">新建数据源</h3>
-            <button class="btn-close" id="modalClose">&times;</button>
+            <button class="app-modal-close btn-close" id="modalClose">&times;</button>
           </div>
-          <div class="modal-body">
+          <div class="app-modal-body modal-body">
             <label class="modal-field">
               <span>配置名称</span><input id="modalName" placeholder="如：本地测试环境" />
             </label>
@@ -1667,10 +1655,10 @@
               </div>
             </div>
           </div>
-          <div class="modal-footer">
+          <div class="app-modal-footer modal-footer">
             <span class="modal-status" id="modalStatus"></span>
-            <button id="modalTestBtn" type="button" class="btn-outline btn-sm">测试连接</button>
-            <button id="modalSaveBtn" type="button" class="btn-primary btn-sm">保存</button>
+            <button id="modalTestBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">测试连接</button>
+            <button id="modalSaveBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存</button>
           </div>
         </div>
       </div>

@@ -115,6 +115,9 @@ def test_exporter_generates_mysql_sql_report_and_keeps_console_sanitized(tmp_pat
     assert report["post_migration_schema_scripts"] == [
         "sql/app_storage/mysql/002_report_navigation.sql",
         "sql/app_storage/mysql/003_report_navigation_seed.sql",
+        "sql/app_storage/mysql/004_user_interface_preferences.sql",
+        "sql/app_storage/mysql/005_user_appearance_preferences.sql",
+        "sql/app_storage/mysql/006_system_interface_preferences.sql",
     ]
 
 

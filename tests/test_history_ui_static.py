@@ -17,8 +17,19 @@ def test_history_detail_uses_info_modal_and_shared_close_button():
     assert 'id="infoModal"' in html
     assert "function showHistoryDetailModal(id)" in js
     assert 'modalClass: "modal-info--history-detail"' in js
-    assert 'document.querySelector("#infoBody .restore-history-detail")' in js
+    assert 'id="infoFooter"' in html
+    assert 'id="infoDetailAction"' in html
+    assert 'detailActionLabel: "恢复到结果页"' in js
+    assert "onDetailAction: async () => {" in js
     assert "selectedHistoryId = \"\"" in js
+
+    start = js.index("function renderHistoryDetailContent(run)")
+    end = js.index("function renderHistoryDetailLoading", start)
+    detail = js[start:end]
+    complete = 'historySection("本次完整核对结果", run.results || [], "complete")'
+    added = 'historySection("本次新增差异", historyDiffItems(run, "added_results"), "added")'
+    removed = 'historySection("本次减少差异", historyDiffItems(run, "removed_results"), "removed")'
+    assert detail.index(complete) < detail.index(added) < detail.index(removed)
 
 
 def test_history_ui_uses_added_and_removed_difference_labels():

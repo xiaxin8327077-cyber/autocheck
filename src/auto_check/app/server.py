@@ -63,6 +63,22 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
+from auto_check.app.storage_user_interface_preferences import (
+    LINE_CHART_STYLES,
+    MAX_INTERFACE_RADIUS_PX,
+    MIN_INTERFACE_RADIUS_PX,
+    UserInterfacePreferences,
+    load_user_interface_preferences,
+    save_user_interface_preferences,
+)
+from auto_check.app.storage_system_interface_preferences import (
+    EffectiveThemeColors,
+    SystemInterfacePreferences,
+    load_system_interface_preferences,
+    normalize_theme_color,
+    resolve_effective_theme_colors,
+    save_system_interface_preferences,
+)
 from auto_check.app.time_utils import beijing_now, beijing_time_text, beijing_timestamp, beijing_today
 from auto_check.app.pbc_import import (
     ColumnMapping,
@@ -108,6 +124,80 @@ FlowChainExecutor = Callable[..., FlowChainRunResult]
 PasswordDecryptor = Callable[[str], str]
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
+
+
+def _serialize_interface_preferences(value: UserInterfacePreferences) -> dict[str, object]:
+    return {
+        "radius_px": value.radius_px,
+        "line_chart_style": value.line_chart_style,
+    }
+
+
+def _can_manage_system_theme_colors(current_user: dict[str, Any] | None) -> bool:
+    return str((current_user or {}).get("role") or "") == "admin"
+
+
+def _serialize_theme_colors(
+    system: SystemInterfacePreferences,
+    personal: UserInterfacePreferences,
+    effective: EffectiveThemeColors,
+    *,
+    current_user: dict[str, Any] | None,
+) -> dict[str, object]:
+    return {
+        "colors": {
+            "system": {
+                "vitality": system.vitality_theme_color,
+                "calm": system.calm_theme_color,
+            },
+            "personal": {
+                "vitality": personal.vitality_theme_color,
+                "calm": personal.calm_theme_color,
+            },
+            "effective": {
+                "vitality": effective.vitality_theme_color,
+                "calm": effective.calm_theme_color,
+            },
+        },
+        "capabilities": {
+            "can_manage_system_theme_colors": _can_manage_system_theme_colors(current_user)
+        },
+    }
+
+
+def _load_theme_colors_payload(
+    connection: Any,
+    current_user: dict[str, Any] | None,
+) -> dict[str, object]:
+    system_preferences = load_system_interface_preferences(connection)
+    user_id = str((current_user or {}).get("id") or "").strip()
+    personal_preferences = (
+        load_user_interface_preferences(connection, user_id)
+        if user_id
+        else UserInterfacePreferences()
+    )
+    effective_colors = resolve_effective_theme_colors(
+        personal_preferences,
+        system_preferences,
+    )
+    return _serialize_theme_colors(
+        system_preferences,
+        personal_preferences,
+        effective_colors,
+        current_user=current_user,
+    )
+
+
+def _validated_theme_color(body: object, field: str) -> str:
+    raw_value = body.get(field) if isinstance(body, dict) else None
+    try:
+        value = normalize_theme_color(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a #RRGGBB string") from exc
+    assert value is not None
+    return value
+
+
 DEFAULT_SERVER_PORT = 8765
 STORAGE_ADMIN_DISABLED_ERROR = "local storage administration is disabled"
 
@@ -305,6 +395,58 @@ class ApiRouter:
         current_user: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         try:
+            if path == "/api/settings/interface/theme-colors":
+                user_id = str((current_user or {}).get("id") or "").strip()
+                if method == "GET":
+                    with self.application_database.connect() as connection:
+                        payload = _load_theme_colors_payload(connection, current_user)
+                    return 200, payload
+                if method == "POST":
+                    if not user_id:
+                        return 401, {"error": "login required"}
+                    if not _can_manage_system_theme_colors(current_user):
+                        return 403, {"error": "admin role required"}
+                    vitality_theme_color = _validated_theme_color(body, "vitality_theme_color")
+                    calm_theme_color = _validated_theme_color(body, "calm_theme_color")
+                    with self.application_database.transaction() as connection:
+                        save_system_interface_preferences(
+                            connection,
+                            vitality_theme_color=vitality_theme_color,
+                            calm_theme_color=calm_theme_color,
+                            updated_by=user_id,
+                        )
+                        payload = _load_theme_colors_payload(connection, current_user)
+                    return 200, payload
+
+            if path == "/api/settings/interface":
+                user_id = str((current_user or {}).get("id") or "").strip()
+                if not user_id:
+                    return 401, {"error": "login required"}
+                if method == "GET":
+                    with self.application_database.connect() as connection:
+                        preferences = load_user_interface_preferences(connection, user_id)
+                    return 200, {"settings": _serialize_interface_preferences(preferences)}
+                if method == "POST":
+                    if not isinstance(body, dict):
+                        raise ValueError("radius_px must be an integer between 1 and 15")
+                    radius_px = body.get("radius_px")
+                    if (
+                        type(radius_px) is not int
+                        or not MIN_INTERFACE_RADIUS_PX <= radius_px <= MAX_INTERFACE_RADIUS_PX
+                    ):
+                        raise ValueError("radius_px must be an integer between 1 and 15")
+                    line_chart_style = body.get("line_chart_style")
+                    if type(line_chart_style) is not str or line_chart_style not in LINE_CHART_STYLES:
+                        raise ValueError("line_chart_style must be one of: smooth, straight")
+                    with self.application_database.transaction() as connection:
+                        preferences = save_user_interface_preferences(
+                            connection,
+                            user_id,
+                            radius_px=radius_px,
+                            line_chart_style=line_chart_style,
+                        )
+                    return 200, {"settings": _serialize_interface_preferences(preferences)}
+
             if method == "GET" and path == "/api/report-navigation/dashboard":
                 query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
                 period = str(query.get("period", "month") or "month")
@@ -2921,6 +3063,16 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path.startswith("/api/auth/"):
             self._handle_auth(method, path)
+            return
+        if method == "GET" and path == "/api/settings/interface/theme-colors":
+            optional_session = self._authenticated_session()
+            status, payload = self.router.handle(
+                method,
+                path,
+                None,
+                current_user=_session_user(optional_session),
+            )
+            self._send_json(status, payload)
             return
         session = self._authenticated_session()
         if session is None:

@@ -310,11 +310,16 @@ class AuthManager:
             self._save_users(users)
 
     def _save_users(self, users: list[dict[str, Any]]) -> None:
+        from auto_check.app.storage_user_interface_preferences import prune_user_interface_preferences
         from auto_check.app.storage_users import replace_users
 
         normalized_users = [_normalize_user(user) for user in users]
         with self.database.transaction() as connection:
             replace_users(connection, normalized_users)
+            prune_user_interface_preferences(
+                connection,
+                [str(user["id"]) for user in normalized_users],
+            )
 
     def _auth_payload(self) -> dict[str, Any]:
         from auto_check.app.storage_users import load_users

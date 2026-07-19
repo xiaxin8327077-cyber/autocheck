@@ -46,6 +46,7 @@ from auto_check.app.storage_config import (
     save_data_sources,
     save_setting,
 )
+from mysql_config_test_support import MySqlContractConnection
 
 
 class _MemoryResult:
@@ -313,6 +314,23 @@ def test_configuration_repository_uses_mysql_core_contract(app_database, monkeyp
         if isinstance(value, datetime)
     ]
     assert datetime_values
+
+
+def test_shared_mysql_contract_not_in_preserves_active_data_source_row(monkeypatch):
+    connection = MySqlContractConnection()
+    entries = _sample_store().data_sources
+    timestamps = iter([datetime(2026, 1, 1), datetime(2026, 1, 2)])
+    monkeypatch.setattr("auto_check.app.storage_config._utc_now", lambda: next(timestamps))
+
+    save_data_sources(connection, entries)
+    original_created_at = next(
+        row["created_at"] for row in connection.tables["data_sources"] if row["id"] == entries[0].id
+    )
+
+    save_data_sources(connection, [entries[0]])
+
+    assert [row["id"] for row in connection.tables["data_sources"]] == [entries[0].id]
+    assert connection.tables["data_sources"][0]["created_at"] == original_created_at
 
 
 def test_store_round_trip_keeps_all_dynamic_settings_in_mysql(app_database, config_path):

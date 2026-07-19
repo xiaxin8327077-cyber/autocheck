@@ -84,7 +84,7 @@ def _start_static_test_server(config_path, web_dir):
 
 
 def _json_request(server, method: str, path: str, body: dict | None = None, headers: dict | None = None):
-    payload = json.dumps(body or {}).encode("utf-8")
+    payload = json.dumps(body).encode("utf-8") if body is not None else None
     conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
     request_headers = {"Content-Type": "application/json", **(headers or {})}
     conn.request(method, path, body=payload if method != "GET" else None, headers=request_headers)
@@ -174,6 +174,76 @@ def test_auth_manager_persists_native_mysql_user_fields(tmp_path, shared_applica
     ]
     assert all(row["created_at"].__class__.__name__ == "datetime" for row in rows)
     assert all(row["updated_at"].__class__.__name__ == "datetime" for row in rows)
+
+
+def test_deleting_user_prunes_interface_preferences_in_same_user_transaction(
+    tmp_path, shared_application_database
+):
+    from auto_check.app.storage_user_interface_preferences import save_user_interface_preferences
+
+    manager = AuthManager(tmp_path / "config.json")
+    manager.set_admin_password("Admin123")
+    admin = manager.list_users()[0]
+    operator = manager.create_user(
+        username="operator",
+        password="Operator123",
+        role="user",
+    )
+
+    with shared_application_database.transaction() as connection:
+        save_user_interface_preferences(
+            connection,
+            admin["id"],
+            radius_px=4,
+            line_chart_style="straight",
+        )
+        save_user_interface_preferences(
+            connection,
+            operator["id"],
+            radius_px=12,
+            line_chart_style="straight",
+        )
+
+    transaction_count = shared_application_database.transaction_count
+    manager.delete_user(operator["id"], current_user_id=admin["id"])
+
+    assert shared_application_database.transaction_count == transaction_count + 1
+    rows = shared_application_database.connection.tables["user_interface_preferences"]
+    assert [(row["user_id"], row["radius_px"]) for row in rows] == [(admin["id"], 4)]
+
+
+def test_user_replacement_rolls_back_when_interface_preferences_prune_fails(
+    tmp_path, shared_application_database, monkeypatch
+):
+    import auto_check.app.storage_user_interface_preferences as preference_storage
+
+    manager = AuthManager(tmp_path / "config.json")
+    manager.set_admin_password("Admin123")
+    admin = manager.list_users()[0]
+    operator = manager.create_user(
+        username="operator",
+        password="Operator123",
+        role="user",
+    )
+    original_user_ids = {
+        row["id"] for row in shared_application_database.connection.tables["users"]
+    }
+
+    def fail_prune(connection, active_user_ids):
+        raise RuntimeError("prune failed")
+
+    monkeypatch.setattr(
+        preference_storage,
+        "prune_user_interface_preferences",
+        fail_prune,
+    )
+
+    with pytest.raises(RuntimeError, match="prune failed"):
+        manager.delete_user(operator["id"], current_user_id=admin["id"])
+
+    assert {
+        row["id"] for row in shared_application_database.connection.tables["users"]
+    } == original_user_ids
 
 
 def test_auth_manager_user_writes_hold_lock(tmp_path):
@@ -390,6 +460,288 @@ def test_auth_password_endpoints_reject_plaintext_passwords(tmp_path):
         assert payload["user"]["username"] == "admin"
         assert payload["user"]["role"] == "admin"
         assert payload["user"]["id"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_interface_settings_http_requires_login_uses_csrf_and_isolates_users(tmp_path):
+    server = _start_auth_test_server(tmp_path / "config.json")
+    try:
+        status, payload, _ = _json_request(server, "GET", "/api/settings/interface")
+        assert status == 401
+        assert payload == {"error": "login required"}
+
+        status, admin_login, headers = _json_request(
+            server,
+            "POST",
+            "/api/auth/setup",
+            {"password_encrypted": _encrypted_password(server, "AdminPass123")},
+        )
+        assert status == 200
+        admin_cookie = headers["set-cookie"].split(";", 1)[0]
+        admin_headers = {
+            "Cookie": admin_cookie,
+            "X-CSRF-Token": admin_login["csrf_token"],
+        }
+
+        status, payload, _ = _json_request(
+            server, "GET", "/api/settings/interface", None, admin_headers
+        )
+        assert status == 200
+        assert payload == {
+            "settings": {
+                "radius_px": 4,
+                "line_chart_style": "straight",
+            }
+        }
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface",
+            {"radius_px": 6, "line_chart_style": "smooth"},
+            admin_headers,
+        )
+        assert status == 200
+        assert payload == {
+            "settings": {
+                "radius_px": 6,
+                "line_chart_style": "smooth",
+            }
+        }
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/users",
+            {
+                "username": "operator",
+                "role": "user",
+                "password_encrypted": _encrypted_password(server, "Operator123"),
+                "enabled": True,
+            },
+            admin_headers,
+        )
+        assert status == 200
+
+        status, operator_login, headers = _json_request(
+            server,
+            "POST",
+            "/api/auth/login",
+            {
+                "username": "operator",
+                "password_encrypted": _encrypted_password(server, "Operator123"),
+            },
+        )
+        assert status == 200
+        operator_cookie = headers["set-cookie"].split(";", 1)[0]
+
+        status, payload, _ = _json_request(
+            server,
+            "GET",
+            "/api/settings/interface",
+            None,
+            {"Cookie": operator_cookie},
+        )
+        assert status == 200
+        assert payload == {
+            "settings": {
+                "radius_px": 4,
+                "line_chart_style": "straight",
+            }
+        }
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface",
+            None,
+            {"Cookie": operator_cookie},
+        )
+        assert status == 403
+        assert payload == {"error": "invalid csrf token"}
+
+        operator_headers = {
+            "Cookie": operator_cookie,
+            "X-CSRF-Token": operator_login["csrf_token"],
+        }
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface",
+            {"radius_px": 12, "line_chart_style": "straight"},
+            operator_headers,
+        )
+        assert status == 200
+        assert payload == {
+            "settings": {
+                "radius_px": 12,
+                "line_chart_style": "straight",
+            }
+        }
+
+        status, payload, _ = _json_request(
+            server, "GET", "/api/settings/interface", None, operator_headers
+        )
+        assert status == 200
+        assert payload == {
+            "settings": {
+                "radius_px": 12,
+                "line_chart_style": "straight",
+            }
+        }
+
+        status, payload, _ = _json_request(
+            server, "GET", "/api/settings/interface", None, admin_headers
+        )
+        assert status == 200
+        assert payload == {
+            "settings": {
+                "radius_px": 6,
+                "line_chart_style": "smooth",
+            }
+        }
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_theme_colors_http_allows_anonymous_read_and_protects_global_writes(tmp_path):
+    server = _start_auth_test_server(tmp_path / "config.json")
+    try:
+        status, payload, _ = _json_request(
+            server, "GET", "/api/settings/interface/theme-colors"
+        )
+        assert status == 200
+        assert payload == {
+            "colors": {
+                "system": {"vitality": "#3466D9", "calm": "#355F63"},
+                "personal": {"vitality": None, "calm": None},
+                "effective": {"vitality": "#3466D9", "calm": "#355F63"},
+            },
+            "capabilities": {"can_manage_system_theme_colors": False},
+        }
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+        )
+        assert status == 401
+        assert payload == {"error": "login required"}
+
+        status, admin_login, headers = _json_request(
+            server,
+            "POST",
+            "/api/auth/setup",
+            {"password_encrypted": _encrypted_password(server, "AdminPass123")},
+        )
+        assert status == 200
+        admin_cookie = headers["set-cookie"].split(";", 1)[0]
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+            {"Cookie": admin_cookie},
+        )
+        assert status == 403
+        assert payload == {"error": "invalid csrf token"}
+
+        admin_headers = {
+            "Cookie": admin_cookie,
+            "X-CSRF-Token": admin_login["csrf_token"],
+        }
+        status, payload, _ = _json_request(
+            server,
+            "GET",
+            "/api/settings/interface/theme-colors",
+            None,
+            admin_headers,
+        )
+        assert status == 200
+        assert payload["capabilities"] == {"can_manage_system_theme_colors": True}
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/users",
+            {
+                "username": "operator",
+                "role": "user",
+                "password_encrypted": _encrypted_password(server, "Operator123"),
+                "enabled": True,
+            },
+            admin_headers,
+        )
+        assert status == 200
+
+        status, operator_login, headers = _json_request(
+            server,
+            "POST",
+            "/api/auth/login",
+            {
+                "username": "operator",
+                "password_encrypted": _encrypted_password(server, "Operator123"),
+            },
+        )
+        assert status == 200
+        operator_headers = {
+            "Cookie": headers["set-cookie"].split(";", 1)[0],
+            "X-CSRF-Token": operator_login["csrf_token"],
+        }
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+            operator_headers,
+        )
+        assert status == 403
+        assert payload == {"error": "admin role required"}
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#abcdef", "calm_theme_color": "#102030"},
+            admin_headers,
+        )
+        assert status == 200
+        assert payload["colors"] == {
+            "system": {"vitality": "#ABCDEF", "calm": "#102030"},
+            "personal": {"vitality": None, "calm": None},
+            "effective": {"vitality": "#ABCDEF", "calm": "#102030"},
+        }
+        assert payload["capabilities"] == {"can_manage_system_theme_colors": True}
+
+        status, payload, _ = _json_request(
+            server,
+            "POST",
+            "/api/settings/interface/theme-colors",
+            {"vitality_theme_color": "#FFFFFF", "calm_theme_color": "invalid"},
+            admin_headers,
+        )
+        assert status == 400
+        assert payload == {"error": "calm_theme_color must be a #RRGGBB string"}
+
+        status, payload, _ = _json_request(
+            server,
+            "GET",
+            "/api/settings/interface/theme-colors",
+            None,
+            operator_headers,
+        )
+        assert status == 200
+        assert payload["colors"] == {
+            "system": {"vitality": "#ABCDEF", "calm": "#102030"},
+            "personal": {"vitality": None, "calm": None},
+            "effective": {"vitality": "#ABCDEF", "calm": "#102030"},
+        }
+        assert payload["capabilities"] == {"can_manage_system_theme_colors": False}
     finally:
         server.shutdown()
         server.server_close()

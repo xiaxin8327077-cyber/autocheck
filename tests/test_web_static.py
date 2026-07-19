@@ -23,6 +23,1127 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def test_semantic_action_tokens_and_disabled_priority_are_centralized():
+    css = _read(STYLES_CSS)
+
+    for declaration in [
+        "--action-danger: #BA1A1A;",
+        "--action-warning: #B45309;",
+        "--action-success: #137333;",
+        "--action-danger: #FFB4AB;",
+        "--action-warning: #FBBF24;",
+        "--action-success: #6DDB9C;",
+    ]:
+        assert declaration in css
+
+    for selector in [
+        '[data-action-tone="primary"][data-action-variant="solid"]',
+        '[data-action-tone="danger"][data-action-variant="solid"]',
+        '[data-action-tone="warning"][data-action-variant="solid"]',
+        '[data-action-tone="success"][data-action-variant="solid"]',
+        '[data-action-tone="danger"][data-action-variant="weak"]',
+        '[data-action-tone="warning"][data-action-variant="weak"]',
+        '[data-action-tone="success"][data-action-variant="weak"]',
+        '[data-action-tone][data-action-variant]:disabled',
+    ]:
+        assert selector in css
+
+    disabled_rule = re.search(
+        r'(?m)^:is\([^\n]*\[data-action-tone\][^\n]*\):disabled[^\{]*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert disabled_rule is not None
+    disabled_body = disabled_rule.group("body")
+    assert "color: var(--on-surface-variant)" in disabled_body
+    assert "background: var(--surface-variant)" in disabled_body
+    assert "box-shadow: none" in disabled_body
+    assert "transform: none" in disabled_body
+
+
+def test_semantic_button_inventory_classifies_key_static_and_dynamic_actions():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+
+    static_actions = {
+        "stopRunBtn": ("danger", "solid"),
+        "pbcClearFilesBtn": ("danger", "weak"),
+        "pbcFinishBtn": ("success", "solid"),
+        "dbValidationDownloadBtn": ("neutral", "weak"),
+        "flowCancelBtn": ("danger", "solid"),
+        "resetInterfaceSettingsBtn": ("warning", "weak"),
+        "resetSettingsBtn": ("warning", "weak"),
+        "userModalCancel": ("neutral", "weak"),
+        "userModalSave": ("primary", "solid"),
+    }
+    for element_id, (tone, variant) in static_actions.items():
+        button = re.search(rf'<button[^>]*id="{element_id}"[^>]*>', html)
+        assert button is not None, element_id
+        assert f'data-action-tone="{tone}"' in button.group(0), element_id
+        assert f'data-action-variant="{variant}"' in button.group(0), element_id
+
+    for required_fragment in [
+        'class="user-icon-action edit-user" data-action-tone="primary" data-action-variant="weak"',
+        'class="user-icon-action toggle-user" data-action-tone="${enabled ? "warning" : "success"}" data-action-variant="weak"',
+        'class="user-icon-action delete-user" data-action-tone="danger" data-action-variant="weak"',
+        'class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak"',
+        'class="btn-outline btn-xs btn-danger del-cfg" data-action-tone="danger" data-action-variant="weak"',
+        'class="btn-outline btn-sm flow-chain-remove" data-action="remove-chain" data-action-tone="danger" data-action-variant="weak"',
+        'class="pbc-file-remove-btn" data-action-tone="danger" data-action-variant="weak"',
+        'data-action-tone="${canRestore ? "neutral" : "danger"}" data-action-variant="weak"',
+    ]:
+        assert required_fragment in app_js
+
+
+def test_show_confirm_normalizes_and_resets_explicit_action_tone():
+    app_js = _read(APP_JS)
+
+    assert "function showConfirm(title, message, options = {})" in app_js
+    confirm_body = app_js[
+        app_js.index("function showConfirm(title, message, options = {})") :
+        app_js.index("function showPrompt", app_js.index("function showConfirm(title, message, options = {})"))
+    ]
+    assert 'const allowedTones = new Set(["primary", "danger", "warning", "success"]);' in confirm_body
+    assert 'const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";' in confirm_body
+    assert 'const tone = requestedTone === "danger" ? "danger" : "primary";' in confirm_body
+    assert "okBtn.dataset.actionTone = tone;" in confirm_body
+    assert 'okBtn.dataset.actionVariant = "solid";' in confirm_body
+    assert "delete okBtn.dataset.actionTone;" in confirm_body
+    assert "delete okBtn.dataset.actionVariant;" in confirm_body
+
+    for required_fragment in [
+        'showConfirm("删除用户", `确定删除用户 ${targetUser.username} 吗？`, { tone: "danger" })',
+        'showConfirm("删除历史记录", "确定删除这条历史记录吗？", { tone: "danger" })',
+        'showConfirm("删除数据源", `确定删除“${cfg?.name || b.dataset.id}”吗？`, { tone: "danger" })',
+        'showConfirm("初始化表字段配置", "将使用服务端 reconcile-schema.yaml 覆盖当前页面配置。是否继续？", { tone: "warning" })',
+        '{ tone: nextEnabled ? "success" : "warning" }',
+        '{ tone: "danger" }',
+    ]:
+        assert required_fragment in app_js
+
+
+def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) -> None:
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Interface radius start.*?// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    ensure_authenticated = re.search(
+        r"async function ensureAuthenticated\(\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    logout = re.search(
+        r"async function logout\(\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    assert ensure_authenticated is not None
+    assert logout is not None
+
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+
+        class FakeElement {
+          constructor(value = "") {
+            this.value = value;
+            this.checked = false;
+            this.textContent = "";
+            this.disabled = false;
+            this.listeners = new Map();
+            this.classList = {
+              values: new Set(),
+              toggle: (name, enabled) => {
+                if (enabled) this.classList.values.add(name);
+                else this.classList.values.delete(name);
+              },
+            };
+          }
+
+          addEventListener(type, listener) {
+            this.listeners.set(type, listener);
+          }
+
+          dispatch(type) {
+            return this.listeners.get(type)?.({ target: this });
+          }
+        }
+
+        const elements = {
+          interfaceRadiusSlider: new FakeElement("4"),
+          interfaceRadiusValue: new FakeElement(),
+          interfaceLineChartStyleStraight: new FakeElement("straight"),
+          interfaceLineChartStyleSmooth: new FakeElement("smooth"),
+          interfaceSettingsStatus: new FakeElement(),
+          saveInterfaceSettingsBtn: new FakeElement(),
+          resetInterfaceSettingsBtn: new FakeElement(),
+        };
+        const cssVariables = new Map();
+        globalThis.document = {
+          getElementById: (id) => elements[id] || null,
+          documentElement: {
+            dataset: {},
+            style: {
+              setProperty: (name, value) => cssVariables.set(name, value),
+              getPropertyValue: (name) => cssVariables.get(name) || "",
+            },
+          },
+        };
+
+        let nextTimerId = 1;
+        const timers = new Map();
+        globalThis.setTimeout = (callback, delay) => {
+          const id = nextTimerId++;
+          timers.set(id, { callback, delay });
+          return id;
+        };
+        globalThis.clearTimeout = (id) => timers.delete(id);
+        const runAllTimers = () => {
+          const pending = [...timers.values()];
+          timers.clear();
+          pending.forEach(({ callback }) => callback());
+        };
+
+        const apiCalls = [];
+        const toasts = [];
+        const sessionStorageRemovals = [];
+        const storageValues = new Map();
+        const storageWrites = [];
+        const authState = { csrfToken: "old-token", user: { id: "old-user", role: "admin" } };
+        const USER_AVATAR_SESSION_KEY = "avatar-key";
+        globalThis.window = {
+          location: { href: "/" },
+        };
+        globalThis.sessionStorage = {
+          removeItem: (key) => sessionStorageRemovals.push(key),
+        };
+        globalThis.localStorage = {
+          getItem: (key) => storageValues.get(key) ?? null,
+          setItem: (key, value) => {
+            storageValues.set(key, String(value));
+            storageWrites.push({ key, value: String(value) });
+          },
+          removeItem: (key) => storageValues.delete(key),
+        };
+        let apiImpl = async () => ({ settings: { radius_px: 4, line_chart_style: "straight" } });
+        let fetchImpl = async () => ({
+          ok: true,
+          json: async () => ({
+            authenticated: true,
+            csrf_token: "new-token",
+            user: { id: "new-user", role: "user" },
+          }),
+        });
+        let confirmResult = true;
+        let revealCount = 0;
+        let adaptLegacyRadiusResponses = true;
+        function legacyRadiusResponse(payload) {
+          const settings = payload?.settings;
+          if (!settings || !Object.hasOwn(settings, "radius_px")) return payload;
+          return {
+            ...payload,
+            settings: {
+              line_chart_style: "straight",
+              ...settings,
+            },
+          };
+        }
+        async function api(path, options = {}) {
+          apiCalls.push({ path, options });
+          const payload = await apiImpl(path, options);
+          return adaptLegacyRadiusResponses ? legacyRadiusResponse(payload) : payload;
+        }
+        async function fetch(path, options = {}) {
+          return fetchImpl(path, options);
+        }
+        function showToast(message, type = "info") {
+          toasts.push({ message, type });
+        }
+        async function showConfirm() {
+          return confirmResult;
+        }
+        function activateThemeUserStorage() {}
+        function applySavedUserTheme() {}
+        function updateCurrentUsername() {}
+        function applyRoleAccess() {}
+        function revealAuthenticatedApp() {
+          revealCount += 1;
+        }
+        function resetSystemThemeColorsForAuthChange() { return 1; }
+        async function loadSystemThemeColors() { return true; }
+        function captureSystemThemeColors() { return {}; }
+        function restoreSystemThemeColors() { return true; }
+        const systemThemeColorState = { authRevision: 1 };
+        function deferred() {
+          let resolve;
+          let reject;
+          const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+          });
+          return { promise, resolve, reject };
+        }
+        async function flushMicrotasks() {
+          for (let index = 0; index < 6; index += 1) await Promise.resolve();
+        }
+
+        __INTERFACE_RADIUS_BLOCK__
+        __ENSURE_AUTHENTICATED__
+        __LOGOUT__
+
+        const radiusHarness = {
+          state: interfaceRadiusState,
+          load: loadInterfaceRadiusPreference,
+          save: saveInterfaceRadiusPreference,
+          discard: discardUnsavedInterfaceRadius,
+          resetAuth: resetInterfaceRadiusForAuthChange,
+          useStrictResponses: () => { adaptLegacyRadiusResponses = false; },
+          ensureAuthenticated,
+          logout,
+          authState,
+          elements,
+          cssVariables,
+          apiCalls,
+          toasts,
+          storageValues,
+          storageWrites,
+          runAllTimers,
+          timerCount: () => timers.size,
+          revealCount: () => revealCount,
+        };
+
+        (async () => {
+        __SCENARIO__
+        })().catch((error) => {
+          console.error(error.stack || error);
+          process.exitCode = 1;
+        });
+        """
+    ).replace("__INTERFACE_RADIUS_BLOCK__", block.group(0)).replace(
+        "__ENSURE_AUTHENTICATED__",
+        ensure_authenticated.group(0),
+    ).replace(
+        "__LOGOUT__",
+        logout.group(0),
+    ).replace(
+        "__SCENARIO__",
+        textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
+    )
+    script_path = tmp_path / "interface_radius_state_machine.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def _run_theme_color_node_scenario(tmp_path: Path, scenario_source: str) -> None:
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Theme color runtime start.*?// Theme color runtime end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+        const cssVariables = new Map();
+        const attributes = new Map([
+          ["data-theme", "space-tech"],
+          ["data-color-mode", "light"],
+        ]);
+        globalThis.document = {
+          documentElement: {
+            getAttribute: (name) => attributes.get(name) || null,
+            setAttribute: (name, value) => attributes.set(name, String(value)),
+            style: {
+              setProperty: (name, value) => cssVariables.set(name, value),
+              getPropertyValue: (name) => cssVariables.get(name) || "",
+            },
+          },
+        };
+
+        __THEME_COLOR_BLOCK__
+
+        (async () => {
+        __SCENARIO__
+        })().catch((error) => {
+          console.error(error.stack || error);
+          process.exitCode = 1;
+        });
+        """
+    ).replace("__THEME_COLOR_BLOCK__", block.group(0)).replace(
+        "__SCENARIO__",
+        textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
+    )
+    script_path = tmp_path / "theme_color_runtime.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def _run_system_theme_color_node_scenario(tmp_path: Path, scenario_source: str) -> None:
+    app_js = _read(APP_JS)
+    runtime_block = re.search(
+        r"// Theme color runtime start.*?// Theme color runtime end",
+        app_js,
+        re.S,
+    )
+    state_block = re.search(
+        r"// System theme colors start.*?// System theme colors end",
+        app_js,
+        re.S,
+    )
+    assert runtime_block is not None
+    assert state_block is not None
+
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+
+        class FakeElement {
+          constructor(value = "") {
+            this.value = value;
+            this.textContent = "";
+            this.hidden = false;
+            this.disabled = false;
+            this.style = {};
+            this.listeners = new Map();
+            this.classList = {
+              values: new Set(),
+              toggle: (name, enabled) => {
+                if (enabled) this.classList.values.add(name);
+                else this.classList.values.delete(name);
+              },
+            };
+          }
+
+          addEventListener(type, listener) {
+            this.listeners.set(type, listener);
+          }
+
+          dispatch(type) {
+            return this.listeners.get(type)?.({ target: this });
+          }
+        }
+
+        const elements = {
+          systemThemeColorsSection: new FakeElement(),
+          systemVitalityThemeColor: new FakeElement("#3F6FAF"),
+          systemCalmThemeColor: new FakeElement("#355F63"),
+          systemVitalityThemeColorSwatch: new FakeElement(),
+          systemCalmThemeColorSwatch: new FakeElement(),
+          systemVitalityThemeColorError: new FakeElement(),
+          systemCalmThemeColorError: new FakeElement(),
+          systemThemeColorsStatus: new FakeElement(),
+          saveSystemThemeColorsBtn: new FakeElement(),
+          resetSystemThemeColorsBtn: new FakeElement(),
+        };
+        elements.systemThemeColorsSection.hidden = true;
+        const cssVariables = new Map();
+        const attributes = new Map([
+          ["data-theme", "space-tech"],
+          ["data-color-mode", "light"],
+        ]);
+        globalThis.document = {
+          getElementById: (id) => elements[id] || null,
+          documentElement: {
+            getAttribute: (name) => attributes.get(name) || null,
+            setAttribute: (name, value) => attributes.set(name, String(value)),
+            style: {
+              setProperty: (name, value) => cssVariables.set(name, value),
+              getPropertyValue: (name) => cssVariables.get(name) || "",
+            },
+          },
+        };
+
+        const storageValues = new Map();
+        const storageWrites = [];
+        globalThis.localStorage = {
+          getItem: (key) => storageValues.get(key) ?? null,
+          setItem: (key, value) => {
+            storageValues.set(key, String(value));
+            storageWrites.push({ key, value: String(value) });
+          },
+          removeItem: (key) => storageValues.delete(key),
+        };
+        const apiCalls = [];
+        const toasts = [];
+        let apiImpl = async () => ({
+          colors: {
+            system: { vitality: "#3F6FAF", calm: "#355F63" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#3F6FAF", calm: "#355F63" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        async function api(path, options = {}) {
+          apiCalls.push({ path, options });
+          return apiImpl(path, options);
+        }
+        function showToast(message, type = "info") {
+          toasts.push({ message, type });
+        }
+        function deferred() {
+          let resolve;
+          let reject;
+          const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+          });
+          return { promise, resolve, reject };
+        }
+        async function flushMicrotasks() {
+          for (let index = 0; index < 6; index += 1) await Promise.resolve();
+        }
+
+        __THEME_RUNTIME_BLOCK__
+        __SYSTEM_THEME_COLOR_BLOCK__
+
+        const themeHarness = {
+          state: systemThemeColorState,
+          load: loadSystemThemeColors,
+          save: saveSystemThemeColors,
+          reset: resetSystemThemeColorDraft,
+          discard: discardUnsavedSystemThemeColors,
+          resetAuth: resetSystemThemeColorsForAuthChange,
+          capture: captureSystemThemeColors,
+          restore: restoreSystemThemeColors,
+          elements,
+          cssVariables,
+          storageValues,
+          storageWrites,
+          apiCalls,
+          toasts,
+        };
+
+        (async () => {
+        __SCENARIO__
+        })().catch((error) => {
+          console.error(error.stack || error);
+          process.exitCode = 1;
+        });
+        """
+    ).replace("__THEME_RUNTIME_BLOCK__", runtime_block.group(0)).replace(
+        "__SYSTEM_THEME_COLOR_BLOCK__",
+        state_block.group(0),
+    ).replace(
+        "__SCENARIO__",
+        textwrap.indent(textwrap.dedent(scenario_source).strip(), "  "),
+    )
+    script_path = tmp_path / "system_theme_color_state_machine.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def test_configurable_theme_gradient_contract_is_absent_and_fixed_logo_gradient_is_present():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    frontend = "\n".join((html, app_js, css))
+
+    for canceled_token in (
+        "interfaceThemeGradientToggle",
+        "themeGradientEnabled",
+        "theme_gradient_enabled",
+        "data-theme-gradient",
+        "themeGradient",
+        "autoCheckLastInterfaceThemeGradient",
+    ):
+        assert canceled_token not in frontend
+    for fixed_token in (
+        "#3466D9",
+        "#6AA4FF",
+        "--theme-accent-gradient",
+    ):
+        assert fixed_token in frontend
+
+
+def test_fixed_logo_theme_palette_runtime_normalizes_and_guarantees_contrast(tmp_path):
+    _run_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        assert.equal(normalizeThemeHex("#3466d9"), "#3466D9");
+        assert.equal(normalizeThemeHex("#fff"), null);
+        assert.equal(normalizeThemeHex("rgb(63, 111, 175)"), null);
+
+        const lightPalette = deriveThemePalette("#3466D9", "light");
+        assert.equal(lightPalette.accent, "#3466D9");
+        assert.equal(lightPalette.gradientEnd, "#6AA4FF");
+        assert.ok(["#000000", "#FFFFFF"].includes(lightPalette.onAccent));
+        assert.ok(
+          contrastRatio(lightPalette.accent, lightPalette.onAccent)
+            >= contrastRatio(lightPalette.accent, lightPalette.onAccent === "#000000" ? "#FFFFFF" : "#000000")
+        );
+        assert.ok(contrastRatio(lightPalette.readableAccent, "#F7FAFC") >= 4.5);
+        assert.match(lightPalette.focusRing, /^rgba\(52, 102, 217, 0\.\d+\)$/);
+
+        const darkPalette = deriveThemePalette("#3466D9", "dark");
+        assert.equal(darkPalette.accent, "#3466D9");
+        assert.ok(contrastRatio(darkPalette.readableAccent, "#121318") >= 4.5);
+
+        const applied = applyEffectiveThemeColors({ vitality: "#FFFFFF", calm: "#000000" });
+        assert.deepEqual(applied.colors, {
+          vitality: "#3466D9",
+          calm: "#355F63",
+        });
+        assert.equal(cssVariables.get("--theme-accent"), "#3466D9");
+        assert.equal(cssVariables.get("--theme-accent-gradient-end"), "#6AA4FF");
+        assert.equal(cssVariables.get("--theme-on-accent"), applied.palette.onAccent);
+        assert.equal(cssVariables.get("--theme-accent-readable"), applied.palette.readableAccent);
+        assert.equal(cssVariables.get("--theme-focus-ring"), applied.palette.focusRing);
+
+        attributes.set("data-theme", "light");
+        attributes.set("data-color-mode", "dark");
+        const calmApplied = applyEffectiveThemeColors(applied.colors);
+        assert.equal(calmApplied.palette.accent, "#3466D9");
+        assert.ok(contrastRatio(calmApplied.palette.readableAccent, "#121318") >= 4.5);
+        """,
+    )
+
+
+def test_theme_and_dark_mode_helpers_force_the_single_light_theme():
+    app_js = _read(APP_JS)
+    commit_theme = re.search(
+        r"function commitTheme\(theme\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    apply_dark_mode = re.search(
+        r"function applyDarkMode\(darkMode\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert commit_theme is not None
+    assert apply_dark_mode is not None
+    assert 'document.documentElement.setAttribute("data-theme", "space-tech");' in commit_theme.group("body")
+    assert 'document.documentElement.setAttribute("data-color-mode", "light");' in apply_dark_mode.group("body")
+    for body in (commit_theme.group("body"), apply_dark_mode.group("body")):
+        assert "applyEffectiveThemeColors(effectiveThemeColors);" in body
+
+
+def test_fixed_theme_runtime_derives_the_page_background(tmp_path):
+    _run_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const light = applyEffectiveThemeColors({
+          vitality: "#3466D9",
+          calm: "#355F63",
+        });
+        assert.match(light.palette.pageBackground, /^#[0-9A-F]{6}$/);
+        assert.equal(cssVariables.get("--theme-page-background"), light.palette.pageBackground);
+        assert.notEqual(light.palette.pageBackground, light.palette.accent);
+
+        assert.equal(light.colors.vitality, "#3466D9");
+        assert.equal(light.palette.gradientEnd, "#6AA4FF");
+        """,
+    )
+
+
+def test_theme_emphasis_surfaces_use_fixed_gradient_without_header_leakage():
+    css = _read(STYLES_CSS)
+
+    for selector in (
+        ".top-nav-item.active,",
+        ".top-nav-group.active > .top-nav-group-toggle",
+        ".nav-item.active",
+        ".btn-primary",
+        ".trend-quick-btn.active",
+        "#page-local-storage .local-storage-tab.active,",
+        "#page-settings .card-icon-blue,",
+    ):
+        assert selector in css
+
+    solid_contract_start = css.index("/* Solid theme emphasis surfaces: start */")
+    solid_contract_end = css.index("/* Solid theme emphasis surfaces: end */", solid_contract_start)
+    solid_contract = css[solid_contract_start:solid_contract_end]
+    assert "background: var(--theme-accent);" in solid_contract
+    assert "color: var(--theme-on-accent);" in solid_contract
+    assert "radial-gradient" not in solid_contract
+    for protected_selector in (" th,", " th {", "\nth {", "thead", ".table-header", ".app-modal-shell"):
+        assert protected_selector not in solid_contract
+
+
+def test_theme_forms_and_calendar_use_solid_tokens_and_neutral_surfaces():
+    css = _read(STYLES_CSS)
+    contract_start = css.index("/* Solid theme form and calendar controls: start */")
+    contract_end = css.index("/* Solid theme form and calendar controls: end */", contract_start)
+    contract = css[contract_start:contract_end]
+
+    for selector in (
+        ".main-content input:not([type=\"checkbox\"])",
+        ".app-modal-shell input:not([type=\"checkbox\"])",
+        ".custom-input-shell:focus-within input.custom-input-native",
+        ".custom-select-trigger::after",
+        ".custom-select-option.active",
+        ".custom-date-shell::after",
+        ".custom-date-head strong",
+        ".custom-date-day.active",
+        ".custom-date-actions button",
+    ):
+        assert selector in contract
+
+    for token in (
+        "caret-color: var(--theme-accent-readable)",
+        "border-color: var(--theme-accent-readable)",
+        "box-shadow: 0 0 0 3px var(--theme-focus-ring)",
+        "background: var(--surface-container-lowest)",
+        "background: var(--theme-accent)",
+        "color: var(--theme-on-accent)",
+    ):
+        assert token in contract
+    assert "linear-gradient" not in contract
+    assert "radial-gradient" not in contract
+    for protected_selector in (" th,", " th {", "\nth {", "thead", ".table-header"):
+        assert protected_selector not in contract
+
+
+def test_theme_surface_contract_does_not_change_protected_header_or_modal_rules():
+    css = _read(STYLES_CSS)
+    theme_contract = css[
+        css.index("/* Solid theme emphasis surfaces: start */"):
+        css.index("/* Solid theme form and calendar controls: end */")
+    ]
+    for protected_surface in (
+        ".app-modal-shell > .app-modal-header",
+        ".app-modal-shell > .app-modal-body",
+        ".app-modal-shell > .app-modal-footer",
+        ".modal-info",
+        ".pbc-modal",
+        ".user-modal",
+    ):
+        assert protected_surface not in theme_contract
+    assert " th," not in theme_contract
+    assert " th {" not in theme_contract
+    assert "\nth {" not in theme_contract
+    assert "thead" not in theme_contract
+
+
+def test_removed_system_theme_color_controls_stay_absent_from_settings_runtime():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    frontend = html + "\n" + app_js
+    for removed_token in (
+        "systemThemeColorsSection",
+        "systemVitalityThemeColor",
+        "systemCalmThemeColor",
+        "saveSystemThemeColorsBtn",
+        "resetSystemThemeColorsBtn",
+        "loadSystemThemeColors",
+        "saveSystemThemeColors",
+        "can_manage_system_theme_colors",
+        "System theme colors start",
+    ):
+        assert removed_token not in frontend
+    assert 'vitality: "#3466D9"' in app_js
+    assert 'gradientEnd: accent === "#3466D9" ? "#6AA4FF"' in app_js
+
+
+def _obsolete_system_theme_color_valid_preview_normalization_and_atomic_save(tmp_path):
+    _run_system_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const h = themeHarness;
+        assert.equal(h.elements.systemThemeColorsSection.hidden, true);
+        assert.equal(await h.load({ silent: true }), true);
+        assert.equal(h.elements.systemThemeColorsSection.hidden, false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.deepEqual(h.state.draftColors, h.state.savedColors);
+        assert.deepEqual(h.state.lastValidDraft, h.state.savedColors);
+        assert.equal(h.cssVariables.get("--theme-accent"), "#3F6FAF");
+
+        h.elements.systemVitalityThemeColor.value = "#abcdef";
+        h.elements.systemVitalityThemeColor.dispatch("input");
+        assert.equal(h.state.rawInputs.vitality, "#abcdef");
+        assert.equal(h.state.draftColors.vitality, "#ABCDEF");
+        assert.equal(h.state.lastValidDraft.vitality, "#ABCDEF");
+        assert.equal(h.cssVariables.get("--theme-accent"), "#ABCDEF");
+        assert.equal(h.elements.systemVitalityThemeColorError.hidden, true);
+        h.elements.systemVitalityThemeColor.dispatch("blur");
+        assert.equal(h.elements.systemVitalityThemeColor.value, "#ABCDEF");
+
+        h.elements.systemCalmThemeColor.value = "#102030";
+        h.elements.systemCalmThemeColor.dispatch("input");
+        assert.equal(h.state.dirty, true);
+        assert.equal(h.elements.saveSystemThemeColorsBtn.disabled, false);
+        let postBody = null;
+        apiImpl = async (path, options) => {
+          assert.equal(path, "/api/settings/interface/theme-colors");
+          assert.equal(options.method, "POST");
+          postBody = JSON.parse(options.body);
+          return {
+            colors: {
+              system: { vitality: "#ABCDEF", calm: "#102030" },
+              personal: { vitality: null, calm: null },
+              effective: { vitality: "#ABCDEF", calm: "#102030" },
+            },
+            capabilities: { can_manage_system_theme_colors: true },
+          };
+        };
+        assert.equal(await h.save(), true);
+        assert.deepEqual(postBody, {
+          vitality_theme_color: "#ABCDEF",
+          calm_theme_color: "#102030",
+        });
+        assert.deepEqual(h.state.savedColors, postBody && {
+          vitality: postBody.vitality_theme_color,
+          calm: postBody.calm_theme_color,
+        });
+        assert.equal(h.state.dirty, false);
+        assert.equal(h.elements.systemThemeColorsStatus.textContent, "保存成功");
+        assert.deepEqual(
+          JSON.parse(h.storageValues.get("autoCheckLastEffectiveThemeColors")),
+          { vitality: "#ABCDEF", calm: "#102030" },
+        );
+        """,
+    )
+
+
+def _obsolete_system_theme_color_invalid_input_reset_failure_and_leave_discard(tmp_path):
+    _run_system_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const h = themeHarness;
+        apiImpl = async () => ({
+          colors: {
+            system: { vitality: "#112233", calm: "#445566" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#112233", calm: "#445566" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await h.load({ silent: true }), true);
+        const appliedBeforeInvalid = h.cssVariables.get("--theme-accent");
+
+        h.elements.systemVitalityThemeColor.value = "#123";
+        h.elements.systemVitalityThemeColor.dispatch("input");
+        assert.equal(h.state.rawInputs.vitality, "#123");
+        assert.equal(h.state.lastValidDraft.vitality, "#112233");
+        assert.equal(h.cssVariables.get("--theme-accent"), appliedBeforeInvalid);
+        assert.equal(h.elements.systemVitalityThemeColorError.hidden, false);
+        assert.equal(h.elements.saveSystemThemeColorsBtn.disabled, true);
+        assert.equal(await h.save(), false);
+
+        const callsBeforeReset = h.apiCalls.length;
+        h.reset();
+        assert.deepEqual(h.state.draftColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(h.apiCalls.length, callsBeforeReset);
+        assert.equal(h.state.dirty, true);
+        assert.equal(h.cssVariables.get("--theme-accent"), "#3F6FAF");
+
+        apiImpl = async () => { throw new Error("save failed"); };
+        assert.equal(await h.save(), false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#112233",
+          calm: "#445566",
+        });
+        assert.deepEqual(h.state.draftColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(h.cssVariables.get("--theme-accent"), "#3F6FAF");
+        assert.equal(h.state.dirty, true);
+        assert.equal(h.elements.systemThemeColorsStatus.textContent, "保存失败");
+        assert.equal(h.toasts.length, 1);
+
+        assert.equal(h.discard(), true);
+        assert.deepEqual(h.state.draftColors, h.state.savedColors);
+        assert.equal(h.cssVariables.get("--theme-accent"), "#112233");
+        assert.equal(h.state.dirty, false);
+        """,
+    )
+
+
+def _obsolete_system_theme_color_state_rejects_stale_get_post_and_auth_revisions(tmp_path):
+    _run_system_theme_color_node_scenario(
+        tmp_path,
+        r"""
+        const h = themeHarness;
+        const oldGet = deferred();
+        apiImpl = async () => oldGet.promise;
+        const oldLoading = h.load({ silent: true });
+        await flushMicrotasks();
+        h.resetAuth();
+        oldGet.resolve({
+          colors: {
+            system: { vitality: "#AAAAAA", calm: "#BBBBBB" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#AAAAAA", calm: "#BBBBBB" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await oldLoading, false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+
+        apiImpl = async () => ({
+          colors: {
+            system: { vitality: "#102030", calm: "#405060" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#102030", calm: "#405060" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await h.load({ silent: true }), true);
+
+        const getDuringMutation = deferred();
+        const currentPost = deferred();
+        apiImpl = async (_path, options) => (
+          options.method === "POST" ? currentPost.promise : getDuringMutation.promise
+        );
+        const loading = h.load({ silent: true });
+        await flushMicrotasks();
+        h.elements.systemVitalityThemeColor.value = "#708090";
+        h.elements.systemVitalityThemeColor.dispatch("input");
+        const saving = h.save();
+        await flushMicrotasks();
+        currentPost.resolve({
+          colors: {
+            system: { vitality: "#708090", calm: "#405060" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#708090", calm: "#405060" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await saving, true);
+        getDuringMutation.resolve({
+          colors: {
+            system: { vitality: "#111111", calm: "#222222" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#111111", calm: "#222222" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await loading, false);
+        assert.equal(h.state.savedColors.vitality, "#708090");
+
+        h.elements.systemCalmThemeColor.value = "#A0B0C0";
+        h.elements.systemCalmThemeColor.dispatch("input");
+        const stalePost = deferred();
+        apiImpl = async () => stalePost.promise;
+        const staleSaving = h.save();
+        await flushMicrotasks();
+        h.resetAuth();
+        stalePost.resolve({
+          colors: {
+            system: { vitality: "#708090", calm: "#A0B0C0" },
+            personal: { vitality: null, calm: null },
+            effective: { vitality: "#708090", calm: "#A0B0C0" },
+          },
+          capabilities: { can_manage_system_theme_colors: true },
+        });
+        assert.equal(await staleSaving, false);
+        assert.deepEqual(h.state.savedColors, {
+          vitality: "#3F6FAF",
+          calm: "#355F63",
+        });
+        assert.equal(h.state.saving, false);
+        assert.equal(h.elements.systemThemeColorsSection.hidden, true);
+        """,
+    )
+
+
+def _obsolete_system_theme_colors_integrate_with_settings_navigation_and_auth_boundaries():
+    app_js = _read(APP_JS)
+    ensure_authenticated = re.search(
+        r"async function ensureAuthenticated\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    switch_page = re.search(
+        r"async function switchPage\(name, options = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    logout = re.search(
+        r"async function logout\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert ensure_authenticated is not None
+    assert switch_page is not None
+    assert logout is not None
+    assert "resetSystemThemeColorsForAuthChange();" in ensure_authenticated.group("body")
+    assert "loadSystemThemeColors({ silent: true })" in ensure_authenticated.group("body")
+    assert "discardUnsavedSystemThemeColors();" in switch_page.group("body")
+    assert "captureSystemThemeColors();" in logout.group("body")
+    assert "resetSystemThemeColorsForAuthChange();" in logout.group("body")
+    assert "restoreSystemThemeColors(" in logout.group("body")
+    assert 'loadPageSection("全局主题色", () => loadSystemThemeColors({ silent: false }))' in app_js
+
+
+def test_interface_preferences_expose_complete_accessible_wysiwyg_controls_and_state_contract(tmp_path):
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert (
+        '<div id="interfaceLineChartStyle" role="radiogroup" aria-label="折线图风格">'
+        in html
+    )
+    assert re.search(
+        r'<input id="interfaceLineChartStyleStraight" type="radio" '
+        r'name="interfaceLineChartStyle" value="straight" checked>',
+        html,
+    )
+    assert re.search(
+        r'<input id="interfaceLineChartStyleSmooth" type="radio" '
+        r'name="interfaceLineChartStyle" value="smooth">',
+        html,
+    )
+    assert re.findall(
+        r'<input[^>]+name="interfaceLineChartStyle"[^>]+value="([^"]+)"',
+        html,
+    ) == ["straight", "smooth"]
+    assert html.index('value="straight" checked') < html.index('value="smooth"')
+    assert 'type="color"' not in html
+    assert "HEX" not in html
+    assert "tension" not in html.lower()
+
+    for selector in (
+        "#page-settings #interfaceLineChartStyle",
+        "#page-settings #interfaceLineChartStyle label:has(input:focus-visible)",
+        "#page-settings #interfaceLineChartStyle label:has(input:disabled)",
+    ):
+        assert selector in css
+
+    assert "统一控制系统折线图的数据点连接方式" not in html
+
+    assert "const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({" in app_js
+    for field in (
+        "radiusPx: 4",
+        'lineChartStyle: "straight"',
+        "savedPreferences:",
+        "draftPreferences:",
+        "function readInterfacePreferencesPayload(payload)",
+        "function applyInterfacePreferences(preferences)",
+        "function cacheAuthenticatedInterfacePreferences(preferences)",
+    ):
+        assert field in app_js
+    assert "Object.defineProperties(interfaceRadiusState" not in app_js
+
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 4,
+          lineChartStyle: "straight",
+        });
+        assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
+
+        h.elements.interfaceLineChartStyleSmooth.checked = true;
+        h.elements.interfaceLineChartStyleSmooth.dispatch("input");
+        assert.equal(h.state.draftPreferences.lineChartStyle, "smooth");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+
+        let postBody = null;
+        apiImpl = async (_path, options) => {
+          postBody = JSON.parse(options.body);
+          return { settings: {
+            radius_px: 4,
+            line_chart_style: "smooth",
+          } };
+        };
+        assert.equal(await h.save(), true);
+        assert.deepEqual(postBody, {
+          radius_px: 4,
+          line_chart_style: "smooth",
+        });
+        assert.deepEqual(h.state.savedPreferences, h.state.draftPreferences);
+
+        h.elements.interfaceLineChartStyleStraight.checked = true;
+        h.elements.interfaceLineChartStyleStraight.dispatch("input");
+        h.elements.interfaceRadiusSlider.value = "8";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        apiImpl = async () => ({ settings: {} });
+        assert.equal(await h.save(), false);
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 4,
+          lineChartStyle: "smooth",
+        });
+        assert.deepEqual(h.state.draftPreferences, {
+          radiusPx: 8,
+          lineChartStyle: "straight",
+        });
+        assert.equal(h.state.statusText, "保存失败");
+
+        assert.equal(h.discard(), true);
+        assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
+        """,
+    )
+
+
+def test_interface_preferences_strict_payloads_and_success_only_display_cache(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const radiusCacheKey = "autoCheckLastInterfaceRadius";
+        h.useStrictResponses();
+
+        apiImpl = async () => ({ settings: {
+          radius_px: 7,
+          line_chart_style: "smooth",
+        } });
+        assert.equal(await h.load({ silent: true }), true);
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 7,
+          lineChartStyle: "smooth",
+        });
+        assert.equal(h.storageValues.get(radiusCacheKey), "7");
+        assert.equal(h.storageWrites.length, 1);
+
+        const invalidPayloads = [
+          { radius_px: 7, line_chart_style: "curve" },
+          { radius_px: 7 },
+          { radius_px: 0, line_chart_style: "smooth" },
+        ];
+        for (const settings of invalidPayloads) {
+          h.resetAuth();
+          apiImpl = async () => ({ settings });
+          assert.equal(await h.load({ silent: true }), false);
+          assert.deepEqual(h.state.savedPreferences, {
+            radiusPx: 4,
+            lineChartStyle: "straight",
+          });
+          assert.equal(h.storageValues.get(radiusCacheKey), "7");
+          assert.equal(h.storageWrites.length, 1);
+        }
+
+        apiImpl = async () => { throw new Error("load failed"); };
+        assert.equal(await h.load({ silent: true }), false);
+        assert.equal(h.storageWrites.length, 1);
+
+        h.elements.interfaceLineChartStyleSmooth.checked = true;
+        h.elements.interfaceLineChartStyleSmooth.dispatch("input");
+        apiImpl = async () => ({ settings: {
+          radius_px: 4,
+          line_chart_style: "curve",
+        } });
+        assert.equal(await h.save(), false);
+        assert.equal(h.state.savedPreferences.lineChartStyle, "straight");
+        assert.equal(h.state.draftPreferences.lineChartStyle, "smooth");
+        assert.equal(h.storageWrites.length, 1);
+
+        fetchImpl = async () => ({
+          ok: false,
+          json: async () => ({ authenticated: false }),
+        });
+        await assert.rejects(() => h.ensureAuthenticated(), /login required/);
+        assert.equal(h.storageWrites.length, 1);
+        """,
+    )
+
+
 def test_reason_filter_contains_all_current_reasons():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -182,7 +1303,7 @@ def test_cards_hover_glow_tracks_theme_palette_instead_of_dark_shadow():
         assert "var(--card-hover-glow)" in rule_body
         assert "#38bdf8" not in rule_body
         assert "rgba(0, 0, 0" not in rule_body
-    assert "卡片悬停在活力主题使用淡蓝光晕、沉稳主题使用深绿色柔和光晕" in readme
+    assert "悬停光晕" not in readme
 
 
 def test_export_to_excel_includes_processing_script_column_after_detail():
@@ -546,15 +1667,16 @@ def test_result_detail_uses_report_asset_total_label_everywhere():
     assert "结果列表支持点击项目所在行展开或收回详情" in readme
 
 
-def test_space_tech_result_detail_title_icon_uses_gradient_theme_color():
+def test_space_tech_result_detail_title_icon_uses_solid_theme_color():
     css = _read(STYLES_CSS)
 
     result_icon = re.search(r'(?m)^\[data-theme="space-tech"\] \.result-card \.card-title-icon\s*\{(?P<body>.*?)\}', css, re.S)
     assert result_icon is not None
     body = result_icon.group("body")
-    assert "linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6)" in body
-    assert "background-clip: text" in body
-    assert "-webkit-text-fill-color: transparent" in body
+    assert "color: var(--theme-accent-readable)" in body
+    assert "background: none" in body
+    assert "background-clip: text" not in body
+    assert "-webkit-text-fill-color: currentColor" in body
     assert "drop-shadow" in body
 
 
@@ -594,7 +1716,9 @@ def test_home_auto_refresh_setting_controls_chart_reload():
     assert "function shouldAutoRefreshHome()" in app_js
     assert "function syncDefaultSettingsControls()" in app_js
     assert '["visualEffects", "autoRefreshHome"].forEach((id)' in app_js
-    assert 'name === "home" && (options.forceHomeRefresh || shouldAutoRefreshHome() || homeChartsNeedThemeRefresh)' in app_js
+    assert 'const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();' in app_js
+    assert 'else if (homeChartsNeedThemeRefresh)' in app_js
+    assert 'redrawHomeChartsFromCache();' in app_js
     assert "homeChartsNeedThemeRefresh = false;" in app_js
     assert "renderHomeStats(); renderChart(); renderTrendChart();" in app_js
     assert 'switchPage(savedPage, { forceHomeRefresh: savedPage === "home" })' in app_js
@@ -663,8 +1787,7 @@ def test_smart_reconcile_parent_uses_theme_specific_toggle_and_hover_behavior():
     assert 'if (group.classList.contains("nav-group")) setNavGroupOpen(group, active);' not in app_js
     assert app_js.count("group.contains(document.activeElement)") >= 2
     assert app_js.count("document.activeElement.blur();") >= 2
-    assert "沉稳主题点击父菜单展开或收回" in readme
-    assert "活力主题悬浮显示二级菜单，点击父菜单进入“对数总览”" in readme
+    assert "当前唯一启用的浅色主题中，悬浮父菜单显示二级菜单，点击父菜单进入“对数总览”" in readme
     assert "系统优化及BUG修复。" in app_js
 
 
@@ -694,7 +1817,8 @@ def test_report_navigation_is_default_route_and_preserves_home_dashboard_hash():
     assert ':root[data-page="home"] #page-home' in css
     assert 'switchPage("report-navigation")' in app_js
     assert 'name = "report-navigation";' in app_js
-    assert 'name === "home" && (options.forceHomeRefresh' in app_js
+    assert 'if (name === "home") {' in app_js
+    assert 'const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();' in app_js
 
 
 def test_report_navigation_page_replicates_design_draft_structure():
@@ -1261,9 +2385,8 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert "function drawGlassMultiMetricChart" in app_js
     assert "drawGlassMultiMetricChart(canvas, [" in app_js
     assert "function trendFirstRunMetricStyle()" in app_js
-    assert 'document.documentElement.getAttribute("data-theme") === "space-tech"' in app_js
+    assert "const palette = canvasThemePalette();" in app_js
     assert 'color: firstRunStyle.color' in app_js
-    assert 'endColor: firstRunStyle.endColor' in app_js
     assert 'shadow: firstRunStyle.shadow' in app_js
     assert "function refreshHomeChartsForTheme()" in app_js
     assert "refreshHomeChartsForTheme();" in app_js
@@ -1473,7 +2596,7 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
         re.S,
     )
     assert home_glass_hover_shadow is not None
-    assert "box-shadow: var(--space-panel-hover-shadow) !important;" in home_glass_hover_shadow.group("body")
+    assert "box-shadow: var(--space-panel-shadow) !important;" in home_glass_hover_shadow.group("body")
     assert "首页调整为自动对数概览工作台" in readme
     assert "对数质量和差异类型分布不再展示统计期数" in readme
     assert "高频差异项目继续展示实际统计期数" in readme
@@ -1634,7 +2757,8 @@ def test_latest_history_results_load_by_default_and_last_run_time_is_retained():
     app_js = _read(APP_JS)
 
     assert "function formatDisplayTime(value)" in app_js
-    assert 'return String(value).replace("T", " ")' in app_js
+    assert 'return String(value)' in app_js
+    assert '.replace(/\.\d+(?=(?:Z|[+-]\\d{2}:?\\d{2})?$)/, "")' in app_js
     assert 'const displayTime = formatDisplayTime(value || "");' in app_js
     assert "if (!displayTime) return;" in app_js
     assert "latestRunAt = displayTime;" in app_js
@@ -1811,6 +2935,65 @@ def test_changelog_documents_latest_setting_and_cleanup_changes():
         assert verbose_text not in app_js
 
 
+def test_v21_changelog_documents_interface_radius_concisely():
+    app_js = _read(APP_JS)
+    changelog = re.search(
+        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)<div class="changelog-item">',
+        app_js,
+        re.S,
+    )
+
+    assert changelog is not None
+    body = changelog.group("body")
+    assert "<li>新增界面圆角个性化设置。</li>" in body
+    assert "<li>系统优化及BUG修复。</li>" in body
+    assert body.count("新增界面圆角个性化设置") == 1
+    assert "1–15px" not in body
+    assert "导航、卡片、按钮" not in body
+    for verbose_theme_detail in [
+        "全局纯色主题",
+        "主题色",
+        "折线图风格",
+        "#3F6FAF",
+        "#355F63",
+        "#RRGGBB",
+    ]:
+        assert verbose_theme_detail not in body
+    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+
+
+def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
+    readme = _read(README_MD)
+    app_js = _read(APP_JS)
+
+    for text in [
+        "系统弹窗统一为轻量平衡风格",
+        "白色表面、细分隔线、克制阴影、统一标题栏、独立滚动内容区和固定操作区",
+        "确认、输入、信息、用户、数据源、人行导入与校验、流程工具弹窗保留各自适配业务内容的尺寸",
+        "历史详情按完整结果、新增差异、减少差异分组",
+        "主题蓝、红、绿色条区分",
+        "表头和内容继续保持居中",
+        "中性浅灰表头、透明描边状态",
+        "隐藏滚动条但保留滚动",
+        "恢复按钮与状态列居中",
+        "弹窗圆角继续跟随当前用户的界面设置",
+        "当前唯一启用的浅色主题",
+    ]:
+        assert text in readme
+    assert "`v2.1` (2026-07-18) 主要变化：" in readme
+
+    current = re.search(
+        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)<div class="changelog-item">',
+        app_js,
+        re.S,
+    )
+    assert current is not None
+    assert '<span class="changelog-date">2026-07-18</span>' in current.group("body")
+    assert "系统优化及BUG修复。" in current.group("body")
+    assert "弹窗" not in current.group("body")
+    assert "历史详情" not in current.group("body")
+
+
 def test_changelog_and_readme_document_pbc_import_and_space_nav_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
@@ -1977,7 +3160,7 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
     assert 'class="brand-wordmark-main">监管智核</span>' in html
     assert 'class="brand-wordmark-sub">监管报送核验平台</span>' in html
     assert 'src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
-    assert 'src="/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
+    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' not in login_html
     assert 'alt="监管智核 Logo"' in html
     assert "准星" not in html
     assert "准星" not in login_html
@@ -2044,9 +3227,9 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
         "表字段配置保存失败弹框按缺失字段逐行展示",
         "自动对账表字段配置新增“标准中文名”输入框",
     ]
-    assert "`v2.1` (2026-07-02) 主要变化：" in readme
+    assert "`v2.1` (2026-07-18) 主要变化：" in readme
     assert '<span class="changelog-version">v2.1</span>' in app_js
-    assert '<span class="changelog-date">2026-07-02</span>' in app_js
+    assert '<span class="changelog-date">2026-07-18</span>' in app_js
     for text in change_items:
         assert text in readme
 
@@ -2461,12 +3644,12 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
         'class="page-header settings-page-header"',
         'class="dashboard-grid settings-dashboard-grid"',
         'class="card settings-dashboard-card card-system-info"',
+        'class="card settings-dashboard-card card-interface"',
         'class="card settings-dashboard-card card-default"',
         'class="card settings-dashboard-card card-db-validation admin-only"',
         'class="card settings-dashboard-card card-flow admin-only"',
         'class="card settings-dashboard-card card-business"',
         'class="card settings-dashboard-card card-datasource"',
-        'class="card settings-dashboard-card card-data admin-only"',
         'class="card settings-dashboard-card card-about"',
         'id="sysInfoBody"',
         'id="defaultSettingsBody"',
@@ -2480,14 +3663,32 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert "主题设置" not in settings_html
     assert 'id="themeBody"' not in settings_html
     system_info_pos = settings_html.index('class="card settings-dashboard-card card-system-info"')
-    data_pos = settings_html.index('class="card settings-dashboard-card card-data admin-only"')
+    interface_pos = settings_html.index('class="card settings-dashboard-card card-interface"')
     default_pos = settings_html.index('class="card settings-dashboard-card card-default admin-only"')
     db_validation_pos = settings_html.index('class="card settings-dashboard-card card-db-validation admin-only"')
     flow_pos = settings_html.index('class="card settings-dashboard-card card-flow admin-only"')
     datasource_pos = settings_html.index('class="card settings-dashboard-card card-datasource admin-only"')
     business_pos = settings_html.index('class="card settings-dashboard-card card-business admin-only"')
     about_pos = settings_html.index('class="card settings-dashboard-card card-about"')
-    assert system_info_pos < data_pos < default_pos < db_validation_pos < flow_pos < datasource_pos < business_pos < about_pos
+    assert system_info_pos < interface_pos < default_pos < db_validation_pos < flow_pos < datasource_pos < business_pos < about_pos
+    for removed_data_management_markup in (
+        'class="card settings-dashboard-card card-data admin-only"',
+        'id="dataManageToggle"',
+        'id="dataManageBody"',
+        'id="clearHistoryBtn"',
+        'id="exportConfigBtn"',
+        'id="importConfigBtn"',
+        'id="importConfigFile"',
+    ):
+        assert removed_data_management_markup not in settings_html
+    for retained_data_management_handler in (
+        'setupCollapsible("dataManageToggle", "dataManageBody", "dataManageArrow");',
+        'document.getElementById("clearHistoryBtn")?.addEventListener("click", async () => {',
+        'document.getElementById("exportConfigBtn")?.addEventListener("click", async () => {',
+        'document.getElementById("importConfigBtn")?.addEventListener("click", () => {',
+        'document.getElementById("importConfigFile")?.addEventListener("change", async (e) => {',
+    ):
+        assert retained_data_management_handler in app_js
     assert 'id="businessSettingsBody" class="card-body settings-business-scroll"' in settings_html
     assert "settings-collapsed-card" not in settings_html
     assert "settings-collapsible-body" not in settings_html
@@ -2636,6 +3837,1723 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert 'if (!configToggle.classList.contains("collapsible")) return;' in app_js
 
 
+def test_interface_settings_card_is_shared_and_has_one_exact_radius_slider():
+    html = _read(INDEX_HTML)
+    settings_section = re.search(
+        r'<section class="page" id="page-settings">(?P<body>.*?)\n      </section>\n\n      <!-- 确认弹窗 -->',
+        html,
+        re.S,
+    )
+    assert settings_section is not None
+    settings_html = settings_section.group("body")
+
+    interface_card = re.search(
+        r'<section class="card settings-dashboard-card card-interface">(?P<body>.*?)</section>',
+        settings_html,
+        re.S,
+    )
+    assert interface_card is not None
+    card_html = interface_card.group("body")
+    assert "admin-only" not in interface_card.group(0)
+    assert "<h3>界面设置</h3>" in card_html
+    assert "<p>配置系统圆角和折线图风格</p>" in card_html
+    assert '<input id="interfaceRadiusSlider" type="range" min="1" max="15" step="1" value="4" />' in card_html
+    assert '<output id="interfaceRadiusValue">4px</output>' in card_html
+    assert '<span id="interfaceSettingsStatus" role="status">已保存</span>' in card_html
+    assert '<button id="saveInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存界面设置</button>' in card_html
+    assert '<button id="resetInterfaceSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="warning" data-action-variant="weak">恢复默认</button>' in card_html
+    assert "导航、卡片、弹窗、矩形按钮和输入选择将统一使用该圆角" not in card_html
+    assert html.count('id="interfaceRadiusSlider"') == 1
+    assert len(re.findall(r'<input[^>]+id="interfaceRadiusSlider"[^>]*>', html)) == 1
+
+    system_info_pos = settings_html.index('class="card settings-dashboard-card card-system-info"')
+    interface_pos = settings_html.index('class="card settings-dashboard-card card-interface"')
+    default_pos = settings_html.index('class="card settings-dashboard-card card-default admin-only"')
+    assert system_info_pos < interface_pos < default_pos
+
+
+def test_user_radius_override_is_semantic_and_border_radius_only():
+    css = _read(STYLES_CSS)
+    start_marker = "/* User interface radius preference: start */"
+    end_marker = "/* User interface radius preference: end */"
+
+    assert css.count(start_marker) == 1
+    assert css.count(end_marker) == 1
+    override = css.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    blocks = re.findall(r"(?P<selectors>[^{}]+)\{(?P<body>[^{}]+)\}", override, re.S)
+    assert blocks
+    selectors = {
+        selector.strip()
+        for selector_group, _body in blocks
+        for selector in selector_group.split(",")
+        if selector.strip()
+    }
+
+    for selector in (
+        ".nav-item",
+        ".nav-group-toggle",
+        ".nav-submenu",
+        '[data-theme="space-tech"] .top-nav',
+        '[data-theme="space-tech"] .top-nav-item',
+        '[data-theme="space-tech"] .top-nav-group-toggle',
+        '[data-theme="space-tech"] .top-nav-submenu',
+        '[data-theme="space-tech"] .top-nav-subitem',
+        ".card",
+        ".home-stat-card",
+        ".home-analysis-card",
+        "#page-home .glass-card",
+        "#page-home .glass-stat-card",
+        ".tool-card",
+        ".run-log-panel",
+        "#page-report-navigation .report-nav-stat-card",
+        "#page-report-navigation .report-nav-card",
+        "#page-report-navigation .report-nav-branch-panel",
+        "#page-report-navigation .report-nav-batch",
+        "#page-report-navigation .report-nav-todo",
+        "#page-report-navigation .report-nav-load-state",
+        ".toast",
+        ".flow-toast",
+        ".top-nav-status",
+        ".dark-mode-toggle",
+        ".sidebar-footer .status",
+        "#page-report-navigation .report-nav-refresh-button",
+        ".history-summary-item",
+        ".history-section",
+        ".detail-block",
+        ".detail-item",
+        ".status-badge",
+        ".flow-chain-list",
+        ".flow-chain-selection-summary",
+        ".flow-run-panel:last-child #flowLog",
+        ".flow-history-table-wrap",
+        ".db-validation-history-table-wrap",
+        ".pbc-upload-area",
+        "#page-settings .metric-item",
+        "#page-settings .db-validation-source-row",
+        "#page-settings .reconcile-schema-table",
+        "#page-settings .business-settings-note",
+        "#page-settings .business-field-group",
+        ".flow-chain-config",
+        ".config-item",
+        "#page-settings .about-description",
+        "#page-settings .about-features",
+        "#page-settings .about-tech",
+        "#page-settings .settings-dashboard-card",
+        "#page-users .user-stat-card",
+        "#page-users .user-filter-bar",
+        "#page-users .user-table-card",
+        ".reconcile-settings-panel",
+        ".db-validation-panel",
+        ".flow-run-panel",
+        ".flow-step-builder-panel",
+        "#page-local-storage .local-storage-metric",
+        "#page-local-storage .local-storage-table-panel",
+        "#page-local-storage .local-storage-detail-panel",
+        ".modal",
+        ".pbc-modal",
+        ".user-modal",
+        ".btn-primary",
+        ".btn-outline",
+        ".btn-danger",
+        ".btn-stop",
+        ".btn-confirm-primary",
+        ".btn-close",
+        ".page-btn",
+        ".trend-quick-btn",
+        ".trend-quick-btns",
+        ".pbc-btn",
+        ".report-nav-action-button",
+        ".info-detail-action",
+        ".flow-toast-action",
+        ".user-menu-trigger",
+        ".user-menu-panel",
+        ".user-menu-logout",
+        ".filter-input",
+        ".filter-select",
+        ".chart-date-select",
+        ".setting-input",
+        ".prompt-input",
+        ".user-form-control",
+        '.main-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"])',
+        ".main-content select",
+        ".main-content textarea",
+        '.modal-field input:not([type="checkbox"]):not([type="radio"]):not([type="range"])',
+        ".modal-field select",
+        '.modal input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"])',
+        ".modal select",
+        ".modal textarea",
+        ".custom-input-shell",
+        ".custom-select-shell",
+        ".custom-select-trigger",
+        ".custom-select-dropdown",
+        ".custom-date-shell",
+        ".custom-date-dropdown",
+        "#page-report-navigation .report-nav-filter-chips span",
+    ):
+        assert selector in selectors
+
+    for forbidden_selector in (
+        ".login-card",
+        ".login-form",
+        ".login-input",
+        ".brand-theme-toggle",
+        ".user-initial-avatar",
+        ".user-menu-icon",
+        ".status-dot",
+        ".filter-clear-button",
+        ".expand-btn",
+        ".custom-date-nav",
+        ".custom-date-day",
+        ".user-filter-pill",
+        ".user-icon-action",
+        ".user-enable-switch",
+        ".flow-toast-close",
+        ".pbc-file-remove-btn",
+        ".pbc-mapping-action",
+        ".tool-card-badge",
+        ".badge",
+        ".tag",
+        ".progress-bar",
+        ".progress-fill",
+        ".checkbox",
+        ".radio",
+        ".range-track",
+        ".range-thumb",
+        "svg",
+        "overlay",
+        "[class*=card]",
+    ):
+        assert forbidden_selector not in selectors
+
+    for selector in selectors:
+        assert "*" not in selector
+        assert re.match(r"^(?:button|input|select|textarea)(?:$|[.#:\[])", selector) is None
+
+    for _selector_group, body in blocks:
+        declarations = [item.strip() for item in body.split(";") if item.strip()]
+        assert declarations == ["border-radius: var(--ui-radius) !important"]
+
+
+def test_remaining_user_modal_home_stat_validation_flow_and_report_radius_overrides_are_scoped():
+    css = _read(STYLES_CSS)
+    start_marker = "/* User interface radius preference: start */"
+    end_marker = "/* User interface radius preference: end */"
+    override = css.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    blocks = re.findall(r"(?P<selectors>[^{}]+)\{(?P<body>[^{}]+)\}", override, re.S)
+    selectors = {
+        selector.strip()
+        for selector_group, _body in blocks
+        for selector in selector_group.split(",")
+        if selector.strip()
+    }
+
+    required_selectors = {
+        "#page-users .user-filter-pill",
+        "#page-users .user-avatar",
+        "#page-users .role-badge",
+        "#page-users .user-status-badge",
+        ".user-modal .user-role-card",
+        ".user-modal .user-role-card-icon",
+        ".user-modal .user-enable-row",
+        "#configModal .modal-section",
+        "#infoModal .home-stat-modal-table-wrap",
+        "#dbValidationModal .db-validation-table-item",
+        "#dbValidationModal #dbValidationLog",
+        ".flow-chain-editor-overlay .flow-definition-table",
+        ".flow-chain-editor-overlay .flow-selected-step",
+        ".flow-chain-editor-overlay .flow-selected-step-actions .btn-icon",
+        "#page-report-navigation .report-nav-done-meta",
+        "#page-report-navigation .report-nav-no-panel-done-meta",
+    }
+    assert len(required_selectors) == 16
+    assert required_selectors <= selectors
+
+    for excluded_selector in (
+        ".user-avatar-status",
+        ".current-user-badge",
+        ".user-enable-switch",
+        ".user-enable-switch .switch-track",
+        ".user-enable-switch .switch-thumb",
+        ".flow-selected-step-actions .btn-icon",
+    ):
+        assert excluded_selector not in selectors
+
+
+def test_readme_documents_expanded_interface_radius_surface_coverage():
+    readme = _read(README_MD)
+
+    for text in (
+        "鱼骨详情卡",
+        "报送日期分组卡",
+        "统计周期分段选择器",
+        "注意事项卡",
+        "注意事项筛选标签",
+        "统计失败提示条",
+        "右上角通知",
+        "顶部版本标签",
+        "流程浮动通知",
+        "历史详情与执行历史表格外框",
+        "结果详情分区",
+        "结果状态标签",
+        "一键导入上传区",
+        "系统信息指标卡",
+        "数据源与流程链配置行",
+        "关于系统内容卡",
+        "对账表字段配置卡",
+        "对账业务维护说明条",
+        "对账业务字段表格分组",
+    ):
+        assert text in readme
+
+
+def test_pbc_close_uses_shared_radius_instead_of_diamond():
+    css = _read(STYLES_CSS)
+
+    for selector in ("tool-card", "pbc-modal"):
+        rule = re.search(
+            rf"(?m)^\.{selector}\s*\{{(?P<body>.*?)\}}",
+            css,
+            re.S,
+        )
+        assert rule is not None
+        assert re.search(r"clip-path\s*:\s*polygon\(", rule.group("body")) is None
+
+    close_rule = re.search(
+        r"(?m)^\.pbc-modal-close\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert close_rule is not None
+    close_body = close_rule.group("body")
+    assert "clip-path" not in close_body
+    assert "rotate(90deg)" not in css
+
+    override = css.split("/* User interface radius preference: start */", 1)[1].split(
+        "/* User interface radius preference: end */",
+        1,
+    )[0]
+    assert ".pbc-modal-close" in override
+
+
+def test_all_system_modals_use_balanced_shared_shell():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+
+    overlay_ids = (
+        "pbcModalOverlay",
+        "dbValidationModalOverlay",
+        "dbValidationHistoryOverlay",
+        "flowModalOverlay",
+        "flowHistoryOverlay",
+        "flowChainEditorOverlay",
+        "confirmModal",
+        "promptModal",
+        "infoModal",
+        "reportNavCardMaintenanceModal",
+        "userModal",
+        "configModal",
+    )
+    for overlay_id in overlay_ids:
+        opening = re.search(
+            rf'<div class="(?P<classes>[^"]+)" id="{overlay_id}"',
+            html,
+        )
+        assert opening is not None
+        assert "app-modal-overlay" in opening.group("classes").split()
+
+    assert html.count("app-modal-shell") == len(overlay_ids)
+    assert html.count("app-modal-header") == len(overlay_ids)
+    assert "pbc-modal-icon" not in html
+    assert "user-modal-icon" not in html
+
+    for selector in (
+        ".app-modal-overlay",
+        ".app-modal-shell",
+        ".app-modal-header",
+        ".app-modal-body",
+        ".app-modal-footer",
+        ".app-modal-close",
+    ):
+        assert selector in css
+    assert '[data-color-mode="dark"] .app-modal-overlay' in css
+    assert '[data-color-mode="dark"] .app-modal-shell' in css
+
+
+def test_all_modal_footers_use_the_neutral_shared_surface():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+
+    footer_classes = [
+        classes
+        for classes in re.findall(r'<div class="(?P<classes>[^"]+)"', html)
+        if {"modal-footer", "pbc-modal-footer"}.intersection(classes.split())
+    ]
+    assert footer_classes
+    assert all("app-modal-footer" in classes.split() for classes in footer_classes)
+
+    shared_footer = re.search(
+        r"(?m)^\.app-modal-shell \.app-modal-footer\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_footer is not None
+    assert "background: var(--surface-container-lowest)" in shared_footer.group("body")
+    assert "border-top: 1px solid var(--outline-variant)" in shared_footer.group("body")
+    for layout_declaration in ("display:", "height:", "min-height:", "padding:", "margin:"):
+        assert layout_declaration not in shared_footer.group("body")
+
+    confirm_footer = re.search(
+        r"(?m)^\.modal-confirm \.modal-footer\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert confirm_footer is not None
+    assert "surface-container-high" in confirm_footer.group("body")
+    assert css.index(".modal-confirm .modal-footer") < css.index(
+        ".app-modal-shell .app-modal-footer"
+    )
+
+    dark_footer = re.search(
+        r'(?m)^\[data-color-mode="dark"\] \.app-modal-shell \.app-modal-footer\s*'
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert dark_footer is not None
+    assert "background: #0f172a" in dark_footer.group("body")
+
+
+def test_modal_surfaces_are_solid_and_tool_gray_is_limited_to_progress_tracks():
+    css = _read(STYLES_CSS)
+
+    start = css.index(
+        "/* Modal surfaces stay solid; neutral gray is reserved for tool progress tracks. */"
+    )
+    end = css.index("/* User interface radius preference: start */", start)
+    surface_contract = css[start:end]
+
+    for selector in (
+        ".app-modal-shell > .app-modal-header",
+        ".app-modal-shell > .app-modal-body",
+        ".app-modal-shell > .app-modal-footer",
+        "#pbcModal :is(",
+        "#dbValidationModal :is(",
+        "#flowModal :is(",
+        ".db-validation-panel",
+        ".db-validation-table-item",
+        ".flow-run-panel",
+        ".flow-chain-list",
+        ".pbc-import-log",
+        "#flowLog",
+    ):
+        assert selector in surface_contract
+
+    assert surface_contract.count(
+        "background: var(--surface-container-lowest);"
+    ) >= 2
+    assert surface_contract.count("background: var(--surface-container);") == 1
+    for progress_selector in (
+        ".pbc-upload-progress-track",
+        ".pbc-progress-bar-track",
+    ):
+        assert progress_selector in surface_contract
+    assert ".pbc-step-num" not in surface_contract
+    step_state = re.search(
+        r"(?m)^\.pbc-step--active \.pbc-step-num,\s*\n"
+        r"\.pbc-step--done \.pbc-step-num\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert step_state is not None
+    assert "background: var(--primary)" in step_state.group("body")
+def test_modal_table_headers_match_history_tokens_without_layout_overrides():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    global_headers = re.search(r"(?m)^th\s*\{(?P<body>.*?)\}", css, re.S)
+    assert global_headers is not None
+    global_body = global_headers.group("body")
+    for preserved_declaration in (
+        "position: sticky",
+        "top: 0",
+        "z-index: 2",
+        "font-size: 12px",
+    ):
+        assert preserved_declaration in global_body
+    for visual_declaration in (
+        "color: var(--on-surface-variant)",
+        "font-weight: 600",
+        "background: var(--surface-container-low)",
+        "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
+    ):
+        assert visual_declaration in global_body
+
+    global_dark_headers = re.search(
+        r'(?m)^\[data-color-mode="dark"\] th\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert global_dark_headers is not None
+    assert "color: #cbd5e1" in global_dark_headers.group("body")
+    assert "background: rgba(30, 41, 59, 0.94)" in global_dark_headers.group("body")
+
+    shared_headers = re.search(
+        r"(?m)^\.app-modal-shell table th,\s*\n"
+        r"\.app-modal-shell \.pbc-file-list-header,\s*\n"
+        r"\.app-modal-shell \.db-validation-table-header,\s*\n"
+        r"\.app-modal-shell \.flow-def-header\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_headers is not None
+    shared_body = shared_headers.group("body")
+    for declaration in (
+        "color: var(--on-surface-variant)",
+        "font-weight: 600",
+        "background: var(--surface-container-low)",
+        "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))",
+    ):
+        assert declaration in shared_body
+    for layout_property in (
+        "text-align:",
+        "position:",
+        "top:",
+        "z-index:",
+        "padding:",
+        "width:",
+        "height:",
+        "display:",
+        "grid-template-columns:",
+        "!important",
+    ):
+        assert layout_property not in shared_body
+
+    shared_rule_start = css.index(".app-modal-shell table th,")
+    assert '<div class="app-modal-shell modal modal-info">' in html
+    assert 'class="home-stat-modal-table"' in app_js
+    assert ".app-modal-shell table th" in shared_headers.group(0)
+    assert css.index(".home-stat-modal-table th") < shared_rule_start
+    for modal_specific_selector in (
+        ".db-validation-history-table th",
+        ".flow-def-header th",
+    ):
+        assert css.index(modal_specific_selector) < shared_rule_start
+
+    dark_headers = re.search(
+        r'(?m)^\[data-color-mode="dark"\] \.app-modal-shell table th,\s*\n'
+        r'\[data-color-mode="dark"\] \.app-modal-shell \.pbc-file-list-header,\s*\n'
+        r'\[data-color-mode="dark"\] \.app-modal-shell \.db-validation-table-header,\s*\n'
+        r'\[data-color-mode="dark"\] \.app-modal-shell \.flow-def-header\s*'
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert dark_headers is not None
+    dark_body = dark_headers.group("body")
+    assert "color: #cbd5e1" in dark_body
+    assert "background: rgba(30, 41, 59, 0.94)" in dark_body
+    assert (
+        "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, "
+        "var(--surface-container-lowest))"
+    ) in dark_body
+
+    user_header = re.search(r"(?m)^\.user-table th\s*\{(?P<body>.*?)\}", css, re.S)
+    assert user_header is not None
+    assert "font-size: 12px" in user_header.group("body")
+    for duplicate_visual in ("background:", "color:", "font-weight:"):
+        assert duplicate_visual not in user_header.group("body")
+
+
+def test_main_result_and_history_headers_match_user_table_height_only():
+    css = _read(STYLES_CSS)
+    main_headers = re.search(
+        r"(?m)^\.result-card > \.table-wrap > \.result-table > thead > tr > th\s*"
+        r"\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert main_headers is not None
+    assert "padding-top: 14px" in main_headers.group("body")
+    assert "padding-bottom: 14px" in main_headers.group("body")
+    assert "height:" not in main_headers.group("body")
+    assert ".app-modal-shell" not in main_headers.group(0)
+
+
+def test_result_detail_labels_use_table_header_color_and_values_are_transparent():
+    css = _read(STYLES_CSS)
+
+    detail_item = re.search(r"(?m)^\.detail-item\s*\{(?P<body>.*?)\}", css, re.S)
+    assert detail_item is not None
+    assert "background: transparent" in detail_item.group("body")
+
+    detail_label = re.search(r"(?m)^\.detail-item span\s*\{(?P<body>.*?)\}", css, re.S)
+    assert detail_label is not None
+    assert "background: var(--surface-container-low)" in detail_label.group("body")
+    assert "surface-container-high" not in detail_label.group("body")
+
+
+def test_section_headers_use_the_shared_table_header_color():
+    css = _read(STYLES_CSS)
+
+    for selector in (
+        ".modal-section-header",
+        ".business-field-header",
+        ".db-validation-panel",
+        ".flow-chain-selected-count",
+        ".flow-chain-list",
+        ".flow-chain-selection-summary",
+        ".pbc-import-log",
+        ".flow-run-panel:last-child #flowLog",
+    ):
+        section_header = re.search(
+            rf"(?m)^{re.escape(selector)}\s*\{{(?P<body>.*?)\}}",
+            css,
+            re.S,
+        )
+        assert section_header is not None
+        assert "background: var(--surface-container-low)" in section_header.group("body")
+        assert "surface-container-high" not in section_header.group("body")
+
+
+def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
+    html = _read(INDEX_HTML)
+    css = _read(STYLES_CSS)
+
+    content_markers = {
+        "pbcModal": "<!-- Steps indicator -->",
+        "dbValidationModal": '<div class="db-validation-grid">',
+        "flowModal": '<div class="flow-run-grid">',
+    }
+    for modal_id, content_marker in content_markers.items():
+        modal = re.search(
+            rf'<div class="app-modal-shell [^"]+" id="{modal_id}">(?P<body>.*?)'
+            r'<div class="app-modal-footer pbc-modal-footer"',
+            html,
+            re.S,
+        )
+        assert modal is not None
+        assert content_marker in modal.group("body")
+        assert '<div class="app-modal-body pbc-modal-body">' not in modal.group("body")
+
+    for auxiliary_body_class in (
+        "db-validation-history-table-wrap",
+        "flow-history-table-wrap",
+        "flow-chain-editor-body",
+    ):
+        assert re.search(
+            r'<div class="app-modal-body pbc-modal-body">\s*'
+            rf'<div class="{auxiliary_body_class}">',
+            html,
+        )
+
+    shared_shell = re.search(
+        r"(?m)^\.app-modal-shell\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_shell is not None
+    for layout_declaration in (
+        "display: flex",
+        "flex-direction: column",
+        "padding: 0",
+        "overflow: hidden",
+    ):
+        assert layout_declaration not in shared_shell.group("body")
+
+    primary_safe_scope = (
+        ".app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal)"
+    )
+    for selector_suffix in (
+        "",
+        " > .app-modal-header",
+        " > .app-modal-body",
+        " .app-modal-close",
+    ):
+        assert f"{primary_safe_scope}{selector_suffix}" in css
+    assert f"{primary_safe_scope}:not(.modal-info--history-detail) > .app-modal-footer" in css
+
+    pbc_modal = re.search(r"(?m)^\.pbc-modal\s*\{(?P<body>.*?)\}", css, re.S)
+    pbc_header = re.search(r"(?m)^\.pbc-modal-header\s*\{(?P<body>.*?)\}", css, re.S)
+    pbc_footer = re.search(r"(?m)^\.pbc-modal-footer\s*\{(?P<body>.*?)\}", css, re.S)
+    flow_modal = re.search(r"(?m)^\.flow-modal\s*\{(?P<body>.*?)\}", css, re.S)
+    assert pbc_modal is not None
+    assert "padding: 32px 32px 24px" in pbc_modal.group("body")
+    assert "overflow-y: auto" in pbc_modal.group("body")
+    assert pbc_header is not None
+    assert "margin-bottom: 24px" in pbc_header.group("body")
+    assert "padding-bottom: 16px" in pbc_header.group("body")
+    assert pbc_footer is not None
+    assert "margin-top: 24px" in pbc_footer.group("body")
+    assert "padding-top: 16px" in pbc_footer.group("body")
+    assert flow_modal is not None
+    assert "display: flex" in flow_modal.group("body")
+    assert "overflow: hidden" in flow_modal.group("body")
+
+    shared_close = re.search(
+        r"(?m)^\.app-modal-close\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_close is not None
+    for layout_declaration in ("top:", "right:", "width:", "height:"):
+        assert layout_declaration not in shared_close.group("body")
+
+    pbc_close = re.search(r"(?m)^\.pbc-modal-close\s*\{(?P<body>.*?)\}", css, re.S)
+    assert pbc_close is not None
+    assert "top: 16px; right: 16px" in pbc_close.group("body")
+    assert "width: 36px; height: 36px" in pbc_close.group("body")
+
+
+def test_primary_tool_modal_header_margins_are_not_overridden_by_shared_visuals():
+    css = _read(STYLES_CSS)
+
+    shared_headings = re.search(
+        r"(?m)^\.app-modal-header h2,\s*\n\.app-modal-header h3\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_headings is not None
+    assert "margin:" not in shared_headings.group("body")
+
+    shared_paragraph = re.search(
+        r"(?m)^\.app-modal-header p\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_paragraph is not None
+    assert "margin:" not in shared_paragraph.group("body")
+
+    primary_safe_scope = (
+        ".app-modal-shell:not(#pbcModal):not(#dbValidationModal):not(#flowModal)"
+    )
+    safe_headings = re.search(
+        rf"(?m)^{re.escape(primary_safe_scope)} > \.app-modal-header h2,\s*\n"
+        rf"{re.escape(primary_safe_scope)} > \.app-modal-header h3\s*\{{(?P<body>.*?)\}}",
+        css,
+        re.S,
+    )
+    assert safe_headings is not None
+    assert "margin: 0" in safe_headings.group("body")
+
+    safe_paragraph = re.search(
+        rf"(?m)^{re.escape(primary_safe_scope)} > \.app-modal-header p\s*\{{(?P<body>.*?)\}}",
+        css,
+        re.S,
+    )
+    assert safe_paragraph is not None
+    assert "margin: 4px 0 0" in safe_paragraph.group("body")
+
+
+def test_interface_radius_has_default_and_regular_user_three_card_responsive_layout():
+    css = _read(STYLES_CSS)
+
+    root = re.search(r"(?m)^:root\s*\{(?P<body>.*?)\n\}", css, re.S)
+    assert root is not None
+    assert "--ui-radius: 4px;" in root.group("body")
+
+    interface_body = re.search(
+        r"(?m)^#page-settings \.card-interface \.card-body\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert interface_body is not None
+    assert "display: flex" in interface_body.group("body")
+    assert "flex-direction: column" in interface_body.group("body")
+    assert "flex: 1" in interface_body.group("body")
+
+    interface_control = re.search(
+        r"(?m)^#page-settings \.card-interface \.setting-item\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert interface_control is not None
+    assert "display: grid" in interface_control.group("body")
+    assert "grid-template-columns:" in interface_control.group("body")
+
+    slider = re.search(
+        r"(?m)^#page-settings #interfaceRadiusSlider\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert slider is not None
+    assert "width: 100%" in slider.group("body")
+    assert "accent-color: var(--secondary)" in slider.group("body")
+
+    value = re.search(
+        r"(?m)^#page-settings #interfaceRadiusValue\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert value is not None
+    assert "color: var(--on-surface)" in value.group("body")
+
+    status = re.search(
+        r"(?m)^#page-settings #interfaceSettingsStatus\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert status is not None
+    assert "color: var(--on-surface-variant)" in status.group("body")
+
+    desktop_user_grid = re.search(
+        r'(?m)^\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert desktop_user_grid is not None
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in desktop_user_grid.group("body")
+    assert "align-items: stretch" in desktop_user_grid.group("body")
+
+    user_cards = re.search(
+        r'\[data-role="user"\] #page-settings \.card-system-info,\s*'
+        r'\[data-role="user"\] #page-settings \.card-interface,\s*'
+        r'\[data-role="user"\] #page-settings \.card-about\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert user_cards is not None
+    assert "grid-column: span 1" in user_cards.group("body")
+    assert "height: 100%" in user_cards.group("body")
+
+    tablet_css = css[css.index("@media (max-width: 1200px)") :]
+    tablet_user_grid = re.search(
+        r'\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}',
+        tablet_css,
+        re.S,
+    )
+    assert tablet_user_grid is not None
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in tablet_user_grid.group("body")
+
+    mobile_css = css[css.index("@media (max-width: 760px)") :]
+    mobile_user_grid = re.search(
+        r'\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}',
+        mobile_css,
+        re.S,
+    )
+    assert mobile_user_grid is not None
+    assert "grid-template-columns: 1fr" in mobile_user_grid.group("body")
+
+    admin_grid = re.search(
+        r"(?m)^#page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert admin_grid is not None
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in admin_grid.group("body")
+
+
+def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallback():
+    app_js = _read(APP_JS)
+
+    ensure_auth = re.search(
+        r"async function ensureAuthenticated\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert ensure_auth is not None
+    auth_body = ensure_auth.group("body")
+    reset_call = "resetInterfaceRadiusForAuthChange();"
+    load_call = "await loadInterfaceRadiusPreference({ silent: true });"
+    assert reset_call in auth_body
+    assert load_call in auth_body
+    assert auth_body.index(reset_call) < auth_body.index('authState.csrfToken = payload.csrf_token || "";')
+    assert auth_body.index(reset_call) < auth_body.index("authState.user = payload.user || null;")
+    assert auth_body.index("authState.user = payload.user || null;") < auth_body.index(load_call)
+    assert auth_body.index("document.documentElement.dataset.role") < auth_body.index(load_call)
+    assert auth_body.index(load_call) < auth_body.index("applySavedUserTheme();")
+    assert auth_body.index(load_call) < auth_body.index("revealAuthenticatedApp();")
+
+    loader = re.search(
+        r"async function loadInterfaceRadiusPreference\(\{ silent = false \} = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert loader is not None
+    load_body = loader.group("body")
+    assert 'api("/api/settings/interface", { signal: abortController.signal })' in load_body
+    assert "const requestId = ++interfaceRadiusState.loadRequestId;" in load_body
+    assert "const editRevision = interfaceRadiusState.editRevision;" in load_body
+    assert "const mutationRevision = interfaceRadiusState.serverMutationRevision;" in load_body
+    assert "const abortController = new AbortController();" in load_body
+    assert "setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS)" in load_body
+    assert "clearTimeout(timeoutId);" in load_body
+    assert "requestId !== interfaceRadiusState.loadRequestId" in load_body
+    assert "mutationRevision !== interfaceRadiusState.serverMutationRevision" in load_body
+    assert "editRevision === interfaceRadiusState.editRevision" in load_body
+    assert "const preferences = readInterfacePreferencesPayload(payload);" in load_body
+    assert "} catch (error) {" in load_body
+    assert "if (!interfaceRadiusState.loaded)" in load_body
+    assert "interfaceRadiusState.savedPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };" in load_body
+    assert "interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };" in load_body
+    assert "applyInterfacePreferences(DEFAULT_INTERFACE_PREFERENCES);" in load_body
+    assert "interfaceRadiusState.loadFailed = true;" in load_body
+    assert 'interfaceRadiusState.statusText = "加载失败，当前使用默认 4px";' in load_body
+    assert "if (!silent)" in load_body
+    assert "showToast(" in load_body
+    assert "return false;" in load_body
+
+
+def test_interface_radius_state_normalization_rendering_and_api_boundary():
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    assert "const DEFAULT_INTERFACE_PREFERENCES = Object.freeze({" in body
+    assert "const MIN_INTERFACE_RADIUS_PX = 1;" in body
+    assert "const MAX_INTERFACE_RADIUS_PX = 15;" in body
+    assert "const INTERFACE_RADIUS_LOAD_TIMEOUT_MS = 2500;" in body
+    for state_line in [
+        "savedPreferences: { ...DEFAULT_INTERFACE_PREFERENCES }",
+        "draftPreferences: { ...DEFAULT_INTERFACE_PREFERENCES }",
+        "loaded: false",
+        "loadFailed: false",
+        "saving: false",
+        'statusText: "已保存"',
+        "loadRequestId: 0",
+        "editRevision: 0",
+        "serverMutationRevision: 0",
+    ]:
+        assert state_line in body
+
+    normalize = re.search(
+        r"function normalizeInterfaceRadius\(radiusPx\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert normalize is not None
+    normalize_body = normalize.group("body")
+    assert "Number.isInteger(radiusPx)" in normalize_body
+    assert "radiusPx >= MIN_INTERFACE_RADIUS_PX" in normalize_body
+    assert "radiusPx <= MAX_INTERFACE_RADIUS_PX" in normalize_body
+    assert "return DEFAULT_INTERFACE_RADIUS_PX;" in normalize_body
+
+    apply_radius = re.search(
+        r"function applyInterfaceRadius\(radiusPx\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert apply_radius is not None
+    apply_body = apply_radius.group("body")
+    assert 'document.documentElement.style.setProperty("--ui-radius", `${normalizedRadiusPx}px`);' in apply_body
+    assert "return normalizedRadiusPx;" in apply_body
+    assert apply_body.count("setProperty(") == 1
+    assert "api(" not in apply_body
+    assert "localStorage" not in apply_body
+
+    strict_payload = re.search(
+        r"function readInterfacePreferencesPayload\(payload\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert strict_payload is not None
+    strict_body = strict_payload.group("body")
+    assert "payload?.settings?.radius_px" in strict_body
+    assert "payload?.settings?.line_chart_style" in strict_body
+    assert "!Number.isInteger(radiusPx)" in strict_body
+    assert "radiusPx < MIN_INTERFACE_RADIUS_PX" in strict_body
+    assert "radiusPx > MAX_INTERFACE_RADIUS_PX" in strict_body
+    assert "throw new Error(" in strict_body
+
+    render = re.search(
+        r"function renderInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert render is not None
+    render_body = render.group("body")
+    assert "interfaceRadiusSlider.value = String(interfaceRadiusState.draftPreferences.radiusPx);" in render_body
+    assert "interfaceRadiusValue.textContent = `${interfaceRadiusState.draftPreferences.radiusPx}px`;" in render_body
+    assert 'interfaceLineChartStyleStraight.checked = interfaceRadiusState.draftPreferences.lineChartStyle === "straight";' in render_body
+    assert "interfaceSettingsStatus.textContent = interfaceRadiusState.statusText;" in render_body
+    assert "const saving = interfaceRadiusState.saving;" in render_body
+    assert "interfaceRadiusSlider.disabled = saving;" in render_body
+    assert "saveInterfaceSettingsBtn.disabled = saving;" in render_body
+    assert 'saveInterfaceSettingsBtn.classList.toggle("loading", saving);' in render_body
+    assert "resetInterfaceSettingsBtn.disabled = saving;" in render_body
+    assert "interfaceRadiusState.statusText =" not in render_body
+
+    api_paths = set(re.findall(r'["\'](/api/[^"\']+)["\']', body))
+    assert api_paths == {"/api/settings/interface"}
+    assert body.count('api("/api/settings/interface"') == 2
+
+    assert "已保存" in body
+    assert "正在预览，尚未保存" in body
+    assert "保存成功" in body
+    assert "保存失败" in body
+    assert "加载失败，当前使用默认 4px" in body
+
+    loader = re.search(
+        r"async function loadInterfaceRadiusPreference\(\{ silent = false \} = \{\}\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert loader is not None
+    load_body = loader.group("body")
+    load_success_body, load_catch_body = load_body.split("} catch (error) {", 1)
+    assert "cacheAuthenticatedInterfacePreferences(preferences);" in load_success_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in load_catch_body
+
+
+def test_interface_radius_preview_reset_save_and_discard_are_draft_safe():
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    slider_handler = re.search(
+        r'interfaceRadiusSlider\?\.addEventListener\("input", \(\) => \{(?P<body>.*?)\n\}\);',
+        body,
+        re.S,
+    )
+    assert slider_handler is not None
+    slider_body = slider_handler.group("body")
+    assert "updateInterfacePreferenceDraft({" in slider_body
+    assert "normalizeInterfaceRadius(Number(interfaceRadiusSlider.value))" in slider_body
+    assert "api(" not in slider_body
+    assert "POST" not in slider_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in slider_body
+
+    draft_updater = re.search(
+        r"function updateInterfacePreferenceDraft\(change\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert draft_updater is not None
+    draft_body = draft_updater.group("body")
+    assert "if (interfaceRadiusState.saving) return;" in draft_body
+    assert "interfaceRadiusState.editRevision += 1;" in draft_body
+    assert "interfaceRadiusState.draftPreferences = {" in draft_body
+    assert "applyInterfacePreferences(interfaceRadiusState.draftPreferences);" in draft_body
+    assert "syncInterfaceRadiusDirtyStatus();" in draft_body
+
+    reset_handler = re.search(
+        r'resetInterfaceSettingsBtn\?\.addEventListener\("click", \(\) => \{(?P<body>.*?)\n\}\);',
+        body,
+        re.S,
+    )
+    assert reset_handler is not None
+    reset_body = reset_handler.group("body")
+    assert "if (interfaceRadiusState.saving) return;" in reset_body
+    assert "interfaceRadiusState.editRevision += 1;" in reset_body
+    assert "interfaceRadiusState.draftPreferences = { ...DEFAULT_INTERFACE_PREFERENCES };" in reset_body
+    assert "applyInterfacePreferences(interfaceRadiusState.draftPreferences);" in reset_body
+    assert "syncInterfaceRadiusDirtyStatus();" in reset_body
+    assert "interfaceRadiusState.savedPreferences" not in reset_body
+    assert "api(" not in reset_body
+    assert "POST" not in reset_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in reset_body
+
+    save = re.search(
+        r"async function saveInterfaceRadiusPreference\(\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert save is not None
+    save_body = save.group("body")
+    assert "if (interfaceRadiusState.saving) return false;" in save_body
+    assert "interfaceRadiusState.serverMutationRevision += 1;" in save_body
+    assert "interfaceRadiusState.saving = true;" in save_body
+    assert 'api("/api/settings/interface", {' in save_body
+    assert 'method: "POST"' in save_body
+    for payload_field in (
+        "radius_px: interfaceRadiusState.draftPreferences.radiusPx",
+        "line_chart_style: interfaceRadiusState.draftPreferences.lineChartStyle",
+    ):
+        assert payload_field in save_body
+    assert "const savedPreferences = readInterfacePreferencesPayload(payload);" in save_body
+    assert "interfaceRadiusState.savedPreferences = copyInterfacePreferences(savedPreferences);" in save_body
+    assert "interfaceRadiusState.draftPreferences = copyInterfacePreferences(savedPreferences);" in save_body
+    assert 'interfaceRadiusState.statusText = "保存成功";' in save_body
+    assert "applyInterfacePreferences(savedPreferences);" in save_body
+    assert "cacheAuthenticatedInterfacePreferences(savedPreferences);" in save_body
+    assert "} catch (error) {" in save_body
+    assert "} finally {" in save_body
+    catch_body = save_body.split("} catch (error) {", 1)[1].split("} finally {", 1)[0]
+    assert 'interfaceRadiusState.statusText = "保存失败";' in catch_body
+    assert "interfaceRadiusState.savedPreferences =" not in catch_body
+    assert "interfaceRadiusState.draftPreferences =" not in catch_body
+    assert "applyInterfacePreferences(" not in catch_body
+    assert "cacheAuthenticatedInterfacePreferences(" not in catch_body
+    finally_body = save_body.split("} finally {", 1)[1]
+    assert "interfaceRadiusState.saving = false;" in finally_body
+    assert "renderInterfaceRadiusPreference();" in finally_body
+
+    discard = re.search(
+        r"function discardUnsavedInterfaceRadius\(\) \{(?P<body>.*?)\n\}",
+        body,
+        re.S,
+    )
+    assert discard is not None
+    discard_body = discard.group("body")
+    assert "!interfacePreferencesMatch(" in discard_body
+    assert "interfaceRadiusState.draftPreferences = copyInterfacePreferences(interfaceRadiusState.savedPreferences);" in discard_body
+    assert "applyInterfacePreferences(interfaceRadiusState.savedPreferences);" in discard_body
+    assert "syncInterfaceRadiusDirtyStatus();" in discard_body
+    assert "renderInterfaceRadiusPreference();" in discard_body
+    assert "api(" not in discard_body
+
+    switch_page = re.search(
+        r"async function switchPage\(name, options = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert switch_page is not None
+    switch_body = switch_page.group("body")
+    assert 'if (previousPage === "settings" && name !== "settings") {' in switch_body
+    assert "discardUnsavedInterfaceRadius();" in switch_body
+    assert "discardUnsavedSystemThemeColors();" not in switch_body
+    assert switch_body.index("discardUnsavedInterfaceRadius();") < switch_body.index(
+        "document.documentElement.setAttribute('data-page', name);"
+    )
+
+
+def test_login_uses_last_authenticated_interface_radius_display_cache():
+    login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
+
+    assert "--ui-radius: 4px;" in login_html
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in login_html
+    assert "function normalizeLoginInterfaceRadius(value)" in login_html
+    assert "Number.isInteger(parsed)" in login_html
+    assert "parsed >= 1 && parsed <= 15" in login_html
+    assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" in login_html
+    assert 'document.documentElement.style.setProperty("--ui-radius", `${radiusPx}px`);' in login_html
+    assert login_html.index('id="initialInterfaceRadiusScript"') < login_html.index("<style>")
+
+    for selector in (
+        ".right-panel",
+        ".form-input",
+        ".login-btn",
+    ):
+        assert selector in login_html
+
+
+def test_interface_radius_settings_use_server_authority_with_login_display_cache():
+    app_js = _read(APP_JS)
+
+    settings_loader = re.search(
+        r"async function loadSettingsPageData\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert settings_loader is not None
+    settings_body = settings_loader.group("body")
+    assert "Promise.all" in settings_body
+    assert 'loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false }))' in settings_body
+
+    block = re.search(
+        r"// Interface radius start(?P<body>.*?)// Interface radius end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+    body = block.group("body")
+
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in body
+    assert "function cacheAuthenticatedInterfacePreferences(preferences)" in body
+    assert "localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY, String(normalizedRadiusPx));" in body
+    assert "localStorage.getItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
+    assert "localStorage.removeItem(LAST_INTERFACE_RADIUS_CACHE_KEY)" not in app_js
+    assert app_js.count("localStorage.setItem(LAST_INTERFACE_RADIUS_CACHE_KEY") == 1
+    assert "autoCheckRadius" not in app_js
+
+
+def test_interface_radius_node_keeps_new_draft_when_older_get_finishes(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const getRequest = deferred();
+        apiImpl = async () => getRequest.promise;
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+
+        getRequest.resolve({ settings: { radius_px: 4 } });
+        assert.equal(await loading, true);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "正在预览，尚未保存");
+        """,
+    )
+
+
+def test_interface_radius_node_discard_invalidates_pending_get_and_allows_reload(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const oldSuccess = deferred();
+        const oldFailure = deferred();
+        let requestCount = 0;
+        apiImpl = async () => {
+          requestCount += 1;
+          if (requestCount === 1) return oldSuccess.promise;
+          if (requestCount === 2) return { settings: { radius_px: 6 } };
+          if (requestCount === 3) return oldFailure.promise;
+          return { settings: { radius_px: 7 } };
+        };
+
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        const staleSuccessLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.discard(), true);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        oldSuccess.resolve({ settings: { radius_px: 6 } });
+        assert.equal(await staleSuccessLoading, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.toasts.length, 0);
+
+        assert.equal(await h.load({ silent: false }), true);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 6);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+
+        const staleFailureLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.discard(), true);
+        oldFailure.reject(new Error("stale load failed"));
+        assert.equal(await staleFailureLoading, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 6);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.toasts.length, 0);
+
+        assert.equal(await h.load({ silent: false }), true);
+        assert.equal(h.state.savedPreferences.radiusPx, 7);
+        assert.equal(h.state.draftPreferences.radiusPx, 7);
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "7px");
+        assert.equal(h.toasts.length, 0);
+        """,
+    )
+
+
+def test_interface_radius_node_ignores_get_that_predates_successful_save(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const getRequest = deferred();
+        const postRequest = deferred();
+        apiImpl = async (_path, options) => (
+          options.method === "POST" ? postRequest.promise : getRequest.promise
+        );
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        const saving = h.save();
+        postRequest.resolve({ settings: { radius_px: 9 } });
+        assert.equal(await saving, true);
+
+        getRequest.resolve({ settings: { radius_px: 4 } });
+        await loading;
+        assert.equal(h.state.savedPreferences.radiusPx, 9);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "保存成功");
+        """,
+    )
+
+
+def test_interface_radius_node_disables_and_guards_draft_controls_while_saving(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const postRequest = deferred();
+        apiImpl = async () => postRequest.promise;
+
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        const saving = h.save();
+        assert.equal(h.elements.interfaceRadiusSlider.disabled, true);
+        assert.equal(h.elements.interfaceLineChartStyleStraight.disabled, true);
+        assert.equal(h.elements.interfaceLineChartStyleSmooth.disabled, true);
+        assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, true);
+
+        h.elements.interfaceRadiusSlider.value = "8";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        h.elements.resetInterfaceSettingsBtn.dispatch("click");
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+
+        postRequest.resolve({ settings: { radius_px: 9 } });
+        assert.equal(await saving, true);
+        assert.equal(h.state.savedPreferences.radiusPx, 9);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.elements.interfaceRadiusSlider.disabled, false);
+        assert.equal(h.elements.interfaceLineChartStyleStraight.disabled, false);
+        assert.equal(h.elements.interfaceLineChartStyleSmooth.disabled, false);
+        assert.equal(h.elements.resetInterfaceSettingsBtn.disabled, false);
+        """,
+    )
+
+
+def test_interface_radius_node_derives_saved_status_when_draft_returns_to_baseline(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+
+        h.elements.resetInterfaceSettingsBtn.dispatch("click");
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "已保存");
+
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        h.elements.interfaceRadiusSlider.value = "4";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "已保存");
+        """,
+    )
+
+
+def test_interface_radius_node_times_out_get_without_real_waiting(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        let capturedOptions = null;
+        apiImpl = async (_path, options) => {
+          capturedOptions = options;
+          return new Promise((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () => {
+              const error = new Error("aborted");
+              error.name = "AbortError";
+              reject(error);
+            }, { once: true });
+          });
+        };
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        assert.ok(capturedOptions.signal);
+        assert.equal(h.timerCount(), 1);
+        let settled = false;
+        let result = null;
+        loading.then((value) => {
+          settled = true;
+          result = value;
+        });
+        h.runAllTimers();
+        await flushMicrotasks();
+
+        assert.equal(settled, true);
+        assert.equal(result, false);
+        assert.equal(h.timerCount(), 0);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.state.statusText, "加载失败，当前使用默认 4px");
+        assert.equal(h.toasts.length, 1);
+        """,
+    )
+
+
+def test_interface_radius_node_preserves_new_draft_when_current_get_fails(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        const getRequest = deferred();
+        apiImpl = async () => getRequest.promise;
+
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        getRequest.reject(new Error("network failed"));
+
+        assert.equal(await loading, false);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, true);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        assert.equal(h.toasts.length, 1);
+        """,
+    )
+
+
+def test_interface_radius_node_rejects_invalid_get_payload_as_load_failure(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: {} });
+
+        const result = await h.load({ silent: true });
+        assert.equal(result, false);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, true);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.state.statusText, "加载失败，当前使用默认 4px");
+        assert.equal(h.toasts.length, 0);
+        """,
+    )
+
+
+def test_interface_radius_node_rejects_invalid_post_without_losing_draft(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 6 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        apiImpl = async () => ({ settings: {} });
+
+        const result = await h.save();
+        assert.equal(result, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "保存失败");
+        assert.equal(h.elements.interfaceSettingsStatus.textContent, "保存失败");
+        assert.equal(h.toasts.length, 1);
+        """,
+    )
+
+
+def test_interface_radius_auth_boundary_logout_resets_immediately_and_invalidates_get(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "8px");
+
+        const oldGet = deferred();
+        const logoutRequest = deferred();
+        apiImpl = async (path) => {
+          if (path === "/api/settings/interface") return oldGet.promise;
+          if (path === "/api/auth/logout") return logoutRequest.promise;
+          throw new Error(`unexpected API path: ${path}`);
+        };
+        const oldLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        const loggingOut = h.logout();
+        await flushMicrotasks();
+
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.saving, false);
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        oldGet.resolve({ settings: { radius_px: 12 } });
+        assert.equal(await oldLoading, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        logoutRequest.resolve({});
+        await loggingOut;
+        assert.equal(h.authState.csrfToken, "");
+        assert.equal(window.location.href, "/login.html");
+        """,
+    )
+
+
+def test_interface_radius_auth_boundary_resets_before_loading_new_user(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        h.useStrictResponses();
+        apiImpl = async () => ({ settings: {
+          radius_px: 8,
+          line_chart_style: "smooth",
+        } });
+        assert.equal(await h.load({ silent: true }), true);
+        assert.equal(h.cssVariables.get("--ui-radius"), "8px");
+        assert.equal(h.storageWrites.length, 1);
+
+        const oldGet = deferred();
+        const newGet = deferred();
+        let preferenceRequestCount = 0;
+        apiImpl = async (path) => {
+          assert.equal(path, "/api/settings/interface");
+          preferenceRequestCount += 1;
+          return preferenceRequestCount === 1 ? oldGet.promise : newGet.promise;
+        };
+        const oldLoading = h.load({ silent: false });
+        await flushMicrotasks();
+        const authenticating = h.ensureAuthenticated();
+        await flushMicrotasks();
+
+        assert.equal(h.authState.user.id, "new-user");
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.state.loaded, false);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.revealCount(), 0);
+
+        oldGet.resolve({ settings: {
+          radius_px: 12,
+          line_chart_style: "smooth",
+        } });
+        assert.equal(await oldLoading, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+        assert.equal(h.storageWrites.length, 1);
+
+        newGet.resolve({ settings: {
+          radius_px: 6,
+          line_chart_style: "straight",
+        } });
+        await authenticating;
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 6,
+          lineChartStyle: "straight",
+        });
+        assert.deepEqual(h.state.draftPreferences, h.state.savedPreferences);
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.storageWrites.length, 2);
+        assert.equal(h.revealCount(), 1);
+        """,
+    )
+
+
+def test_interface_radius_node_keeps_dirty_draft_when_get_starts_after_edit(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+
+        apiImpl = async () => ({ settings: { radius_px: 6 } });
+        assert.equal(await h.load({ silent: false }), true);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        """,
+    )
+
+
+def test_interface_radius_node_rejects_get_started_while_post_is_pending(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 6 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const postRequest = deferred();
+        const getRequest = deferred();
+        let getRequestCount = 0;
+        apiImpl = async (_path, options) => {
+          if (options.method === "POST") return postRequest.promise;
+          getRequestCount += 1;
+          return getRequest.promise;
+        };
+        const saving = h.save();
+        await flushMicrotasks();
+        const loading = h.load({ silent: false });
+        await flushMicrotasks();
+        getRequest.resolve({ settings: { radius_px: 4 } });
+        assert.equal(await loading, false);
+        assert.equal(getRequestCount, 0);
+
+        postRequest.reject(new Error("save failed"));
+        assert.equal(await saving, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 9);
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.state.statusText, "保存失败");
+        """,
+    )
+
+
+def test_interface_radius_auth_reset_invalidates_old_post_success_and_finally(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const oldPost = deferred();
+        const newGet = deferred();
+        const newPost = deferred();
+        let postRequestCount = 0;
+        apiImpl = async (_path, options) => {
+          if (options.method === "POST") {
+            postRequestCount += 1;
+            return postRequestCount === 1 ? oldPost.promise : newPost.promise;
+          }
+          return newGet.promise;
+        };
+        const oldSaving = h.save();
+        await flushMicrotasks();
+        const authenticating = h.ensureAuthenticated();
+        await flushMicrotasks();
+        newGet.resolve({ settings: { radius_px: 6 } });
+        await authenticating;
+
+        h.elements.interfaceRadiusSlider.value = "7";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        const newSaving = h.save();
+        await flushMicrotasks();
+        assert.equal(h.state.saving, true);
+
+        oldPost.resolve({ settings: { radius_px: 9 } });
+        assert.equal(await oldSaving, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 7);
+        assert.equal(h.cssVariables.get("--ui-radius"), "7px");
+        assert.equal(h.state.saving, true);
+        assert.equal(h.toasts.length, 0);
+
+        newPost.resolve({ settings: { radius_px: 7 } });
+        assert.equal(await newSaving, true);
+        assert.equal(h.state.savedPreferences.radiusPx, 7);
+        assert.equal(h.state.draftPreferences.radiusPx, 7);
+        assert.equal(h.state.saving, false);
+        """,
+    )
+
+
+def test_interface_radius_auth_reset_invalidates_old_post_failure(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        apiImpl = async () => ({ settings: { radius_px: 8 } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+
+        const oldPost = deferred();
+        const newGet = deferred();
+        apiImpl = async (_path, options) => (
+          options.method === "POST" ? oldPost.promise : newGet.promise
+        );
+        const oldSaving = h.save();
+        await flushMicrotasks();
+        const authenticating = h.ensureAuthenticated();
+        await flushMicrotasks();
+        newGet.resolve({ settings: { radius_px: 6 } });
+        await authenticating;
+
+        oldPost.reject(new Error("old user save failed"));
+        assert.equal(await oldSaving, false);
+        assert.equal(h.state.savedPreferences.radiusPx, 6);
+        assert.equal(h.state.draftPreferences.radiusPx, 6);
+        assert.equal(h.cssVariables.get("--ui-radius"), "6px");
+        assert.equal(h.state.statusText, "已保存");
+        assert.equal(h.state.saving, false);
+        assert.equal(h.toasts.length, 0);
+        """,
+    )
+
+
+def test_interface_radius_logout_failure_restores_dirty_snapshot(tmp_path):
+    _run_interface_radius_node_scenario(
+        tmp_path,
+        """
+        const h = radiusHarness;
+        h.useStrictResponses();
+        apiImpl = async () => ({ settings: {
+          radius_px: 8,
+          line_chart_style: "smooth",
+        } });
+        assert.equal(await h.load({ silent: true }), true);
+        h.elements.interfaceRadiusSlider.value = "9";
+        h.elements.interfaceRadiusSlider.dispatch("input");
+        h.elements.interfaceLineChartStyleStraight.checked = true;
+        h.elements.interfaceLineChartStyleStraight.dispatch("input");
+
+        const logoutRequest = deferred();
+        apiImpl = async (path) => {
+          assert.equal(path, "/api/auth/logout");
+          return logoutRequest.promise;
+        };
+        const loggingOut = h.logout();
+        await flushMicrotasks();
+        assert.equal(h.state.savedPreferences.radiusPx, 4);
+        assert.equal(h.state.draftPreferences.radiusPx, 4);
+        assert.equal(h.cssVariables.get("--ui-radius"), "4px");
+
+        logoutRequest.reject(new Error("logout failed"));
+        await loggingOut;
+        assert.deepEqual(h.state.savedPreferences, {
+          radiusPx: 8,
+          lineChartStyle: "smooth",
+        });
+        assert.deepEqual(h.state.draftPreferences, {
+          radiusPx: 9,
+          lineChartStyle: "straight",
+        });
+        assert.equal(h.state.loaded, true);
+        assert.equal(h.state.loadFailed, false);
+        assert.equal(h.state.saving, false);
+        assert.equal(h.state.statusText, "正在预览，尚未保存");
+        assert.equal(h.cssVariables.get("--ui-radius"), "9px");
+        assert.equal(h.toasts.length, 1);
+        assert.equal(window.location.href, "/");
+        """,
+    )
+
+
 def test_settings_dark_mode_keeps_business_codes_and_about_links_readable():
     css = _read(STYLES_CSS)
 
@@ -2663,7 +5581,11 @@ def test_home_chart_empty_state_keeps_centered_chart_structure():
 
     assert "function setChartEmptyState" in app_js
     for function_name in ["renderChart", "renderTrendChart"]:
-        body = re.search(rf"async function {function_name}\(\) \{{(?P<body>.*?)\n\}}", app_js, re.S)
+        body = re.search(
+            rf"async function {function_name}\([^)]*\) \{{(?P<body>.*?)\n\}}",
+            app_js,
+            re.S,
+        )
         assert body is not None
         assert "container.innerHTML" not in body.group("body")
         assert "setChartEmptyState" in body.group("body")
@@ -2709,6 +5631,144 @@ def test_home_trend_curve_control_points_stay_inside_plot_area():
     assert "{ top: pad.top, bottom: pad.top + ph }" in app_js
 
 
+def test_home_chart_line_style_normalization_and_geometry_are_shared(tmp_path):
+    app_js = _read(APP_JS)
+    normalize_style = re.search(
+        r"function normalizeLineChartStyle\(value\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    smooth_curve = re.search(
+        r"function smoothCurveThrough\(ctx, pts, tension = 0\.35, bounds = null\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    trace_line = re.search(
+        r"function traceChartLine\(ctx, points, style, bounds = null\) \{.*?\n\}",
+        app_js,
+        re.S,
+    )
+    assert normalize_style is not None
+    assert smooth_curve is not None
+    assert trace_line is not None
+
+    script_path = tmp_path / "chart-line-style.cjs"
+    script_path.write_text(
+        textwrap.dedent(
+            f"""
+            const assert = require("node:assert/strict");
+            function clampNumber(value, min, max) {{
+              return Math.min(Math.max(value, min), max);
+            }}
+            {normalize_style.group(0)}
+            {smooth_curve.group(0)}
+            {trace_line.group(0)}
+
+            assert.equal(normalizeLineChartStyle(), "straight");
+            assert.equal(normalizeLineChartStyle("straight"), "straight");
+            assert.equal(normalizeLineChartStyle("smooth"), "smooth");
+            assert.equal(normalizeLineChartStyle("SMOOTH"), "straight");
+            assert.equal(normalizeLineChartStyle("curve"), "straight");
+
+            const points = [{{ x: 1, y: 4 }}, {{ x: 3, y: 2 }}, {{ x: 7, y: 6 }}];
+            const calls = [];
+            const ctx = {{
+              beginPath: () => calls.push(["beginPath"]),
+              moveTo: (...args) => calls.push(["moveTo", ...args]),
+              lineTo: (...args) => calls.push(["lineTo", ...args]),
+              bezierCurveTo: (...args) => calls.push(["bezierCurveTo", ...args]),
+            }};
+            traceChartLine(ctx, points, "straight");
+            assert.deepEqual(calls.map((call) => call[0]), [
+              "beginPath", "moveTo", "lineTo", "lineTo",
+            ]);
+
+            calls.length = 0;
+            traceChartLine(ctx, points, "smooth", {{ top: 0, bottom: 10 }});
+            assert.equal(calls[0][0], "beginPath");
+            assert.equal(calls[1][0], "moveTo");
+            assert.equal(calls.filter((call) => call[0] === "bezierCurveTo").length, 2);
+            """
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def test_home_chart_renderers_use_logo_gradients_and_style_points():
+    app_js = _read(APP_JS)
+    single_chart = app_js[
+        app_js.index("function drawGlassChart(") :
+        app_js.index("function drawGlassMultiMetricChart(")
+    ]
+    multi_chart = app_js[
+        app_js.index("function drawGlassMultiMetricChart(") :
+        app_js.index("function cssRootValue(")
+    ]
+
+    assert "function canvasThemePalette()" in app_js
+    assert 'cssRootValue("--theme-accent"' in app_js
+    assert 'cssRootValue("--theme-accent-readable"' in app_js
+    for body in (single_chart, multi_chart):
+        assert "const palette = canvasThemePalette();" in body
+        assert "const lineStyle = currentLineChartStyle();" in body
+        assert "traceChartLine(ctx, drawPts, lineStyle, curveBounds);" in body
+        assert 'if (lineStyle === "smooth"' in body
+        assert "createLinearGradient" in body
+
+    assert "ctx.fillStyle = palette.areaFill;" in single_chart
+    assert "lineGradient.addColorStop(0, palette.primary);" in single_chart
+    assert "lineGradient.addColorStop(1, palette.gradientEnd);" in single_chart
+    assert "if (metric.gradientEnd)" in multi_chart
+    assert "metricPaint.addColorStop(0, metric.strokeColor);" in multi_chart
+    assert "metricPaint.addColorStop(1, metric.gradientEnd);" in multi_chart
+    assert 'gradientEnd: "#FFBD38"' in app_js
+
+
+def test_home_chart_theme_and_line_style_redraw_cached_data_without_refetch():
+    app_js = _read(APP_JS)
+    redraw = re.search(
+        r"function redrawHomeChartsFromCache\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    refresh_theme = re.search(
+        r"function refreshHomeChartsForTheme\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    apply_preferences = re.search(
+        r"function applyInterfacePreferences\(preferences\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    load_history = re.search(
+        r"async function loadHomeChartHistory\(\{ refreshData = true \} = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+
+    assert redraw is not None
+    assert "renderChart({ refreshData: false })" in redraw.group("body")
+    assert "renderTrendChart({ refreshData: false })" in redraw.group("body")
+    assert refresh_theme is not None
+    assert "redrawHomeChartsFromCache();" in refresh_theme.group("body")
+    assert apply_preferences is not None
+    assert "normalizeLineChartStyle(preferences.lineChartStyle)" in apply_preferences.group("body")
+    assert "refreshHomeChartsForTheme();" in apply_preferences.group("body")
+    assert load_history is not None
+    assert "homeChartHistoryCache" in load_history.group("body")
+    assert 'api("/api/history")' in load_history.group("body")
+
+    schedule_resize = re.search(
+        r"function scheduleHomeChartsResize\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert schedule_resize is not None
+    assert "redrawHomeChartsFromCache();" in schedule_resize.group("body")
+
+
 def test_space_tech_theme_has_structural_top_navigation_and_switching():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -2717,91 +5777,15 @@ def test_space_tech_theme_has_structural_top_navigation_and_switching():
     assert 'class="top-nav"' in html
     for page in ["home", "auto-check", "history", "settings"]:
         assert re.search(rf'class="[^"]*\btop-nav-item\b[^"]*" data-page="{page}"', html)
-    assert html.count('data-theme-toggle-logo') == 2
-    assert 'class="brand-theme-toggle sidebar-brand-theme-toggle"' in html
-    assert 'class="brand-theme-toggle top-nav-mark"' in html
-    assert 'aria-label="切换主题"' in html
+    assert 'data-theme-toggle-logo' not in html
+    assert 'aria-label="切换主题"' not in html
     assert 'name="theme"' not in html
-    assert 'name="theme" value="dark"' not in html
-    assert 'name="theme" value="auto"' not in html
-
-    for text in [
-        'theme === "space-tech"',
-        'document.documentElement.setAttribute("data-theme", "space-tech")',
-        "function syncNavState",
-        "topNavItems",
-        "async function saveAndApplyTheme",
-        "function runThemeShellTransition",
-        "function applyThemeWithTransition",
-        "document.startViewTransition",
-        "function getNextTheme",
-        "function toggleThemeFromLogo",
-        "theme-shell-transitioning",
-        "theme-shell-to-space-tech",
-        "theme-shell-to-light",
-        "theme-shell-view-transitioning",
-        'document.querySelectorAll("[data-theme-toggle-logo]")',
-    ]:
-        assert text in app_js
-    assert 'document.querySelectorAll(".theme-option")' not in app_js
-
-    for selector in [
-        '[data-theme="space-tech"] .top-nav',
-        '[data-theme="space-tech"] .sidebar',
-        '[data-theme="space-tech"] .main-content',
-        '[data-theme="space-tech"] .top-nav-status',
-        '.theme-shell-transitioning .sidebar',
-        '.theme-shell-transitioning .top-nav',
-        '.theme-shell-transitioning .main-content',
-        '.theme-shell-to-space-tech .sidebar',
-        '.theme-shell-to-space-tech .top-nav',
-        '.theme-shell-to-space-tech .main-content',
-        '.theme-shell-to-light .sidebar',
-        '.theme-shell-to-light .top-nav',
-        '.theme-shell-to-light .main-content',
-        '.theme-shell-view-transitioning .main-content',
-        '@keyframes sidebarToTopNav',
-        '@keyframes topNavToSidebar',
-        '@keyframes mainContentExpandLeft',
-        '@keyframes mainContentContractRight',
-        '::view-transition-old(root)',
-        '::view-transition-new(root)',
-        '@keyframes themeViewOldToSpace',
-        '@keyframes themeViewNewToLight',
-    ]:
-        assert selector in css
-
-    main_transition = re.search(r"\.theme-shell-transitioning \.main-content\s*\{(?P<body>.*?)\}", css, re.S)
-    shell_transition = re.search(
-        r"\.theme-shell-transitioning \.sidebar,\s*"
-        r"\.theme-shell-transitioning \.top-nav\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    expand_keyframes = re.search(r"@keyframes mainContentExpandLeft\s*\{(?P<body>.*?)\n\}", css, re.S)
-    contract_keyframes = re.search(r"@keyframes mainContentContractRight\s*\{(?P<body>.*?)\n\}", css, re.S)
-    assert shell_transition is not None
-    assert main_transition is not None
-    assert expand_keyframes is not None
-    assert contract_keyframes is not None
-    assert "display: flex !important" not in shell_transition.group("body")
-    assert "will-change: transform, opacity" in main_transition.group("body")
-    assert "margin-left" not in main_transition.group("body")
-    assert "margin-left" not in expand_keyframes.group("body")
-    assert "margin-left" not in contract_keyframes.group("body")
-    assert "scaleX" not in expand_keyframes.group("body")
-    assert "scaleX" not in contract_keyframes.group("body")
-    assert "translate3d(220px, 0, 0)" in expand_keyframes.group("body")
-    assert "translate3d(-220px, 0, 0)" in contract_keyframes.group("body")
-    view_transition_live_rule = re.search(
-        r"\.theme-shell-view-transitioning \.sidebar,\s*"
-        r"\.theme-shell-view-transitioning \.top-nav,\s*"
-        r"\.theme-shell-view-transitioning \.main-content\s*\{(?P<body>.*?)\}",
-        css,
-        re.S,
-    )
-    assert view_transition_live_rule is not None
-    assert "animation: none !important" in view_transition_live_rule.group("body")
+    assert 'document.documentElement.setAttribute("data-theme", "space-tech")' in app_js
+    assert 'document.documentElement.setAttribute("data-color-mode", "light")' in app_js
+    assert "function syncNavState" in app_js
+    assert "topNavItems" in app_js
+    assert '[data-theme="space-tech"] .top-nav' in css
+    assert '[data-theme="space-tech"] .main-content' in css
 
     top_nav_brand = re.search(r'\[data-theme="space-tech"\] \.top-nav-brand\s*\{(?P<body>.*?)\}', css, re.S)
     assert top_nav_brand is not None
@@ -2846,7 +5830,8 @@ def test_space_tech_top_navigation_centers_pages_and_keeps_actions_right():
     assert 'data-page="report-navigation"' in tabs.group("body")
     assert 'id="topDarkModeToggle"' not in tabs.group("body")
     assert 'id="topUserMenu"' not in tabs.group("body")
-    assert actions.group("body").index('id="topDarkModeToggle"') < actions.group("body").index('id="topUserMenu"')
+    assert 'id="topDarkModeToggle"' not in actions.group("body")
+    assert 'id="topUserMenu"' in actions.group("body")
 
     top_nav_rule = re.search(r'\[data-theme="space-tech"\] \.top-nav\s*\{(?P<body>.*?)\}', css, re.S)
     tabs_rule = re.search(r'\[data-theme="space-tech"\] \.top-nav-tabs\s*\{(?P<body>.*?)\}', css, re.S)
@@ -2858,7 +5843,7 @@ def test_space_tech_top_navigation_centers_pages_and_keeps_actions_right():
     assert "grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)" in top_nav_rule.group("body")
     assert "justify-self: center" in tabs_rule.group("body")
     assert "justify-self: end" in actions_rule.group("body")
-    assert "活力主题顶部菜单相对整条导航栏居中" in readme
+    assert "当前唯一启用的亮色活力主题" in readme
     assert "系统优化及BUG修复。" in app_js
 
 
@@ -2874,9 +5859,10 @@ def test_space_tech_theme_uses_reference_light_palette():
         "--surface-container-lowest: #ffffff",
         "--on-surface: #0f172a",
         "--secondary: #3b82f6",
-        "--space-gradient-primary: linear-gradient(135deg, #3b82f6, #06b6d4, #8b5cf6)",
+        "background: var(--theme-page-background)",
     ]:
         assert text in body
+    assert "--space-gradient-primary" not in body
     assert '[data-theme="space-tech"] body' in css
     assert "rgba(255, 255, 255, 0.72)" in css
 
@@ -2928,21 +5914,21 @@ def test_theme_is_saved_per_user_without_updating_global_defaults():
     assert 'api("/api/settings/defaults"' not in save_dark.group("body")
 
 
-def test_theme_is_applied_before_stylesheet_and_keeps_local_boot_cache():
+def test_fixed_theme_is_applied_before_stylesheet_and_radius_cache_stays_out_of_boot_script():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
 
     assert 'id="initialThemeScript"' in html
     assert html.index('id="initialThemeScript"') < html.index('href="/styles.css"')
-    for text in ["autoCheckTheme", "autoCheckDarkMode", "data-theme", "data-color-mode"]:
+    for text in ["data-theme", "data-color-mode"]:
         assert text in html
-
-    assert "function syncThemeBootCache" in app_js
-    assert 'const activeThemeUser = localStorage.getItem("autoCheckThemeUserKey") || "";' in html
-    assert 'localStorage.setItem(themeKey, defaultSettings.theme)' in app_js
-    assert 'localStorage.setItem(darkModeKey, defaultSettings.darkMode)' in app_js
-    assert 'localStorage.removeItem("autoCheckTheme")' not in app_js
-    assert 'localStorage.removeItem("autoCheckDarkMode")' not in app_js
+    initial_script = html[html.index('id="initialThemeScript"'):html.index('</script>', html.index('id="initialThemeScript"'))]
+    assert 'setAttribute("data-theme", "space-tech")' in initial_script
+    assert 'setAttribute("data-color-mode", "light")' in initial_script
+    assert "autoCheckTheme" not in initial_script
+    assert "autoCheckDarkMode" not in initial_script
+    assert "autoCheckLastInterfaceRadius" not in initial_script
+    assert 'const LAST_INTERFACE_RADIUS_CACHE_KEY = "autoCheckLastInterfaceRadius";' in app_js
 
 
 def test_latest_result_detail_list_is_restored_from_local_snapshot_before_history_fetch():
@@ -3111,7 +6097,7 @@ def test_pbc_import_modal_flow_and_defaults_do_not_skip_mapping_step():
     assert "function hasPbcActiveMappings()" in app_js
     assert "(pbcCurrentStep === 2 && !hasPbcActiveMappings())" in app_js
     assert "pbcNextBtn?.addEventListener(\"click\", async () => {" in app_js
-    assert 'const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？");' in app_js
+    assert 'const confirmed = await showConfirm("确认导入", "即将开始数据导入，是否确认？", { tone: "primary" });' in app_js
     assert "if (!confirmed) return;" in app_js
     assert re.search(r"else if \(pbcCurrentStep === 2\) \{(?P<body>.*?)goToStep\(3\);", app_js, re.S)
     assert "updatePbcStepUI();" in re.search(r"async function handlePbcFileUpload\(file\) \{(?P<body>.*?)function renderPbcFileList", app_js, re.S).group("body")
@@ -3208,12 +6194,12 @@ def test_toast_deduplicates_same_message_and_type():
     assert "messageEl.textContent = message;" in body
 
 
-def test_login_page_uses_gradient_glass_light_default_and_dark_toggle():
+def test_login_page_uses_fixed_light_centered_layout_with_login_only_background():
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
 
     assert "<title>监管智核</title>" in login_html
     assert 'class="login-container"' in login_html
-    assert 'class="left-panel"' in login_html
+    assert 'class="left-panel"' not in login_html
     assert 'class="right-panel"' in login_html
     assert 'class="light-brand"' in login_html
     assert '<img class="login-brand-logo" src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />' in login_html
@@ -3226,52 +6212,46 @@ def test_login_page_uses_gradient_glass_light_default_and_dark_toggle():
     assert 'document.querySelector(".light-brand p")' not in login_html
     assert 'document.getElementById("loginTitle").textContent = titleText;' in login_html
     assert 'document.getElementById("loginSubtitle").textContent = subtitleText;' in login_html
-    assert 'class="deco deco-1"' in login_html
-    assert "linear-gradient(135deg, #f0fdf4 0%, #ecfeff 30%, #fdf2f8 60%, #fefce8 100%)" in login_html
-    assert "backdrop-filter: blur(20px);" in login_html
-    assert "border-radius: 24px;" in login_html
-    assert "overflow: hidden;" in login_html
+    assert 'class="deco deco-1"' not in login_html
+    assert "--theme-page-background:" in login_html
+    assert "radial-gradient" in login_html
+    assert "linear-gradient(135deg, #EEF4FF 0%, #F8FAFC 58%, #FFFAF4 100%)" in login_html
+    assert "background: var(--theme-page-background);" in login_html
     assert "max-width: 440px;" in login_html
     assert "padding: 34px 32px 34px;" in login_html
     assert "text-align: left;" in login_html
     assert "margin-bottom: 14px;" in login_html
     assert "width: min(360px, 100%);" in login_html
     assert "margin: 0;" in login_html
-    assert "还没有账户？" in login_html
-    assert "去联系管理员" in login_html
-    assert 'class="feature-card"' in login_html
-    assert 'class="social-login"' in login_html
+    assert "还没有账户？" not in login_html
+    assert "去联系管理员" not in login_html
     assert 'class="forgot-password"' in login_html
-    assert 'id="loginThemeToggle"' in login_html
-    assert "max-width: 860px;" in login_html
-    assert "min-height: 500px;" in login_html
-    assert "padding: 52px 44px;" in login_html
-    assert '<img class="login-brand-logo login-brand-logo--dark" src="/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />' in login_html
-    assert "width: min(300px, 88%);" in login_html
-    assert ':root[data-login-theme="dark"] .welcome-title,' in login_html
-    assert ':root[data-login-theme="dark"] .welcome-subtitle {' in login_html
+    assert 'id="loginThemeToggle"' not in login_html
+    assert "max-width: 860px;" not in login_html
+    assert "min-height: 500px;" not in login_html
+    assert "grid-template-columns" not in login_html
     assert 'class="title brand-wordmark' not in login_html
-    assert '<div class="feature-icon">\U0001f4ca</div>' in login_html
-    assert '<div class="feature-icon">\u2713</div>' in login_html
-    assert '<div class="feature-icon">\U0001f512</div>' in login_html
-    assert '<button class="social-btn" type="button" title="\u5fae\u4fe1" data-provider="\u5fae\u4fe1">\U0001f4ac</button>' in login_html
-    assert '<button class="social-btn" type="button" title="\u9489\u9489" data-provider="\u9489\u9489">\U0001f4f1</button>' in login_html
-    assert '<button class="social-btn" type="button" title="LDAP" data-provider="LDAP">\U0001f510</button>' in login_html
     assert '<html lang="zh-CN" data-login-theme="light">' in login_html
-    assert ':root[data-login-theme="dark"] .login-container' in login_html
     assert ':root[data-login-theme="dark"] .form-input:-webkit-autofill' in login_html
     assert "-webkit-text-fill-color: var(--text-primary)" in login_html
-    assert "0 0 0 1000px #20242d inset" in login_html
+    assert "var(--field-surface) inset" in login_html
     assert '"/api/auth/login"' in login_html
     assert '"/api/auth/setup"' in login_html
     assert "暂不支持" in login_html
+    assert 'const normalized = "light";' in login_html
+    assert 'root.setAttribute("data-login-theme", normalized);' in login_html
+    assert 'localStorage.removeItem("autoCheckLoginTheme");' in login_html
 
 
-def test_login_page_light_brand_reuses_dark_mode_floating_circle():
+def test_login_page_brand_restores_animated_blue_and_orange_bubbles():
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
     light_brand = re.search(r"\.light-brand\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
-    light_brand_layers = re.search(r"\.light-brand::before,\s*\n      \.light-brand::after\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
     light_brand_circle = re.search(r"\.light-brand::before\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
+    light_brand_warm_circle = re.search(
+        r"\.light-brand::after\s*\{(?P<body>\s*background:.*?)\n      \}",
+        login_html,
+        re.S,
+    )
     login_logo = re.search(r"\.login-brand-logo\s*\{(?P<body>.*?)\n      \}", login_html, re.S)
 
     assert light_brand is not None
@@ -3279,34 +6259,16 @@ def test_login_page_light_brand_reuses_dark_mode_floating_circle():
     assert "min-height: 128px;" in light_brand_body
     assert "display: flex;" in light_brand_body
     assert "align-items: center;" in light_brand_body
-    assert light_brand_layers is not None
-    layer_body = light_brand_layers.group("body")
-    assert 'content: "";' in layer_body
-    assert "top: 6px;" in layer_body
-    assert "left: 12px;" in layer_body
-    assert "border-radius: 50%;" in layer_body
-    assert "transform-origin: center;" in layer_body
-    assert "will-change: transform, opacity;" in layer_body
-    assert "animation: lightBrandBubbleFloat 14s linear infinite alternate;" in layer_body
     assert light_brand_circle is not None
     circle_body = light_brand_circle.group("body")
-    assert "background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(6, 182, 212, 0.12), rgba(124, 58, 237, 0.16));" in circle_body
-    assert "@keyframes lightBrandBubbleFloat" in login_html
-    assert "0%, 10% { transform: translate3d(-28px, 7px, 0)" in login_html
-    assert "translate3d(-8px, -22px, 0)" in login_html
-    assert "translate3d(22px, 7px, 0)" in login_html
-    assert "translate3d(52px, -22px, 0)" in login_html
-    assert "translate3d(58px, -16px, 0)" in login_html
-    assert "translate3d(63px, -5px, 0)" in login_html
-    assert "96%, 100% { transform: translate3d(68px, 7px, 0)" in login_html
-    assert "@keyframes lightBrandBubbleWarmth" in login_html
-    assert "rgba(37, 99, 235, 0.18)" in login_html
-    assert "96%, 100% { opacity: 0.46;" in login_html
-    assert "rgba(245, 158, 11, 0.34)" in login_html
-    assert "lightBrandBubbleWarmth 14s linear infinite alternate" in login_html
+    assert "linear-gradient" in circle_body
+    assert "animation: lightBrandBubbleFloat" in login_html
+    assert light_brand_warm_circle is not None
+    assert "linear-gradient" in light_brand_warm_circle.group("body")
+    assert "lightBrandBubbleWarmth" in light_brand_warm_circle.group("body")
     assert login_logo is not None
     assert "z-index: 1;" in login_logo.group("body")
-    assert ":root[data-login-theme=\"dark\"] .light-brand {" in login_html
+    assert 'loginBrandLogo.src = "/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal";' in login_html
 
 
 def test_login_page_light_default_password_copy_and_eye_toggle_are_stable():
@@ -3444,6 +6406,8 @@ def test_logout_controls_exist_for_space_and_light_themes():
     assert 'await showConfirm(' in app_js
     logout_body = app_js[app_js.index("async function logout()"):app_js.index("function userDisplayRole")]
     assert "window.confirm" not in logout_body
+    assert "resetInterfaceRadiusForAuthChange();" in logout_body
+    assert logout_body.index("resetInterfaceRadiusForAuthChange();") < logout_body.index('api("/api/auth/logout"')
     assert 'window.location.href = "/login.html";' in app_js
     assert 'document.querySelectorAll("[data-logout-btn]")' in app_js
     assert ".sidebar-footer-main" in css
@@ -3460,7 +6424,7 @@ def test_browser_native_dialogs_are_replaced_by_app_modals():
     assert 'id="confirmModal"' in html
     assert 'id="promptModal"' in html
     assert 'id="promptInput"' in html
-    assert "function showConfirm(title, message)" in app_js
+    assert "function showConfirm(title, message, options = {})" in app_js
     assert "function showPrompt(title, message, options = {})" in app_js
     assert 'await showPrompt("重置密码"' in app_js
     assert 'await showConfirm("删除历史记录"' in app_js
@@ -3501,7 +6465,7 @@ def test_report_navigation_schedule_prompt_uses_system_custom_date_component():
     assert '"请选择新的报送日期"' in app_js
     assert '"请输入新的报送日期（YYYY-MM-DD）"' not in app_js
     assert 'type: "date"' in app_js
-    assert 'class="modal modal-confirm modal-prompt" tabindex="-1"' in html
+    assert 'class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1"' in html
 
     assert ".prompt-date-control" in css
     assert ".prompt-date-control .custom-date-shell" in css
@@ -3698,11 +6662,13 @@ def test_regular_user_settings_are_compact_without_changing_admin_about_details(
     assert "[data-role=\"user\"] #page-settings .about-admin-detail" in css
     assert "[data-role=\"user\"] #page-settings .card-about" in css
     assert "[data-role=\"user\"] #page-settings .card-system-info" in css
+    assert "[data-role=\"user\"] #page-settings .card-interface" in css
     user_grid = re.search(r'\[data-role="user"\] #page-settings \.settings-dashboard-grid\s*\{(?P<body>.*?)\}', css, re.S)
     assert user_grid is not None
     assert "align-items: stretch" in user_grid.group("body")
     user_cards = re.search(
         r'\[data-role="user"\] #page-settings \.card-system-info,\s*'
+        r'\[data-role="user"\] #page-settings \.card-interface,\s*'
         r'\[data-role="user"\] #page-settings \.card-about\s*\{(?P<body>.*?)\}',
         css,
         re.S,
@@ -3717,7 +6683,11 @@ def test_pbc_import_footer_shows_uploaded_file_total_near_next_button():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    footer = re.search(r'<div class="pbc-modal-footer" id="pbcModalFooter">(?P<body>.*?)</div>', html, re.S)
+    footer = re.search(
+        r'<div class="app-modal-footer pbc-modal-footer" id="pbcModalFooter">(?P<body>.*?)</div>',
+        html,
+        re.S,
+    )
     assert footer is not None
     assert 'id="pbcUploadSummary"' in footer.group("body")
     assert 'id="pbcClearFilesBtn"' in footer.group("body")
@@ -3755,12 +6725,15 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    modal = re.search(r'<div class="modal-overlay" id="userModal" hidden>(?P<body>.*?)</div>\s*</div>\s*<!--', html, re.S)
+    modal = re.search(
+        r'<div class="app-modal-overlay modal-overlay" id="userModal" hidden>(?P<body>.*?)</div>\s*</div>\s*<!--',
+        html,
+        re.S,
+    )
     assert modal is not None
     for token in [
         "user-modal-header",
         "user-modal-title",
-        "user-modal-icon",
         "user-modal-form",
         "user-role-card",
         "user-enable-row",
@@ -3768,6 +6741,8 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
     ]:
         assert token in modal.group("body")
         assert f".{token}" in css
+    assert "app-modal-shell" in modal.group("body")
+    assert "user-modal-icon" not in modal.group("body")
     assert '<input id="userRole" type="hidden" value="user" />' in modal.group("body")
     assert '<input id="userEnabled" type="hidden" value="true" />' in modal.group("body")
     assert '<select id="userRole"' not in modal.group("body")
@@ -3956,16 +6931,23 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "function historyDetailRow(innerHtml)" not in app_js
     assert "function renderHistoryDetailLoading(id)" in app_js
     assert "function renderHistoryDetailContent(run)" in app_js
+    assert "function renderHistoryDetailFooter(run)" not in app_js
     assert "function showHistoryDetailModal(id)" in app_js
     assert 'showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });' in app_js
-    assert 'showInfo("历史详情", renderHistoryDetailContent(history), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });' in app_js
+    assert 'detailActionLabel: "恢复到结果页"' in app_js
+    assert "onDetailAction: async () =>" in app_js
+    assert "await restoreHistoryRun(history);" in app_js
     assert "rowHtml += historyDetailRow" not in app_js
     assert 'class="history-main-row"' in app_js
     assert 'class="history-detail-row"' not in app_js
     assert 'class="history-detail-title"' not in app_js
     assert 'class="btn-close close-history-detail"' not in app_js
     assert 'class="btn-outline btn-xs restore-history"' not in app_js
-    assert 'class="btn-primary btn-sm restore-history-detail"' in app_js
+    assert 'id="infoFooter"' in html
+    assert 'class="app-modal-footer history-detail-footer"' in html
+    assert 'const footerEl = document.getElementById("infoFooter");' in app_js
+    assert 'footerEl.innerHTML = options.footerContent || "";' in app_js
+    assert 'footerEl.hidden = !options.footerContent;' in app_js
     assert "历史详情 -" not in app_js
     assert "function historyBaselineText(run = {})" in app_js
     assert "`${baselineRunAt}执行的同报告期记录`" in app_js
@@ -3975,6 +6957,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     detail_start = app_js.index("function renderHistoryDetailContent(run)")
     detail_end = app_js.index("function renderHistoryDetailLoading", detail_start)
     detail_body = app_js[detail_start:detail_end]
+    assert "history-detail-footer" not in detail_body
     assert detail_body.index('historySummaryItem("报告期", run.run_date)') < detail_body.index('historySummaryItem("执行人", historyExecutorName(run))')
     assert detail_body.index('historySummaryItem("执行人", historyExecutorName(run))') < detail_body.index('historySummaryItem("执行时间", run.run_at)')
     assert detail_body.index('historySummaryItem("执行时间", run.run_at)') < detail_body.index('historySummaryItem("基准记录", historyBaselineText(run))')
@@ -4007,16 +6990,17 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
 
     assert ".history-detail-card" in css
     assert ".history-detail-card .history-detail" in css
-    assert ".history-detail-card .history-detail-footer" in css
     assert ".modal-info.modal-info--history-detail" in css
     assert "[data-color-mode=\"dark\"] .history-detail-card" in css
     assert "var(--surface-container-lowest)" in css
     assert "var(--on-surface)" in css
-    assert "history-section--full-results" in app_js
+    assert 'history-section--${tone}' in app_js
     assert 'items.length > 10 ? " history-section--scroll" : ""' in app_js
+    assert 'class="history-status ${statusClass}"' in app_js
 
 
 def test_history_detail_modal_layout_keeps_tables_readable():
+    html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
 
     card = re.search(r"(?m)^\.history-detail-card\s*\{(?P<body>.*?)\}", css, re.S)
@@ -4024,6 +7008,8 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "display: flex" in card.group("body")
     assert "max-height" not in card.group("body")
     assert "overflow: hidden" in card.group("body")
+    assert "width: 100%" in card.group("body")
+    assert "height: 100%" in card.group("body")
     assert "border: 1px solid" not in card.group("body")
     assert "box-shadow" not in card.group("body")
 
@@ -4034,6 +7020,15 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "display: flex" in modal.group("body")
     assert "flex-direction: column" in modal.group("body")
 
+    modal_header = re.search(
+        r"(?m)^\.modal-info\.modal-info--history-detail > \.app-modal-header\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert modal_header is not None
+    assert "height: 58px" in modal_header.group("body")
+    assert "min-height: 58px" in modal_header.group("body")
+
     modal_body = re.search(r"(?m)^\.modal-info\.modal-info--history-detail \.modal-body\s*\{(?P<body>.*?)\}", css, re.S)
     assert modal_body is not None
     assert "flex: 1 1 auto" in modal_body.group("body")
@@ -4042,19 +7037,15 @@ def test_history_detail_modal_layout_keeps_tables_readable():
 
     summary_grid = re.search(r"(?m)^\.history-summary-grid\s*\{(?P<body>.*?)\}", css, re.S)
     assert summary_grid is not None
-    assert "repeat(auto-fit, minmax(220px, 1fr))" in summary_grid.group("body")
+    assert "display: flex" in summary_grid.group("body")
+    assert "flex-wrap: wrap" in summary_grid.group("body")
 
     detail = re.search(r"(?m)^\.history-detail-card \.history-detail\s*\{(?P<body>.*?)\}", css, re.S)
     assert detail is not None
     assert "flex: 1 1 auto" in detail.group("body")
     assert "overflow: auto" in detail.group("body")
 
-    footer = re.search(r"(?m)^\.history-detail-card \.history-detail-footer\s*\{(?P<body>.*?)\}", css, re.S)
-    assert footer is not None
-    assert "flex: 0 0 auto" in footer.group("body")
-    assert "position: relative" in footer.group("body")
-    assert "border-top" in footer.group("body")
-
+    assert html.index('id="infoBody"') < html.index('id="infoFooter"')
     section = re.search(r"(?m)^\.history-section\s*\{(?P<body>.*?)\}", css, re.S)
     assert section is not None
     assert "flex: 0 0 auto" in section.group("body")
@@ -4077,32 +7068,126 @@ def test_history_detail_modal_layout_keeps_tables_readable():
 
     result_header = re.search(r"(?m)^\.history-result-table th\s*\{(?P<body>.*?)\}", css, re.S)
     assert result_header is not None
-    assert "position: static" in result_header.group("body")
+    assert "position: sticky" in result_header.group("body")
+    assert "top: 0" in result_header.group("body")
+    assert "z-index: 2" in result_header.group("body")
+    assert "color: var(--on-surface-variant)" in result_header.group("body")
+    assert "font-weight: 600" in result_header.group("body")
+    assert "background: var(--surface-container-low)" in result_header.group("body")
+    assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
+
+    cells = re.search(
+        r"(?m)^\.history-result-table th,\s*\n\.history-result-table td\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert cells is not None
+    assert "text-align: center" in cells.group("body")
+    assert ".history-result-table td.money-cell" in css
 
     summary_value = re.search(r"(?m)^\.history-summary-item strong\s*\{\s*min-width: 0;(?P<body>.*?)\}", css, re.S)
     assert summary_value is not None
+    assert "color: color-mix(in srgb, var(--on-surface) 90%, var(--surface-container-lowest))" in summary_value.group("body")
+    assert "font-weight: 500" in summary_value.group("body")
     assert "overflow-wrap: break-word" in summary_value.group("body")
     assert "word-break: normal" in summary_value.group("body")
+
+    summary_label = re.search(r"(?m)^\.history-summary-item span\s*\{(?P<body>.*?)\}", css, re.S)
+    assert summary_label is not None
+    assert "color: color-mix(in srgb, var(--on-surface-variant) 58%, var(--surface-container-lowest))" in summary_label.group("body")
+
+    section_title = re.search(r"(?m)^\.history-section-title\s*\{(?P<body>.*?)\}", css, re.S)
+    assert section_title is not None
+    assert "color: color-mix(in srgb, var(--on-surface) 90%, var(--surface-container-lowest))" in section_title.group("body")
+    assert "font-weight: 500" in section_title.group("body")
+
+    section_count = re.search(r"(?m)^\.history-section-title > span:last-child\s*\{(?P<body>.*?)\}", css, re.S)
+    assert section_count is not None
+    assert "color: color-mix(in srgb, var(--on-surface-variant) 40%, var(--surface-container-lowest))" in section_count.group("body")
+    assert "font-weight: 400" in section_count.group("body")
     assert '[data-color-mode="dark"] .history-summary-item' in css
     assert '[data-color-mode="dark"] .history-result-table td' in css
-    assert '[data-color-mode="dark"] .history-count-item strong' in css
+    dark_result_header = re.search(
+        r'(?m)^\[data-color-mode="dark"\] \.history-result-table th\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert dark_result_header is not None
+    assert "color: #cbd5e1" in dark_result_header.group("body")
+    assert "background: rgba(30, 41, 59, 0.94)" in dark_result_header.group("body")
+    for status_tone in ("done", "pending"):
+        status = re.search(rf"(?m)^\.history-status--{status_tone}\s*\{{(?P<body>.*?)\}}", css, re.S)
+        assert status is not None
+        assert "background: transparent" in status.group("body")
+    assert ".history-detail-counts" not in css
 
 
-def test_history_detail_counts_are_one_row():
+def test_history_detail_uses_inline_metadata_and_colored_sections():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    assert "function historyDetailCounts(run)" in app_js
-    assert "${historyDetailCounts(run)}" in app_js
-    assert "historyCountItem(\"本次新增差异\", historyHasBaseline(run) ? (run.added_results || []) : null)" in app_js
-    assert "historyCountItem(\"本次减少差异\", historyHasBaseline(run) ? (run.removed_results || []) : null)" in app_js
-    assert "historyCountItem(\"本次完整核对结果\", run.results || [])" in app_js
-    assert 'if (items === null)' in app_js
-    assert '<strong>-</strong>' in app_js
+    start = app_js.index("function renderHistoryDetailContent(run)")
+    end = app_js.index("function renderHistoryDetailLoading", start)
+    detail = app_js[start:end]
 
-    counts = re.search(r"(?m)^\.history-detail-counts\s*\{(?P<body>.*?)\}", css, re.S)
-    assert counts is not None
-    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in counts.group("body")
+    complete = 'historySection("本次完整核对结果", run.results || [], "complete")'
+    added = 'historySection("本次新增差异", historyDiffItems(run, "added_results"), "added")'
+    removed = 'historySection("本次减少差异", historyDiffItems(run, "removed_results"), "removed")'
+    assert detail.index(complete) < detail.index(added) < detail.index(removed)
+    assert "${historyDetailCounts(run)}" not in detail
+    assert "function historyDetailCounts" not in app_js
+    assert "function historyCountItem" not in app_js
+
+    summary = re.search(r"(?m)^\.history-summary-grid\s*\{(?P<body>.*?)\}", css, re.S)
+    assert summary is not None
+    assert "display: flex" in summary.group("body")
+    assert "flex-wrap: wrap" in summary.group("body")
+
+    for tone in ("complete", "added", "removed"):
+        assert f".history-section--{tone} .history-section-bar" in css
+    assert ".history-status--done" in css
+    assert ".history-status--pending" in css
+
+    cells = re.search(
+        r"(?m)^\.history-result-table th,\s*\n\.history-result-table td\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert cells is not None
+    assert "text-align: center" in cells.group("body")
+    assert ".history-result-table td.money-cell" in css
+
+
+def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
+    css = _read(STYLES_CSS)
+
+    scrollbar_scope = re.search(
+        r"(?m)^\.app-modal-shell,\s*\n\.app-modal-shell \*\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert scrollbar_scope is not None
+    assert "scrollbar-width: none" in scrollbar_scope.group("body")
+    assert "-ms-overflow-style: none" in scrollbar_scope.group("body")
+
+    webkit_scrollbar = re.search(
+        r"(?m)^\.app-modal-shell::\-webkit-scrollbar,\s*\n\.app-modal-shell \*::\-webkit-scrollbar\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert webkit_scrollbar is not None
+    assert "display: none" in webkit_scrollbar.group("body")
+    assert "width: 0" in webkit_scrollbar.group("body")
+    assert "height: 0" in webkit_scrollbar.group("body")
+
+    modal_body = re.search(
+        r"(?m)^\.app-modal-shell:not\(#pbcModal\):not\(#dbValidationModal\):not\(#flowModal\)"
+        r" > \.app-modal-body\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert modal_body is not None
+    assert "overflow: auto" in modal_body.group("body")
 
 
 def test_history_list_shows_loading_animation_while_fetching():
@@ -4325,7 +7410,9 @@ def test_selects_use_scheme_5_glass_style_without_particles():
     for text in [
         "padding-right: 40px",
         "border-radius: 8px",
-        "radial-gradient(circle at 12% 28%",
+        "background-color: var(--surface-container-lowest)",
+        "background-image: none",
+        "caret-color: var(--theme-accent-readable)",
         "backdrop",
         "-webkit-appearance: none",
         "appearance: none",
@@ -4338,7 +7425,7 @@ def test_selects_use_scheme_5_glass_style_without_particles():
     assert "select option:checked" in css
     assert '[data-color-mode="dark"] select' in css
     assert '[data-color-mode="dark"] select option:checked' in css
-    assert "rgba(129, 140, 248, 0.30)" in css
+    assert "color-mix(in srgb, var(--theme-accent) 30%, var(--outline-variant))" in css
 
     for selector in [
         ".custom-select-shell",
@@ -4391,22 +7478,15 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "overflow: hidden",
         "overscroll-behavior: contain",
         "scrollbar-gutter: stable",
-        "background: rgba(255, 255, 255, 0.90)",
-        "background: rgba(255, 255, 255, 0.88)",
-        "rgba(15, 23, 42, 0.76)",
-        "radial-gradient(circle at 18% 22%, rgba(6, 182, 212, 0.15)",
-        "radial-gradient(circle at 84% 72%, rgba(139, 92, 246, 0.13)",
+        "background: var(--surface-container-lowest)",
+        "color: var(--on-surface)",
+        "caret-color: var(--theme-accent-readable)",
         "backdrop-filter: blur(10px)",
-        "border: 1px solid rgba(59, 130, 246, 0.30)",
-        "border: 1px solid rgba(59, 130, 246, 0.24)",
-        "border: 1.5px solid #06b6d4",
-        "filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.50))",
+        "border-color: var(--theme-accent-readable)",
+        "box-shadow: 0 0 0 3px var(--theme-focus-ring)",
         "grid-template-columns: repeat(7, 1fr)",
-        "background: linear-gradient(135deg, #3b82f6, #06b6d4)",
-        "border-color: color-mix(in srgb, var(--secondary) 46%, transparent)",
-        "border-color: color-mix(in srgb, var(--secondary) 52%, transparent)",
-        "background: linear-gradient(135deg, var(--secondary), color-mix(in srgb, var(--secondary) 72%, var(--primary)))",
-        "filter: drop-shadow(0 0 3px #3b82f6)",
+        "background: var(--theme-accent)",
+        "color: var(--theme-on-accent)",
         "animation: dropdown-slide 0.3s ease-out",
         "padding-left: 24px",
         "content: \"✓\"",
@@ -4599,8 +7679,11 @@ def test_regular_user_settings_are_limited_and_readonly_for_system_actions():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
-    for card in ["card-default", "card-db-validation", "card-data", "card-datasource", "card-business"]:
+    for card in ["card-default", "card-db-validation", "card-datasource", "card-business"]:
         assert f'class="card settings-dashboard-card {card} admin-only"' in html
+    assert 'class="card settings-dashboard-card card-data admin-only"' not in html
+    assert 'class="card settings-dashboard-card card-interface"' in html
+    assert 'class="card settings-dashboard-card card-interface admin-only"' not in html
     assert 'id="testAllConnBtn"' not in html
     assert 'id="refreshInfoBtn" type="button" class="btn-outline btn-sm admin-action"' in html
     assert "function applySettingsRoleAccess" in app_js
@@ -4768,9 +7851,10 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     )
     assert frosted_nav is not None
     frosted_nav_body = frosted_nav.group("body")
-    assert "linear-gradient" in frosted_nav_body
-    assert "backdrop-filter: blur(24px) saturate(1.18);" in frosted_nav_body
-    assert "-webkit-backdrop-filter: blur(24px) saturate(1.18);" in frosted_nav_body
+    assert "background: var(--surface-container-lowest);" in frosted_nav_body
+    assert "linear-gradient" not in frosted_nav_body
+    assert "backdrop-filter: none;" in frosted_nav_body
+    assert "-webkit-backdrop-filter: none;" in frosted_nav_body
     assert '[data-theme="space-tech"].space-nav-over-content .top-nav::before' not in css
     assert '[data-theme="space-tech"].space-nav-over-content .top-nav::after' not in css
     assert '[data-theme="space-tech"].space-nav-over-content body::before' not in css
@@ -4812,9 +7896,9 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert space_theme is not None
-    assert "--space-page-background:" in space_theme.group("body")
+    assert "--space-page-background:" not in space_theme.group("body")
     assert "--space-page-gutter-background" not in space_theme.group("body")
-    assert "background: var(--space-page-background)" in space_theme.group("body")
+    assert "background: var(--theme-page-background)" in space_theme.group("body")
     assert "background-size: 100vw 100vh" in space_theme.group("body")
     assert "background-position: 0 0" in space_theme.group("body")
     assert "background-attachment: fixed" in space_theme.group("body")
@@ -4833,7 +7917,7 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert space_body is not None
-    assert "background: transparent" in space_body.group("body")
+    assert "background: var(--theme-page-background)" in space_body.group("body")
 
     mobile_top_nav = re.search(
         r"\[data-theme=\"space-tech\"\] \.top-nav\s*\{(?P<body>.*?)\}",
@@ -5073,31 +8157,20 @@ def test_flow_settings_source_select_uses_name_only_and_shows_execute_url_rule()
     assert "validateFlowExecuteUrl" in app_js
 
 
-def test_dark_mode_is_separate_from_theme_choices_and_has_nav_toggles():
+def test_dark_mode_entry_points_are_removed_and_light_mode_is_forced():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
 
     assert 'name="theme"' not in html
-    assert html.count('data-theme-toggle-logo') == 2
-    assert 'id="topDarkModeToggle"' in html
-    assert 'id="sidebarDarkModeToggle"' in html
-    top_actions_start = html.index('class="top-nav-actions"')
-    assert html.index('id="topDarkModeToggle"', top_actions_start) < html.index('id="topUserMenu"', top_actions_start)
-    assert html.index('id="sidebarDarkModeToggle"') < html.index('id="statusText"')
-
-    for text in [
-        "const topDarkModeToggle",
-        "const sidebarDarkModeToggle",
-        "function toggleThemeFromLogo",
-        "function applyDarkMode",
-        "function syncDarkModeButtons",
-        'document.documentElement.setAttribute("data-color-mode", "dark")',
-    ]:
-        assert text in app_js
-
-    assert "[data-color-mode=\"dark\"]" in css
-    assert ".dark-mode-toggle" in css
+    assert html.count('data-theme-toggle-logo') == 0
+    assert 'id="topDarkModeToggle"' not in html
+    assert 'id="sidebarDarkModeToggle"' not in html
+    assert "function applyDarkMode" in app_js
+    apply_dark_mode = re.search(r"function applyDarkMode\([^)]*\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert apply_dark_mode is not None
+    assert "const enabled = false;" in apply_dark_mode.group("body")
+    assert 'document.documentElement.setAttribute("data-color-mode", "light")' in app_js
     assert ".top-nav-actions" in css
 
 
