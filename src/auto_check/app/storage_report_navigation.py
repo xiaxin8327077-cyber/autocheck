@@ -138,6 +138,7 @@ REPORT_NAV_CARD_SNAPSHOTS = Table(
     Column("total_count", Integer, nullable=False),
     Column("completed_count", Integer, nullable=False),
     Column("incomplete_count", Integer, nullable=False),
+    Column("comparison_delta", Integer),
     Column("completion_rate", Numeric(7, 4), nullable=False),
     Column("evaluated_at", DateTime, nullable=False),
     Column("run_id", BigInteger),
@@ -146,6 +147,19 @@ REPORT_NAV_CARD_MANUAL_VALUES = Table(
     "report_nav_card_manual_values",
     METADATA,
     Column("stat_period", String(16), primary_key=True),
+    Column("card_code", String(64), primary_key=True),
+    Column("completed_count", Integer, nullable=False),
+    Column("incomplete_count", Integer, nullable=False),
+    Column("operator_id", String(64), nullable=False),
+    Column("operator_username", String(128), nullable=False),
+    Column("operator_name", String(128), nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
+REPORT_NAV_CARD_MANUAL_HISTORY = Table(
+    "report_nav_card_manual_history",
+    METADATA,
+    Column("stat_period", String(16), primary_key=True),
+    Column("period_key", String(16), primary_key=True),
     Column("card_code", String(64), primary_key=True),
     Column("completed_count", Integer, nullable=False),
     Column("incomplete_count", Integer, nullable=False),
@@ -288,11 +302,25 @@ class CardSnapshot:
     completion_rate: Decimal
     evaluated_at: datetime
     run_id: int | None
+    comparison_delta: int | None = None
 
 
 @dataclass(frozen=True)
 class ManualCardValue:
     stat_period: str
+    card_code: str
+    completed_count: int
+    incomplete_count: int
+    operator_id: str
+    operator_username: str
+    operator_name: str
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class ManualCardHistoryValue:
+    stat_period: str
+    period_key: str
     card_code: str
     completed_count: int
     incomplete_count: int
@@ -734,6 +762,7 @@ class ReportNavigationStore:
             "total_count": snapshot.total_count,
             "completed_count": snapshot.completed_count,
             "incomplete_count": snapshot.incomplete_count,
+            "comparison_delta": snapshot.comparison_delta,
             "completion_rate": snapshot.completion_rate,
             "evaluated_at": snapshot.evaluated_at,
             "run_id": snapshot.run_id,
@@ -743,6 +772,7 @@ class ReportNavigationStore:
             total_count=statement.inserted.total_count,
             completed_count=statement.inserted.completed_count,
             incomplete_count=statement.inserted.incomplete_count,
+            comparison_delta=statement.inserted.comparison_delta,
             completion_rate=statement.inserted.completion_rate,
             evaluated_at=statement.inserted.evaluated_at,
             run_id=statement.inserted.run_id,
@@ -763,6 +793,11 @@ class ReportNavigationStore:
                 completion_rate=Decimal(str(row["completion_rate"])),
                 evaluated_at=_as_datetime(row["evaluated_at"]),
                 run_id=int(row["run_id"]) if row.get("run_id") is not None else None,
+                comparison_delta=(
+                    int(row["comparison_delta"])
+                    if row.get("comparison_delta") is not None
+                    else None
+                ),
             )
             for row in rows
             if str(row.get("stat_period")) == period
@@ -775,6 +810,7 @@ class ReportNavigationStore:
         current_user: Mapping[str, Any],
         *,
         now: datetime,
+        period_keys: Mapping[str, str] | None = None,
     ) -> None:
         with self.database.transaction() as connection:
             for stat_period, counts in values.items():
@@ -798,6 +834,19 @@ class ReportNavigationStore:
                     updated_at=statement.inserted.updated_at,
                 )
                 connection.execute(statement)
+                period_key = str((period_keys or {}).get(stat_period) or "")
+                if period_key:
+                    history_row = {**row, "period_key": period_key}
+                    history_statement = mysql_insert(REPORT_NAV_CARD_MANUAL_HISTORY).values(**history_row)
+                    history_statement = history_statement.on_duplicate_key_update(
+                        completed_count=history_statement.inserted.completed_count,
+                        incomplete_count=history_statement.inserted.incomplete_count,
+                        operator_id=history_statement.inserted.operator_id,
+                        operator_username=history_statement.inserted.operator_username,
+                        operator_name=history_statement.inserted.operator_name,
+                        updated_at=history_statement.inserted.updated_at,
+                    )
+                    connection.execute(history_statement)
 
     def load_manual_card_values(self, card_code: str) -> dict[str, ManualCardValue]:
         with self.database.connect() as connection:
@@ -805,6 +854,27 @@ class ReportNavigationStore:
         return {
             str(row["stat_period"]): ManualCardValue(
                 stat_period=str(row["stat_period"]),
+                card_code=str(row["card_code"]),
+                completed_count=int(row["completed_count"]),
+                incomplete_count=int(row["incomplete_count"]),
+                operator_id=str(row.get("operator_id") or ""),
+                operator_username=str(row.get("operator_username") or ""),
+                operator_name=str(row.get("operator_name") or ""),
+                updated_at=_as_datetime(row["updated_at"]),
+            )
+            for row in rows
+            if str(row.get("card_code")) == card_code
+        }
+
+    def load_manual_card_history(
+        self, card_code: str
+    ) -> dict[tuple[str, str], ManualCardHistoryValue]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_CARD_MANUAL_HISTORY)
+        return {
+            (str(row["stat_period"]), str(row["period_key"])): ManualCardHistoryValue(
+                stat_period=str(row["stat_period"]),
+                period_key=str(row["period_key"]),
                 card_code=str(row["card_code"]),
                 completed_count=int(row["completed_count"]),
                 incomplete_count=int(row["incomplete_count"]),

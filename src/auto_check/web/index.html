@@ -119,48 +119,74 @@
     <main class="main-content">
       <!-- 报送导航 -->
       <section class="page" id="page-report-navigation">
-        <div class="report-nav-period-bar">
-          <h2 class="report-nav-page-title">报送导航</h2>
-          <div class="report-nav-last-run-group">
-            <span class="report-nav-last-run" id="reportNavLastRun"></span>
-            <button type="button" class="report-nav-refresh-button" id="reportNavRefreshButton" aria-label="立即刷新报送导航统计" title="立即刷新">
-              <svg class="report-nav-refresh-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"></path>
-                <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path>
-              </svg>
-              <span class="report-nav-refresh-countdown" id="reportNavRefreshCountdown" hidden></span>
-            </button>
+        <div class="report-nav-stats-layout" id="reportNavStats">
+          <div class="report-nav-stats-toolbar">
+            <div class="report-nav-report-period">
+              <span class="report-nav-overview-label">报送概览</span>
+              <span class="report-nav-report-month-label">报送期</span>
+              <div class="report-nav-report-month" aria-label="当前报送期">
+                <strong id="reportNavMonth">--</strong>
+              </div>
+            </div>
+            <span class="report-nav-task-label">任务统计</span>
+            <div class="report-nav-report-controls">
+              <div class="report-nav-period-control">
+                <div class="report-nav-period-tabs" role="group" aria-label="统计周期">
+                  <button type="button" data-report-nav-period="week" aria-pressed="false">本周</button>
+                  <button type="button" data-report-nav-period="month" class="active" aria-pressed="true">本月</button>
+                  <button type="button" data-report-nav-period="quarter" aria-pressed="false">本季度</button>
+                  <button type="button" data-report-nav-period="year" aria-pressed="false">本年</button>
+                </div>
+                <div class="report-nav-period-select" aria-hidden="true">
+                  <select id="reportNavPeriodSelect" tabindex="-1">
+                    <option value="week">本周</option>
+                    <option value="month" selected>本月</option>
+                    <option value="quarter">本季度</option>
+                    <option value="year">本年</option>
+                  </select>
+                  <svg class="report-nav-period-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </div>
+              </div>
+            </div>
+            <div class="report-nav-last-run-group">
+              <span class="report-nav-last-run" id="reportNavLastRun"></span>
+              <button type="button" class="report-nav-refresh-button" id="reportNavRefreshButton" aria-label="立即刷新报送导航统计" title="立即刷新">
+                <svg class="report-nav-refresh-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"></path>
+                  <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"></path>
+                </svg>
+                <span class="report-nav-refresh-countdown" id="reportNavRefreshCountdown" hidden></span>
+              </button>
+            </div>
           </div>
-          <label class="report-nav-period-label" for="reportNavPeriodSelect">统计周期</label>
-          <div class="report-nav-period-select">
-            <select id="reportNavPeriodSelect">
-              <option value="week">本周</option>
-              <option value="month" selected>本月</option>
-              <option value="quarter">本季度</option>
-              <option value="year">本年</option>
-            </select>
-            <svg class="report-nav-period-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </div>
+          <section class="report-nav-overview-group" aria-label="报送期概览">
+            <h3 class="report-nav-overview-title">报送概览</h3>
+            <div class="report-nav-monthly-stat" id="reportNavMonthlyStat"></div>
+          </section>
+          <section class="report-nav-period-stat-group" aria-label="统计周期数据">
+            <div class="report-nav-period-stats" id="reportNavPeriodStats"></div>
+          </section>
         </div>
-
-        <div class="report-nav-load-state" id="reportNavStatus" aria-live="polite">正在读取最新统计结果…</div>
-        <div class="report-nav-stats-grid" id="reportNavStats"></div>
 
         <section class="report-nav-card report-nav-flow-card">
           <div class="report-nav-card-head">
             <h2><span></span>报送流程进度</h2>
-            <div class="report-nav-batches" id="reportNavSchedules"></div>
+            <div class="report-nav-flow-legend" aria-label="流程状态图例">
+              <span class="report-nav-legend-item completed"><i aria-hidden="true"></i>已完成</span>
+              <span class="report-nav-legend-item running"><i aria-hidden="true"></i>进行中</span>
+            </div>
           </div>
           <div class="report-nav-fishbone-scroll">
-            <div class="report-nav-fishbone">
+            <div class="report-nav-fishbone" id="reportNavFishbone">
               <div class="report-nav-fishbone-head"><span>监管报送开始</span></div>
               <div class="report-nav-fishbone-spine" id="reportNavFishboneSpine"></div>
               <div class="report-nav-fishbone-tail"><span>监管报送结束</span></div>
               <div class="report-nav-branches" id="reportNavBranches"></div>
             </div>
           </div>
+          <div class="report-nav-process-details" id="reportNavProcessDetails" aria-live="polite" hidden></div>
         </section>
 
         <section class="report-nav-card report-nav-attention-card">
@@ -179,7 +205,6 @@
                 <h3>数据治理流程 <span>紧急</span></h3>
                 <p>截止：2026-06-15　负责人：张智核　关联：人行大集中</p>
               </div>
-              <button type="button" class="report-nav-action-button">立即处理</button>
             </article>
             <article class="report-nav-todo">
               <i aria-hidden="true"></i>
@@ -187,7 +212,6 @@
                 <h3>报表特殊治理 <span>紧急</span></h3>
                 <p>截止：2026-06-16　负责人：李核对　关联：1104 报送</p>
               </div>
-              <button type="button" class="report-nav-action-button">立即处理</button>
             </article>
             <article class="report-nav-todo mid">
               <i aria-hidden="true"></i>
@@ -195,7 +219,6 @@
                 <h3>源系统输出确认 <span>关注</span></h3>
                 <p>截止：2026-06-18　负责人：王核验　关联：全要素报送</p>
               </div>
-              <button type="button" class="report-nav-action-button">查看</button>
             </article>
           </div>
         </section>

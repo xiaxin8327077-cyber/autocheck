@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS `report_nav_card_snapshots` (
   `total_count` INT NOT NULL COMMENT '总数',
   `completed_count` INT NOT NULL COMMENT '已完成数',
   `incomplete_count` INT NOT NULL COMMENT '未完成数',
+  `comparison_delta` INT NULL COMMENT '与上一完整统计周期相比的已完成数变化',
   `completion_rate` DECIMAL(7,4) NOT NULL DEFAULT 0 COMMENT '完成率（百分比）',
   `evaluated_at` DATETIME(6) NOT NULL COMMENT '统计时间',
   `run_id` BIGINT NULL COMMENT '统计任务ID',
@@ -130,6 +131,20 @@ CREATE TABLE IF NOT EXISTS `report_nav_card_manual_values` (
   PRIMARY KEY (`stat_period`, `card_code`),
   KEY `idx_report_nav_card_manual_values_card` (`card_code`, `stat_period`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='报送导航治理统计卡人工维护值';
+
+CREATE TABLE IF NOT EXISTS `report_nav_card_manual_history` (
+  `stat_period` VARCHAR(16) NOT NULL COMMENT '统计周期类型',
+  `period_key` VARCHAR(16) NOT NULL COMMENT '真实自然周期标识',
+  `card_code` VARCHAR(64) NOT NULL COMMENT '统计卡编码',
+  `completed_count` INT NOT NULL DEFAULT 0 COMMENT '已完成数量',
+  `incomplete_count` INT NOT NULL DEFAULT 0 COMMENT '未完成数量',
+  `operator_id` VARCHAR(64) NOT NULL DEFAULT '' COMMENT '操作人用户ID',
+  `operator_username` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '操作人账号',
+  `operator_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '操作人姓名',
+  `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
+  PRIMARY KEY (`stat_period`, `period_key`, `card_code`),
+  KEY `idx_report_nav_card_manual_history_card` (`card_code`, `stat_period`, `period_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='报送导航治理统计卡自然周期历史值';
 
 CREATE TABLE IF NOT EXISTS `report_nav_monthly_schedules` (
   `report_month` CHAR(7) NOT NULL COMMENT '报送月份（YYYY-MM）',

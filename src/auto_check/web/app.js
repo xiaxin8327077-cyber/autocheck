@@ -14,12 +14,16 @@ const topDarkModeToggle = document.getElementById("topDarkModeToggle");
 const sidebarDarkModeToggle = document.getElementById("sidebarDarkModeToggle");
 const logoutButtons = document.querySelectorAll("[data-logout-btn]");
 const reportNavPeriodSelect = document.getElementById("reportNavPeriodSelect");
-const reportNavStatus = document.getElementById("reportNavStatus");
+const reportNavPeriodButtons = document.querySelectorAll("[data-report-nav-period]");
 const reportNavStats = document.getElementById("reportNavStats");
-const reportNavSchedules = document.getElementById("reportNavSchedules");
+const reportNavMonthlyStat = document.getElementById("reportNavMonthlyStat");
+const reportNavPeriodStats = document.getElementById("reportNavPeriodStats");
+const reportNavMonth = document.getElementById("reportNavMonth");
 const reportNavBranches = document.getElementById("reportNavBranches");
+const reportNavProcessDetails = document.getElementById("reportNavProcessDetails");
+const reportNavFlowCard = document.querySelector("#page-report-navigation .report-nav-flow-card");
 const reportNavLastRun = document.getElementById("reportNavLastRun");
-const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine");
+const reportNavFishbone = document.getElementById("reportNavFishbone");
 const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
 const reportNavRefreshCountdown = document.getElementById("reportNavRefreshCountdown");
 const reportNavCardMaintenanceModal = document.getElementById("reportNavCardMaintenanceModal");
@@ -379,6 +383,8 @@ let reportNavigationRefreshCooldownUntil = 0;
 let reportNavigationRefreshTimer = null;
 let reportNavigationRefreshBusy = false;
 let reportNavigationRefreshRemoteRunning = false;
+let selectedReportNavigationProcessCode = "";
+let reportNavigationVisibleProcesses = [];
 const THEME_ACTIVE_USER_KEY = "autoCheckThemeUserKey";
 const THEME_KEY_BASE = "autoCheckTheme";
 const DARK_MODE_KEY_BASE = "autoCheckDarkMode";
@@ -1345,10 +1351,27 @@ async function api(path, options = {}) {
 }
 
 const REPORT_NAV_CARD_STYLES = {
-  report_forms: { color: "blue", icon: "▣", unit: "套" },
-  supplement_tasks: { color: "green", icon: "✓", unit: "个" },
-  data_governance: { color: "orange", icon: "!", unit: "个" },
-  special_governance: { color: "red", icon: "◎", unit: "个" },
+  report_forms: {
+    color: "blue",
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>',
+    unit: "套",
+  },
+  supplement_tasks: {
+    color: "green",
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+    unit: "个",
+  },
+  data_governance: {
+    color: "orange",
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/><polyline points="21 4 21 10 15 10"/></svg>',
+    unit: "个",
+    label: "数据治理",
+  },
+  special_governance: {
+    color: "red",
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    unit: "个",
+  },
 };
 const REPORT_NAV_MAINTENANCE_PERIODS = [
   ["week", "本周"],
@@ -1356,7 +1379,14 @@ const REPORT_NAV_MAINTENANCE_PERIODS = [
   ["quarter", "本季度"],
   ["year", "本年"],
 ];
+const REPORT_NAV_PERIOD_COMPARISON_LABELS = {
+  week: "较上周",
+  month: "较上月",
+  quarter: "较上季度",
+  year: "较上年",
+};
 const REPORT_NAV_MAINTAINABLE_CARDS = new Set(["data_governance", "special_governance"]);
+const REPORT_NAV_CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 
 function reportNavigationDateText(value) {
   const match = String(value || "").match(/^\d{4}-(\d{2})-(\d{2})$/);
@@ -1369,28 +1399,88 @@ function reportNavigationRate(card) {
   return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 }
 
-function renderReportNavigationCards(cards) {
-  if (!reportNavStats) return;
-  reportNavStats.innerHTML = (cards || []).map((card) => {
-    const style = REPORT_NAV_CARD_STYLES[card.card_code] || REPORT_NAV_CARD_STYLES.report_forms;
-    const rate = reportNavigationRate(card);
-    const maintainable = authState.user?.role === "admin" && REPORT_NAV_MAINTAINABLE_CARDS.has(card.card_code);
-    const interaction = maintainable
-      ? ` data-maintenance-card="${escapeHtml(card.card_code || "")}" role="button" tabindex="0"`
-      : "";
-    return `
-      <article class="report-nav-stat-card ${style.color}${maintainable ? " maintainable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
-        <div class="report-nav-stat-top">
-          <div class="report-nav-stat-icon" aria-hidden="true">${style.icon}</div>
-          <div class="report-nav-stat-heading">
-            <span>${escapeHtml(card.name || "")}</span>
-            <strong>${Number(card.total_count || 0)}<small>${style.unit}</small></strong>
-          </div>
+function reportNavigationCountText(value) {
+  return Number(value || 0).toLocaleString("zh-CN");
+}
+
+function reportNavigationTimingSummary(processes = []) {
+  return processes.reduce((summary, process) => {
+    const reportDate = String(process.report_date || "").slice(0, 10);
+    const completedDate = String(process.completed_at || "").slice(0, 10);
+    if (!reportDate) return summary;
+    if (completedDate) {
+      if (completedDate < reportDate) summary.early += 1;
+      else if (completedDate === reportDate) summary.onTime += 1;
+      else summary.overdue += 1;
+    } else if (process.status === "error" || reportDate < new Date().toISOString().slice(0, 10)) {
+      summary.overdue += 1;
+    }
+    return summary;
+  }, { onTime: 0, early: 0, overdue: 0 });
+}
+
+function reportNavigationDisplayProcesses(payload = {}) {
+  const month = Number(String(payload.report_month || "").slice(5, 7));
+  return (payload.processes || []).filter((process) => {
+    if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
+    return true;
+  });
+}
+
+function renderReportNavigationStatFooter(card, processes = [], period = "month") {
+  if (card.card_code === "report_forms") {
+    const summary = reportNavigationTimingSummary(processes);
+    return `<div class="report-nav-stat-footer timing">
+      <span class="on-time"><i></i>按时 <b>${summary.onTime}</b></span>
+      <span class="early"><i></i>提前 <b>${summary.early}</b></span>
+      <span class="overdue"><i></i>逾期 <b>${summary.overdue}</b></span>
+    </div>`;
+  }
+  const comparisonLabel = REPORT_NAV_PERIOD_COMPARISON_LABELS[period] || REPORT_NAV_PERIOD_COMPARISON_LABELS.month;
+  const comparisonMissing = card.comparison_delta === null || card.comparison_delta === undefined;
+  const rawComparisonValue = Number(card.comparison_delta);
+  const comparisonValue = Number.isFinite(rawComparisonValue) ? rawComparisonValue : 0;
+  const comparisonText = comparisonMissing
+    ? "--"
+    : comparisonValue < 0
+    ? `- ${reportNavigationCountText(Math.abs(comparisonValue))}`
+    : `+ ${reportNavigationCountText(comparisonValue)}`;
+  return `<div class="report-nav-stat-footer">
+    <span>${comparisonLabel}</span>
+    <strong><b>${comparisonText}</b>${comparisonMissing ? "" : "<span>个</span>"}</strong>
+  </div>`;
+}
+
+function renderReportNavigationStatCard(card, processes = [], period = "month") {
+  if (!card) return "";
+  const style = REPORT_NAV_CARD_STYLES[card.card_code] || REPORT_NAV_CARD_STYLES.report_forms;
+  const rate = reportNavigationRate(card);
+  const maintainable = authState.user?.role === "admin" && REPORT_NAV_MAINTAINABLE_CARDS.has(card.card_code);
+  const interaction = maintainable
+    ? ` data-maintenance-card="${escapeHtml(card.card_code || "")}" role="button" tabindex="0"`
+    : "";
+  return `
+    <article class="report-nav-stat-card ${style.color}${card.card_code === "report_forms" ? " overview" : ""}${maintainable ? " maintainable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
+      <div class="report-nav-stat-icon" aria-hidden="true">${style.icon}</div>
+      <div class="report-nav-stat-body">
+        <div class="report-nav-stat-heading">
+          <span>${escapeHtml(style.label || card.name || "")}</span>
+          <strong>${reportNavigationCountText(card.total_count)}<small>${style.unit}</small></strong>
         </div>
         <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${rate}%"></b></i><em>${rate.toFixed(rate % 1 ? 1 : 0)}%</em></div>
-        <div class="report-nav-stat-tags"><span class="up">已完成 ${Number(card.completed_count || 0)}</span><span class="warn">未完成 ${Number(card.incomplete_count || 0)}</span></div>
-      </article>`;
-  }).join("");
+        <div class="report-nav-stat-tags"><span class="up"><b>${reportNavigationCountText(card.completed_count)}</b> 已完成</span><span class="warn"><b>${reportNavigationCountText(card.incomplete_count)}</b> 未完成</span></div>
+        ${renderReportNavigationStatFooter(card, processes, period)}
+      </div>
+    </article>`;
+}
+
+function renderReportNavigationCards(cards, processes = [], period = "month") {
+  const monthlyCard = cards.find((card) => card.card_code === "report_forms");
+  const periodCards = cards.filter((card) => card.card_code !== "report_forms");
+  if (reportNavMonthlyStat) reportNavMonthlyStat.innerHTML = renderReportNavigationStatCard(monthlyCard, processes, period);
+  if (reportNavPeriodStats) {
+    reportNavPeriodStats.innerHTML = periodCards.map((card) => renderReportNavigationStatCard(card, processes, period)).join("");
+  }
 }
 
 function closeReportNavigationCardMaintenance() {
@@ -1486,50 +1576,6 @@ reportNavStats?.addEventListener("keydown", (event) => {
   openReportNavigationCardMaintenance(card.dataset.maintenanceCard);
 });
 
-function reportNavigationScheduleName(process) {
-  const labels = {
-    pbc_central: "人行大集中报送",
-    pbc_template: "资管产品模板、逐笔",
-    jr_1104: "1104",
-    full_elements: "全要素",
-    citic_registration: "中信登",
-    east5: "East5",
-    five_articles: "五篇大文章",
-  };
-  return labels[process.process_code] || process.process_name || process.process_code;
-}
-
-function renderReportNavigationSchedules(processes, reportMonth) {
-  if (!reportNavSchedules) return;
-  const groups = [
-    ["人行", new Set(["pbc_central", "pbc_template"])],
-    ["金监", new Set(["jr_1104", "full_elements", "citic_registration", "east5", "five_articles"])],
-  ];
-  reportNavSchedules.innerHTML = groups.map(([groupName, codes]) => {
-    const items = processes.filter((process) => codes.has(process.process_code));
-    if (!items.length) return "";
-    const itemByCode = new Map(items.map((process) => [process.process_code, process]));
-    const groupRows = groupName === "金监"
-      ? [["jr_1104", "full_elements"], ["citic_registration", "east5", "five_articles"]]
-      : [["pbc_central"], ["pbc_template"]];
-    const renderItem = (process) => {
-      const editable = process.schedule_editable && process.report_date;
-      const title = editable ? "双击修改报送日期" : "";
-      return `<span class="report-nav-schedule-item"><b>${escapeHtml(reportNavigationScheduleName(process))}</b><span class="report-nav-schedule-separator">：</span><time data-schedule-process="${escapeHtml(process.process_code)}" data-report-month="${escapeHtml(reportMonth)}" data-report-date="${escapeHtml(process.report_date || "")}" class="${editable ? "editable" : ""}" title="${title}">${escapeHtml(reportNavigationDateText(process.report_date))}</time></span>`;
-    };
-    const rows = groupRows.map((rowCodes) => rowCodes
-      .map((code) => itemByCode.get(code))
-      .filter(Boolean)
-      .map(renderItem)
-      .join(""))
-      .filter(Boolean)
-      .map((row) => `<span class="report-nav-schedule-row">${row}</span>`)
-      .join("");
-    const rowsClass = groupName === "金监" ? "regulator" : "pbc";
-    return `<div class="report-nav-batch"><strong>${groupName}</strong><p class="report-nav-schedule-rows ${rowsClass}">${rows}</p></div>`;
-  }).join("");
-}
-
 function updateReportNavigationRefreshButton() {
   if (!reportNavRefreshButton) return;
   const remainingSeconds = Math.max(0, Math.ceil((reportNavigationRefreshCooldownUntil - Date.now()) / 1000));
@@ -1578,90 +1624,102 @@ function setReportNavigationRefreshCooldown(seconds) {
   updateReportNavigationRefreshButton();
 }
 
-function renderReportNavigationStep(step, reportMonth) {
-  const completed = step.status === "completed";
-  const stateClass = completed ? "completed" : (step.status === "error" ? "error" : "pending");
-  const actionable = step.manual_completion_allowed && (step.manual_completed || !completed);
-  const actionClass = actionable ? " interactive" : "";
-  let actionAttributes = "";
-  if (actionable) {
-    const manualAction = step.manual_completed ? "manual-cancel" : "manual-complete";
-    const label = step.manual_completed ? "撤销手工完成" : "标记完成";
-    actionAttributes = ` data-step-code="${escapeHtml(step.step_code)}" data-manual-action="${manualAction}" data-report-month="${escapeHtml(reportMonth)}" role="button" tabindex="0" aria-label="${label}：${escapeHtml(step.step_name || "")}"`;
-  }
-  const message = step.error_message || step.status_message || "";
-  return `<p class="report-nav-step ${stateClass}${actionClass}"${actionAttributes} title="${escapeHtml(message)}"><span>${escapeHtml(step.step_name || "")}</span></p>`;
+function reportNavigationMonthText(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})$/);
+  return match ? `${match[1]}年${Number(match[2])}月` : "--";
 }
 
-function reportNavigationPanelWidth(steps = []) {
-  const longestStepLength = steps.reduce(
-    (longest, step) => Math.max(longest, Array.from(String(step.step_name || "")).length),
-    0,
-  );
-  return Math.min(340, Math.max(250, longestStepLength * 12 + 56));
+function reportNavigationTimestampText(value) {
+  return String(value || "").replace("T", " ") || "--";
 }
 
-function reportNavigationSpineProgress(processes = []) {
-  if (!processes.length) return 0;
-  let completedPrefixCount = 0;
-  for (const process of processes) {
-    if (process.status !== "completed") break;
-    completedPrefixCount += 1;
+function renderReportNavigationProcessDetails(process) {
+  if (!reportNavProcessDetails) return;
+  reportNavProcessDetails.hidden = !process;
+  reportNavFlowCard?.classList.toggle("has-selection", Boolean(process));
+  if (!process) {
+    reportNavProcessDetails.innerHTML = "";
+    return;
   }
-  if (completedPrefixCount === 0) return 0;
-  if (completedPrefixCount === processes.length) return 100;
-  return ((completedPrefixCount - 0.5) / processes.length) * 100;
+  const done = process.status === "completed";
+  const steps = process.steps || [];
+  const currentStepIndex = steps.findIndex((step) => step.status !== "completed");
+  const rows = steps.map((step, index) => {
+    const completed = step.status === "completed";
+    const error = step.status === "error";
+    const current = !completed && index === currentStepIndex;
+    const stateClass = completed ? "completed" : (error ? "error" : (current ? "current" : "pending"));
+    return `<li class="report-nav-step-row ${stateClass}">
+      <span class="report-nav-step-index" aria-hidden="true">${completed ? REPORT_NAV_CHECK_ICON : index + 1}</span>
+      <div class="report-nav-step-content"><strong>${escapeHtml(step.step_name || "")}</strong></div>
+    </li>`;
+  }).join("");
+  const totalSteps = Number(process.total_steps || steps.length);
+  reportNavProcessDetails.innerHTML = `
+    <div class="report-nav-process-detail-head">
+      <div><strong>${escapeHtml(process.process_name || "")}</strong><span>${done ? "已完成" : "进行中"} ${Number(process.completed_steps || 0)}/${totalSteps}</span></div>
+    </div>
+    ${rows ? `<ol class="report-nav-step-list">${rows}</ol>` : '<div class="report-nav-process-empty">暂无可展示步骤</div>'}`;
+}
+
+function selectReportNavigationProcess(processCode) {
+  const process = reportNavigationVisibleProcesses.find((item) => item.process_code === processCode);
+  if (!process) return;
+  const nextProcessCode = selectedReportNavigationProcessCode === processCode ? "" : processCode;
+  const nextProcess = nextProcessCode ? process : null;
+  selectedReportNavigationProcessCode = nextProcessCode;
+  reportNavBranches?.querySelectorAll("[data-report-nav-process]").forEach((card) => {
+    const selected = card.dataset.reportNavProcess === nextProcessCode;
+    card.classList.toggle("selected", selected);
+    card.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+  renderReportNavigationProcessDetails(nextProcess);
 }
 
 function renderReportNavigationProcesses(payload) {
   if (!reportNavBranches) return;
-  const month = Number(String(payload.report_month || "").slice(5, 7));
-  const processes = (payload.processes || []).filter((process) => {
-    if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
-    return true;
-  });
-  const panelHiddenProcessCodes = new Set(["full_elements", "east5", "five_articles"]);
-  const spineProgress = reportNavigationSpineProgress(processes);
+  const processes = reportNavigationDisplayProcesses(payload);
+  reportNavigationVisibleProcesses = processes;
   const allProcessesCompleted = processes.length > 0
     && processes.every((process) => process.status === "completed");
-  reportNavBranches.closest(".report-nav-fishbone")?.classList.toggle("all-done", allProcessesCompleted);
-  reportNavFishboneSpine?.style.setProperty("--report-nav-spine-progress", `${spineProgress}%`);
+  reportNavFishbone?.classList.toggle("all-done", allProcessesCompleted);
   reportNavBranches.style.setProperty("--report-nav-branch-count", String(Math.max(processes.length, 1)));
+  const selectedExists = processes.some((process) => process.process_code === selectedReportNavigationProcessCode);
+  if (!selectedExists) selectedReportNavigationProcessCode = "";
   reportNavBranches.innerHTML = processes.map((process, index) => {
     const done = process.status === "completed";
+    const selected = process.process_code === selectedReportNavigationProcessCode;
     const side = index % 2 === 0 ? "top" : "bottom";
-    const steps = process.steps || [];
-    const showPanel = steps.length > 0 && !panelHiddenProcessCodes.has(process.process_code);
-    const panelClass = showPanel ? "" : " no-panel";
-    const panelWidth = reportNavigationPanelWidth(steps);
-    const panel = showPanel ? `
-      <div class="report-nav-branch-panel" style="--report-nav-panel-width: ${panelWidth}px">
-        <div class="report-nav-panel-status">${done ? "DONE · " : "进度 · "}${Number(process.completed_steps || 0)}/${Number(process.total_steps || steps.length)}</div>
-        ${steps.map((step) => renderReportNavigationStep(step, payload.report_month)).join("")}
-        ${done && process.completed_at ? `<div class="report-nav-done-meta">✓ 完成于 ${escapeHtml(process.completed_at)}</div>` : ""}
-      </div>` : "";
-    const noPanelCompletion = !showPanel && done && process.completed_at
-      ? `<div class="report-nav-no-panel-done-meta">完成于 ${escapeHtml(process.completed_at)}</div>`
-      : "";
-    return `<div class="report-nav-branch ${side}${done ? " done" : ""}${panelClass}">
+    const totalSteps = Number(process.total_steps || (process.steps || []).length);
+    const completedSteps = Number(process.completed_steps || 0);
+    const completionText = done
+      ? (process.completed_at ? escapeHtml(reportNavigationTimestampText(process.completed_at)) : "--")
+      : "进行中";
+    return `<div class="report-nav-branch ${side}${done ? " done" : " running"}">
       <div class="report-nav-branch-line"></div><div class="report-nav-branch-node"></div>
-      <div class="report-nav-branch-label">${done ? "<span>✓</span>" : ""}${escapeHtml(process.process_name || "")}</div>
-      ${noPanelCompletion}
-      ${panel}
+      <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
+        <div class="report-nav-process-title"><span class="report-nav-process-state-icon" aria-hidden="true">${done ? REPORT_NAV_CHECK_ICON : ""}</span><strong>${escapeHtml(process.process_name || "")}</strong><b>${completedSteps}/${totalSteps}</b></div>
+        <div class="report-nav-process-meta"><span>截止日期</span><time>${escapeHtml(reportNavigationDateText(process.report_date))}</time></div>
+        <div class="report-nav-process-meta completion"><span>${done ? "完成于" : "状态"}</span><time>${completionText}</time></div>
+      </article>
     </div>`;
   }).join("");
+  const selectedProcess = processes.find((process) => process.process_code === selectedReportNavigationProcessCode);
+  renderReportNavigationProcessDetails(selectedProcess || null);
 }
 
 function renderReportNavigation(payload) {
   reportNavigationPayload = payload;
-  renderReportNavigationCards(payload.cards || []);
-  const month = Number(String(payload.report_month || "").slice(5, 7));
-  const processes = (payload.processes || []).filter((process) => {
-    if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
-    return true;
-  });
-  renderReportNavigationSchedules(processes, payload.report_month || "");
-  renderReportNavigationProcesses({ ...payload, processes });
+  if (reportNavMonth) {
+    const businessPeriod = String(payload.business_report_date || payload.report_month || "").slice(0, 7);
+    reportNavMonth.textContent = reportNavigationMonthText(businessPeriod);
+  }
+  renderReportNavigationCards(
+    payload.cards || [],
+    reportNavigationDisplayProcesses(payload),
+    payload.period || reportNavPeriodSelect?.value || "month",
+  );
+  renderReportNavigationProcesses(payload);
   const refreshState = payload.manual_refresh || {};
   reportNavigationRefreshRemoteRunning = Boolean(refreshState.running);
   setReportNavigationRefreshCooldown(Number(refreshState.retry_after_seconds || 0));
@@ -1671,38 +1729,49 @@ function renderReportNavigation(payload) {
       ? `最近更新：${run.finished_at || run.started_at || "--"}${run.status === "failed" ? "（失败）" : ""}`
       : "等待定时任务首次统计";
   }
-  if (reportNavStatus) {
-    const failed = payload.last_run?.status === "failed";
-    reportNavStatus.classList.toggle("error", failed);
-    reportNavStatus.classList.toggle("ready", Boolean(payload.last_run) && !failed);
-    reportNavStatus.textContent = failed
-      ? "最近一次统计失败，当前保留显示上次成功快照，请检查任务日志。"
-      : (payload.last_run ? "" : "尚无统计快照，页面将在定时任务完成后自动显示结果。");
-  }
+  const failed = payload.last_run?.status === "failed";
+  setStatus(failed
+    ? "最近一次统计失败，当前保留显示上次成功快照，请检查任务日志。"
+    : (payload.last_run ? DEFAULT_VERSION : "尚无统计快照，页面将在定时任务完成后自动显示结果。"));
 }
 
 async function loadReportNavigation() {
   if (reportNavigationLoading) return;
   reportNavigationLoading = true;
   const period = reportNavPeriodSelect?.value || "month";
-  if (reportNavStatus) {
-    reportNavStatus.classList.remove("ready", "error");
-    reportNavStatus.textContent = "正在读取最新统计结果…";
-  }
+  setStatus("正在读取最新统计结果…");
   try {
     const payload = await api(`/api/report-navigation/dashboard?period=${encodeURIComponent(period)}`);
     renderReportNavigation(payload);
   } catch (error) {
-    if (reportNavStatus) {
-      reportNavStatus.classList.add("error");
-      reportNavStatus.textContent = `统计结果读取失败：${error.message}`;
-    }
+    setStatus(`统计结果读取失败：${error.message}`);
   } finally {
     reportNavigationLoading = false;
   }
 }
 
-reportNavPeriodSelect?.addEventListener("change", () => loadReportNavigation());
+function syncReportNavigationPeriodTabs() {
+  const period = reportNavPeriodSelect?.value || "month";
+  reportNavPeriodButtons.forEach((button) => {
+    const active = button.dataset.reportNavPeriod === period;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+reportNavPeriodSelect?.addEventListener("change", () => {
+  syncReportNavigationPeriodTabs();
+  loadReportNavigation();
+});
+
+reportNavPeriodButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!reportNavPeriodSelect || reportNavPeriodSelect.value === button.dataset.reportNavPeriod) return;
+    reportNavPeriodSelect.value = button.dataset.reportNavPeriod;
+    syncReportNavigationPeriodTabs();
+    loadReportNavigation();
+  });
+});
 
 reportNavRefreshButton?.addEventListener("click", async () => {
   if (reportNavRefreshButton.disabled || reportNavigationRefreshBusy) return;
@@ -1741,76 +1810,17 @@ reportNavRefreshButton?.addEventListener("click", async () => {
   }
 });
 
-reportNavSchedules?.addEventListener("dblclick", async (event) => {
-  const target = event.target.closest("time[data-schedule-process]");
-  if (!target?.classList.contains("editable") || authState.user?.role !== "admin") return;
-  const nextDate = await showPrompt("修改报送日期", "请选择新的报送日期", {
-    type: "date",
-    defaultValue: target.dataset.reportDate || "",
-    placeholder: "YYYY-MM-DD",
-  });
-  if (!nextDate || nextDate === target.dataset.reportDate) return;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
-    showToast("请输入 YYYY-MM-DD 格式的日期", "error");
-    return;
-  }
-  const confirmed = await showConfirm("修改报送日期", `确认将报送日期修改为 ${nextDate} 吗？`, { tone: "warning" });
-  if (!confirmed) return;
-  try {
-    const result = await api(`/api/report-navigation/schedules/${encodeURIComponent(target.dataset.scheduleProcess)}`, {
-      method: "POST",
-      body: JSON.stringify({ report_month: target.dataset.reportMonth, report_date: nextDate }),
-    });
-    if (result.statistics_status === "failed") {
-      showToast(`报送日期已更新，但状态重算失败：${result.statistics_error || "未知错误"}`, "error");
-    } else if (result.statistics_status === "skipped") {
-      showToast("报送日期已更新，当前已有统计任务执行中，请稍后刷新查看最新状态", "warning");
-    } else {
-      showToast("报送日期已更新，流程状态已重新统计", "success");
-    }
-    await loadReportNavigation();
-  } catch (error) {
-    showToast(error.message, "error");
-  }
-});
-
-async function handleReportNavigationManualAction(stepRow) {
-  if (!stepRow || stepRow.classList.contains("busy") || authState.user?.role !== "admin") return;
-  const isCancel = stepRow.dataset.manualAction === "manual-cancel";
-  const confirmed = await showConfirm(
-    isCancel ? "撤销手工完成" : "标记步骤完成",
-    isCancel ? "撤销后将恢复该步骤最近一次自动统计状态，确认继续吗？" : "确认将该步骤手工标记为已完成吗？",
-    { tone: isCancel ? "warning" : "success" },
-  );
-  if (!confirmed) return;
-  stepRow.classList.add("busy");
-  stepRow.setAttribute("aria-disabled", "true");
-  try {
-    await api(`/api/report-navigation/steps/${encodeURIComponent(stepRow.dataset.stepCode)}/${stepRow.dataset.manualAction}`, {
-      method: "POST",
-      body: JSON.stringify({ report_month: stepRow.dataset.reportMonth }),
-    });
-    showToast(isCancel ? "已恢复自动统计状态" : "已标记完成", "success");
-    await loadReportNavigation();
-  } catch (error) {
-    showToast(error.message, "error");
-  } finally {
-    stepRow.classList.remove("busy");
-    stepRow.removeAttribute("aria-disabled");
-  }
-}
-
 reportNavBranches?.addEventListener("click", (event) => {
-  const stepRow = event.target.closest(".report-nav-step[data-manual-action]");
-  handleReportNavigationManualAction(stepRow);
+  const card = event.target.closest("[data-report-nav-process]");
+  if (card) selectReportNavigationProcess(card.dataset.reportNavProcess);
 });
 
 reportNavBranches?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
-  const stepRow = event.target.closest(".report-nav-step[data-manual-action]");
-  if (!stepRow) return;
+  const card = event.target.closest("[data-report-nav-process]");
+  if (!card) return;
   event.preventDefault();
-  handleReportNavigationManualAction(stepRow);
+  selectReportNavigationProcess(card.dataset.reportNavProcess);
 });
 
 async function encryptPasswordForTransport(password) {

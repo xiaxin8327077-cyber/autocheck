@@ -21,6 +21,7 @@ REPORT_NAV_TABLES = {
     "report_nav_process_snapshots",
     "report_nav_card_snapshots",
     "report_nav_card_manual_values",
+    "report_nav_card_manual_history",
     "report_nav_monthly_schedules",
     "report_nav_stat_runs",
     "report_nav_scheduler_state",
@@ -43,7 +44,7 @@ def test_report_navigation_schema_only_creates_new_relational_tables():
 def test_application_schema_keeps_version_one_and_adds_report_navigation_tables():
     assert CURRENT_APP_SCHEMA_VERSION == 1
     assert REPORT_NAV_TABLES <= set(EXPECTED_APP_SCHEMA)
-    assert len(EXPECTED_APP_SCHEMA) == 37
+    assert len(EXPECTED_APP_SCHEMA) == 38
     assert EXPECTED_APP_SCHEMA["report_nav_steps"] >= {
         "step_code",
         "process_code",

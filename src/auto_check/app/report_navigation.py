@@ -512,6 +512,41 @@ def period_bounds(period: str, today: date) -> tuple[datetime, datetime]:
     return datetime.combine(start_day, time.min), datetime.combine(end_day, time.min)
 
 
+def previous_period_bounds(period: str, today: date) -> tuple[datetime, datetime]:
+    current_start, _ = period_bounds(period, today)
+    current_start_day = current_start.date()
+    if period == "week":
+        previous_start_day = current_start_day - timedelta(days=7)
+    elif period == "month":
+        previous_month_end = current_start_day - timedelta(days=1)
+        previous_start_day = previous_month_end.replace(day=1)
+    elif period == "quarter":
+        previous_year = current_start_day.year
+        previous_month = current_start_day.month - 3
+        if previous_month <= 0:
+            previous_month += 12
+            previous_year -= 1
+        previous_start_day = date(previous_year, previous_month, 1)
+    elif period == "year":
+        previous_start_day = date(current_start_day.year - 1, 1, 1)
+    else:
+        raise ValueError("period must be week, month, quarter or year")
+    return datetime.combine(previous_start_day, time.min), current_start
+
+
+def period_storage_key(period: str, value: date) -> str:
+    if period == "week":
+        iso_year, iso_week, _ = value.isocalendar()
+        return f"{iso_year}-W{iso_week:02d}"
+    if period == "month":
+        return value.strftime("%Y-%m")
+    if period == "quarter":
+        return f"{value.year}-Q{((value.month - 1) // 3) + 1}"
+    if period == "year":
+        return str(value.year)
+    raise ValueError("period must be week, month, quarter or year")
+
+
 def latest_business_report_date(database: ApplicationDatabase) -> date | None:
     with database.connect() as connection:
         rows = connection.execute(
@@ -895,11 +930,16 @@ class ReportNavigationService:
         card_payload = []
         for card_code, name in card_order:
             snapshot = cards.get(card_code)
-            manual_value = (
-                self.store.load_manual_card_values(card_code).get(period)
+            manual_history = (
+                self.store.load_manual_card_history(card_code)
                 if card_code in GOVERNANCE_CARD_CODES
-                else None
+                else {}
             )
+            current_period_key = period_storage_key(period, current.date())
+            previous_period_start, _ = previous_period_bounds(period, current.date())
+            previous_period_key = period_storage_key(period, previous_period_start.date())
+            manual_value = manual_history.get((period, current_period_key))
+            previous_manual_value = manual_history.get((period, previous_period_key))
             if manual_value is not None:
                 completed_count = manual_value.completed_count
                 incomplete_count = manual_value.incomplete_count
@@ -925,19 +965,38 @@ class ReportNavigationService:
                     "incomplete_count": incomplete_count,
                     "completion_rate": completion_rate,
                     "evaluated_at": evaluated_at,
+                    "comparison_delta": (
+                        snapshot.comparison_delta
+                        if card_code == "supplement_tasks" and snapshot is not None
+                        else (
+                            completed_count - previous_manual_value.completed_count
+                            if card_code in GOVERNANCE_CARD_CODES
+                            and manual_value is not None
+                            and previous_manual_value is not None
+                            else None
+                        )
+                    ),
                 }
             )
         card_maintenance = {}
         if is_admin:
             for card_code in GOVERNANCE_CARD_CODES:
-                saved_values = self.store.load_manual_card_values(card_code)
+                saved_values = self.store.load_manual_card_history(card_code)
                 card_maintenance[card_code] = {
                     stat_period: {
-                        "completed_count": saved_values.get(stat_period).completed_count
-                        if saved_values.get(stat_period)
+                        "completed_count": saved_values.get(
+                            (stat_period, period_storage_key(stat_period, current.date()))
+                        ).completed_count
+                        if saved_values.get(
+                            (stat_period, period_storage_key(stat_period, current.date()))
+                        )
                         else 0,
-                        "incomplete_count": saved_values.get(stat_period).incomplete_count
-                        if saved_values.get(stat_period)
+                        "incomplete_count": saved_values.get(
+                            (stat_period, period_storage_key(stat_period, current.date()))
+                        ).incomplete_count
+                        if saved_values.get(
+                            (stat_period, period_storage_key(stat_period, current.date()))
+                        )
                         else 0,
                     }
                     for stat_period in PERIODS
@@ -1032,11 +1091,16 @@ class ReportNavigationService:
                 "completed_count": completed_count,
                 "incomplete_count": incomplete_count,
             }
+        current = now or beijing_now()
         self.store.save_manual_card_values(
             card_code,
             normalized,
             current_user,
-            now=now or beijing_now(),
+            now=current,
+            period_keys={
+                stat_period: period_storage_key(stat_period, current.date())
+                for stat_period in PERIODS
+            },
         )
         return {"ok": True, "card_code": card_code}
 
@@ -1223,28 +1287,49 @@ class ReportNavigationService:
         completed_status = _single_value(supplement_step, "completed_status")
         valid_deleted = _single_value(supplement_step, "valid_deleted_value")
         sql = (
-            f"SELECT COUNT(*) AS total_count, "
-            f"SUM(CASE WHEN {status_field} = %s THEN 1 ELSE 0 END) AS completed_count, "
-            f"SUM(CASE WHEN {status_field} IS NULL OR {status_field} <> %s THEN 1 ELSE 0 END) AS incomplete_count "
+            f"SELECT "
+            f"SUM(CASE WHEN {date_field} >= %s AND {date_field} < %s THEN 1 ELSE 0 END) AS total_count, "
+            f"SUM(CASE WHEN {date_field} >= %s AND {date_field} < %s AND {status_field} = %s THEN 1 ELSE 0 END) AS completed_count, "
+            f"SUM(CASE WHEN {date_field} >= %s AND {date_field} < %s AND ({status_field} IS NULL OR {status_field} <> %s) THEN 1 ELSE 0 END) AS incomplete_count, "
+            f"SUM(CASE WHEN {date_field} >= %s AND {date_field} < %s AND {status_field} = %s THEN 1 ELSE 0 END) AS previous_completed_count "
             f"FROM {query.qualified_table(source)} "
             f"WHERE {deleted_field} = %s AND {date_field} >= %s AND {date_field} < %s"
         )
         for period in PERIODS:
             start, end = period_bounds(period, current.date())
+            previous_start, previous_end = previous_period_bounds(period, current.date())
             row = query.fetch_one(
                 source,
                 sql,
-                (completed_status, completed_status, valid_deleted, start, end),
+                (
+                    start,
+                    end,
+                    start,
+                    end,
+                    completed_status,
+                    start,
+                    end,
+                    completed_status,
+                    previous_start,
+                    previous_end,
+                    completed_status,
+                    valid_deleted,
+                    previous_start,
+                    end,
+                ),
             ) or {}
+            completed_count = _integer(row.get("completed_count"))
+            previous_completed_count = _integer(row.get("previous_completed_count"))
             self.store.save_card_snapshot(
                 _card_snapshot(
                     period,
                     "supplement_tasks",
                     _integer(row.get("total_count")),
-                    _integer(row.get("completed_count")),
+                    completed_count,
                     _integer(row.get("incomplete_count")),
                     current,
                     run_id,
+                    comparison_delta=completed_count - previous_completed_count,
                 )
             )
             self.store.save_card_snapshot(
@@ -1357,6 +1442,8 @@ def _card_snapshot(
     incomplete: int,
     evaluated_at: datetime,
     run_id: int,
+    *,
+    comparison_delta: int | None = None,
 ) -> CardSnapshot:
     rate = Decimal("0") if total <= 0 else (Decimal(completed) * Decimal("100") / Decimal(total))
     return CardSnapshot(
@@ -1368,6 +1455,7 @@ def _card_snapshot(
         rate.quantize(Decimal("0.0001")),
         evaluated_at,
         run_id,
+        comparison_delta,
     )
 
 
