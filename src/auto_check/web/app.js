@@ -24,6 +24,7 @@ const reportNavProcessDetails = document.getElementById("reportNavProcessDetails
 const reportNavFlowCard = document.querySelector("#page-report-navigation .report-nav-flow-card");
 const reportNavLastRun = document.getElementById("reportNavLastRun");
 const reportNavFishbone = document.getElementById("reportNavFishbone");
+const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine");
 const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
 const reportNavRefreshCountdown = document.getElementById("reportNavRefreshCountdown");
 const reportNavCardMaintenanceModal = document.getElementById("reportNavCardMaintenanceModal");
@@ -385,6 +386,7 @@ let reportNavigationRefreshBusy = false;
 let reportNavigationRefreshRemoteRunning = false;
 let selectedReportNavigationProcessCode = "";
 let reportNavigationVisibleProcesses = [];
+let reportNavigationFlowCardAnimation = null;
 const THEME_ACTIVE_USER_KEY = "autoCheckThemeUserKey";
 const THEME_KEY_BASE = "autoCheckTheme";
 const DARK_MODE_KEY_BASE = "autoCheckDarkMode";
@@ -1427,6 +1429,18 @@ function reportNavigationDisplayProcesses(payload = {}) {
   });
 }
 
+function reportNavigationSpineProgress(processes = []) {
+  if (!processes.length) return 0;
+  let completedPrefixCount = 0;
+  for (const process of processes) {
+    if (process.status !== "completed") break;
+    completedPrefixCount += 1;
+  }
+  if (completedPrefixCount === 0) return 0;
+  if (completedPrefixCount === processes.length) return 100;
+  return ((completedPrefixCount - 0.5) / processes.length) * 100;
+}
+
 function renderReportNavigationStatFooter(card, processes = [], period = "month") {
   if (card.card_code === "report_forms") {
     const summary = reportNavigationTimingSummary(processes);
@@ -1633,6 +1647,20 @@ function reportNavigationTimestampText(value) {
   return String(value || "").replace("T", " ") || "--";
 }
 
+function animateReportNavigationFlowCardHeight(startHeight) {
+  if (!reportNavFlowCard || typeof reportNavFlowCard.animate !== "function" || !startHeight) return;
+  const endHeight = reportNavFlowCard.getBoundingClientRect().height;
+  if (Math.abs(endHeight - startHeight) < 1) return;
+  reportNavigationFlowCardAnimation?.cancel();
+  reportNavigationFlowCardAnimation = reportNavFlowCard.animate(
+    [
+      { height: `${startHeight}px`, overflow: "hidden" },
+      { height: `${endHeight}px`, overflow: "hidden" },
+    ],
+    { duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+  );
+}
+
 function renderReportNavigationProcessDetails(process) {
   if (!reportNavProcessDetails) return;
   reportNavProcessDetails.hidden = !process;
@@ -1650,30 +1678,75 @@ function renderReportNavigationProcessDetails(process) {
     const current = !completed && index === currentStepIndex;
     const stateClass = completed ? "completed" : (error ? "error" : (current ? "current" : "pending"));
     return `<li class="report-nav-step-row ${stateClass}">
-      <span class="report-nav-step-index" aria-hidden="true">${completed ? REPORT_NAV_CHECK_ICON : index + 1}</span>
-      <div class="report-nav-step-content"><strong>${escapeHtml(step.step_name || "")}</strong></div>
+      <span class="report-nav-step-index" aria-hidden="true">${completed ? REPORT_NAV_CHECK_ICON : ""}</span>
+      <div class="report-nav-step-content"><span class="report-nav-step-order">${index + 1}、</span><strong>${escapeHtml(step.step_name || "")}</strong></div>
     </li>`;
   }).join("");
   const totalSteps = Number(process.total_steps || steps.length);
   reportNavProcessDetails.innerHTML = `
-    <div class="report-nav-process-detail-head">
+    <div class="report-nav-process-detail-head ${done ? "completed" : "running"}">
       <div><strong>${escapeHtml(process.process_name || "")}</strong><span>${done ? "已完成" : "进行中"} ${Number(process.completed_steps || 0)}/${totalSteps}</span></div>
     </div>
     ${rows ? `<ol class="report-nav-step-list">${rows}</ol>` : '<div class="report-nav-process-empty">暂无可展示步骤</div>'}`;
 }
 
+function clearReportNavigationProcessSelection() {
+  reportNavigationFlowCardAnimation?.cancel();
+  const startHeight = reportNavFlowCard?.getBoundingClientRect().height || 0;
+  selectedReportNavigationProcessCode = "";
+  reportNavBranches?.querySelectorAll("[data-report-nav-process]").forEach((card) => {
+    card.classList.remove("selected");
+    card.setAttribute("aria-pressed", "false");
+  });
+  renderReportNavigationProcessDetails(null);
+  animateReportNavigationFlowCardHeight(startHeight);
+}
+
 function selectReportNavigationProcess(processCode) {
   const process = reportNavigationVisibleProcesses.find((item) => item.process_code === processCode);
   if (!process) return;
-  const nextProcessCode = selectedReportNavigationProcessCode === processCode ? "" : processCode;
-  const nextProcess = nextProcessCode ? process : null;
-  selectedReportNavigationProcessCode = nextProcessCode;
+  if (selectedReportNavigationProcessCode === processCode) {
+    clearReportNavigationProcessSelection();
+    return;
+  }
+  reportNavigationFlowCardAnimation?.cancel();
+  const startHeight = reportNavFlowCard?.getBoundingClientRect().height || 0;
+  selectedReportNavigationProcessCode = processCode;
   reportNavBranches?.querySelectorAll("[data-report-nav-process]").forEach((card) => {
-    const selected = card.dataset.reportNavProcess === nextProcessCode;
+    const selected = card.dataset.reportNavProcess === processCode;
     card.classList.toggle("selected", selected);
     card.setAttribute("aria-pressed", selected ? "true" : "false");
   });
-  renderReportNavigationProcessDetails(nextProcess);
+  renderReportNavigationProcessDetails(process);
+  animateReportNavigationFlowCardHeight(startHeight);
+}
+
+async function editReportNavigationSchedule(processCode) {
+  if (authState.user?.role !== "admin") return;
+  const process = reportNavigationVisibleProcesses.find((item) => item.process_code === processCode);
+  const reportMonth = String(reportNavigationPayload?.report_month || "").slice(0, 7);
+  if (!process || !reportMonth) return;
+  const currentDate = String(process.report_date || "").slice(0, 10);
+  const nextDate = await showPrompt(
+    "修改截止日期",
+    `${process.process_name || "报送流程"}（${reportNavigationMonthText(reportMonth)}）`,
+    { type: "date", defaultValue: currentDate },
+  );
+  if (nextDate === null || nextDate === currentDate) return;
+  if (!nextDate) {
+    showToast("请选择截止日期", "warning");
+    return;
+  }
+  try {
+    await api(`/api/report-navigation/schedules/${encodeURIComponent(processCode)}`, {
+      method: "POST",
+      body: JSON.stringify({ report_month: reportMonth, report_date: nextDate }),
+    });
+    await loadReportNavigation();
+    showToast("截止日期已更新", "success");
+  } catch (error) {
+    showToast(`截止日期更新失败：${error.message}`, "error");
+  }
 }
 
 function renderReportNavigationProcesses(payload) {
@@ -1683,6 +1756,10 @@ function renderReportNavigationProcesses(payload) {
   const allProcessesCompleted = processes.length > 0
     && processes.every((process) => process.status === "completed");
   reportNavFishbone?.classList.toggle("all-done", allProcessesCompleted);
+  reportNavFishboneSpine?.style.setProperty(
+    "--report-nav-spine-progress",
+    `${reportNavigationSpineProgress(processes)}%`,
+  );
   reportNavBranches.style.setProperty("--report-nav-branch-count", String(Math.max(processes.length, 1)));
   const selectedExists = processes.some((process) => process.process_code === selectedReportNavigationProcessCode);
   if (!selectedExists) selectedReportNavigationProcessCode = "";
@@ -1695,11 +1772,17 @@ function renderReportNavigationProcesses(payload) {
     const completionText = done
       ? (process.completed_at ? escapeHtml(reportNavigationTimestampText(process.completed_at)) : "--")
       : "进行中";
-    return `<div class="report-nav-branch ${side}${done ? " done" : " running"}">
+    const shift = index === 0
+      ? "shift-right"
+      : (index === processes.length - 1 ? "shift-left" : (index % 2 === 0 ? "shift-left" : "shift-right"));
+    const dateInteraction = authState.user?.role === "admin"
+      ? ` class="editable" data-report-nav-date="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-label="编辑${escapeHtml(process.process_name || "")}截止日期" title="右击修改截止日期"`
+      : "";
+    return `<div class="report-nav-branch ${side} ${shift}${done ? " done" : " running"}">
       <div class="report-nav-branch-line"></div><div class="report-nav-branch-node"></div>
       <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
         <div class="report-nav-process-title"><span class="report-nav-process-state-icon" aria-hidden="true">${done ? REPORT_NAV_CHECK_ICON : ""}</span><strong>${escapeHtml(process.process_name || "")}</strong><b>${completedSteps}/${totalSteps}</b></div>
-        <div class="report-nav-process-meta"><span>截止日期</span><time>${escapeHtml(reportNavigationDateText(process.report_date))}</time></div>
+        <div class="report-nav-process-meta report-nav-process-deadline"><span>截止日期</span><time${dateInteraction}>${escapeHtml(reportNavigationDateText(process.report_date))}</time></div>
         <div class="report-nav-process-meta completion"><span>${done ? "完成于" : "状态"}</span><time>${completionText}</time></div>
       </article>
     </div>`;
@@ -1815,12 +1898,33 @@ reportNavBranches?.addEventListener("click", (event) => {
   if (card) selectReportNavigationProcess(card.dataset.reportNavProcess);
 });
 
+reportNavBranches?.addEventListener("contextmenu", (event) => {
+  const date = event.target.closest("[data-report-nav-date]");
+  if (!date) return;
+  event.preventDefault();
+  event.stopPropagation();
+  void editReportNavigationSchedule(date.dataset.reportNavDate);
+});
+
 reportNavBranches?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
+  const date = event.target.closest("[data-report-nav-date]");
+  if (date) {
+    event.preventDefault();
+    event.stopPropagation();
+    void editReportNavigationSchedule(date.dataset.reportNavDate);
+    return;
+  }
   const card = event.target.closest("[data-report-nav-process]");
   if (!card) return;
   event.preventDefault();
   selectReportNavigationProcess(card.dataset.reportNavProcess);
+});
+
+reportNavFlowCard?.addEventListener("click", (event) => {
+  if (!selectedReportNavigationProcessCode) return;
+  if (event.target.closest("[data-report-nav-process], #reportNavProcessDetails")) return;
+  clearReportNavigationProcessSelection();
 });
 
 async function encryptPasswordForTransport(password) {

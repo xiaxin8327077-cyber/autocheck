@@ -6,6 +6,7 @@ from decimal import Decimal
 from math import ceil
 from pathlib import Path
 import threading
+from time import sleep
 from typing import Any, Callable, Mapping, Protocol, Sequence
 import uuid
 
@@ -32,6 +33,7 @@ INCOMPLETE = "incomplete"
 WAITING_REPORT_PERIOD = "waiting_report_period"
 ERROR = "error"
 MANUAL_REFRESH_COOLDOWN_SECONDS = 300
+MANUAL_REFRESH_SETTLE_SECONDS = 0.8
 
 
 @dataclass(frozen=True)
@@ -871,6 +873,8 @@ class ReportNavigationService:
                 "error_message": f"刷新间隔为 5 分钟，请等待约 {wait_minutes} 分钟后再试",
             }
 
+        if now is None:
+            sleep(MANUAL_REFRESH_SETTLE_SECONDS)
         result = self.collect_once(trigger_type="manual", now=now)
         if result.status == "skipped":
             return {

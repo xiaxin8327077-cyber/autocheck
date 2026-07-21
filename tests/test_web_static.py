@@ -1832,20 +1832,20 @@ def test_report_navigation_page_uses_monthly_and_period_statistics_scopes():
     assert page is not None
     body = page.group("body")
 
-    assert body.index('class="report-nav-page-title"') < body.index('id="reportNavMonth"')
+    assert body.index('class="report-nav-stats-toolbar"') < body.index('id="reportNavMonth"')
     assert 'class="report-nav-overview-group"' in body
     assert '<h3 class="report-nav-overview-title">报送概览</h3>' in body
     assert 'class="report-nav-report-month"' in body
     assert 'id="reportNavMonthlyStat"' in body
     assert 'id="reportNavPeriodStats"' in body
     assert 'id="reportNavStats"' in body
-    assert '<h3 class="report-nav-period-group-title">任务统计</h3>' in body
+    assert '<span class="report-nav-task-label">任务统计</span>' in body
     assert 'id="reportNavPeriodSelect" tabindex="-1"' in body
     for value in ["week", "month", "quarter", "year"]:
         assert f'value="{value}"' in body
         assert f'data-report-nav-period="{value}"' in body
-    assert body.index('id="reportNavMonthlyStat"') < body.index('id="reportNavPeriodSelect"')
-    assert body.index('id="reportNavPeriodSelect"') < body.index('id="reportNavPeriodStats"')
+    assert body.index('id="reportNavPeriodSelect"') < body.index('id="reportNavMonthlyStat"')
+    assert body.index('id="reportNavMonthlyStat"') < body.index('id="reportNavPeriodStats"')
     assert 'id="reportNavLastRun"' in body
     assert 'id="reportNavRefreshButton"' in body
 
@@ -1861,13 +1861,12 @@ def test_report_navigation_page_uses_readonly_panorama_details_and_attention_row
     assert page is not None
     body = page.group("body")
 
-    for element_id in ["reportNavStatus", "reportNavBranches"]:
+    for element_id in ["reportNavFishbone", "reportNavFishboneSpine", "reportNavBranches"]:
         assert f'id="{element_id}"' in body
     assert 'id="reportNavProcessDetails" aria-live="polite" hidden' in body
     assert "报送流程进度" in body
-    assert 'class="report-nav-flow-legend"' in body
-    assert len(re.findall(r'class="report-nav-legend-item (?:completed|running)"', body)) == 2
-    assert "已完成" in body and "进行中" in body
+    assert 'class="report-nav-flow-legend"' not in body
+    assert 'class="report-nav-legend-item' not in body
     assert 'class="report-nav-fishbone"' in body
     assert "注意事项" in body
     for title in ["数据治理流程", "报表特殊治理", "源系统输出确认"]:
@@ -1919,17 +1918,33 @@ def test_report_navigation_statistics_keep_the_existing_four_icon_colors():
 
 def test_report_navigation_process_cards_select_readonly_step_details():
     app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    redesign_css = css.split("/* ===== Report navigation: restrained read-only panorama ===== */", 1)[1]
 
     assert "const REPORT_NAV_CHECK_ICON =" in app_js
-    assert '${completed ? REPORT_NAV_CHECK_ICON : index + 1}' in app_js
+    assert '${completed ? REPORT_NAV_CHECK_ICON : ""}' in app_js
+    assert 'class="report-nav-step-order">${index + 1}、</span>' in app_js
     assert '${done ? REPORT_NAV_CHECK_ICON : ""}' in app_js
+    assert 'class="report-nav-process-detail-head ${done ? "completed" : "running"}"' in app_js
     assert "function renderReportNavigationProcessDetails(process)" in app_js
+    assert "function animateReportNavigationFlowCardHeight(startHeight)" in app_js
+    assert "reportNavigationFlowCardAnimation" in app_js
+    assert "reportNavFlowCard.animate(" in app_js
+    assert 'height: `${startHeight}px`' in app_js
+    assert 'height: `${endHeight}px`' in app_js
+    assert 'overflow: "hidden"' in app_js
+    assert "duration: 180" in app_js
+    assert app_js.count("animateReportNavigationFlowCardHeight(startHeight);") == 2
+    assert "reportNavProcessDetails.animate(" not in app_js
+    assert "clipPath:" not in app_js
     assert "function selectReportNavigationProcess(processCode)" in app_js
     assert 'data-report-nav-process="${escapeHtml(process.process_code || "")}"' in app_js
     assert 'aria-pressed="${selected ? "true" : "false"}"' in app_js
     assert 'event.target.closest("[data-report-nav-process]")' in app_js
     assert 'event.key !== "Enter" && event.key !== " "' in app_js
-    assert 'const nextProcessCode = selectedReportNavigationProcessCode === processCode ? "" : processCode;' in app_js
+    assert "function clearReportNavigationProcessSelection()" in app_js
+    assert 'reportNavFlowCard?.addEventListener("click"' in app_js
+    assert 'event.target.closest("[data-report-nav-process], #reportNavProcessDetails")' in app_js
     assert 'reportNavProcessDetails.hidden = !process;' in app_js
     assert 'reportNavFlowCard?.classList.toggle("has-selection", Boolean(process));' in app_js
     assert 'class="report-nav-step-row ${stateClass}"' in app_js
@@ -1947,6 +1962,46 @@ def test_report_navigation_process_cards_select_readonly_step_details():
     assert "error_message" not in detail_renderer.group("body")
     assert "report-nav-step-state" not in detail_renderer.group("body")
     assert "reportNavigationTimestampText(process.completed_at)" not in detail_renderer.group("body")
+    process_icon = re.search(
+        r"#page-report-navigation \.report-nav-process-state-icon\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert process_icon is not None
+    assert "width: 16px;" in process_icon.group("body")
+    assert "height: 16px;" in process_icon.group("body")
+    assert "border: 1px solid var(--outline);" in process_icon.group("body")
+    running_state = re.search(
+        r"#page-report-navigation \.report-nav-branch\.running \.report-nav-process-meta\.completion time\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert running_state is not None
+    assert "color: var(--on-surface-variant);" in running_state.group("body")
+    assert "font-size:" not in running_state.group("body")
+    step_icon = re.search(
+        r"#page-report-navigation \.report-nav-step-index\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert step_icon is not None
+    assert "width: 14px;" in step_icon.group("body")
+    assert "height: 14px;" in step_icon.group("body")
+    assert "align-self: center;" in step_icon.group("body")
+    step_content = re.search(
+        r"#page-report-navigation \.report-nav-step-content\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert step_content is not None
+    assert "align-items: center;" in step_content.group("body")
+    step_svg = re.search(
+        r"#page-report-navigation \.report-nav-step-index svg\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert step_svg is not None
+    assert "display: block;" in step_svg.group("body")
     flow_renderer = re.search(
         r"function renderReportNavigationProcesses\(payload\) \{(?P<body>.*?)\n\}",
         app_js,
@@ -1963,30 +2018,87 @@ def test_report_navigation_process_cards_select_readonly_step_details():
     assert "reportNavigationPanelWidth" not in app_js
 
 
-def test_report_navigation_spine_turns_theme_color_only_when_all_processes_complete():
+def test_report_navigation_uses_bent_connectors_below_details_and_admin_schedule_editing():
+    html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
+    redesign_css = css.split("/* ===== Report navigation: restrained read-only panorama ===== */", 1)[1]
+
+    assert 'class="report-nav-flow-legend"' not in html
+    assert 'class="report-nav-legend-item' not in html
+    assert 'const shift = index === 0' in app_js
+    assert 'class="report-nav-branch ${side} ${shift}' in app_js
+    assert ".report-nav-branch-line::after" in redesign_css
+    assert "height: 16px;" in redesign_css
+    assert "width: 23px;" in redesign_css
+    assert "rotate(-52deg)" in redesign_css
+    assert "rotate(128deg)" in redesign_css
+    assert "bottom: calc(50% + 34px);" in redesign_css
+    assert "top: calc(50% + 34px);" in redesign_css
+    assert "padding: 0 136px;" in redesign_css
+    assert "var(--report-nav-card-shift)" in redesign_css
+    assert "#page-report-navigation .report-nav-flow-card.has-selection" not in redesign_css
+    details = re.search(
+        r"#page-report-navigation \.report-nav-process-details\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert details is not None
+    assert "background: transparent;" in details.group("body")
+    assert "margin: 14px 20px 0;" in details.group("body")
+    assert 'data-report-nav-date="${escapeHtml(process.process_code || "")}"' in app_js
+    assert 'title="右击修改截止日期"' in app_js
+    assert 'reportNavBranches?.addEventListener("contextmenu"' in app_js
+    assert 'authState.user?.role !== "admin"' in app_js
+    assert '"修改截止日期"' in app_js
+    assert '{ type: "date", defaultValue: currentDate }' in app_js
+    assert '/api/report-navigation/schedules/${encodeURIComponent(processCode)}' in app_js
+    assert "report_month: reportMonth, report_date: nextDate" in app_js
+
+
+def test_report_navigation_spine_colors_completed_prefix_and_keeps_future_nodes_gray():
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    redesign_css = css.split("/* ===== Report navigation: restrained read-only panorama ===== */", 1)[1]
 
     assert "const allProcessesCompleted = processes.length > 0" in app_js
     assert 'reportNavFishbone?.classList.toggle("all-done", allProcessesCompleted)' in app_js
-    assert "--report-nav-spine-progress" not in app_js
-    assert "function reportNavigationSpineProgress" not in app_js
-    assert "#page-report-navigation .report-nav-fishbone-spine::before {\n  display: none;" in css
-    assert "#page-report-navigation .report-nav-fishbone.all-done .report-nav-fishbone-spine" in css
-    assert "#page-report-navigation .report-nav-fishbone.all-done .report-nav-branch-node" in css
-    assert "#page-report-navigation .report-nav-fishbone.all-done .report-nav-fishbone-tail" in css
-    all_done_node = re.search(
-        r"#page-report-navigation \.report-nav-fishbone\.all-done \.report-nav-branch-node\s*\{(?P<body>.*?)\}",
-        css,
+    assert 'const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine")' in app_js
+    assert "function reportNavigationSpineProgress(processes = [])" in app_js
+    assert 'if (process.status !== "completed") break;' in app_js
+    assert "((completedPrefixCount - 0.5) / processes.length) * 100" in app_js
+    assert '"--report-nav-spine-progress"' in app_js
+    assert "`${reportNavigationSpineProgress(processes)}%`" in app_js
+
+    progress_rule = re.search(
+        r"#page-report-navigation \.report-nav-fishbone-spine::before\s*\{(?P<body>.*?)\}",
+        redesign_css,
         re.S,
     )
-    assert all_done_node is not None
-    assert "width: 12px;" in all_done_node.group("body")
-    assert "height: 12px;" in all_done_node.group("body")
-    assert "box-shadow: 0 0 0 3px var(--surface-container-lowest);" in all_done_node.group("body")
+    assert progress_rule is not None
+    assert "width: var(--report-nav-spine-progress, 0%);" in progress_rule.group("body")
+    assert "background: var(--theme-accent);" in progress_rule.group("body")
+    assert "background-image: var(--theme-accent-gradient);" in progress_rule.group("body")
+    assert "box-shadow: none;" in progress_rule.group("body")
+    assert "transform: none;" in progress_rule.group("body")
+
+    assert ".report-nav-branch.done.top .report-nav-branch-line" in redesign_css
+    assert ".report-nav-branch.done.bottom .report-nav-branch-line" in redesign_css
+    assert ".report-nav-branch.done .report-nav-branch-line::after" in redesign_css
+    done_node = re.search(
+        r"#page-report-navigation \.report-nav-branch\.done \.report-nav-branch-node\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert done_node is not None
+    assert "border-color: var(--theme-accent);" in done_node.group("body")
+    assert "background: var(--theme-accent);" in done_node.group("body")
+
+    assert "#page-report-navigation .report-nav-fishbone.all-done .report-nav-fishbone-spine" in css
+    assert "#page-report-navigation .report-nav-fishbone.all-done .report-nav-fishbone-tail" in css
     spine_matches = re.findall(
         r"#page-report-navigation \.report-nav-fishbone-spine\s*\{(?P<body>.*?)\}",
-        css,
+        redesign_css,
         re.S,
     )
     assert spine_matches
@@ -1996,11 +2108,30 @@ def test_report_navigation_spine_turns_theme_color_only_when_all_processes_compl
     )
     assert "var(--outline)" in base_spine or "var(--outline-variant)" in base_spine
     assert "var(--theme-accent)" not in base_spine
+    all_done_tail_matches = re.findall(
+        r"#page-report-navigation \.report-nav-fishbone\.all-done \.report-nav-fishbone-tail\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert all_done_tail_matches
+    final_all_done_tail = all_done_tail_matches[-1]
+    assert "background: var(--theme-accent);" in final_all_done_tail
+    assert "background-image: var(--theme-accent-gradient);" in final_all_done_tail
 
 
 def test_report_navigation_styles_follow_theme_radius_and_vertical_mobile_timeline():
     css = _read(STYLES_CSS)
     redesign_css = css.split("/* ===== Report navigation: restrained read-only panorama ===== */", 1)[1]
+
+    fishbone_terminals = re.search(
+        r"#page-report-navigation \.report-nav-fishbone-head,\s*"
+        r"#page-report-navigation \.report-nav-fishbone-tail\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert fishbone_terminals is not None
+    assert "border-radius: 999px !important;" in fishbone_terminals.group("body")
+    assert "var(--ui-radius)" not in fishbone_terminals.group("body")
 
     for selector in [
         "#page-report-navigation .report-nav-period-bar",
@@ -2020,18 +2151,11 @@ def test_report_navigation_styles_follow_theme_radius_and_vertical_mobile_timeli
     assert "grid-template-columns: 28px minmax(0, 1fr);" in css
     assert '[data-color-mode="dark"] #page-report-navigation' not in redesign_css
     assert "width: min(220px, calc(200% - 12px));" in redesign_css
-    assert "grid-template-columns: 1fr 3fr;" in redesign_css
-    assert "min-height: 198px;" in redesign_css
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in redesign_css
+    assert "min-height: 260px;" in redesign_css
     assert "overflow-y: hidden;" in redesign_css
-    assert "@media (min-width: 1400px)" in redesign_css
-    wide_css = redesign_css.split("@media (min-width: 1400px)", 1)[1].split(
-        "@media (max-width: 1100px)", 1
-    )[0]
-    assert "#page-report-navigation .report-nav-flow-card.has-selection" in wide_css
-    assert "grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);" in wide_css
-    assert "#page-report-navigation .report-nav-flow-card:not(.has-selection)" not in wide_css
+    assert "#page-report-navigation .report-nav-flow-card.has-selection" not in redesign_css
     assert "#page-report-navigation .report-nav-process-details[hidden]" in redesign_css
-    assert "flex: 0 0 44px;" in redesign_css
     todo_content = re.search(
         r"#page-report-navigation \.report-nav-todo > div\s*\{(?P<body>.*?)\}",
         redesign_css,
@@ -2047,7 +2171,6 @@ def test_report_navigation_styles_follow_theme_radius_and_vertical_mobile_timeli
     )
     assert todo_bar is not None
     assert "height: 28px;" in todo_bar.group("body")
-    assert "overflow-x: hidden;" in redesign_css
     assert "flex-wrap: wrap;" in redesign_css
     assert "#page-report-navigation .report-nav-stat-card::before" in redesign_css
     assert "display: none;" in re.search(
@@ -2061,18 +2184,77 @@ def test_report_navigation_styles_follow_theme_radius_and_vertical_mobile_timeli
         re.S,
     )
     assert details_style is not None
-    assert "background: var(--surface-container-low);" in details_style.group("body")
+    assert "background: transparent;" in details_style.group("body")
     assert "display: block !important;" in re.search(
         r"#page-report-navigation \.report-nav-page-title\s*\{(?P<body>.*?)\}",
         redesign_css,
         re.S,
     ).group("body")
-    assert (
-        "#page-report-navigation .report-nav-fishbone:not(.all-done) "
-        ".report-nav-branch.done .report-nav-branch-node"
-    ) in redesign_css
+    assert "#page-report-navigation .report-nav-branch.done .report-nav-branch-node" in redesign_css
     assert "box-shadow: 0 0 0 3px var(--surface-container-lowest);" in redesign_css
     assert ".report-nav-card-maintenance-grid" in css
+
+
+def test_report_navigation_headings_and_fishbone_spacing_match_the_requested_layout():
+    css = _read(STYLES_CSS)
+    redesign_css = css.split("/* ===== Report navigation: restrained read-only panorama ===== */", 1)[1]
+
+    heading = re.search(
+        r"#page-report-navigation \.report-nav-card-head h2\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert heading is not None
+    assert "font-size: 16px;" in heading.group("body")
+
+    for selector in ["report-nav-fishbone", "report-nav-branches"]:
+        rule = re.search(
+            rf"#page-report-navigation \.{selector}\s*\{{(?P<body>.*?)\}}",
+            redesign_css,
+            re.S,
+        )
+        assert rule is not None
+        assert "min-height: 260px;" in rule.group("body")
+
+    fishbone = re.search(
+        r"#page-report-navigation \.report-nav-fishbone\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert fishbone is not None
+    assert "padding: 0 136px;" in fishbone.group("body")
+    assert "left: 20px;" in redesign_css
+    assert "right: 20px;" in redesign_css
+
+    spine = re.search(
+        r"#page-report-navigation \.report-nav-fishbone-spine\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert spine is not None
+    assert "left: 116px;" in spine.group("body")
+    assert "right: 116px;" in spine.group("body")
+
+    terminals = re.search(
+        r"#page-report-navigation \.report-nav-fishbone-head,\s*"
+        r"#page-report-navigation \.report-nav-fishbone-tail\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert terminals is not None
+    assert "min-height: 34px;" in terminals.group("body")
+    assert "padding: 8px 14px;" in terminals.group("body")
+
+    process_card = re.search(
+        r"#page-report-navigation \.report-nav-process-card\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert process_card is not None
+    assert "min-height: 88px;" in process_card.group("body")
+    assert "padding: 10px 12px;" in process_card.group("body")
+    assert "margin-bottom: 6px;" in redesign_css
+    assert "line-height: 1.6;" in redesign_css
 
 
 def test_report_navigation_matches_the_selected_desktop_design_proportions():
@@ -2085,8 +2267,8 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
         re.S,
     )
     assert stats_layout is not None
-    assert "grid-template-columns: 1fr 3fr;" in stats_layout.group("body")
-    assert "gap: 16px;" in stats_layout.group("body")
+    assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in stats_layout.group("body")
+    assert "column-gap: 16px;" in stats_layout.group("body")
 
     stat_groups = re.search(
         r"#page-report-navigation \.report-nav-overview-group,\s*"
@@ -2095,9 +2277,10 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
         re.S,
     )
     assert stat_groups is not None
-    assert "min-height: 204px;" in stat_groups.group("body")
-    assert "padding: 16px 22px;" in stat_groups.group("body")
-    assert "border-radius: var(--ui-radius);" in stat_groups.group("body")
+    assert "min-height: 0;" in stat_groups.group("body")
+    assert "padding: 0;" in stat_groups.group("body")
+    assert "border: 0;" in stat_groups.group("body")
+    assert "background: transparent;" in stat_groups.group("body")
 
     flow_card = re.search(
         r"#page-report-navigation \.report-nav-flow-card\s*\{(?P<body>.*?)\}",
@@ -2113,8 +2296,8 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
         re.S,
     )
     assert fishbone is not None
-    assert "min-height: 198px;" in fishbone.group("body")
-    assert "padding: 0 96px;" in fishbone.group("body")
+    assert "min-height: 260px;" in fishbone.group("body")
+    assert "padding: 0 136px;" in fishbone.group("body")
 
     process_card = re.search(
         r"#page-report-navigation \.report-nav-process-card\s*\{(?P<body>.*?)\}",
@@ -2123,8 +2306,8 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
     )
     assert process_card is not None
     assert "width: min(220px, calc(200% - 12px));" in process_card.group("body")
-    assert "min-height: 74px;" in process_card.group("body")
-    assert "padding: 8px 10px;" in process_card.group("body")
+    assert "min-height: 88px;" in process_card.group("body")
+    assert "padding: 10px 12px;" in process_card.group("body")
     assert "border-radius: var(--ui-radius);" in process_card.group("body")
 
     stat_card = re.search(
@@ -2134,8 +2317,8 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
     )
     assert stat_card is not None
     assert "display: flex;" in stat_card.group("body")
-    assert "align-items: center;" in stat_card.group("body")
-    assert "gap: 14px;" in stat_card.group("body")
+    assert "align-items: flex-start;" in stat_card.group("body")
+    assert "gap: 16px;" in stat_card.group("body")
 
     process_details = re.search(
         r"#page-report-navigation \.report-nav-process-details\s*\{(?P<body>.*?)\}",
@@ -2184,7 +2367,8 @@ def test_report_navigation_month_label_uses_snapshot_while_period_only_reloads_s
     app_js = _read(APP_JS)
 
     assert "function reportNavigationMonthText(value)" in app_js
-    assert "reportNavMonth.textContent = reportNavigationMonthText(payload.report_month);" in app_js
+    assert 'const businessPeriod = String(payload.business_report_date || payload.report_month || "").slice(0, 7);' in app_js
+    assert "reportNavMonth.textContent = reportNavigationMonthText(businessPeriod);" in app_js
     assert 'const monthlyCard = cards.find((card) => card.card_code === "report_forms")' in app_js
     assert 'const periodCards = cards.filter((card) => card.card_code !== "report_forms")' in app_js
     assert 'const period = reportNavPeriodSelect?.value || "month";' in app_js

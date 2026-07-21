@@ -1139,6 +1139,37 @@ def test_governance_card_maintenance_rejects_non_admin_invalid_card_and_missing_
             raise AssertionError("invalid governance maintenance should be rejected")
 
 
+def test_manual_refresh_waits_for_source_commit_before_collecting(monkeypatch):
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+    )
+    events = []
+
+    monkeypatch.setattr(
+        report_module,
+        "sleep",
+        lambda seconds: events.append(("settle", seconds)),
+        raising=False,
+    )
+
+    def collect_once(*, trigger_type="scheduled", now=None):
+        events.append(("collect", trigger_type))
+        return report_module.CollectionResult(
+            "completed", "2026-07", 1, 7, 0
+        )
+
+    monkeypatch.setattr(service, "collect_once", collect_once)
+
+    payload = service.manual_refresh(current_user={"role": "admin"})
+
+    assert payload["status"] == "completed"
+    assert events == [("settle", 0.8), ("collect", "manual")]
+
+
 def test_manual_refresh_uses_database_cooldown_for_five_minutes_after_completion():
     report_module = _report_navigation()
     storage_module = _storage()
