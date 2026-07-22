@@ -185,39 +185,58 @@
           <div class="report-nav-process-details" id="reportNavProcessDetails" aria-live="polite" hidden></div>
         </section>
 
-        <section class="report-nav-card report-nav-attention-card">
-          <div class="report-nav-card-head">
-            <h2><span></span>注意事项</h2>
-            <div class="report-nav-filter-chips" aria-label="注意事项分类">
-              <span class="active">全部 3</span>
-              <span>紧急 2</span>
-              <span>常规 1</span>
+        <div class="report-nav-schedule-layout">
+          <section class="report-nav-card report-nav-schedule-card" id="reportNavScheduleCard">
+            <div class="report-nav-card-head">
+              <h2><span></span>报送日程 <small id="reportNavScheduleRange"></small></h2>
             </div>
-          </div>
-          <div class="report-nav-todo-list">
-            <article class="report-nav-todo">
-              <i aria-hidden="true"></i>
-              <div>
-                <h3>数据治理流程 <span>紧急</span></h3>
-                <p>截止：2026-06-15　负责人：张智核　关联：人行大集中</p>
-              </div>
-            </article>
-            <article class="report-nav-todo">
-              <i aria-hidden="true"></i>
-              <div>
-                <h3>报表特殊治理 <span>紧急</span></h3>
-                <p>截止：2026-06-16　负责人：李核对　关联：1104 报送</p>
-              </div>
-            </article>
-            <article class="report-nav-todo mid">
-              <i aria-hidden="true"></i>
-              <div>
-                <h3>源系统输出确认 <span>关注</span></h3>
-                <p>截止：2026-06-18　负责人：王核验　关联：全要素报送</p>
-              </div>
-            </article>
-          </div>
-        </section>
+            <div class="report-nav-schedule-scroll">
+              <div class="report-nav-schedule-table" id="reportNavScheduleTable"></div>
+            </div>
+          </section>
+
+          <aside class="report-nav-card report-nav-attention-card" aria-labelledby="reportNavTodoTitle">
+            <div class="report-nav-card-head">
+              <h2 id="reportNavTodoTitle"><span></span>我的待办<small>（3）</small></h2>
+              <span class="report-nav-todo-all">全部 <b aria-hidden="true">&gt;</b></span>
+            </div>
+            <div class="report-nav-todo-list">
+              <article class="report-nav-todo">
+                <i aria-hidden="true"></i>
+                <div class="report-nav-todo-main">
+                  <div class="report-nav-todo-primary">
+                    <h3>数据治理流程 · 人行大集中</h3>
+                    <button type="button" class="report-nav-todo-action" aria-label="处理数据治理流程待办">处理</button>
+                  </div>
+                  <p>负责人：张智核</p>
+                  <p class="report-nav-todo-deadline">截止日期：<time datetime="2026-06-15">6月15日</time></p>
+                </div>
+              </article>
+              <article class="report-nav-todo">
+                <i aria-hidden="true"></i>
+                <div class="report-nav-todo-main">
+                  <div class="report-nav-todo-primary">
+                    <h3>报表特殊治理 · 1104报送</h3>
+                    <button type="button" class="report-nav-todo-action" aria-label="处理报表特殊治理待办">处理</button>
+                  </div>
+                  <p>负责人：李核对</p>
+                  <p class="report-nav-todo-deadline">截止日期：<time datetime="2026-06-16">6月16日</time></p>
+                </div>
+              </article>
+              <article class="report-nav-todo mid">
+                <i aria-hidden="true"></i>
+                <div class="report-nav-todo-main">
+                  <div class="report-nav-todo-primary">
+                    <h3>源系统输出确认 · 全要素报送</h3>
+                    <button type="button" class="report-nav-todo-action" aria-label="处理源系统输出确认待办">处理</button>
+                  </div>
+                  <p>负责人：王核验</p>
+                  <p class="report-nav-todo-deadline">截止日期：<time datetime="2026-06-18">6月18日</time></p>
+                </div>
+              </article>
+            </div>
+          </aside>
+        </div>
       </section>
 
       <!-- 首页 -->

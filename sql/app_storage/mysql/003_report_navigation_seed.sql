@@ -1,10 +1,10 @@
 INSERT INTO `report_nav_processes` (`process_code`, `process_name`, `display_order`, `enabled`, `allow_manual_step_completion`) VALUES
   ('pbc_central', '人行大集中报送', 10, 1, 1),
-  ('pbc_template', '资管产品模板、逐笔', 20, 1, 1),
+  ('pbc_template', '资管产品模板、逐笔报送', 20, 1, 1),
   ('jr_1104', '1104报送', 30, 1, 1),
-  ('full_elements', '21、23版全要素报送', 40, 1, 1),
+  ('full_elements', '全要素报送', 40, 1, 1),
   ('citic_registration', '中信登定期报送', 50, 1, 1),
-  ('east5', 'East5报送', 60, 1, 1),
+  ('east5', 'EAST5.0报送', 60, 1, 1),
   ('five_articles', '五篇大文章报送', 70, 1, 1),
   ('supplement_tasks', '补录任务统计', 1000, 0, 0)
 ON DUPLICATE KEY UPDATE `process_name`=VALUES(`process_name`), `display_order`=VALUES(`display_order`), `enabled`=VALUES(`enabled`), `allow_manual_step_completion`=VALUES(`allow_manual_step_completion`);
@@ -110,7 +110,7 @@ INSERT INTO `report_nav_steps` (`step_code`, `process_code`, `step_name`, `displ
   ('citic_registration_3', 'citic_registration', '确认各表不存在数据缺失、数据重复', 3, 'dependency_completed', 1, 0, 1),
   ('citic_registration_4', 'citic_registration', '完成监管报送平台中信登报表校验', 4, 'dependency_completed', 1, 0, 1),
   ('citic_registration_5', 'citic_registration', '制表人核验归档报表并上传中信登平台质检网站', 5, 'version_present', 1, 0, 1),
-  ('east5_1', 'east5', '归档并上传 East5 报送', 1, 'version_present', 1, 0, 1),
+  ('east5_1', 'east5', '归档并上传 EAST5.0 报送', 1, 'version_present', 1, 0, 1),
   ('five_articles_1', 'five_articles', '归档并上传五篇大文章报送', 1, 'version_present', 1, 0, 1),
   ('supplement_tasks_1', 'supplement_tasks', '统计补录任务', 1, 'supplement_task_counts', 0, 0, 0)
 ON DUPLICATE KEY UPDATE `process_code`=VALUES(`process_code`), `step_name`=VALUES(`step_name`), `display_order`=VALUES(`display_order`), `evaluator_key`=VALUES(`evaluator_key`), `enabled`=VALUES(`enabled`), `default_completed`=VALUES(`default_completed`), `manual_completion_allowed`=VALUES(`manual_completion_allowed`);

@@ -1076,6 +1076,49 @@ def test_dashboard_returns_selected_period_snapshots_processes_and_latest_run():
     assert payload["manual_refresh"]["retry_after_seconds"] == 0
 
 
+def test_dashboard_returns_database_work_calendar_for_current_year():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    database.connection.tables["report_nav_work_calendar"] = [
+        {
+            "calendar_date": date(2026, 1, 1),
+            "calendar_year": 2026,
+            "day_type": "holiday",
+            "day_name": "元旦",
+            "source_document": "国办发明电〔2025〕7号",
+            "updated_by": "system",
+            "updated_at": datetime(2025, 11, 4, 17, 0),
+        },
+        {
+            "calendar_date": date(2026, 1, 4),
+            "calendar_year": 2026,
+            "day_type": "adjusted_workday",
+            "day_name": "元旦调休补班",
+            "source_document": "国办发明电〔2025〕7号",
+            "updated_by": "system",
+            "updated_at": datetime(2025, 11, 4, 17, 0),
+        },
+    ]
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+    )
+
+    payload = service.dashboard(
+        period="month",
+        current_user={"role": "user"},
+        now=datetime(2026, 7, 21, 9, 30),
+    )
+
+    assert payload["work_calendar"] == {
+        "year": 2026,
+        "configured": True,
+        "holidays": ["2026-01-01"],
+        "adjusted_workdays": ["2026-01-04"],
+    }
+
+
 def test_governance_card_admin_maintenance_updates_all_periods_and_dashboard_uses_selected_value():
     report_module = _report_navigation()
     storage_module = _storage()
@@ -1389,3 +1432,62 @@ def test_schedule_update_accepts_current_or_future_month_and_rejects_cross_month
         assert "报送月份" in str(exc)
     else:
         raise AssertionError("cross-month schedule date should be rejected")
+
+
+def test_schedule_owner_is_saved_and_returned_in_dashboard():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    current = datetime(2026, 7, 16, 9, 30)
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+    user = {"id": "u2", "username": "user", "display_name": "用户", "role": "user"}
+    store.upsert_schedule(
+        "2026-07",
+        "p1",
+        date(2026, 7, 20),
+        source_type="manual",
+        source_year=2026,
+        updated_by="admin",
+        now=current,
+    )
+
+    result = service.update_schedule_owner(
+        "p1", "2026-07", "  张智核  ", admin, now=current
+    )
+    admin_payload = service.dashboard(period="month", current_user=admin, now=current)
+    user_payload = service.dashboard(period="month", current_user=user, now=current)
+    admin_process = next(item for item in admin_payload["processes"] if item["process_code"] == "p1")
+    user_process = next(item for item in user_payload["processes"] if item["process_code"] == "p1")
+
+    assert result == {"ok": True, "process_code": "p1", "report_month": "2026-07", "owner_name": "张智核"}
+    assert (admin_process["owner_name"], admin_process["owner_editable"]) == ("张智核", True)
+    assert (user_process["owner_name"], user_process["owner_editable"]) == ("张智核", False)
+
+
+def test_schedule_owner_rejects_non_admin_historical_month_and_long_name():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database, store=storage_module.ReportNavigationStore(database)
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+
+    invalid_inputs = [
+        ("2026-07", "张智核", {"role": "user"}, "管理员"),
+        ("2026-06", "张智核", {"role": "admin"}, "历史月份"),
+        ("2026-07", "张" * 129, {"role": "admin"}, "128"),
+    ]
+    for report_month, owner_name, actor, expected in invalid_inputs:
+        try:
+            service.update_schedule_owner(
+                "p1", report_month, owner_name, actor, now=current
+            )
+        except ValueError as exc:
+            assert expected in str(exc)
+        else:
+            raise AssertionError("invalid schedule owner update should be rejected")

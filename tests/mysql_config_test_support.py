@@ -74,6 +74,7 @@ class MySqlContractConnection:
             "report_nav_card_manual_values": [],
             "report_nav_card_manual_history": [],
             "report_nav_monthly_schedules": [],
+            "report_nav_work_calendar": [],
             "report_nav_stat_runs": [],
             "report_nav_scheduler_state": [],
         }

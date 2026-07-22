@@ -1835,6 +1835,21 @@ def test_report_navigation_page_uses_monthly_and_period_statistics_scopes():
     assert body.index('class="report-nav-stats-toolbar"') < body.index('id="reportNavMonth"')
     assert 'class="report-nav-overview-group"' in body
     assert '<h3 class="report-nav-overview-title">报送概览</h3>' in body
+    overview_label_rule = re.search(
+        r"#page-report-navigation \.report-nav-overview-label::before\s*\{(?P<body>[^}]*)\}",
+        _read(STYLES_CSS),
+    )
+    assert overview_label_rule is not None
+    assert "width: 4px;" in overview_label_rule.group("body")
+    assert "height: 19px;" in overview_label_rule.group("body")
+    assert "background-image: var(--theme-accent-gradient);" in overview_label_rule.group("body")
+    report_period_rule = re.search(
+        r"#page-report-navigation \.report-nav-report-period\s*\{(?P<body>[^}]*)\}",
+        _read(STYLES_CSS),
+    )
+    assert report_period_rule is not None
+    assert "margin-left: -2px;" in report_period_rule.group("body")
+    assert "padding-left: 0;" in report_period_rule.group("body")
     assert 'class="report-nav-report-month"' in body
     assert 'id="reportNavMonthlyStat"' in body
     assert 'id="reportNavPeriodStats"' in body
@@ -1850,7 +1865,7 @@ def test_report_navigation_page_uses_monthly_and_period_statistics_scopes():
     assert 'id="reportNavRefreshButton"' in body
 
 
-def test_report_navigation_page_uses_readonly_panorama_details_and_attention_rows():
+def test_report_navigation_page_uses_readonly_panorama_details_and_compact_todo_rows():
     html = _read(INDEX_HTML)
 
     page = re.search(
@@ -1868,10 +1883,69 @@ def test_report_navigation_page_uses_readonly_panorama_details_and_attention_row
     assert 'class="report-nav-flow-legend"' not in body
     assert 'class="report-nav-legend-item' not in body
     assert 'class="report-nav-fishbone"' in body
-    assert "注意事项" in body
+    assert 'class="report-nav-schedule-layout"' in body
+    assert 'id="reportNavTodoTitle"' in body
+    assert "我的待办" in body
+    assert "（3）" in body
+    assert 'class="report-nav-todo-all"' in body
+    assert '<span class="report-nav-todo-all">全部 <b aria-hidden="true">&gt;</b></span>' in body
+    assert "注意事项" not in body
+    assert 'class="report-nav-filter-chips"' not in body
     for title in ["数据治理流程", "报表特殊治理", "源系统输出确认"]:
         assert title in body
     assert 'class="report-nav-todo-list"' in body
+    assert body.count('class="report-nav-todo-primary"') == 3
+    assert body.count('class="report-nav-todo-action"') == 3
+    assert body.count('class="report-nav-todo-deadline"') == 3
+    assert body.count('type="button" class="report-nav-todo-action"') == 3
+    assert body.count(">处理</button>") == 3
+    assert body.count("<time datetime=") == 3
+    todo_all = re.search(
+        r"#page-report-navigation \.report-nav-todo-all\s*\{(?P<body>.*?)\}",
+        _read(STYLES_CSS),
+        re.S,
+    )
+    assert todo_all is not None
+    assert "color: var(--outline);" in todo_all.group("body")
+    redesign_css = _read(STYLES_CSS).split(
+        "/* ===== Report navigation: restrained read-only panorama ===== */",
+        1,
+    )[1]
+    todo_dot = re.search(
+        r"#page-report-navigation \.report-nav-todo > i\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert todo_dot is not None
+    assert "background: var(--report-nav-danger);" in todo_dot.group("body")
+    todo_mid_dot = re.search(
+        r"#page-report-navigation \.report-nav-todo\.mid > i\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert todo_mid_dot is not None
+    assert "background: var(--report-nav-warning);" in todo_mid_dot.group("body")
+    todo_action = re.search(
+        r"#page-report-navigation \.report-nav-todo-action\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert todo_action is not None
+    for declaration in [
+        "border: 1px solid var(--theme-accent);",
+        "border-radius: var(--ui-radius);",
+        "color: var(--theme-accent-readable);",
+        "background: transparent;",
+    ]:
+        assert declaration in todo_action.group("body")
+    todo_title = re.search(
+        r"#page-report-navigation \.report-nav-todo h3\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert todo_title is not None
+    assert "font-size: 13px;" in todo_title.group("body")
+    assert "font-weight: 600;" in todo_title.group("body")
     assert "立即处理" not in body
     assert "查看</button>" not in body
     assert 'id="reportNavSchedules"' not in body
@@ -2157,20 +2231,22 @@ def test_report_navigation_styles_follow_theme_radius_and_vertical_mobile_timeli
     assert "#page-report-navigation .report-nav-flow-card.has-selection" not in redesign_css
     assert "#page-report-navigation .report-nav-process-details[hidden]" in redesign_css
     todo_content = re.search(
-        r"#page-report-navigation \.report-nav-todo > div\s*\{(?P<body>.*?)\}",
+        r"#page-report-navigation \.report-nav-todo > \.report-nav-todo-main\s*\{(?P<body>.*?)\}",
         redesign_css,
         re.S,
     )
     assert todo_content is not None
-    assert "display: flex;" in todo_content.group("body")
-    assert "align-items: center;" in todo_content.group("body")
+    assert "display: grid;" in todo_content.group("body")
+    assert "gap: 3px;" in todo_content.group("body")
     todo_bar = re.search(
         r"#page-report-navigation \.report-nav-todo > i\s*\{(?P<body>.*?)\}",
         redesign_css,
         re.S,
     )
     assert todo_bar is not None
-    assert "height: 28px;" in todo_bar.group("body")
+    assert "width: 5px;" in todo_bar.group("body")
+    assert "height: 5px;" in todo_bar.group("body")
+    assert "border-radius: 50%;" in todo_bar.group("body")
     assert "flex-wrap: wrap;" in redesign_css
     assert "#page-report-navigation .report-nav-stat-card::before" in redesign_css
     assert "display: none;" in re.search(
@@ -2269,6 +2345,18 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
     assert stats_layout is not None
     assert "grid-template-columns: repeat(4, minmax(0, 1fr));" in stats_layout.group("body")
     assert "column-gap: 16px;" in stats_layout.group("body")
+    content_area_hover = re.search(
+        r"#page-report-navigation \.report-nav-stats-layout:hover,\s*"
+        r"#page-report-navigation \.report-nav-flow-card:hover,\s*"
+        r"#page-report-navigation \.report-nav-schedule-card:hover,\s*"
+        r"#page-report-navigation \.report-nav-attention-card:hover\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert content_area_hover is not None
+    assert "border-color: color-mix(in srgb, var(--theme-accent) 50%, var(--outline-variant));" in content_area_hover.group("body")
+    assert "transform: translateY(-2px);" in content_area_hover.group("body")
+    assert "0 8px 18px rgba(15, 23, 42, 0.08);" in content_area_hover.group("body")
 
     stat_groups = re.search(
         r"#page-report-navigation \.report-nav-overview-group,\s*"
@@ -2335,7 +2423,21 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
         re.S,
     )
     assert attention is not None
-    assert "padding: 14px 22px 16px;" in attention.group("body")
+    assert "padding: 16px;" in attention.group("body")
+    assert "align-self: flex-start;" in attention.group("body")
+    assert "align-self: stretch;" not in attention.group("body")
+    assert "display: flex;" in attention.group("body")
+    assert "flex-direction: column;" in attention.group("body")
+
+    todo_heading = re.search(
+        r"#page-report-navigation \.report-nav-attention-card \.report-nav-card-head h2\s*\{(?P<body>.*?)\}",
+        redesign_css,
+        re.S,
+    )
+    assert todo_heading is not None
+    assert "gap: 6px;" in todo_heading.group("body")
+    assert "font-size: 16px;" in todo_heading.group("body")
+    assert "font-weight: 600;" in todo_heading.group("body")
 
 
 def test_space_tech_uses_gap_safe_panel_shadows_across_all_pages():
@@ -2374,6 +2476,378 @@ def test_report_navigation_month_label_uses_snapshot_while_period_only_reloads_s
     assert 'const period = reportNavPeriodSelect?.value || "month";' in app_js
     assert 'dashboard?period=${encodeURIComponent(period)}' in app_js
     assert "report_month=" not in app_js
+
+
+def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    flow_position = html.index('class="report-nav-card report-nav-flow-card"')
+    schedule_position = html.index('id="reportNavScheduleCard"')
+    layout_position = html.index('class="report-nav-schedule-layout"')
+    attention_position = html.index('class="report-nav-card report-nav-attention-card"')
+    assert flow_position < schedule_position < attention_position
+    assert flow_position < layout_position <= schedule_position
+    for element_id in ["reportNavScheduleCard", "reportNavScheduleRange", "reportNavScheduleTable"]:
+        assert f'id="{element_id}"' in html
+    assert "报送日程" in html
+    assert "我的待办" in html
+    for process_code, process_name in [
+        ("pbc_template", "资管产品模板、逐笔报送"),
+        ("full_elements", "全要素报送"),
+        ("east5", "EAST5.0报送"),
+    ]:
+        assert f'{process_code}: "{process_name}"' in app_js
+    assert "function reportNavigationProcessDisplayName(process = {})" in app_js
+    assert 'east5_1: "归档并上传 EAST5.0 报送"' in app_js
+    assert "function reportNavigationStepDisplayName(step = {})" in app_js
+    assert "step_name: reportNavigationStepDisplayName(step)" in app_js
+    assert "const REPORT_NAV_FISHBONE_PROCESS_NAMES = {" in app_js
+    assert 'pbc_template: "资管产品模板、逐笔"' in app_js
+    assert "function reportNavigationFishboneProcessName(process = {})" in app_js
+    assert "const fishboneProcessName = reportNavigationFishboneProcessName(process);" in app_js
+    assert "<strong>${escapeHtml(fishboneProcessName)}</strong>" in app_js
+    assert '<div class="report-nav-schedule-summary"><strong>${escapeHtml(process.process_name || "")}</strong>' in app_js
+    schedule_layout_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-layout\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_layout_rule is not None
+    assert "display: flex;" in schedule_layout_rule.group("body")
+    assert "flex-wrap: wrap;" in schedule_layout_rule.group("body")
+    assert "flex: 999 1 var(--report-nav-schedule-min-width, 1148px);" in css
+    assert "min-width: min(100%, var(--report-nav-schedule-min-width, 1148px));" in css
+    assert "flex: 1 1 320px;" in css
+    assert "grid-template-columns: 172px minmax(0, 1fr);" in css
+    assert "const scheduleMinWidth = 172 + (dates.length * 38) + 64;" in app_js
+    assert 'reportNavScheduleCard?.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);' in app_js
+    assert 'const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");' in app_js
+    assert "function syncReportNavigationTodoCardHeight()" in app_js
+    assert "Math.abs(reportNavScheduleCard.offsetTop - reportNavTodoCard.offsetTop) < 2" in app_js
+    assert "Math.abs(scheduleRect.top - todoRect.top) < 2" not in app_js
+    assert 'reportNavScheduleTable.querySelectorAll(".report-nav-schedule-detail")' in app_js
+    assert "scheduleHeight - detailHeight" in app_js
+    assert 'reportNavTodoCard.style.removeProperty("height");' in app_js
+    assert "syncReportNavigationTodoCardHeight();" in app_js
+    assert 'window.addEventListener("resize", syncReportNavigationTodoCardHeight);' in app_js
+    assert 'class="report-nav-schedule-header-label" aria-hidden="true"></div>' in app_js
+    assert ">流程 / 进度</div>" not in app_js
+
+    for function_name in [
+        "reportNavigationScheduleDates",
+        "reportNavigationScheduleState",
+        "renderReportNavigationSchedule",
+        "selectReportNavigationScheduleProcess",
+        "animateReportNavigationScheduleCardHeight",
+        "editReportNavigationScheduleOwner",
+        "openReportNavigationScheduleStepsPreview",
+        "closeReportNavigationScheduleStepsPreview",
+    ]:
+        assert f"function {function_name}" in app_js or f"async function {function_name}" in app_js
+    assert 'data-report-nav-schedule-process="${processCode}"' in app_js
+    assert 'data-report-nav-schedule-date="${processCode}"' in app_js
+    assert '<span>负责人</span>' not in app_js
+    assert 'data-report-nav-schedule-owner="${processCode}"' not in app_js
+    assert 'class="report-nav-schedule-steps-preview"' in app_js
+    assert 'role="button" aria-label="查看步骤"' in app_js
+    assert '<span>查看步骤</span>' in app_js
+    assert 'class="report-nav-schedule-steps-popover"' in app_js
+    assert 'popover="manual"' in app_js
+    assert 'class="report-nav-schedule-step-list"' in app_js
+    assert 'class="report-nav-schedule-steps-arrow" aria-hidden="true"' in app_js
+    assert 'class="report-nav-schedule-detail-spacer" aria-hidden="true"' in app_js
+    assert "`${index + 1}、${escapeHtml(reportNavigationStepDisplayName(step))}`" in app_js
+    assert 'const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");' in app_js
+    assert 'index === firstIncompleteStepIndex ? "running" : "waiting"' in app_js
+    assert 'stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成")' in app_js
+    assert "function positionReportNavigationScheduleStepsPopover" in app_js
+    assert 'data-report-nav-schedule-view="${processCode}"' not in app_js
+    assert 'class="report-nav-schedule-view-steps"' not in app_js
+    assert 'class="report-nav-schedule-today"' not in app_js
+    assert "reportNavigationScheduleDates(payload.report_month, processes)" in app_js
+    assert "const deadlines = processes" in app_js
+    assert "const latestDeadline = new Date(Math.max(...deadlines.map((item) => item.getTime())));" in app_js
+    assert "const deadlinePosition = ((deadlineIndex + 0.5) / dates.length) * 100;" in app_js
+    assert "const completionOffsetDays" in app_js
+    assert 'code: "early-completed", label: "提前完成"' in app_js
+    assert "const todayPosition = ((todayIndex + 0.5) / dates.length) * 100;" in app_js
+    assert 'const endpointPosition = ["early-completed", "overdue-completed"].includes(state.code)' in app_js
+    assert '? completionPosition' in app_js
+    assert ': deadlinePosition;' in app_js
+    assert 'const fillPosition = ["completed", "early-completed", "overdue-completed"].includes(state.code)' in app_js
+    assert ': todayPosition;' in app_js
+    assert '`提前${state.earlyDays}天 · 截止${deadlineText}`' in app_js
+    assert '`逾期${state.overdueDays}天 · 原截止${deadlineText}`' in app_js
+    assert '`已逾期${state.overdueDays}天 · 原截止${deadlineText}`' in app_js
+    assert '`逾期${state.overdueDays}天完成`' in app_js
+    assert 'class="report-nav-schedule-deadline-warning"' in app_js
+    assert '--report-nav-schedule-deadline:${deadlinePosition}%' in app_js
+    assert 'class="report-nav-schedule-early-tail"' not in app_js
+    assert 'class="report-nav-schedule-early-deadline"' not in app_js
+    assert "const scheduleEdgePosition = 50 / dates.length;" in app_js
+    assert "const scheduleEndPosition = 100 - scheduleEdgePosition;" in app_js
+    assert "const earlyTailEndPosition" in app_js
+    assert "const overdueStopPosition" in app_js
+    assert '--report-nav-schedule-early-tail-end:${earlyTailEndPosition}%' in app_js
+    assert '--report-nav-schedule-overdue-stop:${overdueStopPosition}%' in app_js
+    assert "const dotPosition = ((index + 0.5) / dates.length) * 100;" in app_js
+    assert "dotPosition <= fillPosition" in app_js
+    assert 'class="reached"' in app_js
+    assert 'class="early-target"' in app_js
+    assert 'class="reached before-deadline"' in app_js
+    assert 'class="reached after-deadline"' in app_js
+    assert "dates.push(new Date(cursor));" in app_js
+    assert "payload.work_calendar?.holidays" in app_js
+    assert "payload.work_calendar?.adjusted_workdays" in app_js
+    assert "const holiday = holidayKeys.has(itemKey) || (weekend && !adjustedWorkday);" in app_js
+    assert '${holiday ? " holiday" : ""}' in app_js
+    assert "overdue-completed" in app_js
+    assert 'api(`/api/report-navigation/schedule-owners/${encodeURIComponent(processCode)}`' in app_js
+    assert 'return { code: "running", label: "进行中", overdueDays: 0, earlyDays: 0 };' in app_js
+    assert 'return { code: "pending", label: "待开始"' not in app_js
+    assert "function viewReportNavigationScheduleSteps" not in app_js
+    assert "duration: 180" in app_js
+    assert 'reportNavScheduleCard?.addEventListener("click"' in app_js
+    assert 'reportNavScheduleTable?.addEventListener("contextmenu"' in app_js
+    assert 'reportNavScheduleTable?.addEventListener("pointerover"' in app_js
+    assert 'reportNavScheduleTable?.addEventListener("pointerout"' in app_js
+    assert 'reportNavScheduleTable?.addEventListener("focusin"' in app_js
+    assert 'reportNavScheduleTable?.addEventListener("focusout"' in app_js
+    assert "const REPORT_NAV_SCHEDULE_STEPS_SHOW_DELAY = 120;" in app_js
+    assert "const REPORT_NAV_SCHEDULE_STEPS_HIDE_DELAY = 140;" in app_js
+
+    for selector in [
+        ".report-nav-schedule-card",
+        ".report-nav-schedule-scroll",
+        ".report-nav-schedule-header",
+        ".report-nav-schedule-summary",
+        ".report-nav-schedule-dates",
+        ".report-nav-schedule-track",
+        ".report-nav-schedule-detail",
+        ".report-nav-schedule-steps-preview",
+        ".report-nav-schedule-steps-popover",
+    ]:
+        assert f"#page-report-navigation {selector}" in css
+    assert "position: sticky;" in css
+    assert "margin: 14px 0 0;" in css
+    assert "overflow-x: hidden;" in css
+    schedule_header_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-header\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_header_rule is not None
+    assert "min-height: 58px;" in schedule_header_rule.group("body")
+    assert ".report-nav-schedule-date-head.today {" not in css
+    assert "#page-report-navigation .report-nav-schedule-today" not in css
+    today_circle_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-date-head\.today b\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert today_circle_rule is not None
+    assert "border-radius: 50%;" in today_circle_rule.group("body")
+    assert "border: 1px solid var(--theme-accent);" in today_circle_rule.group("body")
+    date_head_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-date-head\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert date_head_rule is not None
+    assert "grid-template-rows: 28px 14px;" in date_head_rule.group("body")
+    for selector in [
+        ".report-nav-schedule-date-head b",
+        ".report-nav-schedule-date-head em",
+    ]:
+        date_text_rule = re.search(
+            rf"#page-report-navigation \{selector}\s*\{{(?P<body>[^}}]*)\}}",
+            css,
+        )
+        assert date_text_rule is not None
+        assert "display: grid;" in date_text_rule.group("body")
+        assert "place-items: center;" in date_text_rule.group("body")
+    assert "grid-template-columns: repeat(var(--report-nav-schedule-day-count), minmax(0, 1fr));" in css
+    schedule_grid_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-header,\s*"
+        r"#page-report-navigation \.report-nav-schedule-row\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_grid_rule is not None
+    assert "gap: 0;" in schedule_grid_rule.group("body")
+    assert "align-items: stretch;" in schedule_grid_rule.group("body")
+    schedule_summary_title_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-summary strong\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_summary_title_rule is not None
+    assert "font-size: 12px;" in schedule_summary_title_rule.group("body")
+    for declaration in [
+        "overflow: visible;",
+        "overflow-wrap: anywhere;",
+        "text-overflow: clip;",
+        "white-space: normal;",
+    ]:
+        assert declaration in schedule_summary_title_rule.group("body")
+    schedule_summary_percent_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-summary span\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_summary_percent_rule is not None
+    assert "color: var(--outline);" in schedule_summary_percent_rule.group("body")
+    assert "--report-nav-schedule-baseline-color: var(--outline-variant);" in css
+    schedule_hover_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-row:hover:not\(\.selected\),\s*"
+        r"#page-report-navigation \.report-nav-schedule-row:focus-visible:not\(\.selected\)\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_hover_rule is not None
+    assert "--report-nav-schedule-baseline-color: var(--outline-variant);" in schedule_hover_rule.group("body")
+    assert "background: linear-gradient(" in schedule_hover_rule.group("body")
+    assert "color-mix(in srgb, var(--theme-accent) 12%, var(--surface-container-lowest))" in schedule_hover_rule.group("body")
+    assert "background: var(--theme-focus-ring);" not in schedule_hover_rule.group("body")
+    assert ".report-nav-schedule-row:hover:not(.selected)::after" in css
+    assert ".report-nav-schedule-row:focus-visible:not(.selected)::after" in css
+    assert "width: 3px;" in css
+    assert ".report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-summary strong" in css
+    assert ".report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-dots > i.reached" in css
+    assert "color-mix(in srgb, var(--theme-accent) 14%, transparent)" not in css
+    schedule_selected_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-row\.selected\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_selected_rule is not None
+    assert "--report-nav-schedule-baseline-color: var(--outline-variant);" in schedule_selected_rule.group("body")
+    assert "background: transparent;" in schedule_selected_rule.group("body")
+    schedule_selected_outline_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-row\.selected::after\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_selected_outline_rule is not None
+    assert "border: 1px solid var(--theme-accent);" in schedule_selected_outline_rule.group("body")
+    assert "border-bottom: 0;" in schedule_selected_outline_rule.group("body")
+    assert "transform: scale(1.35);" in css
+    assert "--report-nav-schedule-edge: calc(50% / var(--report-nav-schedule-day-count));" in css
+    assert "left: var(--report-nav-schedule-fill);" in css
+    assert "left: var(--report-nav-schedule-edge);" in css
+    assert "right: var(--report-nav-schedule-edge);" in css
+    assert "calc(var(--report-nav-schedule-fill) - var(--report-nav-schedule-edge))" in css
+    schedule_line_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-baseline,\s*"
+        r"#page-report-navigation \.report-nav-schedule-fill\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_line_rule is not None
+    assert "height: 3px;" in schedule_line_rule.group("body")
+    assert "var(--report-nav-schedule-baseline-color) 0 5px" in css
+    assert "var(--report-nav-success) 0 var(--report-nav-schedule-early-tail-end)" in css
+    assert "#page-report-navigation .report-nav-schedule-dots > i.reached" in css
+    assert "background: var(--report-nav-schedule-state);" in css
+    assert ".report-nav-schedule-row.pending," not in css
+    assert "--report-nav-schedule-state: var(--theme-accent);" in css
+    assert ".report-nav-schedule-row.early-completed" in css
+    assert ".report-nav-schedule-row.overdue-completed," in css
+    assert "left: var(--report-nav-schedule-endpoint);" in css
+    assert "const endpointAtLastDate = endpointIndex >= dates.length - 1;" in app_js
+    assert 'report-nav-schedule-endpoint${endpointAtLastDate ? " at-last" : ""}' in app_js
+    assert "#page-report-navigation .report-nav-schedule-endpoint.at-last em" in css
+    assert "right: 50%;" in css
+    assert "text-align: right;" in css
+    assert "#page-report-navigation .report-nav-schedule-deadline-warning" in css
+    assert "left: var(--report-nav-schedule-deadline);" in css
+    schedule_deadline_warning_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-deadline-warning\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_deadline_warning_rule is not None
+    assert "width: 12px;" in schedule_deadline_warning_rule.group("body")
+    assert "height: 12px;" in schedule_deadline_warning_rule.group("body")
+    assert "#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-endpoint" in css
+    assert "#page-report-navigation .report-nav-schedule-early-tail" not in css
+    assert "#page-report-navigation .report-nav-schedule-early-deadline" not in css
+    assert ".report-nav-schedule-row.early-completed .report-nav-schedule-baseline" in css
+    assert "var(--report-nav-schedule-baseline-color) var(--report-nav-schedule-early-tail-end) 100%" in css
+    assert "mask: repeating-linear-gradient" in css
+    assert "#page-report-navigation .report-nav-schedule-dots > i.early-target" in css
+    assert "border: 2px solid var(--report-nav-success);" in css
+    assert ".report-nav-schedule-row.overdue .report-nav-schedule-fill" in css
+    assert ".report-nav-schedule-row.overdue-completed .report-nav-schedule-fill" in css
+    assert "var(--theme-accent) 0 var(--report-nav-schedule-overdue-stop)" in css
+    assert "var(--report-nav-danger) var(--report-nav-schedule-overdue-stop) 100%" in css
+    assert ".report-nav-schedule-dots > i.reached.before-deadline" in css
+    assert ".report-nav-schedule-dots > i.reached.after-deadline" in css
+    schedule_endpoint_label_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-endpoint em\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_endpoint_label_rule is not None
+    for declaration in [
+        "bottom: calc(100% + 5px);",
+        "left: 50%;",
+        "text-align: center;",
+        "transform: translateX(-50%);",
+    ]:
+        assert declaration in schedule_endpoint_label_rule.group("body")
+    assert "left: 18px;" not in schedule_endpoint_label_rule.group("body")
+    schedule_detail_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-detail\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_detail_rule is not None
+    assert "grid-template-columns: 172px 150px 300px minmax(300px, 1fr) auto;" in schedule_detail_rule.group("body")
+    assert "min-height: 64px;" in schedule_detail_rule.group("body")
+    assert "padding: 8px 18px;" in schedule_detail_rule.group("body")
+    assert "background: transparent;" in schedule_detail_rule.group("body")
+    assert "animation: report-nav-schedule-detail-expand 160ms ease-out both;" in schedule_detail_rule.group("body")
+    assert "@keyframes report-nav-schedule-detail-expand" in css
+    assert "clip-path: inset(0 0 100% 0);" in css
+    assert "clip-path: inset(0);" in css
+    assert "#page-report-navigation .report-nav-schedule-row.selected::after" in css
+    assert "#page-report-navigation .report-nav-schedule-detail::before" in css
+    assert "border: 1px solid var(--theme-accent);" in css
+    schedule_detail_label_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-detail > div > span\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_detail_label_rule is not None
+    assert "color: var(--outline);" in schedule_detail_label_rule.group("body")
+    assert "font-size: 12px;" in schedule_detail_label_rule.group("body")
+    assert "font-weight: 400;" in schedule_detail_label_rule.group("body")
+    schedule_detail_text_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-detail > div > strong\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_detail_text_rule is not None
+    assert "color: var(--on-surface);" in schedule_detail_text_rule.group("body")
+    assert "font-size: 12px;" in schedule_detail_text_rule.group("body")
+    assert "font-weight: 400;" in schedule_detail_text_rule.group("body")
+    assert ".report-nav-schedule-steps-preview.open .report-nav-schedule-steps-popover" in css
+    schedule_steps_trigger_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-steps-preview\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_steps_trigger_rule is not None
+    assert "border: 1px solid var(--outline-variant);" in schedule_steps_trigger_rule.group("body")
+    assert "border: 1px solid var(--theme-accent);" not in schedule_steps_trigger_rule.group("body")
+    assert "background: var(--surface-container-lowest);" in schedule_steps_trigger_rule.group("body")
+    assert "box-shadow:" in schedule_steps_trigger_rule.group("body")
+    assert ".report-nav-schedule-steps-preview.open::before" in css
+    assert "z-index: 2147483000;" in css
+    assert "pointer-events: auto;" in css
+    assert "@keyframes report-nav-schedule-step-ping" in css
+    assert "position: fixed;" in re.search(
+        r"#page-report-navigation \.report-nav-schedule-steps-popover\s*\{(?P<body>[^}]*)\}",
+        css,
+    ).group("body")
+    assert "鼠标悬浮“查看步骤”以状态面板展示该流程的全部步骤" in _read(README_MD)
+    assert "提前完成使用绿色并在完成日结束" in _read(README_MD)
+    assert "原灰色虚线段改为绿色" in _read(README_MD)
+    assert "期间日期圆点显示为绿色空心圈" in _read(README_MD)
+    assert "截止日及之前保持主题蓝" in _read(README_MD)
+    assert "超过截止日后改为红色" in _read(README_MD)
+    assert "不显示今天文字标签，保留当天日期圆圈" in _read(README_MD)
+    assert "行悬浮时不填充背景，复用鱼骨图卡片的主题色描边和中性阴影" in _read(README_MD)
+    assert "--report-nav-schedule-table-width" not in app_js
+    assert "border-color: var(--theme-accent);" in css
+    assert ".report-nav-schedule-date-head.holiday" in css
+    assert "color: var(--report-nav-danger);" in css
 
 
 def test_report_navigation_manual_refresh_has_icon_cooldown_and_error_feedback():
@@ -2675,6 +3149,14 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert ".home-focus-detail" in css
     assert ".home-analysis-card:hover" in css
     assert "transform: translateY(-2px);" in css
+    home_content_surface = re.search(
+        r"#page-home \.glass-card,\s*"
+        r"#page-home \.glass-stat-card\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert home_content_surface is not None
+    assert "background: var(--surface-container-lowest) !important;" in home_content_surface.group("body")
     assert ':root[data-page="home"] body' in css
     assert "grid-template-columns: repeat(6, minmax(0, 1fr))" in css
     page_home_rule = re.search(r"(?m)^#page-home\s*\{(?P<body>.*?)\}", css, re.S)

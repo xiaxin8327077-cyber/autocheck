@@ -7,6 +7,8 @@ from auto_check.app.app_database import CURRENT_APP_SCHEMA_VERSION, EXPECTED_APP
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_SQL = ROOT / "sql" / "app_storage" / "mysql" / "002_report_navigation.sql"
 SEED_SQL = ROOT / "sql" / "app_storage" / "mysql" / "003_report_navigation_seed.sql"
+OWNER_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "007_report_navigation_schedule_owner.sql"
+WORK_CALENDAR_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "008_report_navigation_work_calendar.sql"
 
 REPORT_NAV_TABLES = {
     "report_nav_processes",
@@ -23,6 +25,7 @@ REPORT_NAV_TABLES = {
     "report_nav_card_manual_values",
     "report_nav_card_manual_history",
     "report_nav_monthly_schedules",
+    "report_nav_work_calendar",
     "report_nav_stat_runs",
     "report_nav_scheduler_state",
 }
@@ -44,7 +47,7 @@ def test_report_navigation_schema_only_creates_new_relational_tables():
 def test_application_schema_keeps_version_one_and_adds_report_navigation_tables():
     assert CURRENT_APP_SCHEMA_VERSION == 1
     assert REPORT_NAV_TABLES <= set(EXPECTED_APP_SCHEMA)
-    assert len(EXPECTED_APP_SCHEMA) == 38
+    assert len(EXPECTED_APP_SCHEMA) == 39
     assert EXPECTED_APP_SCHEMA["report_nav_steps"] >= {
         "step_code",
         "process_code",
@@ -68,6 +71,38 @@ def test_application_schema_keeps_version_one_and_adds_report_navigation_tables(
     }
 
 
+def test_schedule_owner_column_is_declared_and_has_an_idempotent_migration():
+    schema_sql = SCHEMA_SQL.read_text(encoding="utf-8")
+    migration_sql = OWNER_MIGRATION_SQL.read_text(encoding="utf-8")
+
+    assert "owner_name" in EXPECTED_APP_SCHEMA["report_nav_monthly_schedules"]
+    assert "`owner_name` VARCHAR(128) NULL COMMENT '月度负责人'" in schema_sql
+    assert "information_schema.columns" in migration_sql
+    assert "ADD COLUMN `owner_name` VARCHAR(128) NULL COMMENT ''月度负责人''" in migration_sql
+
+
+def test_work_calendar_table_and_2026_official_exceptions_are_declared():
+    schema_sql = SCHEMA_SQL.read_text(encoding="utf-8")
+    migration_sql = WORK_CALENDAR_MIGRATION_SQL.read_text(encoding="utf-8")
+
+    assert EXPECTED_APP_SCHEMA["report_nav_work_calendar"] >= {
+        "calendar_date",
+        "calendar_year",
+        "day_type",
+        "day_name",
+        "source_document",
+        "updated_at",
+    }
+    assert "CREATE TABLE IF NOT EXISTS `report_nav_work_calendar`" in schema_sql
+    assert "ON DUPLICATE KEY UPDATE" in migration_sql
+    assert "2026-01-01" in migration_sql
+    assert "2026-01-04" in migration_sql
+    assert "2026-02-15" in migration_sql
+    assert "2026-02-14" in migration_sql
+    assert "2026-10-07" in migration_sql
+    assert "2026-10-10" in migration_sql
+
+
 def test_report_navigation_tables_do_not_redefine_schema_version():
     sql = SCHEMA_SQL.read_text(encoding="utf-8")
 
@@ -86,7 +121,10 @@ def test_pbc_process_names_match_report_date_labels():
     sql = SEED_SQL.read_text(encoding="utf-8")
 
     assert "('pbc_central', '人行大集中报送', 10, 1, 1)" in sql
-    assert "('pbc_template', '资管产品模板、逐笔', 20, 1, 1)" in sql
+    assert "('pbc_template', '资管产品模板、逐笔报送', 20, 1, 1)" in sql
+    assert "('full_elements', '全要素报送', 40, 1, 1)" in sql
+    assert "('east5', 'EAST5.0报送', 60, 1, 1)" in sql
+    assert "('east5_1', 'east5', '归档并上传 EAST5.0 报送'" in sql
 
 
 def test_archive_steps_map_update_and_create_dates_for_completion_time():

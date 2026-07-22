@@ -152,10 +152,23 @@ CREATE TABLE IF NOT EXISTS `report_nav_monthly_schedules` (
   `report_date` DATE NOT NULL COMMENT '报送日期',
   `source_type` VARCHAR(32) NOT NULL COMMENT '日期来源',
   `source_year` SMALLINT NULL COMMENT '来源年份',
+  `owner_name` VARCHAR(128) NULL COMMENT '月度负责人',
   `updated_by` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '更新人',
   `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
   PRIMARY KEY (`report_month`, `process_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='报送导航月度报送日期';
+
+CREATE TABLE IF NOT EXISTS `report_nav_work_calendar` (
+  `calendar_date` DATE NOT NULL COMMENT '日历日期',
+  `calendar_year` SMALLINT NOT NULL COMMENT '日历年份',
+  `day_type` VARCHAR(32) NOT NULL COMMENT '日期类型（holiday或adjusted_workday）',
+  `day_name` VARCHAR(64) NOT NULL COMMENT '节假日或调休名称',
+  `source_document` VARCHAR(255) NOT NULL COMMENT '国务院节假日安排文件',
+  `updated_by` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '更新人',
+  `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
+  PRIMARY KEY (`calendar_date`),
+  KEY `idx_report_nav_work_calendar_year_type` (`calendar_year`, `day_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='报送导航中国法定工作日例外日历';
 
 CREATE TABLE IF NOT EXISTS `report_nav_stat_runs` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',

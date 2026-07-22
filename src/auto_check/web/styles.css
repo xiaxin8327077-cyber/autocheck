@@ -12240,6 +12240,12 @@ input.custom-input-native:disabled {
   box-shadow: var(--space-panel-shadow) !important;
 }
 
+/* Match reconciliation overview content surfaces to report navigation cards. */
+#page-home .glass-card,
+#page-home .glass-stat-card {
+  background: var(--surface-container-lowest) !important;
+}
+
 /* Reconciliation overview: hover only emphasizes the border, without an edge glow. */
 #page-home .glass-card:hover {
   box-shadow: 0 4px 24px rgba(37, 103, 110, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
@@ -13607,15 +13613,29 @@ input.custom-input-native:disabled {
   grid-row: 1;
   align-items: baseline;
   gap: 10px;
-  padding-left: 18px;
+  margin-left: -2px;
+  padding-left: 0;
   white-space: nowrap;
 }
 
 #page-report-navigation .report-nav-overview-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   margin-right: 14px;
   color: var(--on-surface);
   font-size: 16px;
   font-weight: 600;
+}
+
+#page-report-navigation .report-nav-overview-label::before {
+  flex: 0 0 auto;
+  width: 4px;
+  height: 19px;
+  border-radius: 4px;
+  background: var(--theme-accent);
+  background-image: var(--theme-accent-gradient);
+  content: "";
 }
 
 #page-report-navigation .report-nav-report-period .report-nav-report-month-label {
@@ -13930,6 +13950,24 @@ input.custom-input-native:disabled {
   border-radius: var(--ui-radius) !important;
   background: var(--surface-container-lowest);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+}
+
+#page-report-navigation .report-nav-stats-layout,
+#page-report-navigation .report-nav-flow-card,
+#page-report-navigation .report-nav-schedule-card,
+#page-report-navigation .report-nav-attention-card {
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+#page-report-navigation .report-nav-stats-layout:hover,
+#page-report-navigation .report-nav-flow-card:hover,
+#page-report-navigation .report-nav-schedule-card:hover,
+#page-report-navigation .report-nav-attention-card:hover {
+  border-color: color-mix(in srgb, var(--theme-accent) 50%, var(--outline-variant));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.56),
+    0 8px 18px rgba(15, 23, 42, 0.08);
+  transform: translateY(-2px);
 }
 
 #page-report-navigation .report-nav-stat-card {
@@ -14770,80 +14808,894 @@ input.custom-input-native:disabled {
   text-align: center;
 }
 
-#page-report-navigation .report-nav-attention-card {
-  padding: 14px 22px 16px;
+#page-report-navigation .report-nav-schedule-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 14px;
+  min-width: 0;
 }
 
-#page-report-navigation .report-nav-attention-card .report-nav-card-head {
-  margin-bottom: 10px;
+#page-report-navigation .report-nav-schedule-card {
+  flex: 999 1 var(--report-nav-schedule-min-width, 1148px);
+  min-width: min(100%, var(--report-nav-schedule-min-width, 1148px));
+  padding: 16px 22px 18px;
 }
 
-#page-report-navigation .report-nav-filter-chips span {
-  border-radius: var(--ui-radius) !important;
-  font-size: 12px;
+#page-report-navigation .report-nav-schedule-card .report-nav-card-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#page-report-navigation .report-nav-schedule-card .report-nav-card-head h2 > small {
+  color: var(--on-surface-variant);
+  font-size: 13px;
   font-weight: 500;
 }
 
-#page-report-navigation .report-nav-filter-chips .active {
-  color: var(--theme-on-accent);
+#page-report-navigation .report-nav-schedule-scroll {
+  margin: 14px 0 0;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: var(--surface-container-lowest);
+  scrollbar-width: thin;
+}
+
+#page-report-navigation .report-nav-schedule-table {
+  width: 100%;
+  min-width: 100%;
+}
+
+#page-report-navigation .report-nav-schedule-header,
+#page-report-navigation .report-nav-schedule-row {
+  display: grid;
+  grid-template-columns: 172px minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  min-height: 56px;
+}
+
+#page-report-navigation .report-nav-schedule-header {
+  min-height: 58px;
+  border-bottom: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+}
+
+#page-report-navigation .report-nav-schedule-header-label,
+#page-report-navigation .report-nav-schedule-summary {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 16px;
+  border-right: 1px solid var(--outline-variant);
+  background: inherit;
+}
+
+#page-report-navigation .report-nav-schedule-header-label {
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#page-report-navigation .report-nav-schedule-dates,
+#page-report-navigation .report-nav-schedule-dots {
+  display: grid;
+  grid-template-columns: repeat(var(--report-nav-schedule-day-count), minmax(0, 1fr));
+}
+
+#page-report-navigation .report-nav-schedule-date-head {
+  position: relative;
+  display: grid;
+  grid-template-rows: 28px 14px;
+  place-content: center;
+  gap: 2px;
+  min-width: 0;
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+
+#page-report-navigation .report-nav-schedule-date-head b {
+  display: grid;
+  place-items: center;
+  font-family: var(--report-nav-font-mono);
+  font-size: 13px;
+}
+
+#page-report-navigation .report-nav-schedule-date-head em {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-style: normal;
+}
+
+#page-report-navigation .report-nav-schedule-date-head.holiday {
+  color: var(--report-nav-danger);
+}
+
+#page-report-navigation .report-nav-schedule-date-head.adjusted-workday em {
+  color: var(--report-nav-warning);
+  font-weight: 600;
+}
+
+#page-report-navigation .report-nav-schedule-date-head.today b {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto;
+  border: 1px solid var(--theme-accent);
+  border-radius: 50%;
+  color: var(--theme-accent-readable);
+  background: var(--theme-focus-ring);
+}
+
+#page-report-navigation .report-nav-schedule-row {
+  --report-nav-schedule-state: var(--outline);
+  --report-nav-schedule-baseline-color: var(--outline-variant);
+  position: relative;
+  border-bottom: 1px solid var(--report-nav-border-soft);
+  background: var(--surface-container-lowest);
+  cursor: pointer;
+  outline: 0;
+  transition: background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+#page-report-navigation .report-nav-schedule-row:hover:not(.selected),
+#page-report-navigation .report-nav-schedule-row:focus-visible:not(.selected) {
+  --report-nav-schedule-baseline-color: var(--outline-variant);
+  z-index: 2;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--theme-accent) 12%, var(--surface-container-lowest)),
+    color-mix(in srgb, var(--theme-accent) 5%, var(--surface-container-lowest)) 60%,
+    var(--surface-container-lowest)
+  );
+  box-shadow: 0 10px 26px -14px rgba(52, 102, 217, 0.45);
+}
+
+#page-report-navigation .report-nav-schedule-row:hover:not(.selected)::after,
+#page-report-navigation .report-nav-schedule-row:focus-visible:not(.selected)::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--theme-accent);
+  content: "";
+  pointer-events: none;
+}
+
+#page-report-navigation .report-nav-schedule-row.selected {
+  --report-nav-schedule-baseline-color: var(--outline-variant);
+  border-bottom-color: transparent;
+  background: transparent;
+}
+
+#page-report-navigation .report-nav-schedule-row.selected::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 1px solid var(--theme-accent);
+  border-bottom: 0;
+  content: "";
+  pointer-events: none;
+}
+
+#page-report-navigation .report-nav-schedule-row.selected .report-nav-schedule-summary {
+  box-shadow: inset 3px 0 0 var(--theme-accent);
+}
+
+#page-report-navigation .report-nav-schedule-row.completed,
+#page-report-navigation .report-nav-schedule-row.early-completed {
+  --report-nav-schedule-state: var(--report-nav-success);
+}
+
+#page-report-navigation .report-nav-schedule-row.running {
+  --report-nav-schedule-state: var(--theme-accent);
+}
+
+#page-report-navigation .report-nav-schedule-row.overdue,
+#page-report-navigation .report-nav-schedule-row.overdue-completed,
+#page-report-navigation .report-nav-schedule-row.risk {
+  --report-nav-schedule-state: var(--report-nav-danger);
+}
+
+#page-report-navigation .report-nav-schedule-summary {
+  background: var(--surface-container-lowest);
+}
+
+#page-report-navigation .report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-summary,
+#page-report-navigation .report-nav-schedule-row:focus-visible:not(.selected) .report-nav-schedule-summary {
+  background: transparent;
+}
+
+#page-report-navigation .report-nav-schedule-row.selected .report-nav-schedule-summary {
+  background: transparent;
+}
+
+#page-report-navigation .report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-summary strong,
+#page-report-navigation .report-nav-schedule-row:focus-visible:not(.selected) .report-nav-schedule-summary strong {
+  color: var(--theme-accent-readable);
+}
+
+#page-report-navigation .report-nav-schedule-summary strong {
+  min-width: 0;
+  overflow: visible;
+  color: var(--on-surface);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+#page-report-navigation .report-nav-schedule-summary span {
+  flex: 0 0 auto;
+  color: var(--outline);
+  font-family: var(--report-nav-font-mono);
+  font-size: 12px;
+}
+
+#page-report-navigation .report-nav-schedule-track {
+  --report-nav-schedule-edge: calc(50% / var(--report-nav-schedule-day-count));
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 56px;
+}
+
+#page-report-navigation .report-nav-schedule-baseline,
+#page-report-navigation .report-nav-schedule-fill {
+  position: absolute;
+  top: 50%;
+  left: var(--report-nav-schedule-edge);
+  height: 3px;
+  border-radius: 999px;
+  transform: translateY(-50%);
+}
+
+#page-report-navigation .report-nav-schedule-baseline {
+  left: var(--report-nav-schedule-fill);
+  right: var(--report-nav-schedule-edge);
+  background: repeating-linear-gradient(90deg, var(--report-nav-schedule-baseline-color) 0 5px, transparent 5px 10px);
+}
+
+#page-report-navigation .report-nav-schedule-row.early-completed .report-nav-schedule-baseline {
+  background: linear-gradient(
+    90deg,
+    var(--report-nav-success) 0 var(--report-nav-schedule-early-tail-end),
+    var(--report-nav-schedule-baseline-color) var(--report-nav-schedule-early-tail-end) 100%
+  );
+  -webkit-mask: repeating-linear-gradient(90deg, #000000 0 5px, transparent 5px 10px);
+  mask: repeating-linear-gradient(90deg, #000000 0 5px, transparent 5px 10px);
+}
+
+#page-report-navigation .report-nav-schedule-fill {
+  width: max(0px, calc(var(--report-nav-schedule-fill) - var(--report-nav-schedule-edge)));
+  background: var(--report-nav-schedule-state);
+}
+
+#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-fill,
+#page-report-navigation .report-nav-schedule-row.overdue-completed .report-nav-schedule-fill {
+  background: linear-gradient(
+    90deg,
+    var(--theme-accent) 0 var(--report-nav-schedule-overdue-stop),
+    var(--report-nav-danger) var(--report-nav-schedule-overdue-stop) 100%
+  );
+}
+
+#page-report-navigation .report-nav-schedule-dots {
+  position: absolute;
+  inset: 0;
+  align-items: center;
+}
+
+#page-report-navigation .report-nav-schedule-dots > i {
+  justify-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface-container-high);
+  transition: box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.2, 0.9, 0.25, 1.05);
+}
+
+#page-report-navigation .report-nav-schedule-dots > i.reached {
+  background: var(--report-nav-schedule-state);
+}
+
+#page-report-navigation .report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-dots > i.reached,
+#page-report-navigation .report-nav-schedule-row:focus-visible:not(.selected) .report-nav-schedule-dots > i.reached {
+  transform: scale(1.35);
+}
+
+#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-dots > i.reached.before-deadline,
+#page-report-navigation .report-nav-schedule-row.overdue-completed .report-nav-schedule-dots > i.reached.before-deadline {
+  background: var(--theme-accent);
+}
+
+#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-dots > i.reached.after-deadline,
+#page-report-navigation .report-nav-schedule-row.overdue-completed .report-nav-schedule-dots > i.reached.after-deadline {
+  background: var(--report-nav-danger);
+}
+
+#page-report-navigation .report-nav-schedule-dots > i.early-target {
+  box-sizing: border-box;
+  border: 2px solid var(--report-nav-success);
+  background: var(--surface-container-lowest);
+}
+
+#page-report-navigation .report-nav-schedule-endpoint {
+  position: absolute;
+  top: 50%;
+  left: var(--report-nav-schedule-endpoint);
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--report-nav-schedule-state);
+  border-radius: 50%;
+  color: #ffffff;
+  background: var(--surface-container-lowest);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+}
+
+#page-report-navigation .report-nav-schedule-row.completed .report-nav-schedule-endpoint,
+#page-report-navigation .report-nav-schedule-row.early-completed .report-nav-schedule-endpoint,
+#page-report-navigation .report-nav-schedule-row.overdue-completed .report-nav-schedule-endpoint,
+#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-endpoint,
+#page-report-navigation .report-nav-schedule-row.risk .report-nav-schedule-endpoint {
+  background: var(--report-nav-schedule-state);
+}
+
+#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-endpoint,
+#page-report-navigation .report-nav-schedule-row.risk .report-nav-schedule-endpoint {
+  width: 12px;
+  height: 12px;
+}
+
+#page-report-navigation .report-nav-schedule-endpoint svg {
+  width: 8px;
+  height: 8px;
+}
+
+#page-report-navigation .report-nav-schedule-endpoint em {
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  width: max-content;
+  max-width: 160px;
+  color: var(--on-surface-variant);
+  font-family: var(--report-nav-font-mono);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  transform: translateX(-50%);
+}
+
+#page-report-navigation .report-nav-schedule-endpoint.at-last em {
+  right: 50%;
+  left: auto;
+  text-align: right;
+  transform: none;
+}
+
+#page-report-navigation .report-nav-schedule-deadline-warning {
+  position: absolute;
+  top: 50%;
+  left: var(--report-nav-schedule-deadline);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  color: #ffffff;
+  background: var(--report-nav-danger);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+}
+
+#page-report-navigation .report-nav-schedule-row.early-completed .report-nav-schedule-endpoint em {
+  color: var(--report-nav-success);
+}
+
+#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-endpoint em,
+#page-report-navigation .report-nav-schedule-row.overdue-completed .report-nav-schedule-endpoint em {
+  color: var(--report-nav-danger);
+}
+
+#page-report-navigation .report-nav-schedule-detail {
+  position: relative;
+  display: grid;
+  grid-template-columns: 172px 150px 300px minmax(300px, 1fr) auto;
+  align-items: center;
+  gap: 0;
+  min-height: 64px;
+  padding: 8px 18px;
+  border-bottom: 0;
+  background: transparent;
+  animation: report-nav-schedule-detail-expand 160ms ease-out both;
+  transform-origin: top;
+}
+
+@keyframes report-nav-schedule-detail-expand {
+  from {
+    opacity: 0.35;
+    clip-path: inset(0 0 100% 0);
+    transform: translateY(-4px);
+  }
+
+  99% {
+    opacity: 1;
+    clip-path: inset(0);
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 1;
+    clip-path: none;
+    transform: translateY(0);
+  }
+}
+
+#page-report-navigation .report-nav-schedule-detail::before {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 1px solid var(--theme-accent);
+  border-top-color: var(--outline-variant);
+  content: "";
+  pointer-events: none;
+}
+
+#page-report-navigation .report-nav-schedule-detail > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+#page-report-navigation .report-nav-schedule-detail-status {
+  padding-right: 14px;
+}
+
+#page-report-navigation .report-nav-schedule-detail-progress,
+#page-report-navigation .report-nav-schedule-detail-next {
+  padding: 0 14px;
+  border-left: 1px solid var(--outline-variant);
+}
+
+#page-report-navigation .report-nav-schedule-detail > div > span {
+  color: var(--outline);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+#page-report-navigation .report-nav-schedule-detail > div > strong {
+  overflow: hidden;
+  color: var(--on-surface);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#page-report-navigation .report-nav-schedule-detail small {
+  color: var(--report-nav-danger);
+  font-size: 10px;
+}
+
+#page-report-navigation .report-nav-schedule-detail.early-completed small {
+  color: var(--report-nav-success);
+}
+
+#page-report-navigation .report-nav-schedule-detail-progress {
+  grid-template-columns: minmax(90px, 1fr) auto;
+}
+
+#page-report-navigation .report-nav-schedule-detail-progress > span {
+  grid-column: 1 / -1;
+}
+
+#page-report-navigation .report-nav-schedule-detail-progress > i {
+  align-self: center;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-container-high);
+}
+
+#page-report-navigation .report-nav-schedule-detail-progress > i > b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
   background: var(--theme-accent);
   background-image: var(--theme-accent-gradient);
 }
 
-#page-report-navigation .report-nav-todo-list {
+#page-report-navigation .report-nav-schedule-steps-preview {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  justify-content: center;
+  min-width: 76px;
+  width: auto;
+  height: 40px;
+  min-height: 40px;
+  margin-left: 18px;
+  padding: 0 14px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  color: var(--on-surface-variant);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 5px 12px rgba(15, 23, 42, 0.1);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+#page-report-navigation .report-nav-schedule-steps-preview:hover,
+#page-report-navigation .report-nav-schedule-steps-preview:focus-visible {
+  border-color: var(--outline);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.1), 0 8px 18px rgba(15, 23, 42, 0.14);
+  outline: 2px solid var(--surface-container-high);
+  outline-offset: 2px;
+  transform: translateY(-1px);
+}
+
+#page-report-navigation .report-nav-schedule-steps-preview.open::before {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  width: 12px;
+  height: 100%;
+  content: "";
+}
+
+#page-report-navigation .report-nav-schedule-steps-popover {
+  position: fixed;
+  inset: auto;
+  top: var(--report-nav-schedule-steps-top, 12px);
+  left: var(--report-nav-schedule-steps-left, 12px);
+  z-index: 2147483000;
   display: grid;
   gap: 8px;
+  width: min(330px, calc(100vw - 48px));
+  max-height: min(340px, calc(100vh - 32px));
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  color: var(--on-surface);
+  background: var(--surface-container-lowest);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 12px 24px -8px rgba(15, 23, 42, 0.18), 0 32px 60px -24px rgba(15, 23, 42, 0.28);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(8px) scale(0.97);
+  transform-origin: right center;
+  transition:
+    opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.3s cubic-bezier(0.2, 0.9, 0.25, 1.05),
+    visibility 0s linear 0.25s;
+  pointer-events: none;
+}
+
+#page-report-navigation .report-nav-schedule-steps-preview.open .report-nav-schedule-steps-popover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0) scale(1);
+  transition:
+    opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.3s cubic-bezier(0.2, 0.9, 0.25, 1.05),
+    visibility 0s;
+  pointer-events: auto;
+}
+
+#page-report-navigation .report-nav-schedule-steps-popover[data-side="right"] {
+  transform: translateX(-8px) scale(0.97);
+  transform-origin: left center;
+}
+
+#page-report-navigation .report-nav-schedule-steps-preview.open .report-nav-schedule-steps-popover[data-side="right"] {
+  transform: translateX(0) scale(1);
+}
+
+#page-report-navigation .report-nav-schedule-steps-popover::backdrop {
+  background: transparent;
+  pointer-events: none;
+}
+
+#page-report-navigation .report-nav-schedule-steps-arrow {
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 11px;
+  height: 11px;
+  margin-top: -5px;
+  border: 1px solid var(--outline-variant);
+  border-bottom: 0;
+  border-left: 0;
+  background: var(--surface-container-lowest);
+  transform: rotate(45deg);
+}
+
+#page-report-navigation .report-nav-schedule-steps-popover[data-side="right"] .report-nav-schedule-steps-arrow {
+  right: auto;
+  left: -6px;
+  border: 1px solid var(--outline-variant);
+  border-top: 0;
+  border-right: 0;
+}
+
+#page-report-navigation .report-nav-schedule-steps-popover > strong {
+  position: relative;
+  z-index: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#page-report-navigation .report-nav-schedule-step-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+  color: var(--on-surface-variant);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li > i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--outline-variant);
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li.completed > i {
+  background: var(--report-nav-success);
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li.running > i {
+  background: var(--theme-accent);
+  animation: report-nav-schedule-step-ping 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li > em {
+  color: var(--outline);
+  font-family: var(--font-family-mono, monospace);
+  font-size: 10px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li.empty {
+  grid-template-columns: 1fr;
+  color: var(--on-surface-variant);
+}
+
+@keyframes report-nav-schedule-step-ping {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--theme-accent) 45%, transparent);
+  }
+
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (max-width: 760px) {
+  #page-report-navigation .report-nav-schedule-scroll {
+    margin-inline: 0;
+  }
+
+  #page-report-navigation .report-nav-schedule-detail {
+    grid-template-columns: 1fr;
+  }
+
+  #page-report-navigation .report-nav-schedule-detail-spacer {
+    display: none;
+  }
+
+  #page-report-navigation .report-nav-schedule-detail-status,
+  #page-report-navigation .report-nav-schedule-detail-progress,
+  #page-report-navigation .report-nav-schedule-detail-next {
+    padding: 10px 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--outline-variant);
+  }
+
+  #page-report-navigation .report-nav-schedule-steps-preview {
+    justify-self: start;
+    margin: 10px 0 0;
+  }
+
+}
+
+#page-report-navigation .report-nav-attention-card {
+  flex: 1 1 320px;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  min-width: min(100%, 280px);
+  padding: 16px;
+}
+
+#page-report-navigation .report-nav-attention-card .report-nav-card-head {
+  margin-bottom: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--report-nav-border-soft);
+}
+
+#page-report-navigation .report-nav-attention-card .report-nav-card-head h2 {
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+#page-report-navigation .report-nav-attention-card .report-nav-card-head h2 > small {
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+#page-report-navigation .report-nav-todo-all {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--outline);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+#page-report-navigation .report-nav-todo-all > b {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+#page-report-navigation .report-nav-todo-list {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 0;
 }
 
 #page-report-navigation .report-nav-todo {
   display: grid;
-  grid-template-columns: 4px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--ui-radius) !important;
-  background: var(--surface-container-lowest);
+  grid-template-columns: 5px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 11px 0;
+  border: 0;
+  border-bottom: 1px solid var(--report-nav-border-soft);
+  border-radius: 0 !important;
+  background: transparent;
   box-shadow: none;
   transform: none;
+}
+
+#page-report-navigation .report-nav-todo:last-child {
+  border-bottom: 0;
 }
 
 #page-report-navigation .report-nav-todo:hover {
-  border-color: var(--outline);
+  border-color: var(--report-nav-border-soft);
+  background: transparent;
   box-shadow: none;
   transform: none;
 }
 
-#page-report-navigation .report-nav-todo > div {
-  display: flex;
-  align-items: center;
-  gap: 28px;
+#page-report-navigation .report-nav-todo > .report-nav-todo-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+#page-report-navigation .report-nav-todo-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
   min-width: 0;
 }
 
 #page-report-navigation .report-nav-todo h3 {
-  flex: 0 0 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--on-surface);
   font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+#page-report-navigation .report-nav-todo time {
+  color: var(--theme-accent-readable);
+  font-family: var(--report-nav-font-mono);
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1.55;
   white-space: nowrap;
 }
 
-#page-report-navigation .report-nav-todo h3 span {
+#page-report-navigation .report-nav-todo-action {
+  min-height: 24px;
+  padding: 2px 9px;
+  border: 1px solid var(--theme-accent);
+  border-radius: var(--ui-radius);
+  color: var(--theme-accent-readable);
+  background: transparent;
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#page-report-navigation .report-nav-todo-action:hover,
+#page-report-navigation .report-nav-todo-action:focus-visible {
+  border-color: var(--theme-accent);
+  background: var(--theme-focus-ring);
+  outline: none;
 }
 
 #page-report-navigation .report-nav-todo p {
   min-width: 0;
   margin: 0;
-  font-size: 13px;
-  white-space: nowrap;
+  color: var(--on-surface-variant);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+#page-report-navigation .report-nav-todo-deadline {
+  display: flex;
+  align-items: center;
+  gap: 3px;
 }
 
 #page-report-navigation .report-nav-todo > i {
-  width: 3px;
-  height: 28px;
-  border-radius: 999px;
+  width: 5px;
+  height: 5px;
+  margin-top: 6px;
+  border-radius: 50%;
   background: var(--report-nav-danger);
 }
 
@@ -14879,14 +15731,6 @@ input.custom-input-native:disabled {
     grid-template-rows: auto auto;
   }
 
-  #page-report-navigation .report-nav-todo > div {
-    flex-wrap: wrap;
-    gap: 4px 20px;
-  }
-
-  #page-report-navigation .report-nav-todo p {
-    white-space: normal;
-  }
 }
 
 @media (max-width: 760px) {
@@ -14934,14 +15778,8 @@ input.custom-input-native:disabled {
     grid-template-columns: 1fr;
   }
 
-  #page-report-navigation .report-nav-todo > div {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  #page-report-navigation .report-nav-todo p {
-    white-space: normal;
+  #page-report-navigation .report-nav-attention-card {
+    padding: 14px 16px;
   }
 
   #page-report-navigation .report-nav-card-head,

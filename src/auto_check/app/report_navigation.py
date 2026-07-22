@@ -1041,10 +1041,13 @@ class ReportNavigationService:
                     "report_date": schedule.report_date.isoformat() if schedule else "",
                     "report_date_source": schedule.source_type if schedule else "",
                     "schedule_editable": is_admin,
+                    "owner_name": schedule.owner_name if schedule else "",
+                    "owner_editable": is_admin,
                     "steps": steps,
                 }
             )
         business_report_date = latest_business_report_date(self.database)
+        work_calendar = self.store.load_work_calendar(current.year)
         return {
             "period": period,
             "report_month": report_month,
@@ -1052,6 +1055,7 @@ class ReportNavigationService:
             "cards": card_payload,
             "card_maintenance": card_maintenance,
             "processes": process_payload,
+            "work_calendar": work_calendar,
             "last_run": _run_payload(last_run),
             "manual_refresh": self.manual_refresh_state(
                 current_user=current_user,
@@ -1182,6 +1186,43 @@ class ReportNavigationService:
                 failed_steps=collection_result.failed_steps,
             )
         return payload
+
+    def update_schedule_owner(
+        self,
+        process_code: str,
+        report_month: str,
+        owner_name: str,
+        current_user: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if str(current_user.get("role") or "") != "admin":
+            raise ValueError("仅管理员可以维护负责人")
+        current = now or beijing_now()
+        try:
+            month_start = date.fromisoformat(f"{report_month}-01")
+        except ValueError as exc:
+            raise ValueError("报送月份格式不正确") from exc
+        if month_start < current.date().replace(day=1):
+            raise ValueError("历史月份不允许修改负责人")
+        normalized_owner = str(owner_name or "").strip()
+        if len(normalized_owner) > 128:
+            raise ValueError("负责人不能超过 128 个字符")
+        if not self.store.process_exists(process_code):
+            raise ValueError("报送节点不存在")
+        self.store.update_schedule_owner(
+            report_month,
+            process_code,
+            normalized_owner,
+            updated_by=str(current_user.get("username") or ""),
+            now=current,
+        )
+        return {
+            "ok": True,
+            "process_code": process_code,
+            "report_month": report_month,
+            "owner_name": normalized_owner,
+        }
 
     def _recalculate_manual_process(
         self, report_month: str, changed_step: StepConfig, current: datetime

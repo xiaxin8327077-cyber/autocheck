@@ -502,6 +502,24 @@ class ApiRouter:
                     current_user or {},
                 )
 
+            schedule_owner_match = re.fullmatch(
+                r"/api/report-navigation/schedule-owners/([^/]+)",
+                path,
+            )
+            if method == "POST" and schedule_owner_match:
+                if str((current_user or {}).get("role", "")) != "admin":
+                    return 403, {"error": "admin role required"}
+                report_month = str((body or {}).get("report_month", "")).strip()
+                owner_name = str((body or {}).get("owner_name", "")).strip()
+                if not report_month:
+                    return 400, {"error": "report_month is required"}
+                return 200, self.report_navigation.update_schedule_owner(
+                    schedule_owner_match.group(1),
+                    report_month,
+                    owner_name,
+                    current_user or {},
+                )
+
             card_values_match = re.fullmatch(
                 r"/api/report-navigation/cards/([^/]+)",
                 path,

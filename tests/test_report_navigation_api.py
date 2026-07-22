@@ -26,6 +26,10 @@ class FakeReportNavigationService:
         self.calls.append(("schedule", process_code, report_month, report_date, current_user))
         return {"ok": True, "report_date": report_date}
 
+    def update_schedule_owner(self, process_code, report_month, owner_name, current_user):
+        self.calls.append(("schedule-owner", process_code, report_month, owner_name, current_user))
+        return {"ok": True, "owner_name": owner_name}
+
     def update_card_manual_values(self, card_code, values, current_user):
         self.calls.append(("card-values", card_code, values, current_user))
         return {"ok": True, "card_code": card_code}
@@ -119,6 +123,31 @@ def test_schedule_update_requires_admin_and_passes_month_and_date(tmp_path):
     assert allowed == 200
     assert payload["report_date"] == "2026-07-20"
     assert service.calls == [("schedule", "east5", "2026-07", "2026-07-20", _admin())]
+
+
+def test_schedule_owner_update_requires_admin_and_passes_month_and_name(tmp_path):
+    router, service = _router(tmp_path)
+    body = {"report_month": "2026-07", "owner_name": "张智核"}
+
+    denied, _ = router.handle(
+        "POST",
+        "/api/report-navigation/schedule-owners/east5",
+        body,
+        current_user=_user(),
+    )
+    allowed, payload = router.handle(
+        "POST",
+        "/api/report-navigation/schedule-owners/east5",
+        body,
+        current_user=_admin(),
+    )
+
+    assert denied == 403
+    assert allowed == 200
+    assert payload["owner_name"] == "张智核"
+    assert service.calls == [
+        ("schedule-owner", "east5", "2026-07", "张智核", _admin())
+    ]
 
 
 def test_governance_card_values_require_admin_and_pass_all_four_periods(tmp_path):

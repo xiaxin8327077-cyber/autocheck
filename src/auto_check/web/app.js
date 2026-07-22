@@ -25,6 +25,10 @@ const reportNavFlowCard = document.querySelector("#page-report-navigation .repor
 const reportNavLastRun = document.getElementById("reportNavLastRun");
 const reportNavFishbone = document.getElementById("reportNavFishbone");
 const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine");
+const reportNavScheduleCard = document.getElementById("reportNavScheduleCard");
+const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");
+const reportNavScheduleRange = document.getElementById("reportNavScheduleRange");
+const reportNavScheduleTable = document.getElementById("reportNavScheduleTable");
 const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
 const reportNavRefreshCountdown = document.getElementById("reportNavRefreshCountdown");
 const reportNavCardMaintenanceModal = document.getElementById("reportNavCardMaintenanceModal");
@@ -387,6 +391,13 @@ let reportNavigationRefreshRemoteRunning = false;
 let selectedReportNavigationProcessCode = "";
 let reportNavigationVisibleProcesses = [];
 let reportNavigationFlowCardAnimation = null;
+let selectedReportNavigationScheduleProcessCode = "";
+let reportNavigationScheduleCardAnimation = null;
+const REPORT_NAV_SCHEDULE_STEPS_SHOW_DELAY = 120;
+const REPORT_NAV_SCHEDULE_STEPS_HIDE_DELAY = 140;
+let reportNavigationScheduleStepsShowTimer = null;
+let reportNavigationScheduleStepsHideTimer = null;
+let activeReportNavigationScheduleStepsPreview = null;
 const THEME_ACTIVE_USER_KEY = "autoCheckThemeUserKey";
 const THEME_KEY_BASE = "autoCheckTheme";
 const DARK_MODE_KEY_BASE = "autoCheckDarkMode";
@@ -1389,6 +1400,17 @@ const REPORT_NAV_PERIOD_COMPARISON_LABELS = {
 };
 const REPORT_NAV_MAINTAINABLE_CARDS = new Set(["data_governance", "special_governance"]);
 const REPORT_NAV_CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+const REPORT_NAV_PROCESS_DISPLAY_NAMES = {
+  pbc_template: "资管产品模板、逐笔报送",
+  full_elements: "全要素报送",
+  east5: "EAST5.0报送",
+};
+const REPORT_NAV_FISHBONE_PROCESS_NAMES = {
+  pbc_template: "资管产品模板、逐笔",
+};
+const REPORT_NAV_STEP_DISPLAY_NAMES = {
+  east5_1: "归档并上传 EAST5.0 报送",
+};
 
 function reportNavigationDateText(value) {
   const match = String(value || "").match(/^\d{4}-(\d{2})-(\d{2})$/);
@@ -1421,12 +1443,38 @@ function reportNavigationTimingSummary(processes = []) {
   }, { onTime: 0, early: 0, overdue: 0 });
 }
 
+function reportNavigationProcessDisplayName(process = {}) {
+  return REPORT_NAV_PROCESS_DISPLAY_NAMES[String(process.process_code || "")]
+    || String(process.process_name || "");
+}
+
+function reportNavigationFishboneProcessName(process = {}) {
+  return REPORT_NAV_FISHBONE_PROCESS_NAMES[String(process.process_code || "")]
+    || reportNavigationProcessDisplayName(process);
+}
+
+function reportNavigationStepDisplayName(step = {}) {
+  return REPORT_NAV_STEP_DISPLAY_NAMES[String(step.step_code || "")]
+    || String(step.step_name || "");
+}
+
 function reportNavigationDisplayProcesses(payload = {}) {
   const month = Number(String(payload.report_month || "").slice(5, 7));
-  return (payload.processes || []).filter((process) => {
-    if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
-    return true;
-  });
+  return (payload.processes || [])
+    .filter((process) => {
+      if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
+      return true;
+    })
+    .map((process) => ({
+      ...process,
+      process_name: reportNavigationProcessDisplayName(process),
+      steps: Array.isArray(process.steps)
+        ? process.steps.map((step) => ({
+          ...step,
+          step_name: reportNavigationStepDisplayName(step),
+        }))
+        : process.steps,
+    }));
 }
 
 function reportNavigationSpineProgress(processes = []) {
@@ -1439,6 +1487,382 @@ function reportNavigationSpineProgress(processes = []) {
   if (completedPrefixCount === 0) return 0;
   if (completedPrefixCount === processes.length) return 100;
   return ((completedPrefixCount - 0.5) / processes.length) * 100;
+}
+
+function reportNavigationDateOnly(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function reportNavigationDateKey(value) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return "";
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function reportNavigationScheduleDates(reportMonth = "", processes = []) {
+  const [yearText, monthText] = String(reportMonth || "").split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return [];
+  const deadlines = processes
+    .map((process) => reportNavigationDateOnly(process.report_date))
+    .filter((item) => item && item.getFullYear() === year && item.getMonth() === month - 1);
+  if (!deadlines.length) return [];
+  const latestDeadline = new Date(Math.max(...deadlines.map((item) => item.getTime())));
+  const dates = [];
+  for (const cursor = new Date(year, month - 1, 1); cursor <= latestDeadline; cursor.setDate(cursor.getDate() + 1)) {
+    dates.push(new Date(cursor));
+  }
+  return dates;
+}
+
+function reportNavigationScheduleState(process, today = new Date()) {
+  const deadline = reportNavigationDateOnly(process.report_date);
+  const completedAt = reportNavigationDateOnly(process.completed_at);
+  const current = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const completed = process.status === "completed";
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (completed) {
+    const completionOffsetDays = deadline && completedAt
+      ? Math.round((completedAt.getTime() - deadline.getTime()) / dayMs)
+      : 0;
+    if (completionOffsetDays > 0) {
+      return { code: "overdue-completed", label: "逾期完成", overdueDays: completionOffsetDays, earlyDays: 0 };
+    }
+    if (completionOffsetDays < 0) {
+      return { code: "early-completed", label: "提前完成", overdueDays: 0, earlyDays: Math.abs(completionOffsetDays) };
+    }
+    return { code: "completed", label: "已完成", overdueDays: 0, earlyDays: 0 };
+  }
+  if (process.status === "error") return { code: "risk", label: "异常", overdueDays: 0, earlyDays: 0 };
+  if (deadline && current > deadline) {
+    return {
+      code: "overdue",
+      label: "已逾期",
+      overdueDays: Math.ceil((current.getTime() - deadline.getTime()) / dayMs),
+      earlyDays: 0,
+    };
+  }
+  return { code: "running", label: "进行中", overdueDays: 0, earlyDays: 0 };
+}
+
+function reportNavigationSchedulePercent(process) {
+  const total = Math.max(0, Number(process.total_steps || 0));
+  const completed = Math.max(0, Number(process.completed_steps || 0));
+  return total ? Math.min(100, Math.round((completed * 100) / total)) : 0;
+}
+
+function reportNavigationScheduleRangeText(dates = []) {
+  if (!dates.length) return "";
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+  return `（${first.getMonth() + 1}月${first.getDate()}日–${last.getMonth() + 1}月${last.getDate()}日）`;
+}
+
+function animateReportNavigationScheduleCardHeight(startHeight) {
+  if (!reportNavScheduleCard || typeof reportNavScheduleCard.animate !== "function" || !startHeight) return;
+  const endHeight = reportNavScheduleCard.getBoundingClientRect().height;
+  if (Math.abs(endHeight - startHeight) < 1) return;
+  reportNavigationScheduleCardAnimation?.cancel();
+  reportNavigationScheduleCardAnimation = reportNavScheduleCard.animate(
+    [
+      { height: `${startHeight}px`, overflow: "hidden" },
+      { height: `${endHeight}px`, overflow: "hidden" },
+    ],
+    { duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+  );
+}
+
+function syncReportNavigationTodoCardHeight() {
+  if (!reportNavScheduleCard || !reportNavScheduleTable || !reportNavTodoCard) return;
+  const scheduleRect = reportNavScheduleCard.getBoundingClientRect();
+  const scheduleHeight = scheduleRect.height;
+  const sameRow = Math.abs(reportNavScheduleCard.offsetTop - reportNavTodoCard.offsetTop) < 2;
+  if (!sameRow) {
+    reportNavTodoCard.style.removeProperty("height");
+    return;
+  }
+  const detailHeight = Array.from(
+    reportNavScheduleTable.querySelectorAll(".report-nav-schedule-detail"),
+  ).reduce((total, detail) => total + detail.getBoundingClientRect().height, 0);
+  const collapsedHeight = Math.max(0, Math.round(scheduleHeight - detailHeight));
+  if (collapsedHeight) reportNavTodoCard.style.height = `${collapsedHeight}px`;
+}
+
+function renderReportNavigationSchedule(payload = {}) {
+  if (!reportNavScheduleTable) return;
+  window.clearTimeout(reportNavigationScheduleStepsShowTimer);
+  window.clearTimeout(reportNavigationScheduleStepsHideTimer);
+  if (activeReportNavigationScheduleStepsPreview) {
+    closeReportNavigationScheduleStepsPreview(activeReportNavigationScheduleStepsPreview, true);
+  }
+  const processes = reportNavigationDisplayProcesses(payload);
+  const dates = reportNavigationScheduleDates(payload.report_month, processes);
+  const todayKey = reportNavigationDateKey(new Date());
+  const weekdayText = ["日", "一", "二", "三", "四", "五", "六"];
+  const holidayKeys = new Set(
+    Array.isArray(payload.work_calendar?.holidays) ? payload.work_calendar.holidays : [],
+  );
+  const adjustedWorkdayKeys = new Set(
+    Array.isArray(payload.work_calendar?.adjusted_workdays)
+      ? payload.work_calendar.adjusted_workdays
+      : [],
+  );
+  if (reportNavScheduleRange) reportNavScheduleRange.textContent = reportNavigationScheduleRangeText(dates);
+  if (!dates.length || !processes.length) {
+    selectedReportNavigationScheduleProcessCode = "";
+    reportNavScheduleTable.innerHTML = '<div class="report-nav-process-empty">暂无报送日程</div>';
+    return;
+  }
+  if (!processes.some((process) => process.process_code === selectedReportNavigationScheduleProcessCode)) {
+    selectedReportNavigationScheduleProcessCode = "";
+  }
+  const scheduleMinWidth = 172 + (dates.length * 38) + 64;
+  reportNavScheduleCard?.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);
+  reportNavScheduleTable.style.setProperty("--report-nav-schedule-day-count", String(dates.length));
+  const dateKeys = dates.map(reportNavigationDateKey);
+  const header = `<div class="report-nav-schedule-header">
+    <div class="report-nav-schedule-header-label" aria-hidden="true"></div>
+    <div class="report-nav-schedule-dates">${dates.map((item) => {
+      const itemKey = reportNavigationDateKey(item);
+      const adjustedWorkday = adjustedWorkdayKeys.has(itemKey);
+      const weekend = item.getDay() === 0 || item.getDay() === 6;
+      const holiday = holidayKeys.has(itemKey) || (weekend && !adjustedWorkday);
+      const today = itemKey === todayKey;
+      return `<span class="report-nav-schedule-date-head${holiday ? " holiday" : ""}${adjustedWorkday ? " adjusted-workday" : ""}${today ? " today" : ""}">
+        <b>${item.getDate()}</b><em>${weekdayText[item.getDay()]}${adjustedWorkday ? "·班" : ""}</em>
+      </span>`;
+    }).join("")}</div>
+  </div>`;
+  const rows = processes.map((process) => {
+    const processCode = escapeHtml(process.process_code || "");
+    const deadlineKey = String(process.report_date || "").slice(0, 10);
+    const deadlineDate = reportNavigationDateOnly(deadlineKey);
+    let deadlineIndex = dateKeys.indexOf(deadlineKey);
+    if (deadlineIndex < 0 && deadlineDate) {
+      deadlineIndex = dates.findIndex((item) => item >= deadlineDate);
+    }
+    if (deadlineIndex < 0) deadlineIndex = dates.length - 1;
+    const deadlinePosition = ((deadlineIndex + 0.5) / dates.length) * 100;
+    let todayIndex = dateKeys.indexOf(todayKey);
+    if (todayIndex < 0) todayIndex = todayKey < dateKeys[0] ? 0 : dates.length - 1;
+    const todayPosition = ((todayIndex + 0.5) / dates.length) * 100;
+    const completedKey = String(process.completed_at || "").slice(0, 10);
+    let completionIndex = dateKeys.indexOf(completedKey);
+    if (completionIndex < 0) completionIndex = deadlineIndex;
+    const completionPosition = ((completionIndex + 0.5) / dates.length) * 100;
+    const scheduleEdgePosition = 50 / dates.length;
+    const percent = reportNavigationSchedulePercent(process);
+    const state = reportNavigationScheduleState(process);
+    const endpointPosition = ["early-completed", "overdue-completed"].includes(state.code)
+      ? completionPosition
+      : deadlinePosition;
+    const endpointIndex = ["early-completed", "overdue-completed"].includes(state.code)
+      ? completionIndex
+      : deadlineIndex;
+    const endpointAtLastDate = endpointIndex >= dates.length - 1;
+    const fillPosition = ["completed", "early-completed", "overdue-completed"].includes(state.code)
+      ? endpointPosition
+      : todayPosition;
+    const scheduleEndPosition = 100 - scheduleEdgePosition;
+    const remainingBaselineSpan = Math.max(1, scheduleEndPosition - fillPosition);
+    const earlyTailEndPosition = Math.max(0, Math.min(
+      100,
+      ((deadlinePosition - fillPosition) / remainingBaselineSpan) * 100,
+    ));
+    const fillSpanPosition = Math.max(1, fillPosition - scheduleEdgePosition);
+    const overdueStopPosition = Math.max(0, Math.min(
+      100,
+      ((deadlinePosition - scheduleEdgePosition) / fillSpanPosition) * 100,
+    ));
+    const overdueState = ["overdue", "overdue-completed"].includes(state.code);
+    const dots = dates.map((_, index) => {
+      const dotPosition = ((index + 0.5) / dates.length) * 100;
+      if (dotPosition <= fillPosition) {
+        if (overdueState) {
+          return dotPosition <= deadlinePosition
+            ? '<i class="reached before-deadline"></i>'
+            : '<i class="reached after-deadline"></i>';
+        }
+        return '<i class="reached"></i>';
+      }
+      if (state.code === "early-completed" && dotPosition <= deadlinePosition) {
+        return '<i class="early-target"></i>';
+      }
+      return "<i></i>";
+    }).join("");
+    const selected = process.process_code === selectedReportNavigationScheduleProcessCode;
+    const endpointText = ["completed", "early-completed", "overdue-completed"].includes(state.code)
+      ? REPORT_NAV_CHECK_ICON
+      : (state.code === "risk" || state.code === "overdue" ? "!" : "");
+    const deadlineText = reportNavigationDateText(process.report_date);
+    const endpointLabel = state.code === "early-completed"
+      ? `提前${state.earlyDays}天 · 截止${deadlineText}`
+      : (
+        state.code === "overdue-completed"
+          ? `逾期${state.overdueDays}天 · 原截止${deadlineText}`
+          : (state.code === "overdue" ? `已逾期${state.overdueDays}天 · 原截止${deadlineText}` : deadlineText)
+      );
+    const deadlineWarning = state.code === "overdue-completed"
+      ? `<span class="report-nav-schedule-deadline-warning" style="--report-nav-schedule-deadline:${deadlinePosition}%" title="原截止日期：${escapeHtml(deadlineText)}" aria-label="原截止日期：${escapeHtml(deadlineText)}">!</span>`
+      : "";
+    const processSteps = Array.isArray(process.steps) ? process.steps : [];
+    const nextStep = processSteps.find((step) => step.status !== "completed");
+    const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");
+    const stepItems = processSteps.map((step, index) => {
+      const completed = step.status === "completed";
+      const stepState = completed
+        ? "completed"
+        : (index === firstIncompleteStepIndex ? "running" : "waiting");
+      const stepStatusText = stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成");
+      const stepLabel = `${index + 1}、${escapeHtml(reportNavigationStepDisplayName(step))}`;
+      return `<li class="${stepState}"><i aria-hidden="true"></i><span>${stepLabel}</span><em>${stepStatusText}</em></li>`;
+    }).join("");
+    const stepsPreviewId = `report-nav-schedule-steps-${processCode}`;
+    const timingText = state.earlyDays > 0
+      ? `提前 ${state.earlyDays} 天`
+      : (state.overdueDays > 0
+      ? (state.code === "overdue-completed" ? `逾期${state.overdueDays}天完成` : `逾期 ${state.overdueDays} 天`)
+      : "");
+    const detail = selected ? `<div class="report-nav-schedule-detail ${state.code}" data-report-nav-schedule-detail="${processCode}">
+      <div class="report-nav-schedule-detail-spacer" aria-hidden="true"></div>
+      <div class="report-nav-schedule-detail-status"><span>状态</span><strong>${escapeHtml(state.label)}</strong>${timingText ? `<small>${escapeHtml(timingText)}</small>` : ""}</div>
+      <div class="report-nav-schedule-detail-progress"><span>完成进度</span><i><b style="width:${percent}%"></b></i><strong>${percent}%（${Number(process.completed_steps || 0)}/${Number(process.total_steps || 0)}）</strong></div>
+      <div class="report-nav-schedule-detail-next"><span>下一步</span><strong>${escapeHtml(nextStep?.step_name || "全部步骤已完成")}</strong></div>
+      <div class="report-nav-schedule-steps-preview" tabindex="0" role="button" aria-label="查看步骤" aria-describedby="${stepsPreviewId}" aria-expanded="false">
+        <span>查看步骤</span>
+        <div class="report-nav-schedule-steps-popover" id="${stepsPreviewId}" role="tooltip" popover="manual">
+          <span class="report-nav-schedule-steps-arrow" aria-hidden="true"></span>
+          <strong>${escapeHtml(process.process_name || "")} · 全部步骤</strong>
+          <ol class="report-nav-schedule-step-list">${stepItems || '<li class="empty"><span>暂无步骤</span></li>'}</ol>
+        </div>
+      </div>
+    </div>` : "";
+    return `<div class="report-nav-schedule-row ${state.code}${selected ? " selected" : ""}" data-report-nav-schedule-process="${processCode}" role="button" tabindex="0" aria-expanded="${selected ? "true" : "false"}">
+      <div class="report-nav-schedule-summary"><strong>${escapeHtml(process.process_name || "")}</strong><span>${percent}%</span></div>
+      <div class="report-nav-schedule-track" style="--report-nav-schedule-endpoint:${endpointPosition}%;--report-nav-schedule-fill:${fillPosition}%;--report-nav-schedule-early-tail-end:${earlyTailEndPosition}%;--report-nav-schedule-overdue-stop:${overdueStopPosition}%">
+        <i class="report-nav-schedule-baseline"></i><i class="report-nav-schedule-fill"></i>
+        <div class="report-nav-schedule-dots">${dots}</div>
+        ${deadlineWarning}
+        <span class="report-nav-schedule-endpoint${endpointAtLastDate ? " at-last" : ""}" data-report-nav-schedule-date="${processCode}" role="button" tabindex="0" title="${process.schedule_editable ? "右击修改截止日期" : "截止日期"}">${endpointText}<em>${escapeHtml(endpointLabel)}</em></span>
+      </div>
+    </div>${detail}`;
+  }).join("");
+  reportNavScheduleTable.innerHTML = header + rows;
+  reportNavScheduleCard?.classList.toggle("has-selection", Boolean(selectedReportNavigationScheduleProcessCode));
+  syncReportNavigationTodoCardHeight();
+}
+
+function selectReportNavigationScheduleProcess(processCode) {
+  const nextCode = selectedReportNavigationScheduleProcessCode === processCode ? "" : processCode;
+  reportNavigationScheduleCardAnimation?.cancel();
+  const startHeight = reportNavScheduleCard?.getBoundingClientRect().height || 0;
+  selectedReportNavigationScheduleProcessCode = nextCode;
+  renderReportNavigationSchedule(reportNavigationPayload || {});
+  animateReportNavigationScheduleCardHeight(startHeight);
+}
+
+async function editReportNavigationScheduleOwner(processCode) {
+  if (authState.user?.role !== "admin") return;
+  const process = reportNavigationVisibleProcesses.find((item) => item.process_code === processCode);
+  const reportMonth = String(reportNavigationPayload?.report_month || "").slice(0, 7);
+  if (!process || !reportMonth) return;
+  const nextOwner = await showPrompt(
+    "修改负责人",
+    `${process.process_name || "报送流程"}（${reportNavigationMonthText(reportMonth)}）`,
+    { type: "text", defaultValue: String(process.owner_name || ""), placeholder: "未配置时留空" },
+  );
+  if (nextOwner === null || String(nextOwner).trim() === String(process.owner_name || "").trim()) return;
+  try {
+    await api(`/api/report-navigation/schedule-owners/${encodeURIComponent(processCode)}`, {
+      method: "POST",
+      body: JSON.stringify({ report_month: reportMonth, owner_name: String(nextOwner).trim() }),
+    });
+    await loadReportNavigation();
+    showToast("负责人已更新", "success");
+  } catch (error) {
+    showToast(`负责人更新失败：${error.message}`, "error");
+  }
+}
+
+function positionReportNavigationScheduleStepsPopover(preview) {
+  const popover = preview?.querySelector(".report-nav-schedule-steps-popover");
+  if (!popover) return;
+  const viewportPadding = 12;
+  const gap = 12;
+  const triggerRect = preview.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  let left = triggerRect.left - popoverRect.width - gap;
+  let side = "left";
+  if (left < viewportPadding) {
+    left = Math.min(
+      window.innerWidth - popoverRect.width - viewportPadding,
+      triggerRect.right + gap,
+    );
+    side = "right";
+  }
+  const top = Math.min(
+    window.innerHeight - popoverRect.height - viewportPadding,
+    Math.max(viewportPadding, triggerRect.top + ((triggerRect.height - popoverRect.height) / 2)),
+  );
+  popover.dataset.side = side;
+  popover.style.setProperty("--report-nav-schedule-steps-left", `${Math.round(left)}px`);
+  popover.style.setProperty("--report-nav-schedule-steps-top", `${Math.round(top)}px`);
+}
+
+function openReportNavigationScheduleStepsPreview(preview, immediate = false) {
+  if (!preview) return;
+  window.clearTimeout(reportNavigationScheduleStepsShowTimer);
+  window.clearTimeout(reportNavigationScheduleStepsHideTimer);
+  const open = () => {
+    if (activeReportNavigationScheduleStepsPreview && activeReportNavigationScheduleStepsPreview !== preview) {
+      closeReportNavigationScheduleStepsPreview(activeReportNavigationScheduleStepsPreview, true);
+    }
+    activeReportNavigationScheduleStepsPreview = preview;
+    preview.classList.add("open");
+    preview.setAttribute("aria-expanded", "true");
+    const popover = preview.querySelector(".report-nav-schedule-steps-popover");
+    if (!popover) return;
+    window.clearTimeout(popover.reportNavigationHideTimer);
+    if (typeof popover.showPopover === "function" && !popover.matches(":popover-open")) {
+      popover.showPopover();
+    }
+    positionReportNavigationScheduleStepsPopover(preview);
+  };
+  if (immediate) open();
+  else reportNavigationScheduleStepsShowTimer = window.setTimeout(open, REPORT_NAV_SCHEDULE_STEPS_SHOW_DELAY);
+}
+
+function closeReportNavigationScheduleStepsPreview(preview, immediate = false) {
+  if (!preview) return;
+  window.clearTimeout(reportNavigationScheduleStepsShowTimer);
+  window.clearTimeout(reportNavigationScheduleStepsHideTimer);
+  const close = () => {
+    preview.classList.remove("open");
+    preview.setAttribute("aria-expanded", "false");
+    const popover = preview.querySelector(".report-nav-schedule-steps-popover");
+    if (popover) {
+      window.clearTimeout(popover.reportNavigationHideTimer);
+      const hide = () => {
+        if (
+          typeof popover.hidePopover === "function"
+          && popover.matches(":popover-open")
+          && !preview.classList.contains("open")
+        ) {
+          popover.hidePopover();
+        }
+      };
+      if (immediate) hide();
+      else popover.reportNavigationHideTimer = window.setTimeout(hide, 250);
+    }
+    if (activeReportNavigationScheduleStepsPreview === preview) {
+      activeReportNavigationScheduleStepsPreview = null;
+    }
+  };
+  if (immediate) close();
+  else reportNavigationScheduleStepsHideTimer = window.setTimeout(close, REPORT_NAV_SCHEDULE_STEPS_HIDE_DELAY);
 }
 
 function renderReportNavigationStatFooter(card, processes = [], period = "month") {
@@ -1769,6 +2193,7 @@ function renderReportNavigationProcesses(payload) {
     const side = index % 2 === 0 ? "top" : "bottom";
     const totalSteps = Number(process.total_steps || (process.steps || []).length);
     const completedSteps = Number(process.completed_steps || 0);
+    const fishboneProcessName = reportNavigationFishboneProcessName(process);
     const completionText = done
       ? (process.completed_at ? escapeHtml(reportNavigationTimestampText(process.completed_at)) : "--")
       : "进行中";
@@ -1776,12 +2201,12 @@ function renderReportNavigationProcesses(payload) {
       ? "shift-right"
       : (index === processes.length - 1 ? "shift-left" : (index % 2 === 0 ? "shift-left" : "shift-right"));
     const dateInteraction = authState.user?.role === "admin"
-      ? ` class="editable" data-report-nav-date="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-label="编辑${escapeHtml(process.process_name || "")}截止日期" title="右击修改截止日期"`
+      ? ` class="editable" data-report-nav-date="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-label="编辑${escapeHtml(fishboneProcessName)}截止日期" title="右击修改截止日期"`
       : "";
     return `<div class="report-nav-branch ${side} ${shift}${done ? " done" : " running"}">
       <div class="report-nav-branch-line"></div><div class="report-nav-branch-node"></div>
       <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
-        <div class="report-nav-process-title"><span class="report-nav-process-state-icon" aria-hidden="true">${done ? REPORT_NAV_CHECK_ICON : ""}</span><strong>${escapeHtml(process.process_name || "")}</strong><b>${completedSteps}/${totalSteps}</b></div>
+        <div class="report-nav-process-title"><span class="report-nav-process-state-icon" aria-hidden="true">${done ? REPORT_NAV_CHECK_ICON : ""}</span><strong>${escapeHtml(fishboneProcessName)}</strong><b>${completedSteps}/${totalSteps}</b></div>
         <div class="report-nav-process-meta report-nav-process-deadline"><span>截止日期</span><time${dateInteraction}>${escapeHtml(reportNavigationDateText(process.report_date))}</time></div>
         <div class="report-nav-process-meta completion"><span>${done ? "完成于" : "状态"}</span><time>${completionText}</time></div>
       </article>
@@ -1803,6 +2228,7 @@ function renderReportNavigation(payload) {
     payload.period || reportNavPeriodSelect?.value || "month",
   );
   renderReportNavigationProcesses(payload);
+  renderReportNavigationSchedule(payload);
   const refreshState = payload.manual_refresh || {};
   reportNavigationRefreshRemoteRunning = Boolean(refreshState.running);
   setReportNavigationRefreshCooldown(Number(refreshState.retry_after_seconds || 0));
@@ -1925,6 +2351,64 @@ reportNavFlowCard?.addEventListener("click", (event) => {
   if (!selectedReportNavigationProcessCode) return;
   if (event.target.closest("[data-report-nav-process], #reportNavProcessDetails")) return;
   clearReportNavigationProcessSelection();
+});
+
+reportNavScheduleTable?.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-report-nav-schedule-process]");
+  if (row) selectReportNavigationScheduleProcess(row.dataset.reportNavScheduleProcess);
+});
+
+reportNavScheduleTable?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const owner = event.target.closest("[data-report-nav-schedule-owner]");
+  const date = event.target.closest("[data-report-nav-schedule-date]");
+  if (owner) void editReportNavigationScheduleOwner(owner.dataset.reportNavScheduleOwner);
+  else if (date) void editReportNavigationSchedule(date.dataset.reportNavScheduleDate);
+  else {
+    const row = event.target.closest("[data-report-nav-schedule-process]");
+    if (row) selectReportNavigationScheduleProcess(row.dataset.reportNavScheduleProcess);
+  }
+  event.preventDefault();
+  event.stopPropagation();
+});
+
+reportNavScheduleTable?.addEventListener("pointerover", (event) => {
+  const preview = event.target.closest(".report-nav-schedule-steps-preview");
+  if (!preview || preview.contains(event.relatedTarget)) return;
+  openReportNavigationScheduleStepsPreview(preview);
+});
+
+reportNavScheduleTable?.addEventListener("pointerout", (event) => {
+  const preview = event.target.closest(".report-nav-schedule-steps-preview");
+  if (!preview || preview.contains(event.relatedTarget)) return;
+  closeReportNavigationScheduleStepsPreview(preview);
+});
+
+reportNavScheduleTable?.addEventListener("focusin", (event) => {
+  const preview = event.target.closest(".report-nav-schedule-steps-preview");
+  if (preview) openReportNavigationScheduleStepsPreview(preview, true);
+});
+
+reportNavScheduleTable?.addEventListener("focusout", (event) => {
+  const preview = event.target.closest(".report-nav-schedule-steps-preview");
+  if (!preview || preview.contains(event.relatedTarget)) return;
+  closeReportNavigationScheduleStepsPreview(preview);
+});
+
+reportNavScheduleTable?.addEventListener("contextmenu", (event) => {
+  const owner = event.target.closest("[data-report-nav-schedule-owner]");
+  const date = event.target.closest("[data-report-nav-schedule-date]");
+  if (!owner && !date) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (owner) void editReportNavigationScheduleOwner(owner.dataset.reportNavScheduleOwner);
+  else void editReportNavigationSchedule(date.dataset.reportNavScheduleDate);
+});
+
+reportNavScheduleCard?.addEventListener("click", (event) => {
+  if (!selectedReportNavigationScheduleProcessCode) return;
+  if (event.target.closest("[data-report-nav-schedule-process], .report-nav-schedule-detail")) return;
+  selectReportNavigationScheduleProcess("");
 });
 
 async function encryptPasswordForTransport(password) {
@@ -10689,7 +11173,7 @@ document.getElementById("aboutHelp")?.addEventListener("click", (e) => {
 
     <h4>功能说明</h4>
     <ul>
-      <li><strong>报送导航</strong>：查看监管报送统计、流程进度和注意事项</li>
+      <li><strong>报送导航</strong>：查看监管报送统计、流程进度、报送日程和我的待办</li>
       <li><strong>智能核数 / 对数总览</strong>：查看核对趋势和统计图表</li>
       <li><strong>智能核数 / 对数执行</strong>：执行余额核对，查看差异详情</li>
       <li><strong>智能核数 / 对数历史</strong>：查看历史核对记录，并可在详情中恢复到结果页</li>
@@ -10731,6 +11215,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       </div>
               <ul>
         <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
+        <li>新增报送日程、月度负责人维护和鱼骨步骤定位。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
         <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
         <li>新增界面圆角个性化设置。</li>
@@ -10946,6 +11431,7 @@ mainContent?.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true 
 window.addEventListener("resize", updateSpaceTopNavFrost);
 window.addEventListener("resize", fitHomeReportPeriodValue);
 window.addEventListener("resize", scheduleHomeChartsResize);
+window.addEventListener("resize", syncReportNavigationTodoCardHeight);
 
 // Initial load
 (async () => {

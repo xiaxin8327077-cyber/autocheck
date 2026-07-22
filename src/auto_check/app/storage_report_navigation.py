@@ -176,6 +176,18 @@ REPORT_NAV_MONTHLY_SCHEDULES = Table(
     Column("report_date", Date, nullable=False),
     Column("source_type", String(32), nullable=False),
     Column("source_year", SmallInteger),
+    Column("owner_name", String(128)),
+    Column("updated_by", String(128), nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+)
+REPORT_NAV_WORK_CALENDAR = Table(
+    "report_nav_work_calendar",
+    METADATA,
+    Column("calendar_date", Date, primary_key=True),
+    Column("calendar_year", SmallInteger, nullable=False),
+    Column("day_type", String(32), nullable=False),
+    Column("day_name", String(64), nullable=False),
+    Column("source_document", String(255), nullable=False),
     Column("updated_by", String(128), nullable=False),
     Column("updated_at", DateTime, nullable=False),
 )
@@ -264,6 +276,7 @@ class ScheduleConfig:
     source_year: int | None
     updated_by: str
     updated_at: datetime
+    owner_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -591,6 +604,63 @@ class ReportNavigationStore:
             None,
         )
         return _schedule_from_row(row) if row else None
+
+    def load_work_calendar(self, year: int) -> dict[str, Any]:
+        if year < 2000 or year > 9999:
+            raise ValueError("工作日历年份不正确")
+        with self.database.connect() as connection:
+            rows = [
+                row
+                for row in _rows(connection, REPORT_NAV_WORK_CALENDAR)
+                if int(row.get("calendar_year") or 0) == year
+            ]
+        holidays = sorted(
+            _as_date(row["calendar_date"]).isoformat()
+            for row in rows
+            if str(row.get("day_type") or "") == "holiday"
+        )
+        adjusted_workdays = sorted(
+            _as_date(row["calendar_date"]).isoformat()
+            for row in rows
+            if str(row.get("day_type") or "") == "adjusted_workday"
+        )
+        return {
+            "year": year,
+            "configured": bool(rows),
+            "holidays": holidays,
+            "adjusted_workdays": adjusted_workdays,
+        }
+
+    def update_schedule_owner(
+        self,
+        report_month: str,
+        process_code: str,
+        owner_name: str,
+        *,
+        updated_by: str,
+        now: datetime,
+    ) -> None:
+        current = self.load_schedule(report_month, process_code)
+        if current is None:
+            raise ValueError("报送日期未配置，无法维护负责人")
+        values = {
+            "report_month": current.report_month,
+            "process_code": current.process_code,
+            "report_date": current.report_date,
+            "source_type": current.source_type,
+            "source_year": current.source_year,
+            "owner_name": owner_name or None,
+            "updated_by": updated_by,
+            "updated_at": now,
+        }
+        statement = mysql_insert(REPORT_NAV_MONTHLY_SCHEDULES).values(**values)
+        statement = statement.on_duplicate_key_update(
+            owner_name=statement.inserted.owner_name,
+            updated_by=statement.inserted.updated_by,
+            updated_at=statement.inserted.updated_at,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
 
     def ensure_schedule(
         self, report_month: str, process_code: str, *, now: datetime
@@ -1107,6 +1177,7 @@ def _schedule_from_row(row: Mapping[str, Any]) -> ScheduleConfig:
         report_date=_as_date(row["report_date"]),
         source_type=str(row["source_type"]),
         source_year=int(row["source_year"]) if row.get("source_year") is not None else None,
+        owner_name=str(row.get("owner_name") or ""),
         updated_by=str(row.get("updated_by") or ""),
         updated_at=_as_datetime(row["updated_at"]),
     )
