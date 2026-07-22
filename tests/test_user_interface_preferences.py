@@ -129,7 +129,7 @@ def test_application_schema_keeps_version_one_and_adds_user_interface_preference
         }
     )
     assert "theme_gradient_enabled" not in EXPECTED_APP_SCHEMA["user_interface_preferences"]
-    assert len(EXPECTED_APP_SCHEMA) == 37
+    assert len(EXPECTED_APP_SCHEMA) == 39
 
 
 def test_missing_interface_preferences_use_complete_defaults():

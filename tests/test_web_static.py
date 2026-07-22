@@ -2418,7 +2418,7 @@ def test_report_navigation_matches_the_selected_desktop_design_proportions():
     assert "border-radius: var(--ui-radius);" in process_details.group("body")
 
     attention = re.search(
-        r"#page-report-navigation \.report-nav-attention-card\s*\{(?P<body>.*?)\}",
+        r"#page-report-navigation \.report-nav-attention-card\s*\{(?P<body>[^}]*padding: 16px;[^}]*)\}",
         redesign_css,
         re.S,
     )
@@ -2707,8 +2707,15 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert ".report-nav-schedule-row:focus-visible:not(.selected)::after" in css
     assert "width: 3px;" in css
     assert ".report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-summary strong" in css
-    assert ".report-nav-schedule-row:hover:not(.selected) .report-nav-schedule-dots > i.reached" in css
-    assert "color-mix(in srgb, var(--theme-accent) 14%, transparent)" not in css
+    schedule_hover_dot_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-row:hover:not\(\.selected\) \.report-nav-schedule-dots > i\.reached,\s*"
+        r"#page-report-navigation \.report-nav-schedule-row:focus-visible:not\(\.selected\) \.report-nav-schedule-dots > i\.reached\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert schedule_hover_dot_rule is not None
+    assert "transform: scale(1.35);" in schedule_hover_dot_rule.group("body")
+    assert "box-shadow" not in schedule_hover_dot_rule.group("body")
+    assert "color-mix(in srgb, var(--theme-accent) 14%, transparent)" not in schedule_hover_dot_rule.group("body")
     schedule_selected_rule = re.search(
         r"#page-report-navigation \.report-nav-schedule-row\.selected\s*\{(?P<body>[^}]*)\}",
         css,
@@ -2843,7 +2850,7 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "截止日及之前保持主题蓝" in _read(README_MD)
     assert "超过截止日后改为红色" in _read(README_MD)
     assert "不显示今天文字标签，保留当天日期圆圈" in _read(README_MD)
-    assert "行悬浮时不填充背景，复用鱼骨图卡片的主题色描边和中性阴影" in _read(README_MD)
+    assert "鼠标悬浮日程行时采用参考页 01 的浅蓝横向渐变底" in _read(README_MD)
     assert "--report-nav-schedule-table-width" not in app_js
     assert "border-color: var(--theme-accent);" in css
     assert ".report-nav-schedule-date-head.holiday" in css
@@ -3237,6 +3244,57 @@ def test_home_report_period_stat_card_fits_scale_ratio_changes():
     assert "\u9996\u9875\u62a5\u544a\u671f\u7edf\u8ba1\u5361\u7247\u6309\u5b9e\u9645\u663e\u793a\u6bd4\u4f8b\u81ea\u9002\u5e94\u5b57\u53f7" in _read(README_MD)
 
 
+def test_outer_content_panels_share_one_glow_free_hover_rule():
+    css = _read(STYLES_CSS)
+    readme = _read(README_MD)
+
+    shared_base_rule = re.search(
+        r"#page-home \.glass-card,\s*"
+        r"#page-home \.glass-stat-card,\s*"
+        r"#page-report-navigation \.report-nav-stats-layout,\s*"
+        r"#page-report-navigation \.report-nav-flow-card,\s*"
+        r"#page-report-navigation \.report-nav-schedule-card,\s*"
+        r"#page-report-navigation \.report-nav-attention-card,\s*"
+        r"#page-auto-check > \.card,\s*"
+        r"#page-history > \.card,\s*"
+        r"#page-settings \.settings-dashboard-card,\s*"
+        r"#page-users \.user-stat-card,\s*"
+        r"#page-users \.user-filter-bar,\s*"
+        r"#page-users \.user-table-card\s*"
+        r"\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert shared_base_rule is not None
+    assert "box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;" in shared_base_rule.group("body")
+
+    shared_hover_rule = re.search(
+        r"#page-home \.glass-card:hover,\s*"
+        r"#page-home \.glass-stat-card:hover,\s*"
+        r"#page-report-navigation \.report-nav-stats-layout:hover,\s*"
+        r"#page-report-navigation \.report-nav-flow-card:hover,\s*"
+        r"#page-report-navigation \.report-nav-schedule-card:hover,\s*"
+        r"#page-report-navigation \.report-nav-attention-card:hover,\s*"
+        r"#page-auto-check > \.card:hover,\s*"
+        r"#page-history > \.card:hover,\s*"
+        r"#page-settings \.settings-dashboard-card:hover,\s*"
+        r"#page-users \.user-stat-card:hover,\s*"
+        r"#page-users \.user-filter-bar:hover,\s*"
+        r"#page-users \.user-table-card:hover\s*"
+        r"\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert shared_hover_rule is not None
+    hover_body = shared_hover_rule.group("body")
+    assert "border-width: 1px !important;" in hover_body
+    assert "border-color: color-mix(in srgb, var(--theme-accent) 36%, var(--outline-variant)) !important;" in hover_body
+    assert "box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;" in hover_body
+    assert "transform: translateY(-2px) !important;" in hover_body
+    assert "0 0" not in hover_body
+    assert "rgba(15, 23, 42" not in hover_body
+    assert "外层内容模块悬浮统一使用对数总览的 1px 浅主题描边" in readme
+    assert "内容模块之间的缝隙不显示外投影" in readme
+
+
 def test_home_charts_rerender_after_scale_ratio_changes():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
@@ -3347,7 +3405,7 @@ def test_latest_history_results_load_by_default_and_last_run_time_is_retained():
 
     assert "function formatDisplayTime(value)" in app_js
     assert 'return String(value)' in app_js
-    assert '.replace(/\.\d+(?=(?:Z|[+-]\\d{2}:?\\d{2})?$)/, "")' in app_js
+    assert r'.replace(/\.\d+(?=(?:Z|[+-]\d{2}:?\d{2})?$)/, "")' in app_js
     assert 'const displayTime = formatDisplayTime(value || "");' in app_js
     assert "if (!displayTime) return;" in app_js
     assert "latestRunAt = displayTime;" in app_js

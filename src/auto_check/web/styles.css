@@ -15886,3 +15886,38 @@ input.custom-input-native:disabled {
     transition: none;
   }
 }
+
+/* Keep outer content-panel seams free of drop shadows across primary pages. */
+#page-home .glass-card,
+#page-home .glass-stat-card,
+#page-report-navigation .report-nav-stats-layout,
+#page-report-navigation .report-nav-flow-card,
+#page-report-navigation .report-nav-schedule-card,
+#page-report-navigation .report-nav-attention-card,
+#page-auto-check > .card,
+#page-history > .card,
+#page-settings .settings-dashboard-card,
+#page-users .user-stat-card,
+#page-users .user-filter-bar,
+#page-users .user-table-card {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;
+}
+
+/* Keep outer content-panel hover feedback identical across primary pages. */
+#page-home .glass-card:hover,
+#page-home .glass-stat-card:hover,
+#page-report-navigation .report-nav-stats-layout:hover,
+#page-report-navigation .report-nav-flow-card:hover,
+#page-report-navigation .report-nav-schedule-card:hover,
+#page-report-navigation .report-nav-attention-card:hover,
+#page-auto-check > .card:hover,
+#page-history > .card:hover,
+#page-settings .settings-dashboard-card:hover,
+#page-users .user-stat-card:hover,
+#page-users .user-filter-bar:hover,
+#page-users .user-table-card:hover {
+  border-width: 1px !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 36%, var(--outline-variant)) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;
+  transform: translateY(-2px) !important;
+}

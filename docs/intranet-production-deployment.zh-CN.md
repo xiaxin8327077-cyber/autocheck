@@ -9,17 +9,19 @@
 1. 在 MySQL 中手工创建 `auto_check` 数据库，并为应用账号授予必要读写权限。
 2. 执行 `sql/app_storage/mysql/001_init_schema.sql` 创建 20 张应用存储表；该脚本不包含生产数据，也不包含 `CREATE DATABASE`、`DROP` 或 `TRUNCATE`。
 3. 如需迁移旧 SQLite `auto-check.db`，停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读生成数据 SQL 和迁移报告，再由运维人员人工执行数据 SQL。
-4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 15 张报送导航表。
+4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 17 张报送导航表。
 5. 执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入报送导航种子配置。
 6. 执行 `sql/app_storage/mysql/004_user_interface_preferences.sql` 新增第 36 张用户界面偏好表。
 7. 执行 `sql/app_storage/mysql/005_user_appearance_preferences.sql`，为用户偏好表增加折线图风格和两个可空的未来个人主题色字段及检查约束。
-8. 执行 `sql/app_storage/mysql/006_system_interface_preferences.sql` 新增第 37 张系统界面偏好表；完整应用结构共 37 张表，`app_schema_version` 仍为 `1`。
-9. `/home/autocheck/data/config.json` 中只保留 `app_database` 启动连接信息和必要启动参数，动态配置、用户和历史记录不再写回 JSON。
-10. `AUTO_CHECK_SECRET_KEY` 必须与旧环境保持一致，避免旧数据源加密密码无法解密。
-11. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
-12. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 37 张应用存储表结构（依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`）齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+8. 执行 `sql/app_storage/mysql/006_system_interface_preferences.sql` 新增第 39 张系统界面偏好表；完整应用结构共 39 张表，`app_schema_version` 仍为 `1`。
+9. 执行 `sql/app_storage/mysql/007_report_navigation_schedule_owner.sql`，为月度报送日程补充负责人字段。
+10. 执行 `sql/app_storage/mysql/008_report_navigation_work_calendar.sql`，创建或更新法定节假日与调休工作日日历。
+11. `/home/autocheck/data/config.json` 中只保留 `app_database` 启动连接信息和必要启动参数，动态配置、用户和历史记录不再写回 JSON。
+12. `AUTO_CHECK_SECRET_KEY` 必须与旧环境保持一致，避免旧数据源加密密码无法解密。
+13. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
+14. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 39 张应用存储表结构（依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`）齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
 
-`user_interface_preferences` 按每个用户独立保存界面圆角和折线图风格，并预留两个可空的个人主题色，不设置外键，删除用户后的孤儿偏好由应用清理。`system_interface_preferences` 只保存系统级活力/沉稳纯色主题及最后修改人；主题色绝不写入 `app_settings`。从已执行 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`，再替换应用。`004` 和 `006` 采用 `CREATE TABLE IF NOT EXISTS`，`005` 通过 `information_schema` 判断字段与约束后再升级；三个脚本均可重复执行，不会重复建表、重复加列或删除现有数据，表已存在时仍需人工核对结构。本文仅描述运维步骤，不代表已在任何线上环境执行。
+`user_interface_preferences` 按每个用户独立保存界面圆角和折线图风格，并预留两个可空的个人主题色，不设置外键，删除用户后的孤儿偏好由应用清理。`system_interface_preferences` 只保存系统级活力/沉稳纯色主题及最后修改人；主题色绝不写入 `app_settings`。从已执行 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`，再替换应用。`004`、`006` 和 `008` 采用 `CREATE TABLE IF NOT EXISTS`，`005` 与 `007` 通过 `information_schema` 判断字段或约束后再升级；五个脚本均可重复执行，不会重复建表、重复加列或删除现有数据，表已存在时仍需人工核对结构。本文仅描述运维步骤，不代表已在任何线上环境执行。
 
 `app_database` 配置示例：
 

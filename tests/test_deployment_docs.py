@@ -142,14 +142,16 @@ def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> 
     for acceptance in acceptance_sections.values():
         assert "原 20 张迁移目标表的数据行数" in acceptance
         assert "与迁移报告一致" in acceptance
-        assert "当前完整 37 张应用存储表结构" in acceptance
+        assert "当前完整 39 张应用存储表结构" in acceptance
         assert "004_user_interface_preferences.sql" in acceptance
         assert "005_user_appearance_preferences.sql" in acceptance
         assert "006_system_interface_preferences.sql" in acceptance
-        assert "37 张目标表和迁移行数齐全" not in acceptance
+        assert "007_report_navigation_schedule_owner.sql" in acceptance
+        assert "008_report_navigation_work_calendar.sql" in acceptance
+        assert "39 张目标表和迁移行数齐全" not in acceptance
 
 
-def test_mysql_rollout_docs_require_004_through_006_and_37_table_sequence() -> None:
+def test_mysql_rollout_docs_require_004_through_008_and_39_table_sequence() -> None:
     for path in [README, MYSQL_STORAGE_DOC, DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
         scripts = [
@@ -159,8 +161,10 @@ def test_mysql_rollout_docs_require_004_through_006_and_37_table_sequence() -> N
             "004_user_interface_preferences.sql",
             "005_user_appearance_preferences.sql",
             "006_system_interface_preferences.sql",
+            "007_report_navigation_schedule_owner.sql",
+            "008_report_navigation_work_calendar.sql",
         ]
-        assert "37 张" in text
+        assert "39 张" in text
         assert all(script in text for script in scripts)
         assert [text.index(script) for script in scripts] == sorted(
             text.index(script) for script in scripts
@@ -175,7 +179,7 @@ def test_mysql_rollout_docs_require_004_through_006_and_37_table_sequence() -> N
     assert "绝不使用 `app_settings`" in mysql_doc
 
 
-def test_deployment_upgrade_docs_define_safe_manual_004_through_006_boundary() -> None:
+def test_deployment_upgrade_docs_define_safe_manual_004_through_008_boundary() -> None:
     for path in [DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
         assert "升级应用前" in text

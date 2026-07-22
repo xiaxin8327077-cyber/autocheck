@@ -1436,7 +1436,7 @@ function reportNavigationTimingSummary(processes = []) {
       if (completedDate < reportDate) summary.early += 1;
       else if (completedDate === reportDate) summary.onTime += 1;
       else summary.overdue += 1;
-    } else if (process.status === "error" || reportDate < new Date().toISOString().slice(0, 10)) {
+    } else if (process.status === "error" || reportDate < formatBeijingDate()) {
       summary.overdue += 1;
     }
     return summary;
