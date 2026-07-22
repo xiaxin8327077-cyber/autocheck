@@ -1125,7 +1125,20 @@ class ReportNavigationService:
         if report_month != current.strftime("%Y-%m"):
             raise ValueError("只允许维护当前月的步骤状态")
         step = self.store.load_step_config(step_code)
-        if step is None or not step.manual_completion_allowed:
+        process = next(
+            (
+                item
+                for item in self.store.load_configuration(report_month)
+                if item.process_code == (step.process_code if step else "")
+            ),
+            None,
+        )
+        if (
+            step is None
+            or process is None
+            or not process.allow_manual_step_completion
+            or not step.manual_completion_allowed
+        ):
             raise ValueError("步骤不存在或不允许手动完成")
         if action == "manual-complete":
             self.store.set_manual_complete(report_month, step_code, current_user, now=current)

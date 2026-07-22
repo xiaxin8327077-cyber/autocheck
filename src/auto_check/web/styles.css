@@ -14611,18 +14611,15 @@ input.custom-input-native:disabled {
 }
 
 #page-report-navigation .report-nav-process-deadline time.editable {
-  margin: -1px -4px;
-  padding: 1px 4px;
-  border-radius: var(--ui-radius);
   color: var(--theme-accent-readable);
   cursor: pointer;
-  outline: 1px dashed transparent;
+  outline: none;
 }
 
 #page-report-navigation .report-nav-process-deadline time.editable:hover,
 #page-report-navigation .report-nav-process-deadline time.editable:focus-visible {
-  background: var(--theme-focus-ring);
-  outline-color: var(--theme-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 #page-report-navigation .report-nav-branch.running .report-nav-process-meta.completion time {
@@ -15187,6 +15184,12 @@ input.custom-input-native:disabled {
   transform: translateX(-50%);
 }
 
+#page-report-navigation .report-nav-schedule-endpoint.at-first em {
+  left: 50%;
+  text-align: left;
+  transform: none;
+}
+
 #page-report-navigation .report-nav-schedule-endpoint.at-last em {
   right: 50%;
   left: auto;
@@ -15492,12 +15495,53 @@ input.custom-input-native:disabled {
   animation: report-nav-schedule-step-ping 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
 
-#page-report-navigation .report-nav-schedule-step-list > li > em {
+#page-report-navigation .report-nav-schedule-step-list > li > em,
+#page-report-navigation .report-nav-schedule-step-status-readonly {
+  margin: 0;
+  padding: 0;
+  border: 0;
   color: var(--outline);
+  background: transparent;
   font-family: var(--font-family-mono, monospace);
   font-size: 10px;
   font-style: normal;
   white-space: nowrap;
+}
+
+#page-report-navigation .report-nav-schedule-step-status-action {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--theme-accent-readable);
+  background: transparent;
+  font-family: var(--font-family-mono, monospace);
+  font-size: 10px;
+  font-style: normal;
+  line-height: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#page-report-navigation .report-nav-schedule-step-status-action:hover {
+  color: color-mix(in srgb, var(--theme-accent-readable) 75%, var(--on-surface));
+}
+
+#page-report-navigation .report-nav-schedule-step-status-action:focus-visible {
+  outline: 1px solid var(--theme-accent-readable);
+  outline-offset: 2px;
+}
+
+#page-report-navigation .report-nav-schedule-step-status-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+#page-report-navigation .report-nav-schedule-step-status-action[data-report-nav-step-pending="true"] {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 #page-report-navigation .report-nav-schedule-step-list > li.empty {

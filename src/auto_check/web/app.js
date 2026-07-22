@@ -398,6 +398,7 @@ const REPORT_NAV_SCHEDULE_STEPS_HIDE_DELAY = 140;
 let reportNavigationScheduleStepsShowTimer = null;
 let reportNavigationScheduleStepsHideTimer = null;
 let activeReportNavigationScheduleStepsPreview = null;
+let reportNavigationScheduleRenderDeferred = false;
 const THEME_ACTIVE_USER_KEY = "autoCheckThemeUserKey";
 const THEME_KEY_BASE = "autoCheckTheme";
 const DARK_MODE_KEY_BASE = "autoCheckDarkMode";
@@ -1591,6 +1592,125 @@ function syncReportNavigationTodoCardHeight() {
   if (collapsedHeight) reportNavTodoCard.style.height = `${collapsedHeight}px`;
 }
 
+function reportNavigationScheduleStepItems(process = {}) {
+  const processCode = escapeHtml(String(process.process_code || ""));
+  const processSteps = Array.isArray(process.steps) ? process.steps : [];
+  const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");
+  return processSteps.map((step, index) => {
+    const completed = step.status === "completed";
+    const stepState = completed
+      ? "completed"
+      : (index === firstIncompleteStepIndex ? "running" : "waiting");
+    const stepStatusText = stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成");
+    const stepLabel = `${index + 1}、${escapeHtml(reportNavigationStepDisplayName(step))}`;
+    const manualAction = step.manual_completion_allowed && (!completed || step.manual_completed)
+      ? (step.manual_completed ? "manual-cancel" : "manual-complete")
+      : "";
+    const statusMarkup = manualAction
+      ? `<button type="button" class="report-nav-schedule-step-status-action" data-report-nav-step-action="${manualAction}" data-report-nav-step-code="${escapeHtml(String(step.step_code || ""))}" data-report-nav-step-process="${processCode}" aria-label="${manualAction === "manual-cancel" ? "撤销该步骤人工确认" : "确认该步骤已完成"}">${stepStatusText}</button>`
+      : `<em>${stepStatusText}</em>`;
+    return `<li class="${stepState}" data-report-nav-step-row="${escapeHtml(String(step.step_code || ""))}"><i aria-hidden="true"></i><span>${stepLabel}</span>${statusMarkup}</li>`;
+  }).join("");
+}
+
+function updateReportNavigationScheduleStepsPopover(control, processCode, payload) {
+  const process = reportNavigationDisplayProcesses(payload)
+    .find((item) => item.process_code === processCode);
+  const preview = control?.closest(".report-nav-schedule-steps-preview");
+  const list = preview?.querySelector(".report-nav-schedule-step-list");
+  if (!process || !preview || !list) return;
+  reportNavigationScheduleRenderDeferred = true;
+  const processSteps = Array.isArray(process.steps) ? process.steps : [];
+  const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");
+  processSteps.forEach((step, index) => {
+    const stepCode = String(step.step_code || "");
+    const row = Array.from(list.children)
+      .find((item) => item.dataset.reportNavStepRow === stepCode);
+    if (!row) return;
+    const completed = step.status === "completed";
+    const stepState = completed
+      ? "completed"
+      : (index === firstIncompleteStepIndex ? "running" : "waiting");
+    const stepStatusText = stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成");
+    const manualAction = step.manual_completion_allowed && (!completed || step.manual_completed)
+      ? (step.manual_completed ? "manual-cancel" : "manual-complete")
+      : "";
+    const statusControl = row.querySelector(".report-nav-schedule-step-status-action, .report-nav-schedule-step-status-readonly, em");
+    row.className = stepState;
+    if (!statusControl) return;
+    statusControl.textContent = stepStatusText;
+    if (manualAction && statusControl instanceof HTMLButtonElement) {
+      statusControl.className = "report-nav-schedule-step-status-action";
+      statusControl.dataset.reportNavStepAction = manualAction;
+      statusControl.dataset.reportNavStepCode = stepCode;
+      statusControl.dataset.reportNavStepProcess = processCode;
+      statusControl.setAttribute("aria-label", manualAction === "manual-cancel" ? "撤销该步骤人工确认" : "确认该步骤已完成");
+      statusControl.removeAttribute("aria-disabled");
+      statusControl.removeAttribute("aria-busy");
+      delete statusControl.dataset.reportNavStepPending;
+      statusControl.tabIndex = 0;
+      statusControl.disabled = false;
+    } else if (!manualAction && statusControl instanceof HTMLButtonElement) {
+      statusControl.className = "report-nav-schedule-step-status-readonly";
+      delete statusControl.dataset.reportNavStepAction;
+      delete statusControl.dataset.reportNavStepCode;
+      delete statusControl.dataset.reportNavStepProcess;
+      statusControl.removeAttribute("aria-label");
+      statusControl.setAttribute("aria-disabled", "true");
+      statusControl.tabIndex = -1;
+      statusControl.disabled = false;
+    }
+  });
+}
+
+function updateReportNavigationScheduleProcessSummary(processCode, payload) {
+  const process = reportNavigationDisplayProcesses(payload)
+    .find((item) => item.process_code === processCode);
+  const row = Array.from(reportNavScheduleTable?.querySelectorAll("[data-report-nav-schedule-process]") || [])
+    .find((item) => item.dataset.reportNavScheduleProcess === processCode);
+  const detail = row?.nextElementSibling?.matches?.(`[data-report-nav-schedule-detail="${processCode}"]`)
+    ? row.nextElementSibling
+    : reportNavScheduleTable?.querySelector(`[data-report-nav-schedule-detail="${processCode}"]`);
+  if (!process || !row || !detail) return;
+  const percent = reportNavigationSchedulePercent(process);
+  const completedSteps = Number(process.completed_steps || 0);
+  const totalSteps = Number(process.total_steps || 0);
+  const nextStep = (Array.isArray(process.steps) ? process.steps : [])
+    .find((step) => step.status !== "completed");
+  const state = reportNavigationScheduleState(process);
+  const timingText = state.earlyDays > 0
+    ? `提前 ${state.earlyDays} 天`
+    : (state.overdueDays > 0
+      ? (state.code === "overdue-completed" ? `逾期${state.overdueDays}天完成` : `逾期 ${state.overdueDays} 天`)
+      : "");
+  const summaryPercent = row.querySelector(".report-nav-schedule-summary > span");
+  const statusBlock = detail.querySelector(".report-nav-schedule-detail-status");
+  const statusValue = statusBlock?.querySelector("strong");
+  let timingValue = statusBlock?.querySelector("small");
+  const progressBar = detail.querySelector(".report-nav-schedule-detail-progress > i > b");
+  const progressValue = detail.querySelector(".report-nav-schedule-detail-progress > strong");
+  const nextStepValue = detail.querySelector(".report-nav-schedule-detail-next > strong");
+  if (summaryPercent) summaryPercent.textContent = `${percent}%`;
+  if (statusValue) statusValue.textContent = state.label;
+  if (timingText && !timingValue && statusBlock) {
+    timingValue = document.createElement("small");
+    statusBlock.appendChild(timingValue);
+  }
+  if (timingValue) {
+    timingValue.textContent = timingText;
+    timingValue.hidden = !timingText;
+  }
+  if (progressBar) progressBar.style.width = `${percent}%`;
+  if (progressValue) progressValue.textContent = `${percent}%（${completedSteps}/${totalSteps}）`;
+  if (nextStepValue) nextStepValue.textContent = nextStep?.step_name || "全部步骤已完成";
+}
+
+function flushDeferredReportNavigationScheduleRender() {
+  if (!reportNavigationScheduleRenderDeferred) return;
+  reportNavigationScheduleRenderDeferred = false;
+  renderReportNavigationSchedule(reportNavigationPayload || {});
+}
+
 function renderReportNavigationSchedule(payload = {}) {
   if (!reportNavScheduleTable) return;
   window.clearTimeout(reportNavigationScheduleStepsShowTimer);
@@ -1662,6 +1782,7 @@ function renderReportNavigationSchedule(payload = {}) {
     const endpointIndex = ["early-completed", "overdue-completed"].includes(state.code)
       ? completionIndex
       : deadlineIndex;
+    const endpointAtFirstDate = endpointIndex <= 0;
     const endpointAtLastDate = endpointIndex >= dates.length - 1;
     const fillPosition = ["completed", "early-completed", "overdue-completed"].includes(state.code)
       ? endpointPosition
@@ -1710,16 +1831,7 @@ function renderReportNavigationSchedule(payload = {}) {
       : "";
     const processSteps = Array.isArray(process.steps) ? process.steps : [];
     const nextStep = processSteps.find((step) => step.status !== "completed");
-    const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");
-    const stepItems = processSteps.map((step, index) => {
-      const completed = step.status === "completed";
-      const stepState = completed
-        ? "completed"
-        : (index === firstIncompleteStepIndex ? "running" : "waiting");
-      const stepStatusText = stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成");
-      const stepLabel = `${index + 1}、${escapeHtml(reportNavigationStepDisplayName(step))}`;
-      return `<li class="${stepState}"><i aria-hidden="true"></i><span>${stepLabel}</span><em>${stepStatusText}</em></li>`;
-    }).join("");
+    const stepItems = reportNavigationScheduleStepItems(process);
     const stepsPreviewId = `report-nav-schedule-steps-${processCode}`;
     const timingText = state.earlyDays > 0
       ? `提前 ${state.earlyDays} 天`
@@ -1746,7 +1858,7 @@ function renderReportNavigationSchedule(payload = {}) {
         <i class="report-nav-schedule-baseline"></i><i class="report-nav-schedule-fill"></i>
         <div class="report-nav-schedule-dots">${dots}</div>
         ${deadlineWarning}
-        <span class="report-nav-schedule-endpoint${endpointAtLastDate ? " at-last" : ""}" data-report-nav-schedule-date="${processCode}" role="button" tabindex="0" title="${process.schedule_editable ? "右击修改截止日期" : "截止日期"}">${endpointText}<em>${escapeHtml(endpointLabel)}</em></span>
+        <span class="report-nav-schedule-endpoint${endpointAtFirstDate ? " at-first" : ""}${endpointAtLastDate ? " at-last" : ""}" data-report-nav-schedule-date="${processCode}" role="button" tabindex="0" title="${process.schedule_editable ? "右击修改截止日期" : "截止日期"}">${endpointText}<em>${escapeHtml(endpointLabel)}</em></span>
       </div>
     </div>${detail}`;
   }).join("");
@@ -1762,6 +1874,37 @@ function selectReportNavigationScheduleProcess(processCode) {
   selectedReportNavigationScheduleProcessCode = nextCode;
   renderReportNavigationSchedule(reportNavigationPayload || {});
   animateReportNavigationScheduleCardHeight(startHeight);
+}
+
+async function setReportNavigationManualStepState(control) {
+  if (control?.dataset.reportNavStepPending === "true") return;
+  const stepCode = String(control?.dataset.reportNavStepCode || "");
+  const processCode = String(control?.dataset.reportNavStepProcess || "");
+  const action = String(control?.dataset.reportNavStepAction || "");
+  const reportMonth = String(reportNavigationPayload?.report_month || "");
+  if (!stepCode || !reportMonth || !["manual-complete", "manual-cancel"].includes(action)) return;
+  control.dataset.reportNavStepPending = "true";
+  control.setAttribute("aria-disabled", "true");
+  control.setAttribute("aria-busy", "true");
+  try {
+    await api(`/api/report-navigation/steps/${encodeURIComponent(stepCode)}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ report_month: reportMonth }),
+    });
+    const payload = await loadReportNavigation({ preserveSchedule: true });
+    if (payload) {
+      updateReportNavigationScheduleStepsPopover(control, processCode, payload);
+      updateReportNavigationScheduleProcessSummary(processCode, payload);
+    }
+    showToast(action === "manual-cancel" ? "已撤销人工确认" : "步骤已确认完成", "success");
+  } catch (error) {
+    if (control.isConnected) {
+      delete control.dataset.reportNavStepPending;
+      control.removeAttribute("aria-disabled");
+      control.removeAttribute("aria-busy");
+    }
+    showToast(`步骤状态更新失败：${error.message}`, "error");
+  }
 }
 
 async function editReportNavigationScheduleOwner(processCode) {
@@ -1860,6 +2003,7 @@ function closeReportNavigationScheduleStepsPreview(preview, immediate = false) {
     if (activeReportNavigationScheduleStepsPreview === preview) {
       activeReportNavigationScheduleStepsPreview = null;
     }
+    flushDeferredReportNavigationScheduleRender();
   };
   if (immediate) close();
   else reportNavigationScheduleStepsHideTimer = window.setTimeout(close, REPORT_NAV_SCHEDULE_STEPS_HIDE_DELAY);
@@ -2216,7 +2360,7 @@ function renderReportNavigationProcesses(payload) {
   renderReportNavigationProcessDetails(selectedProcess || null);
 }
 
-function renderReportNavigation(payload) {
+function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
   reportNavigationPayload = payload;
   if (reportNavMonth) {
     const businessPeriod = String(payload.business_report_date || payload.report_month || "").slice(0, 7);
@@ -2228,7 +2372,7 @@ function renderReportNavigation(payload) {
     payload.period || reportNavPeriodSelect?.value || "month",
   );
   renderReportNavigationProcesses(payload);
-  renderReportNavigationSchedule(payload);
+  if (!preserveSchedule) renderReportNavigationSchedule(payload);
   const refreshState = payload.manual_refresh || {};
   reportNavigationRefreshRemoteRunning = Boolean(refreshState.running);
   setReportNavigationRefreshCooldown(Number(refreshState.retry_after_seconds || 0));
@@ -2244,16 +2388,18 @@ function renderReportNavigation(payload) {
     : (payload.last_run ? DEFAULT_VERSION : "尚无统计快照，页面将在定时任务完成后自动显示结果。"));
 }
 
-async function loadReportNavigation() {
+async function loadReportNavigation({ preserveSchedule = false } = {}) {
   if (reportNavigationLoading) return;
   reportNavigationLoading = true;
   const period = reportNavPeriodSelect?.value || "month";
   setStatus("正在读取最新统计结果…");
   try {
     const payload = await api(`/api/report-navigation/dashboard?period=${encodeURIComponent(period)}`);
-    renderReportNavigation(payload);
+    renderReportNavigation(payload, { preserveSchedule });
+    return payload;
   } catch (error) {
     setStatus(`统计结果读取失败：${error.message}`);
+    return null;
   } finally {
     reportNavigationLoading = false;
   }
@@ -2354,15 +2500,24 @@ reportNavFlowCard?.addEventListener("click", (event) => {
 });
 
 reportNavScheduleTable?.addEventListener("click", (event) => {
+  const stepAction = event.target.closest("[data-report-nav-step-action]");
+  if (stepAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    void setReportNavigationManualStepState(stepAction);
+    return;
+  }
   const row = event.target.closest("[data-report-nav-schedule-process]");
   if (row) selectReportNavigationScheduleProcess(row.dataset.reportNavScheduleProcess);
 });
 
 reportNavScheduleTable?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
+  const stepAction = event.target.closest("[data-report-nav-step-action]");
   const owner = event.target.closest("[data-report-nav-schedule-owner]");
   const date = event.target.closest("[data-report-nav-schedule-date]");
-  if (owner) void editReportNavigationScheduleOwner(owner.dataset.reportNavScheduleOwner);
+  if (stepAction) void setReportNavigationManualStepState(stepAction);
+  else if (owner) void editReportNavigationScheduleOwner(owner.dataset.reportNavScheduleOwner);
   else if (date) void editReportNavigationSchedule(date.dataset.reportNavScheduleDate);
   else {
     const row = event.target.closest("[data-report-nav-schedule-process]");
@@ -11216,6 +11371,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
               <ul>
         <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
         <li>新增报送日程、月度负责人维护和鱼骨步骤定位。</li>
+        <li>新增报送步骤浮窗人工确认和撤销确认。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
         <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
         <li>新增界面圆角个性化设置。</li>

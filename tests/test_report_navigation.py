@@ -1411,6 +1411,44 @@ def test_manual_completion_recalculates_process_and_cancel_restores_automatic_st
     assert store.load_card_snapshots("month")["report_forms"].completed_count == 1
 
 
+def test_manual_completion_requires_process_and_step_permission_switches():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    current = datetime(2026, 7, 16, 9, 30)
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+
+    process_row = next(
+        row
+        for row in database.connection.tables["report_nav_processes"]
+        if row["process_code"] == "p1"
+    )
+    process_row["allow_manual_step_completion"] = 0
+    try:
+        service.set_manual_state("p1_s2", "manual-complete", "2026-07", admin, now=current)
+    except ValueError as exc:
+        assert "不允许手动完成" in str(exc)
+    else:
+        raise AssertionError("disabled process-level manual completion should be rejected")
+
+    process_row["allow_manual_step_completion"] = 1
+    step_row = next(
+        row
+        for row in database.connection.tables["report_nav_steps"]
+        if row["step_code"] == "p1_s2"
+    )
+    step_row["manual_completion_allowed"] = 0
+    try:
+        service.set_manual_state("p1_s2", "manual-complete", "2026-07", admin, now=current)
+    except ValueError as exc:
+        assert "不允许手动完成" in str(exc)
+    else:
+        raise AssertionError("disabled step-level manual completion should be rejected")
+
+
 def test_schedule_update_accepts_current_or_future_month_and_rejects_cross_month_date():
     report_module = _report_navigation()
     storage_module = _storage()

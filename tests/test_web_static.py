@@ -2121,7 +2121,26 @@ def test_report_navigation_uses_bent_connectors_below_details_and_admin_schedule
     assert "background: transparent;" in details.group("body")
     assert "margin: 14px 20px 0;" in details.group("body")
     assert 'data-report-nav-date="${escapeHtml(process.process_code || "")}"' in app_js
+    assert '<time${dateInteraction}>${escapeHtml(reportNavigationDateText(process.report_date))}</time>' in app_js
     assert 'title="右击修改截止日期"' in app_js
+    deadline_edit_rule = re.search(
+        r"#page-report-navigation \.report-nav-process-deadline time\.editable\s*\{(?P<body>[^}]*)\}",
+        redesign_css,
+    )
+    assert deadline_edit_rule is not None
+    assert "cursor: pointer;" in deadline_edit_rule.group("body")
+    for declaration in ["padding:", "margin:", "background:", "outline-color:"]:
+        assert declaration not in deadline_edit_rule.group("body")
+    assert "outline: none;" in deadline_edit_rule.group("body")
+    deadline_edit_hover_rule = re.search(
+        r"#page-report-navigation \.report-nav-process-deadline time\.editable:hover,\s*"
+        r"#page-report-navigation \.report-nav-process-deadline time\.editable:focus-visible\s*\{(?P<body>[^}]*)\}",
+        redesign_css,
+    )
+    assert deadline_edit_hover_rule is not None
+    assert "text-decoration: underline;" in deadline_edit_hover_rule.group("body")
+    assert "background:" not in deadline_edit_hover_rule.group("body")
+    assert "outline-color:" not in deadline_edit_hover_rule.group("body")
     assert 'reportNavBranches?.addEventListener("contextmenu"' in app_js
     assert 'authState.user?.role !== "admin"' in app_js
     assert '"修改截止日期"' in app_js
@@ -2753,7 +2772,9 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert ".report-nav-schedule-row.overdue-completed," in css
     assert "left: var(--report-nav-schedule-endpoint);" in css
     assert "const endpointAtLastDate = endpointIndex >= dates.length - 1;" in app_js
-    assert 'report-nav-schedule-endpoint${endpointAtLastDate ? " at-last" : ""}' in app_js
+    assert "const endpointAtFirstDate = endpointIndex <= 0;" in app_js
+    assert '${endpointAtFirstDate ? " at-first" : ""}${endpointAtLastDate ? " at-last" : ""}' in app_js
+    assert "#page-report-navigation .report-nav-schedule-endpoint.at-first em" in css
     assert "#page-report-navigation .report-nav-schedule-endpoint.at-last em" in css
     assert "right: 50%;" in css
     assert "text-align: right;" in css
@@ -2855,6 +2876,47 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "border-color: var(--theme-accent);" in css
     assert ".report-nav-schedule-date-head.holiday" in css
     assert "color: var(--report-nav-danger);" in css
+
+
+def test_report_navigation_step_popover_uses_clickable_status_for_manual_confirmation():
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert 'class="report-nav-schedule-step-status-action"' in app_js
+    assert 'data-report-nav-step-action="${manualAction}"' in app_js
+    assert 'data-report-nav-step-code="${escapeHtml(String(step.step_code || ""))}"' in app_js
+    assert 'data-report-nav-step-row="${escapeHtml(String(step.step_code || ""))}"' in app_js
+    assert 'step.manual_completion_allowed && (!completed || step.manual_completed)' in app_js
+    assert "setReportNavigationManualStepState" in app_js
+    assert "await loadReportNavigation({ preserveSchedule: true });" in app_js
+    assert "function updateReportNavigationScheduleStepsPopover" in app_js
+    update_body = app_js.split(
+        "function updateReportNavigationScheduleStepsPopover", 1
+    )[1].split("function flushDeferredReportNavigationScheduleRender", 1)[0]
+    assert "list.innerHTML" not in update_body
+    assert "preview.focus" not in update_body
+    assert "statusControl.textContent = stepStatusText;" in update_body
+    assert "row.className = stepState;" in update_body
+    assert "function updateReportNavigationScheduleProcessSummary" in app_js
+    assert "summaryPercent.textContent = `${percent}%`;" in app_js
+    assert "progressValue.textContent = `${percent}%（${completedSteps}/${totalSteps}）`;" in app_js
+    assert 'nextStepValue.textContent = nextStep?.step_name || "全部步骤已完成";' in app_js
+    action_body = app_js.split(
+        "async function setReportNavigationManualStepState", 1
+    )[1].split("async function editReportNavigationScheduleOwner", 1)[0]
+    assert "control.disabled = true;" not in action_body
+    assert 'control?.dataset.reportNavStepPending === "true"' in action_body
+    assert 'control.dataset.reportNavStepPending = "true";' in action_body
+    assert 'delete control.dataset.reportNavStepPending;' in action_body
+    assert "updateReportNavigationScheduleProcessSummary(processCode, payload);" in action_body
+    assert "if (!preserveSchedule) renderReportNavigationSchedule(payload);" in app_js
+    assert "reportNavigationScheduleRenderDeferred = true;" in app_js
+    assert "flushDeferredReportNavigationScheduleRender();" in app_js
+    assert "reopenReportNavigationScheduleStepsPreview" not in app_js
+    assert "reportNavigationScheduleStepsKeepOpenProcessCode" not in app_js
+    assert "#page-report-navigation .report-nav-schedule-step-status-action" in css
+    assert "text-decoration: underline;" in css
+    assert "cursor: pointer;" in css
 
 
 def test_report_navigation_manual_refresh_has_icon_cooldown_and_error_feedback():

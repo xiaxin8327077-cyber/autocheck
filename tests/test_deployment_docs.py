@@ -148,6 +148,7 @@ def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> 
         assert "006_system_interface_preferences.sql" in acceptance
         assert "007_report_navigation_schedule_owner.sql" in acceptance
         assert "008_report_navigation_work_calendar.sql" in acceptance
+        assert "009_report_navigation_manual_step_permissions.sql" in acceptance
         assert "39 张目标表和迁移行数齐全" not in acceptance
 
 
@@ -163,6 +164,7 @@ def test_mysql_rollout_docs_require_004_through_008_and_39_table_sequence() -> N
             "006_system_interface_preferences.sql",
             "007_report_navigation_schedule_owner.sql",
             "008_report_navigation_work_calendar.sql",
+            "009_report_navigation_manual_step_permissions.sql",
         ]
         assert "39 张" in text
         assert all(script in text for script in scripts)

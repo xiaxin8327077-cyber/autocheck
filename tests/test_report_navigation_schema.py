@@ -9,6 +9,7 @@ SCHEMA_SQL = ROOT / "sql" / "app_storage" / "mysql" / "002_report_navigation.sql
 SEED_SQL = ROOT / "sql" / "app_storage" / "mysql" / "003_report_navigation_seed.sql"
 OWNER_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "007_report_navigation_schedule_owner.sql"
 WORK_CALENDAR_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "008_report_navigation_work_calendar.sql"
+MANUAL_STEP_PERMISSIONS_SQL = ROOT / "sql" / "app_storage" / "mysql" / "009_report_navigation_manual_step_permissions.sql"
 
 REPORT_NAV_TABLES = {
     "report_nav_processes",
@@ -101,6 +102,15 @@ def test_work_calendar_table_and_2026_official_exceptions_are_declared():
     assert "2026-02-14" in migration_sql
     assert "2026-10-07" in migration_sql
     assert "2026-10-10" in migration_sql
+
+
+def test_manual_step_permission_migration_only_enables_current_confirmable_step():
+    migration_sql = MANUAL_STEP_PERMISSIONS_SQL.read_text(encoding="utf-8")
+
+    assert "UPDATE `report_nav_steps`" in migration_sql
+    assert "WHEN `step_code` = 'pbc_template_7' THEN 1" in migration_sql
+    assert "ELSE 0" in migration_sql
+    assert "DROP " not in migration_sql.upper()
 
 
 def test_report_navigation_tables_do_not_redefine_schema_version():
