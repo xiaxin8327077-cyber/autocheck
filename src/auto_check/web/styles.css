@@ -13569,6 +13569,14 @@ input.custom-input-native:disabled {
   text-rendering: auto;
 }
 
+:root[data-page="report-navigation"] .main-content {
+  padding-bottom: 14px;
+}
+
+:root[data-page="report-navigation"] #page-report-navigation {
+  padding-bottom: 0;
+}
+
 #page-report-navigation button,
 #page-report-navigation input,
 #page-report-navigation select,
@@ -15180,7 +15188,7 @@ input.custom-input-native:disabled {
   font-weight: 500;
   line-height: 1.2;
   text-align: center;
-  white-space: normal;
+  white-space: nowrap;
   transform: translateX(-50%);
 }
 

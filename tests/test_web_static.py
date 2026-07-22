@@ -2810,10 +2810,23 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
         "bottom: calc(100% + 5px);",
         "left: 50%;",
         "text-align: center;",
+        "white-space: nowrap;",
         "transform: translateX(-50%);",
     ]:
         assert declaration in schedule_endpoint_label_rule.group("body")
     assert "left: 18px;" not in schedule_endpoint_label_rule.group("body")
+    report_navigation_main_spacing_rule = re.search(
+        r':root\[data-page="report-navigation"\] \.main-content\s*\{(?P<body>[^}]*)\}',
+        css,
+    )
+    assert report_navigation_main_spacing_rule is not None
+    assert "padding-bottom: 14px;" in report_navigation_main_spacing_rule.group("body")
+    report_navigation_page_spacing_rule = re.search(
+        r':root\[data-page="report-navigation"\] #page-report-navigation\s*\{(?P<body>[^}]*)\}',
+        css,
+    )
+    assert report_navigation_page_spacing_rule is not None
+    assert "padding-bottom: 0;" in report_navigation_page_spacing_rule.group("body")
     schedule_detail_rule = re.search(
         r"#page-report-navigation \.report-nav-schedule-detail\s*\{(?P<body>[^}]*)\}",
         css,
