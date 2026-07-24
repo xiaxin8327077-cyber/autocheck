@@ -20,21 +20,21 @@ CREATE TABLE `data_sources` (
   `host` VARCHAR(255) NOT NULL COMMENT '主机地址',
   `port` INT NOT NULL COMMENT '端口',
   `database_name` VARCHAR(191) NOT NULL COMMENT '数据库名',
-  `schema_name` VARCHAR(191) NOT NULL COMMENT 'Schema',
+  `schema_name` VARCHAR(191) NOT NULL COMMENT 'Schema 名称',
   `username` VARCHAR(191) NOT NULL COMMENT '用户名',
   `password_encrypted` TEXT NOT NULL COMMENT '加密密码',
   `is_default` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否默认',
   `created_at` DATETIME(6) NOT NULL COMMENT '创建时间',
   `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据源配置表?保存 DWS、报表库等本地数据源连接配置和默认标记。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据源配置表，保存 DWS、报表库等本地数据源连接配置和默认标记。';
 
 CREATE TABLE `app_settings` (
   `key` VARCHAR(191) NOT NULL COMMENT '设置键',
   `value_json` JSON NOT NULL COMMENT '设置内容',
   `updated_at` DATETIME(6) NOT NULL COMMENT '更新时间',
   PRIMARY KEY (`key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='应用设置表?保存系统设置、默认设置、人行逐笔校验设置、流程工具设置等结构化配置。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='应用设置表，保存系统设置、默认设置、人行逐笔校验设置、流程工具设置等结构化配置。';
 
 CREATE TABLE `users` (
   `id` VARCHAR(64) NOT NULL COMMENT '用户 ID',
@@ -48,7 +48,7 @@ CREATE TABLE `users` (
   `last_login_at` DATETIME(6) NULL COMMENT '最近登录时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_users_username` (`username`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户账号表?保存用户、角色、状态、密码哈希和登录时间。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户账号表，保存用户、角色、状态、密码哈希和登录时间。';
 
 CREATE TABLE `config_snapshots` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '快照 ID',
@@ -56,7 +56,7 @@ CREATE TABLE `config_snapshots` (
   `payload_json` JSON NOT NULL COMMENT '配置快照',
   `created_at` DATETIME(6) NOT NULL COMMENT '创建时间',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='配置兼容快照表?保存完整配置 payload 快照，便于兼容旧结构和后续排查。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='配置兼容快照表，保存完整配置 payload 快照，便于兼容旧结构和后续排查。';
 
 CREATE TABLE `run_headers` (
   `id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -72,7 +72,7 @@ CREATE TABLE `run_headers` (
   `payload_json` JSON NOT NULL COMMENT '完整快照',
   PRIMARY KEY (`id`),
   KEY `idx_run_headers_sort` (`kind`, `run_date`, `run_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='历史运行头表?保存各类历史运行的公共字段和完整 payload 快照。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='历史运行头表，保存各类历史运行的公共字段和完整 payload 快照。';
 
 CREATE TABLE `reconcile_runs` (
   `id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -87,7 +87,7 @@ CREATE TABLE `reconcile_runs` (
   `removed_count` BIGINT NULL COMMENT '减少差异数',
   PRIMARY KEY (`id`),
   CONSTRAINT `fk_reconcile_runs_header` FOREIGN KEY (`id`) REFERENCES `run_headers` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数运行表?保存自动对数运行摘要、配置名称、规则版本和增量数量。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数运行表，保存自动对数运行摘要、配置名称、规则版本和增量数量。';
 
 CREATE TABLE `reconcile_run_counts` (
   `run_id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -96,7 +96,7 @@ CREATE TABLE `reconcile_run_counts` (
   `count_value` BIGINT NOT NULL COMMENT '统计值',
   PRIMARY KEY (`run_id`, `count_type`, `label`),
   CONSTRAINT `fk_reconcile_counts_run` FOREIGN KEY (`run_id`) REFERENCES `reconcile_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数运行统计表?保存匹配状态、差异类型等聚合统计。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数运行统计表，保存匹配状态、差异类型等聚合统计。';
 
 CREATE TABLE `reconcile_results` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '结果 ID',
@@ -118,7 +118,7 @@ CREATE TABLE `reconcile_results` (
   KEY `idx_reconcile_results_project` (`project_code`),
   KEY `idx_reconcile_results_reason` (`difference_reason`, `match_status`),
   CONSTRAINT `fk_reconcile_results_run` FOREIGN KEY (`run_id`) REFERENCES `reconcile_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数结果明细表?保存项目编号、差异类型、匹配状态、差异金额等结果热字段。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数结果明细表，保存项目编号、差异类型、匹配状态、差异金额等结果热字段。';
 
 CREATE TABLE `reconcile_result_details` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '详情 ID',
@@ -130,7 +130,7 @@ CREATE TABLE `reconcile_result_details` (
   PRIMARY KEY (`id`),
   KEY `idx_reconcile_result_details_result` (`result_id`, `detail_order`),
   CONSTRAINT `fk_reconcile_details_result` FOREIGN KEY (`result_id`) REFERENCES `reconcile_results` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数结果详情表?保存结构化详情类型、具体原因和详情 payload。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数结果详情表，保存结构化详情类型、具体原因和详情 payload。';
 
 CREATE TABLE `reconcile_delta_results` (
   `run_id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -139,7 +139,7 @@ CREATE TABLE `reconcile_delta_results` (
   `payload_json` JSON NOT NULL COMMENT '增量快照',
   PRIMARY KEY (`run_id`, `delta_type`, `result_order`),
   CONSTRAINT `fk_reconcile_delta_run` FOREIGN KEY (`run_id`) REFERENCES `reconcile_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数增量差异表?保存本次新增差异和减少差异快照。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='自动对数增量差异表，保存本次新增差异和减少差异快照。';
 
 CREATE TABLE `db_validation_runs` (
   `id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -155,7 +155,7 @@ CREATE TABLE `db_validation_runs` (
   PRIMARY KEY (`id`),
   KEY `idx_db_validation_runs_sort` (`report_date`),
   CONSTRAINT `fk_db_validation_runs_header` FOREIGN KEY (`id`) REFERENCES `run_headers` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验运行表?保存逐笔校验报告期、结果数、告警数、校验开关和下载路径。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验运行表，保存逐笔校验报告期、结果数、告警数、校验开关和下载路径。';
 
 CREATE TABLE `db_validation_selected_tables` (
   `run_id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -163,7 +163,7 @@ CREATE TABLE `db_validation_selected_tables` (
   `table_code` VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'ZG 表编号',
   PRIMARY KEY (`run_id`, `table_order`),
   CONSTRAINT `fk_db_validation_selected_run` FOREIGN KEY (`run_id`) REFERENCES `db_validation_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验选表明细表?保存一次逐笔校验运行中勾选的 ZG 表清单。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验选表明细表，保存一次逐笔校验运行中勾选的 ZG 表清单。';
 
 CREATE TABLE `db_validation_warnings` (
   `run_id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -171,7 +171,7 @@ CREATE TABLE `db_validation_warnings` (
   `message` TEXT NOT NULL COMMENT '告警内容',
   PRIMARY KEY (`run_id`, `warning_order`),
   CONSTRAINT `fk_db_validation_warnings_run` FOREIGN KEY (`run_id`) REFERENCES `db_validation_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验告警表?保存一次逐笔校验运行产生的告警信息。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验告警表，保存一次逐笔校验运行产生的告警信息。';
 
 CREATE TABLE `db_validation_result_rows` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '结果行 ID',
@@ -186,7 +186,7 @@ CREATE TABLE `db_validation_result_rows` (
   PRIMARY KEY (`id`),
   KEY `idx_db_validation_result_rows_run` (`run_id`, `row_order`),
   CONSTRAINT `fk_db_validation_results_run` FOREIGN KEY (`run_id`) REFERENCES `db_validation_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验结果行表?保存逐笔校验结果行的表号、规则、级别、消息和完整行快照。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='人行逐笔校验结果行表，保存逐笔校验结果行的表号、规则、级别、消息和完整行快照。';
 
 CREATE TABLE `flow_chain_runs` (
   `id` VARCHAR(64) NOT NULL COMMENT '运行 ID',
@@ -201,7 +201,7 @@ CREATE TABLE `flow_chain_runs` (
   `duration_seconds` BIGINT NOT NULL DEFAULT 0 COMMENT '耗时秒数',
   PRIMARY KEY (`id`),
   CONSTRAINT `fk_flow_runs_header` FOREIGN KEY (`id`) REFERENCES `run_headers` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行运行表?保存流程链名称、触发方式、执行人、状态、错误、步骤数和总耗时。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行运行表，保存流程链名称、触发方式、执行人、状态、错误、步骤数和总耗时。';
 
 CREATE TABLE `flow_chain_run_steps` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '步骤 ID',
@@ -218,7 +218,7 @@ CREATE TABLE `flow_chain_run_steps` (
   PRIMARY KEY (`id`),
   KEY `idx_flow_chain_run_steps_run` (`run_id`, `step_order`),
   CONSTRAINT `fk_flow_steps_run` FOREIGN KEY (`run_id`) REFERENCES `flow_chain_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行步骤表?保存每个流程步骤的流程编号、名称、状态、任务号和起止时间。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行步骤表，保存每个流程步骤的流程编号、名称、状态、任务号和起止时间。';
 
 CREATE TABLE `flow_chain_run_logs` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '日志 ID',
@@ -232,7 +232,7 @@ CREATE TABLE `flow_chain_run_logs` (
   PRIMARY KEY (`id`),
   KEY `idx_flow_chain_run_logs_run` (`run_id`, `log_order`),
   CONSTRAINT `fk_flow_logs_run` FOREIGN KEY (`run_id`) REFERENCES `flow_chain_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行日志表?保存流程链执行过程中的日志、进度和当前步骤。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行日志表，保存流程链执行过程中的日志、进度和当前步骤。';
 
 CREATE TABLE `flow_chain_run_details` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '链路明细 ID',
@@ -247,7 +247,7 @@ CREATE TABLE `flow_chain_run_details` (
   PRIMARY KEY (`id`),
   KEY `idx_flow_chain_run_details_run` (`run_id`, `chain_order`),
   CONSTRAINT `fk_flow_details_run` FOREIGN KEY (`run_id`) REFERENCES `flow_chain_runs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行链路明细表?保存单链路或多链路合并历史中的链路详情。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='流程链执行链路明细表，保存单链路或多链路合并历史中的链路详情。';
 
 CREATE TABLE `storage_migration_runs` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '迁移 ID',
@@ -263,4 +263,4 @@ CREATE TABLE `storage_migration_runs` (
   `finished_at` DATETIME(6) NULL COMMENT '完成时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_storage_migration_source` (`source_type`, `source_path`, `source_key`, `source_fingerprint`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据迁移记录表?记录旧 SQLite/旧 JSON 来源的迁移路径、指纹、条数和状态。';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='数据迁移记录表，记录旧 SQLite/旧 JSON 来源的迁移路径、指纹、条数和状态。';

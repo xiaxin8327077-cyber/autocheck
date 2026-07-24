@@ -227,3 +227,48 @@ def test_report_navigation_schema_has_chinese_comments_for_every_table_and_colum
                 r"\bCOMMENT\s+'[^']*[\u4e00-\u9fff][^']*'",
                 column_line.group(0),
             ), f"{table_name}.{column_name} lacks a Chinese comment"
+
+
+def test_all_mysql_create_tables_have_clean_chinese_table_and_column_comments():
+    ddl_dir = ROOT / "sql" / "app_storage" / "mysql"
+    create_pattern = re.compile(
+        r"CREATE TABLE(?: IF NOT EXISTS)? `(?P<table>[^`]+)` \((?P<body>.*?)\) "
+        r"ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        r"\s+COMMENT='(?P<comment>[^']+)';",
+        re.DOTALL,
+    )
+    create_count = 0
+
+    for sql_path in sorted(ddl_dir.glob("*.sql")):
+        sql = sql_path.read_text(encoding="utf-8")
+        declared_count = len(re.findall(r"(?im)^CREATE TABLE(?: IF NOT EXISTS)? `", sql))
+        matches = list(create_pattern.finditer(sql))
+        assert len(matches) == declared_count, f"{sql_path.name} has an unparsed CREATE TABLE"
+        create_count += declared_count
+
+        for match in matches:
+            table_name = match.group("table")
+            table_comment = match.group("comment")
+            assert re.search(r"[\u4e00-\u9fff]", table_comment), (
+                f"{sql_path.name}:{table_name} lacks a Chinese table comment"
+            )
+            assert "?" not in table_comment, (
+                f"{sql_path.name}:{table_name} has a damaged table comment"
+            )
+
+            column_lines = re.findall(r"(?m)^\s+`[^`]+`\s+.*$", match.group("body"))
+            assert column_lines, f"{sql_path.name}:{table_name} has no columns"
+            for column_line in column_lines:
+                column_name = re.match(r"\s+`([^`]+)`", column_line).group(1)
+                column_comment = re.search(
+                    r"\bCOMMENT\s+'(?P<comment>[^']*[\u4e00-\u9fff][^']*)'",
+                    column_line,
+                )
+                assert column_comment is not None, (
+                    f"{sql_path.name}:{table_name}.{column_name} lacks a Chinese comment"
+                )
+                assert "?" not in column_comment.group("comment"), (
+                    f"{sql_path.name}:{table_name}.{column_name} has a damaged comment"
+                )
+
+    assert create_count > 0
