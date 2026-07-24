@@ -35,8 +35,8 @@
 ### 报告月份与业务报告期
 
 - 鱼骨图和报送日期始终展示系统当前月份，不受顶部“本周／本月／本季度／本年”选择影响。
-- 需要“同对账报告期”的判断规则，统一取自动对数历史中最新的报告期。
-- 例如最新自动对数报告期为 `2026-06-30`：
+- 需要“同对账报告期”的判断规则，统一取当前月份上一个自然月的最后一天。
+- 例如当前月份为 `2026-07`，则报送导航报告期为 `2026-06-30`：
   - 普通日期字段使用 `2026-06-30`。
   - `ck_result.period` 使用 `2026_06_30`。
   - 版本号使用 `V.20260630`。
@@ -60,9 +60,9 @@
 ### 节点完成时间
 
 - “完成于 2026-06-01 10:24”表示鱼骨节点整体完成时间，不是单个步骤时间。
-- 报送日期当天仍执行真实逻辑且不兜底；从次日起，每次统计先执行真实逻辑，仍未完成时才按最新报送日期兜底，完成时间取报送日期当天 `20:00:00`。
-- 报送日期修改后立即串行重新计算：保存当前月日期后，接口使用统计任务的同一数据库租约锁触发一次 `schedule-update` 统计；新日期尚未逾期且真实逻辑未完成时撤销原兜底；新日期已逾期且真实逻辑仍未完成时更新为新日期当天 `20:00:00`；真实逻辑已完成时不受报送日期修改影响。
-- 当流程最后一步使用 `xt_reg_version` 归档记录完成时，完成时间取匹配记录的 `MAX(COALESCE(update_date, create_date))`；归档时间变化后，下次统计覆盖更新。
+- 不使用报送日期自动完成兜底；每次统计只按真实业务逻辑或人工确认判断。超过截止日期仍未完成时，在当前报告期持续保持逾期状态，不生成完成时间。
+- 进入下个月后创建新的报告期快照，不结转上月逾期状态；报送日期修改后立即使用统计任务的同一数据库租约锁触发一次 `schedule-update` 统计，重新计算当前报告期状态。
+- 当流程最后一步使用 `xt_reg_version` 归档记录完成时，完成时间仅取匹配记录的 `MAX(create_date)`；归档记录的 `create_date` 变化后，下次统计覆盖更新。
 - 不属于以上两类权威业务时间时，定时任务首次检测到节点全部有效步骤完成后记录当前检测完成时间并保持。
 - 管理员操作使最后一个未完成步骤变为完成时，立即记录当前操作时间。
 - 节点重新变为未完成或判断异常时清除当前完成时间；再次全部完成时重新记录。
@@ -296,7 +296,7 @@
 - 数据源：`ass_man_reg`
 - 表：`ex_pledge_back`
 - 报告期字段角色：`reporting_period`
-- 完成条件：表中存在数据，且所有记录的 `reporting_period` 都等于最新自动对数报告期。
+- 完成条件：表中存在数据，且所有记录的 `reporting_period` 都等于当前月份上一个自然月的最后一天（报送导航报告期）。
 
 #### 步骤 2：资产合计与负债及权益合计一致
 
@@ -381,15 +381,15 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`
+- 字段：`manage_code`、`version_num`、`create_date`
 - 固定业务值：`manage_code` 包含 `20002` 和 `zbbs24`
 - 完成条件：两个 `manage_code` 都存在 `version_num = V.当前报告期` 的记录。
+- 完成时间：匹配记录取 `MAX(create_date)`。
 
-#### 步骤 7：填写数据调整情况说明
+#### 步骤 7：归档后制表人填写数据调整情况说明（如有）
 
-- 自动条件：系统当前日期达到或超过人行模板、逐笔报送日期时自动完成。
-- 报送日期之前，管理员可以手动完成。
-- 取消手动完成后恢复自动日期判断。
+- 仅作文字展示，不参与自动或人工完成判断。
+- 不计入步骤总数、完成进度和流程完成时间；步骤 6 仍是最终完成判断节点。
 
 ### 1104 报送
 
@@ -409,10 +409,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
+- 字段：`manage_code`、`version_num`、`create_date`
 - 固定业务值：`manage_code = system1104`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
-- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
+- 完成时间：匹配记录取 `MAX(create_date)`。
 
 ### 21、23 版全要素报送
 
@@ -420,10 +420,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
+- 字段：`manage_code`、`version_num`、`create_date`
 - 固定业务值：`manage_code = qysnew`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
-- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
+- 完成时间：匹配记录取 `MAX(create_date)`。
 
 ### 中信登定期报送
 
@@ -446,10 +446,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
+- 字段：`manage_code`、`version_num`、`create_date`
 - 固定业务值：`manage_code = zxdreport`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
-- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
+- 完成时间：匹配记录取 `MAX(create_date)`。
 
 ### East5 报送
 
@@ -457,10 +457,10 @@
 
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
+- 字段：`manage_code`、`version_num`、`create_date`
 - 固定业务值：`manage_code = east5`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
-- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
+- 完成时间：匹配记录取 `MAX(create_date)`。
 
 ### 五篇大文章报送
 
@@ -468,10 +468,10 @@
 - 该节点使用一个内部判断步骤。
 - 数据源：`reg-report-analysis`
 - 表：`xt_reg_version`
-- 字段：`manage_code`、`version_num`、`update_date`、`create_date`
+- 字段：`manage_code`、`version_num`、`create_date`
 - 固定业务值：`manage_code = dwz5`
 - 完成条件：存在 `version_num = V.当前报告期` 的记录。
-- 完成时间：匹配记录取 `MAX(COALESCE(update_date, create_date))`。
+- 完成时间：匹配记录取 `MAX(create_date)`。
 
 ## 补录任务统计
 
@@ -571,7 +571,7 @@
 
 返回：
 
-- 当前月份和最新自动对数报告期。
+- 当前月份和按上月月末计算的报送导航报告期。
 - 四张统计卡快照。
 - 当前月可见节点、步骤状态、人工标记、错误信息和节点完成时间。
 - 报送日期及是否允许编辑。

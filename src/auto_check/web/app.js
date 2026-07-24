@@ -11428,7 +11428,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-07-18</span>
       </div>
               <ul>
-        <li>新增报送导航状态定时统计、鱼骨进度、报送日期到期完成兜底和治理统计四周期维护。</li>
+        <li>新增报送导航状态定时统计、鱼骨进度、当期逾期跟踪和治理统计四周期维护。</li>
         <li>新增报送日程、月度负责人维护和鱼骨步骤定位。</li>
         <li>新增报送步骤浮窗人工确认和撤销确认。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>

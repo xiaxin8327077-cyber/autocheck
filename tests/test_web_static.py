@@ -2023,6 +2023,33 @@ def test_completed_report_navigation_schedule_detail_shows_completion_time():
     assert "全部完成时在展开详情的“下一步”区域显示“完成时间：YYYY-MM-DD HH:mm:ss”" in _read(README_MD)
 
 
+def test_report_navigation_overdue_state_is_real_and_current_period_only():
+    readme = _read(README_MD)
+    app = _read(APP_JS)
+    design = _read(
+        ROOT
+        / "docs"
+        / "superpowers"
+        / "specs"
+        / "2026-07-15-report-navigation-statistics-design.md"
+    )
+
+    assert "未完成流程在当前报告期持续保持逾期状态" in readme
+    assert "进入下个月后按新的报告期重新开始，不结转上月逾期状态" in readme
+    assert "报送导航报告期固定为当前月份上一个自然月的最后一天" in readme
+    assert "8 月 1 日对应 7 月 31 日" in readme
+    assert "按最新报送日期兜底" not in readme
+    assert "节点完成时间固定为该报送日期当天 `20:00:00`" not in readme
+    assert "当期逾期跟踪" in app
+    assert "报送日期到期完成兜底" not in app
+    assert "当前月份上一个自然月的最后一天" in design
+    assert "进入下个月后创建新的报告期快照" in design
+    assert "报送日期当天 `20:00:00`" not in design
+    assert "MAX(COALESCE(update_date, create_date))" not in design
+    assert "完成时间仅取匹配记录的 `MAX(create_date)`" in design
+    assert "步骤 6 仍是最终完成判断节点" in design
+
+
 def test_report_navigation_process_cards_select_readonly_step_details():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)

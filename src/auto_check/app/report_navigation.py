@@ -10,12 +10,9 @@ from time import sleep
 from typing import Any, Callable, Mapping, Protocol, Sequence
 import uuid
 
-from sqlalchemy import select
-
 from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.config import DataSourceEntry, load_store
 from auto_check.app.db import DatabaseClient, qualified_name, quote_identifier
-from auto_check.app.storage_history import RUN_HEADERS
 from auto_check.app.storage_report_navigation import (
     CardSnapshot,
     ProcessSnapshot,
@@ -444,7 +441,7 @@ def _table(context: EvaluationContext, source: StepSourceConfig) -> str:
 
 def _require_report_date(context: EvaluationContext) -> date:
     if context.business_report_date is None:
-        raise WaitingForReportPeriod("等待自动对数报告期")
+        raise WaitingForReportPeriod("等待报送导航报告期")
     return context.business_report_date
 
 
@@ -572,13 +569,8 @@ def period_storage_key(period: str, value: date) -> str:
     raise ValueError("period must be week, month, quarter or year")
 
 
-def latest_business_report_date(database: ApplicationDatabase) -> date | None:
-    with database.connect() as connection:
-        rows = connection.execute(
-            select(RUN_HEADERS.c.run_date).where(RUN_HEADERS.c.kind == "reconcile")
-        ).mappings().all()
-    values = [_coerce_date(row.get("run_date")) for row in rows]
-    return max((value for value in values if value is not None), default=None)
+def report_navigation_business_report_date(current: datetime) -> date:
+    return current.date().replace(day=1) - timedelta(days=1)
 
 
 def _steps_in_dependency_order(steps: Sequence[StepConfig]) -> tuple[StepConfig, ...]:
@@ -642,7 +634,7 @@ class ReportNavigationService:
         release_error = ""
         finished_at = current
         try:
-            business_report_date = latest_business_report_date(self.database)
+            business_report_date = report_navigation_business_report_date(current)
             run_id = self.store.start_run(
                 trigger_type, report_month, business_report_date, current
             )
@@ -663,17 +655,8 @@ class ReportNavigationService:
                 schedule = self.store.ensure_schedule(
                     report_month, process.process_code, now=current
                 )
-                schedule_overdue = bool(
-                    schedule is not None and current.date() > schedule.report_date
-                )
-                schedule_completed_at = (
-                    datetime.combine(schedule.report_date, time(20, 0))
-                    if schedule is not None
-                    else None
-                )
                 dependency_statuses: dict[str, str] = {}
                 automatic_completion_times: dict[str, datetime] = {}
-                schedule_fallback_used = False
                 completed_steps = 0
                 has_error = False
                 for step in _steps_in_dependency_order(process.steps):
@@ -690,24 +673,9 @@ class ReportNavigationService:
                     )
                     override = overrides.get(step.step_code)
                     is_manual = bool(not display_only and override and override.completed)
-                    if (
-                        not display_only
-                        and schedule_overdue
-                        and logic_result.status != COMPLETED
-                        and not is_manual
-                    ):
-                        automatic = EvaluationResult(
-                            COMPLETED,
-                            f"已到报送日期 {schedule.report_date.isoformat()}，按报送时间兜底完成",
-                            completed_at=schedule_completed_at,
-                        )
-                        effective_status = COMPLETED
-                        completion_source = "schedule"
-                        schedule_fallback_used = True
-                    else:
-                        automatic = logic_result
-                        effective_status = COMPLETED if is_manual else automatic.status
-                        completion_source = "manual" if is_manual else "auto"
+                    automatic = logic_result
+                    effective_status = COMPLETED if is_manual else automatic.status
+                    completion_source = "manual" if is_manual else "auto"
                     if not display_only and effective_status == COMPLETED:
                         completed_steps += 1
                     if automatic.status == ERROR:
@@ -763,11 +731,6 @@ class ReportNavigationService:
                     if final_step is not None
                     else None
                 )
-                authoritative_completed_at = (
-                    schedule_completed_at
-                    if schedule_fallback_used
-                    else archive_completed_at
-                )
                 self.store.save_process_snapshot(
                     ProcessSnapshot(
                         report_month=report_month,
@@ -776,14 +739,14 @@ class ReportNavigationService:
                         completed_steps=completed_steps,
                         status=process_status,
                         completed_at=(
-                            authoritative_completed_at or current
+                            archive_completed_at or current
                             if process_status == COMPLETED
                             else None
                         ),
                         evaluated_at=current,
                         run_id=run_id,
                     ),
-                    preserve_completed_at=authoritative_completed_at is None,
+                    preserve_completed_at=archive_completed_at is None,
                 )
 
             self._save_card_snapshots(
@@ -1082,7 +1045,7 @@ class ReportNavigationService:
                     "steps": steps,
                 }
             )
-        business_report_date = latest_business_report_date(self.database)
+        business_report_date = report_navigation_business_report_date(current)
         work_calendar = self.store.load_work_calendar(current.year)
         return {
             "period": period,

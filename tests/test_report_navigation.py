@@ -268,6 +268,17 @@ def test_format_business_report_date_supports_all_required_styles():
     assert module.format_business_report_date(date(2026, 6, 30), "version") == "V.20260630"
 
 
+def test_report_navigation_period_defaults_to_previous_month_end():
+    module = _report_navigation()
+
+    assert module.report_navigation_business_report_date(datetime(2026, 8, 1, 0, 0)) == date(
+        2026, 7, 31
+    )
+    assert module.report_navigation_business_report_date(datetime(2026, 1, 15, 9, 0)) == date(
+        2025, 12, 31
+    )
+
+
 def test_negative_rule_requires_scope_rows_before_accepting_no_exceptions():
     module = _report_navigation()
 
@@ -707,7 +718,7 @@ def test_ck_report_period_dependency_quarterly_and_waiting_report_period_rules()
             report_date=None,
         )
     )
-    assert (waiting.status, waiting.message) == ("waiting_report_period", "等待自动对数报告期")
+    assert (waiting.status, waiting.message) == ("waiting_report_period", "等待报送导航报告期")
 
 
 def test_period_bounds_cover_week_month_quarter_and_year():
@@ -986,22 +997,36 @@ def test_collection_continues_after_one_step_error_and_marks_partial_run():
     assert database.connection.tables["report_nav_stat_runs"][0]["status"] == "partial"
 
 
-def test_collection_uses_reached_report_date_as_completion_fallback_without_querying_steps():
+def test_collection_keeps_overdue_incomplete_and_starts_new_report_period_next_month():
     report_module = _report_navigation()
     storage_module = _storage()
     database = _database()
     _seed_collection_configuration(database)
+    database.connection.tables["report_nav_process_months"].extend(
+        [{"process_code": "p1", "month_no": 8}, {"process_code": "p2", "month_no": 8}]
+    )
     report_day = datetime(2026, 7, 16, 21, 0)
-    database.connection.tables["report_nav_monthly_schedules"].append(
-        {
-            "report_month": "2026-07",
-            "process_code": "p1",
-            "report_date": date(2026, 7, 16),
-            "source_type": "manual",
-            "source_year": 2026,
-            "updated_by": "admin",
-            "updated_at": report_day,
-        }
+    database.connection.tables["report_nav_monthly_schedules"].extend(
+        [
+            {
+                "report_month": "2026-07",
+                "process_code": "p1",
+                "report_date": date(2026, 7, 16),
+                "source_type": "manual",
+                "source_year": 2026,
+                "updated_by": "admin",
+                "updated_at": report_day,
+            },
+            {
+                "report_month": "2026-08",
+                "process_code": "p1",
+                "report_date": date(2026, 8, 16),
+                "source_type": "manual",
+                "source_year": 2026,
+                "updated_by": "admin",
+                "updated_at": report_day,
+            },
+        ]
     )
     calls = []
 
@@ -1016,56 +1041,47 @@ def test_collection_uses_reached_report_date_as_completion_fallback_without_quer
         query_executor_factory=SupplementQueryExecutor,
         evaluator=evaluator,
     )
-    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
 
-    same_day = service.collect_once(now=report_day)
+    service.collect_once(now=report_day + timedelta(days=1))
 
-    assert same_day.status == "completed"
     assert calls == ["p1_s1", "p1_s2", "p2_s1"]
-    assert store.load_process_snapshot("2026-07", "p1").status == "incomplete"
-
-    calls.clear()
-    next_day = report_day + timedelta(days=1)
-    result = service.collect_once(now=next_day)
-
-    assert result.status == "completed"
-    assert calls == ["p1_s1", "p1_s2", "p2_s1"]
-    p1 = store.load_process_snapshot("2026-07", "p1")
-    assert (p1.status, p1.completed_steps, p1.total_steps) == ("completed", 2, 2)
-    assert p1.completed_at == datetime(2026, 7, 16, 20, 0)
+    july_snapshot = store.load_process_snapshot("2026-07", "p1")
+    assert (july_snapshot.status, july_snapshot.completed_steps, july_snapshot.total_steps) == (
+        "incomplete",
+        0,
+        2,
+    )
+    assert july_snapshot.completed_at is None
     for step_code in ("p1_s1", "p1_s2"):
         step = store.load_step_snapshot("2026-07", step_code)
-        assert step.auto_status == "completed"
-        assert step.effective_status == "completed"
-        assert step.completion_source == "schedule"
-        assert step.auto_completed_at == datetime(2026, 7, 16, 20, 0)
-        assert "报送日期" in step.status_message
+        assert step.auto_status == "incomplete"
+        assert step.effective_status == "incomplete"
+        assert step.completion_source == "auto"
+        assert step.auto_completed_at is None
 
-    service.update_schedule(
-        "p1",
-        "2026-07",
-        "2026-07-18",
-        admin,
-        now=next_day + timedelta(minutes=1),
+    calls.clear()
+    august_now = datetime(2026, 8, 1, 9, 0)
+    service.collect_once(now=august_now)
+    august_payload = service.dashboard(
+        period="month",
+        current_user={"username": "user", "role": "user"},
+        now=august_now,
     )
 
-    rescheduled = store.load_process_snapshot("2026-07", "p1")
-    assert rescheduled.status == "incomplete"
-    assert rescheduled.completed_at is None
-
-    service.update_schedule(
-        "p1",
-        "2026-07",
-        "2026-07-15",
-        admin,
-        now=next_day + timedelta(minutes=3),
+    assert calls == ["p1_s1", "p1_s2", "p2_s1"]
+    assert august_payload["report_month"] == "2026-08"
+    assert august_payload["business_report_date"] == "2026-07-31"
+    assert database.connection.tables["report_nav_stat_runs"][-1]["business_report_date"] == date(
+        2026, 7, 31
     )
-
-    refreshed = store.load_process_snapshot("2026-07", "p1")
-    assert refreshed.completed_at == datetime(2026, 7, 15, 20, 0)
-    assert store.load_step_snapshot(
-        "2026-07", "p1_s2"
-    ).auto_completed_at == datetime(2026, 7, 15, 20, 0)
+    august_p1 = next(
+        process for process in august_payload["processes"] if process["process_code"] == "p1"
+    )
+    assert august_p1["status"] == "incomplete"
+    assert august_p1["report_date"] == "2026-08-16"
+    assert august_p1["completed_at"] == ""
+    assert all(process["status"] == "incomplete" for process in august_payload["processes"])
+    assert store.load_process_snapshot("2026-07", "p1").status == "incomplete"
 
 
 def test_scheduler_uses_initial_delay_then_configured_interval_without_parallel_runs():
