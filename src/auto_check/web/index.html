@@ -118,7 +118,12 @@
 
     <main class="main-content">
       <!-- 报送导航 -->
-      <section class="page" id="page-report-navigation">
+      <section class="page" id="page-report-navigation" data-loading-state="initial-loading" aria-busy="true">
+        <div class="report-nav-initial-loading" id="reportNavInitialLoading" role="status" aria-live="polite">
+          <span class="report-nav-loading-spinner" aria-hidden="true"></span>
+          <strong id="reportNavInitialLoadingTitle">正在加载报送导航</strong>
+          <small id="reportNavInitialLoadingText">正在读取最新统计结果…</small>
+        </div>
         <div class="report-nav-stats-layout" id="reportNavStats">
           <div class="report-nav-stats-toolbar">
             <div class="report-nav-report-period">

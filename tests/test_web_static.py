@@ -1825,7 +1825,7 @@ def test_report_navigation_page_uses_monthly_and_period_statistics_scopes():
     html = _read(INDEX_HTML)
 
     page = re.search(
-        r'<section class="page" id="page-report-navigation">(?P<body>.*?)</section>\s*<!-- 首页 -->',
+        r'<section class="page" id="page-report-navigation"[^>]*>(?P<body>.*?)</section>\s*<!-- 首页 -->',
         html,
         re.S,
     )
@@ -1869,7 +1869,7 @@ def test_report_navigation_page_uses_readonly_panorama_details_and_compact_todo_
     html = _read(INDEX_HTML)
 
     page = re.search(
-        r'<section class="page" id="page-report-navigation">(?P<body>.*?)</section>\s*<!-- 首页 -->',
+        r'<section class="page" id="page-report-navigation"[^>]*>(?P<body>.*?)</section>\s*<!-- 首页 -->',
         html,
         re.S,
     )
@@ -2029,11 +2029,34 @@ def test_report_navigation_browser_refresh_keeps_cached_content_on_request_failu
     body = app_js[start:end]
 
     assert "const cached = readReportNavigationCache(period);" in body
-    assert "let restoredFromCache = false;" in body
+    assert 'let restoredFromCache = String(reportNavigationPayload?.period || "") === period;' in body
     assert "restoredFromCache = true;" in body
     assert "if (!restoredFromCache)" in body
     assert "renderReportNavigation({})" not in body
     assert "writeReportNavigationCache(period, payload);" in body
+
+
+def test_report_navigation_has_first_load_placeholder_and_accessible_loading_state():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    page = re.search(r'<section class="page" id="page-report-navigation"[^>]*>', html)
+    assert page is not None
+    assert 'data-loading-state="initial-loading"' in page.group(0)
+    assert 'aria-busy="true"' in page.group(0)
+    assert 'id="reportNavInitialLoading"' in html
+    assert 'class="report-nav-initial-loading"' in html
+    assert 'role="status"' in html
+    assert "function setReportNavigationLoadingState(state)" in app_js
+    assert 'reportNavPage.dataset.loadingState = state;' in app_js
+    assert 'reportNavPage.setAttribute("aria-busy"' in app_js
+    assert 'setReportNavigationLoadingState(restoredFromCache ? "refreshing-with-cache" : "initial-loading");' in app_js
+    assert 'setReportNavigationLoadingState("ready");' in app_js
+    assert 'setReportNavigationLoadingState(restoredFromCache ? "error-with-cache" : "error-empty");' in app_js
+    assert '#page-report-navigation[data-loading-state="initial-loading"] > :not(.report-nav-initial-loading)' in css
+    assert '#page-report-navigation[data-loading-state="error-empty"] > :not(.report-nav-initial-loading)' in css
+    assert "@keyframes report-nav-loading-spin" in css
 
 
 def test_report_navigation_statistics_keep_the_existing_four_icon_colors():

@@ -15,6 +15,10 @@ const sidebarDarkModeToggle = document.getElementById("sidebarDarkModeToggle");
 const logoutButtons = document.querySelectorAll("[data-logout-btn]");
 const reportNavPeriodSelect = document.getElementById("reportNavPeriodSelect");
 const reportNavPeriodButtons = document.querySelectorAll("[data-report-nav-period]");
+const reportNavPage = document.getElementById("page-report-navigation");
+const reportNavInitialLoading = document.getElementById("reportNavInitialLoading");
+const reportNavInitialLoadingTitle = document.getElementById("reportNavInitialLoadingTitle");
+const reportNavInitialLoadingText = document.getElementById("reportNavInitialLoadingText");
 const reportNavStats = document.getElementById("reportNavStats");
 const reportNavMonthlyStat = document.getElementById("reportNavMonthlyStat");
 const reportNavPeriodStats = document.getElementById("reportNavPeriodStats");
@@ -2504,25 +2508,49 @@ function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
     : (payload.last_run ? DEFAULT_VERSION : "尚无统计快照，页面将在定时任务完成后自动显示结果。"));
 }
 
+function setReportNavigationLoadingState(state) {
+  if (!reportNavPage) return;
+  const loading = state === "initial-loading" || state === "refreshing-with-cache";
+  reportNavPage.dataset.loadingState = state;
+  reportNavPage.setAttribute("aria-busy", loading ? "true" : "false");
+  if (reportNavInitialLoading) reportNavInitialLoading.hidden = state !== "initial-loading";
+  if (reportNavInitialLoadingTitle) reportNavInitialLoadingTitle.textContent = "正在加载报送导航";
+  if (reportNavInitialLoadingText) reportNavInitialLoadingText.textContent = "正在读取最新统计结果…";
+  reportNavInitialLoading?.classList.remove("error");
+  reportNavRefreshButton?.classList.toggle("refreshing", state === "refreshing-with-cache");
+}
+
+function showReportNavigationEmptyLoadError() {
+  if (!reportNavInitialLoading) return;
+  reportNavInitialLoading.hidden = false;
+  reportNavInitialLoading.classList.add("error");
+  if (reportNavInitialLoadingTitle) reportNavInitialLoadingTitle.textContent = "报送导航加载失败";
+  if (reportNavInitialLoadingText) reportNavInitialLoadingText.textContent = "请稍后刷新页面重试";
+}
+
 async function loadReportNavigation({ preserveSchedule = false } = {}) {
   if (reportNavigationLoading) return;
   reportNavigationLoading = true;
   const period = reportNavPeriodSelect?.value || "month";
   const cached = readReportNavigationCache(period);
-  let restoredFromCache = false;
-  if (String(reportNavigationPayload?.period || "") !== period && cached?.payload) {
+  let restoredFromCache = String(reportNavigationPayload?.period || "") === period;
+  if (!restoredFromCache && cached?.payload) {
     renderReportNavigation(cached.payload);
     restoredFromCache = true;
   }
+  setReportNavigationLoadingState(restoredFromCache ? "refreshing-with-cache" : "initial-loading");
   setStatus(restoredFromCache ? "正在更新报送导航…" : "正在读取最新统计结果…");
   try {
     const payload = await api(`/api/report-navigation/dashboard?period=${encodeURIComponent(period)}`);
     renderReportNavigation(payload, { preserveSchedule });
     writeReportNavigationCache(period, payload);
+    setReportNavigationLoadingState("ready");
     return payload;
   } catch (error) {
+    setReportNavigationLoadingState(restoredFromCache ? "error-with-cache" : "error-empty");
     if (!restoredFromCache) {
       setStatus(`统计结果读取失败：${error.message}`);
+      showReportNavigationEmptyLoadError();
     } else {
       setStatus(`最新统计结果读取失败，当前保留显示上次成功数据：${error.message}`);
     }
