@@ -1971,6 +1971,71 @@ def test_report_navigation_frontend_preserves_snapshot_period_refresh_and_card_m
     assert "本周" in app_js and "本月" in app_js and "本季度" in app_js and "本年" in app_js
 
 
+def test_report_navigation_browser_refresh_restores_scoped_session_cache(tmp_path):
+    app_js = _read(APP_JS)
+    block = re.search(
+        r"// Report navigation session cache start(?P<body>.*?)// Report navigation session cache end",
+        app_js,
+        re.S,
+    )
+    assert block is not None
+
+    script = textwrap.dedent(
+        f"""
+        const assert = require("node:assert/strict");
+        const values = new Map();
+        const sessionStorage = {{
+          get length() {{ return values.size; }},
+          key: (index) => [...values.keys()][index] ?? null,
+          getItem: (key) => values.get(key) ?? null,
+          setItem: (key, value) => values.set(key, String(value)),
+          removeItem: (key) => values.delete(key),
+        }};
+        const authState = {{ user: {{ id: "user-a" }} }};
+        {block.group("body")}
+
+        const now = new Date(2026, 6, 24, 12, 0, 0);
+        const payload = {{
+          period: "month",
+          business_report_date: "2026-06-30",
+          processes: [{{ process_code: "cached-process" }}],
+        }};
+
+        writeReportNavigationCache("month", payload, now);
+        assert.deepEqual(readReportNavigationCache("month", now)?.payload, payload);
+        assert.equal(readReportNavigationCache("week", now), null);
+
+        authState.user = {{ id: "user-b" }};
+        assert.equal(readReportNavigationCache("month", now), null);
+
+        authState.user = {{ id: "user-a" }};
+        assert.equal(readReportNavigationCache("month", new Date(2026, 7, 1, 12, 0, 0)), null);
+
+        sessionStorage.setItem("unrelated-key", "keep");
+        clearReportNavigationCache();
+        assert.equal(readReportNavigationCache("month", now), null);
+        assert.equal(sessionStorage.getItem("unrelated-key"), "keep");
+        """
+    )
+    script_path = tmp_path / "report_navigation_cache_test.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+
+def test_report_navigation_browser_refresh_keeps_cached_content_on_request_failure():
+    app_js = _read(APP_JS)
+    start = app_js.index("async function loadReportNavigation")
+    end = app_js.index("function syncReportNavigationPeriodTabs", start)
+    body = app_js[start:end]
+
+    assert "const cached = readReportNavigationCache(period);" in body
+    assert "let restoredFromCache = false;" in body
+    assert "restoredFromCache = true;" in body
+    assert "if (!restoredFromCache)" in body
+    assert "renderReportNavigation({})" not in body
+    assert "writeReportNavigationCache(period, payload);" in body
+
+
 def test_report_navigation_statistics_keep_the_existing_four_icon_colors():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)

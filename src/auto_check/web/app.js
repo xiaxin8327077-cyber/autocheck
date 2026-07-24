@@ -381,6 +381,63 @@ let usersLoaded = false;
 let usersLoading = false;
 const USER_PAGE_SIZE = 10;
 const authState = { csrfToken: "", user: null };
+// Report navigation session cache start
+const REPORT_NAV_CACHE_PREFIX = "autoCheckReportNavigationDashboard:v1";
+
+function expectedReportNavigationBusinessDate(now = new Date()) {
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const previousMonthEnd = new Date(firstDay.getTime() - 86400000);
+  return [
+    previousMonthEnd.getFullYear(),
+    String(previousMonthEnd.getMonth() + 1).padStart(2, "0"),
+    String(previousMonthEnd.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function reportNavigationCacheKey(period) {
+  const userId = String(authState.user?.id || "");
+  return `${REPORT_NAV_CACHE_PREFIX}:${userId}:${period}`;
+}
+
+function readReportNavigationCache(period, now = new Date()) {
+  if (!authState.user?.id) return null;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(reportNavigationCacheKey(period)) || "null");
+    if (!cached || cached.userId !== String(authState.user.id) || cached.period !== period) return null;
+    if (cached.businessReportDate !== expectedReportNavigationBusinessDate(now)) return null;
+    if (!cached.payload || typeof cached.payload !== "object") return null;
+    return cached;
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeReportNavigationCache(period, payload, now = new Date()) {
+  if (!authState.user?.id || !payload || typeof payload !== "object") return;
+  const businessReportDate = String(payload.business_report_date || "");
+  if (businessReportDate !== expectedReportNavigationBusinessDate(now)) return;
+  const entry = {
+    userId: String(authState.user.id),
+    period,
+    businessReportDate,
+    savedAt: new Date().toISOString(),
+    payload,
+  };
+  try {
+    sessionStorage.setItem(reportNavigationCacheKey(period), JSON.stringify(entry));
+  } catch (_) {}
+}
+
+function clearReportNavigationCache() {
+  try {
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith(`${REPORT_NAV_CACHE_PREFIX}:`)) sessionStorage.removeItem(key);
+    }
+  } catch (_) {}
+}
+// Report navigation session cache end
+
 let reportNavigationPayload = null;
 let reportNavigationLoading = false;
 const REPORT_NAV_REFRESH_COOLDOWN_SECONDS = 300;
@@ -2451,13 +2508,24 @@ async function loadReportNavigation({ preserveSchedule = false } = {}) {
   if (reportNavigationLoading) return;
   reportNavigationLoading = true;
   const period = reportNavPeriodSelect?.value || "month";
-  setStatus("正在读取最新统计结果…");
+  const cached = readReportNavigationCache(period);
+  let restoredFromCache = false;
+  if (String(reportNavigationPayload?.period || "") !== period && cached?.payload) {
+    renderReportNavigation(cached.payload);
+    restoredFromCache = true;
+  }
+  setStatus(restoredFromCache ? "正在更新报送导航…" : "正在读取最新统计结果…");
   try {
     const payload = await api(`/api/report-navigation/dashboard?period=${encodeURIComponent(period)}`);
     renderReportNavigation(payload, { preserveSchedule });
+    writeReportNavigationCache(period, payload);
     return payload;
   } catch (error) {
-    setStatus(`统计结果读取失败：${error.message}`);
+    if (!restoredFromCache) {
+      setStatus(`统计结果读取失败：${error.message}`);
+    } else {
+      setStatus(`最新统计结果读取失败，当前保留显示上次成功数据：${error.message}`);
+    }
     return null;
   } finally {
     reportNavigationLoading = false;
@@ -2645,6 +2713,7 @@ async function logout() {
   }
   if (logoutAuthRevision !== interfaceRadiusState.authRevision) return;
   authState.csrfToken = "";
+  clearReportNavigationCache();
   try { sessionStorage.removeItem(USER_AVATAR_SESSION_KEY); } catch (_) {}
   window.location.href = "/login.html";
 }
