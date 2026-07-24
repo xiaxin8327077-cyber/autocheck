@@ -1459,6 +1459,16 @@ function reportNavigationStepDisplayName(step = {}) {
     || String(step.step_name || "");
 }
 
+function reportNavigationStepIsDisplayOnly(step = {}) {
+  return Boolean(step.display_only || step.status === "display_only");
+}
+
+function reportNavigationCompletionTimeText(process = {}) {
+  return process.status === "completed" && process.completed_at
+    ? `完成时间：${reportNavigationTimestampText(process.completed_at)}`
+    : "";
+}
+
 function reportNavigationDisplayProcesses(payload = {}) {
   const month = Number(String(payload.report_month || "").slice(5, 7));
   return (payload.processes || [])
@@ -1512,8 +1522,26 @@ function reportNavigationScheduleDates(reportMonth = "", processes = []) {
     .filter((item) => item && item.getFullYear() === year && item.getMonth() === month - 1);
   if (!deadlines.length) return [];
   const latestDeadline = new Date(Math.max(...deadlines.map((item) => item.getTime())));
+  const completionDates = processes
+    .filter((process) => process.status === "completed")
+    .map((process) => reportNavigationDateOnly(process.completed_at))
+    .filter((item) => item && item >= new Date(year, month - 1, 1));
+  const latestCompletion = completionDates.length
+    ? new Date(Math.max(...completionDates.map((item) => item.getTime())))
+    : latestDeadline;
+  const current = new Date();
+  const today = new Date(current.getFullYear(), current.getMonth(), current.getDate());
+  const hasOverdueIncomplete = processes.some((process) => {
+    const deadline = reportNavigationDateOnly(process.report_date);
+    return process.status !== "completed" && deadline && today > deadline;
+  });
+  const scheduleEndDate = new Date(Math.max(
+    latestDeadline.getTime(),
+    latestCompletion.getTime(),
+    hasOverdueIncomplete ? today.getTime() : latestDeadline.getTime(),
+  ));
   const dates = [];
-  for (const cursor = new Date(year, month - 1, 1); cursor <= latestDeadline; cursor.setDate(cursor.getDate() + 1)) {
+  for (const cursor = new Date(year, month - 1, 1); cursor <= scheduleEndDate; cursor.setDate(cursor.getDate() + 1)) {
     dates.push(new Date(cursor));
   }
   return dates;
@@ -1595,20 +1623,27 @@ function syncReportNavigationTodoCardHeight() {
 function reportNavigationScheduleStepItems(process = {}) {
   const processCode = escapeHtml(String(process.process_code || ""));
   const processSteps = Array.isArray(process.steps) ? process.steps : [];
-  const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");
+  const firstIncompleteStepIndex = processSteps.findIndex(
+    (step) => !reportNavigationStepIsDisplayOnly(step) && step.status !== "completed",
+  );
   return processSteps.map((step, index) => {
+    const displayOnly = reportNavigationStepIsDisplayOnly(step);
     const completed = step.status === "completed";
-    const stepState = completed
+    const stepState = displayOnly
+      ? "display-only"
+      : (completed
       ? "completed"
-      : (index === firstIncompleteStepIndex ? "running" : "waiting");
+      : (index === firstIncompleteStepIndex ? "running" : "waiting"));
     const stepStatusText = stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成");
     const stepLabel = `${index + 1}、${escapeHtml(reportNavigationStepDisplayName(step))}`;
-    const manualAction = step.manual_completion_allowed && (!completed || step.manual_completed)
+    const manualAction = !displayOnly && step.manual_completion_allowed && (!completed || step.manual_completed)
       ? (step.manual_completed ? "manual-cancel" : "manual-complete")
       : "";
-    const statusMarkup = manualAction
-      ? `<button type="button" class="report-nav-schedule-step-status-action" data-report-nav-step-action="${manualAction}" data-report-nav-step-code="${escapeHtml(String(step.step_code || ""))}" data-report-nav-step-process="${processCode}" aria-label="${manualAction === "manual-cancel" ? "撤销该步骤人工确认" : "确认该步骤已完成"}">${stepStatusText}</button>`
-      : `<em>${stepStatusText}</em>`;
+    const statusMarkup = displayOnly ? "" : (
+      manualAction
+        ? `<button type="button" class="report-nav-schedule-step-status-action" data-report-nav-step-action="${manualAction}" data-report-nav-step-code="${escapeHtml(String(step.step_code || ""))}" data-report-nav-step-process="${processCode}" aria-label="${manualAction === "manual-cancel" ? "撤销该步骤人工确认" : "确认该步骤已完成"}">${stepStatusText}</button>`
+        : `<em>${stepStatusText}</em>`
+    );
     return `<li class="${stepState}" data-report-nav-step-row="${escapeHtml(String(step.step_code || ""))}"><i aria-hidden="true"></i><span>${stepLabel}</span>${statusMarkup}</li>`;
   }).join("");
 }
@@ -1621,18 +1656,23 @@ function updateReportNavigationScheduleStepsPopover(control, processCode, payloa
   if (!process || !preview || !list) return;
   reportNavigationScheduleRenderDeferred = true;
   const processSteps = Array.isArray(process.steps) ? process.steps : [];
-  const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");
+  const firstIncompleteStepIndex = processSteps.findIndex(
+    (step) => !reportNavigationStepIsDisplayOnly(step) && step.status !== "completed",
+  );
   processSteps.forEach((step, index) => {
     const stepCode = String(step.step_code || "");
     const row = Array.from(list.children)
       .find((item) => item.dataset.reportNavStepRow === stepCode);
     if (!row) return;
+    const displayOnly = reportNavigationStepIsDisplayOnly(step);
     const completed = step.status === "completed";
-    const stepState = completed
+    const stepState = displayOnly
+      ? "display-only"
+      : (completed
       ? "completed"
-      : (index === firstIncompleteStepIndex ? "running" : "waiting");
+      : (index === firstIncompleteStepIndex ? "running" : "waiting"));
     const stepStatusText = stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成");
-    const manualAction = step.manual_completion_allowed && (!completed || step.manual_completed)
+    const manualAction = !displayOnly && step.manual_completion_allowed && (!completed || step.manual_completed)
       ? (step.manual_completed ? "manual-cancel" : "manual-complete")
       : "";
     const statusControl = row.querySelector(".report-nav-schedule-step-status-action, .report-nav-schedule-step-status-readonly, em");
@@ -1676,8 +1716,9 @@ function updateReportNavigationScheduleProcessSummary(processCode, payload) {
   const completedSteps = Number(process.completed_steps || 0);
   const totalSteps = Number(process.total_steps || 0);
   const nextStep = (Array.isArray(process.steps) ? process.steps : [])
-    .find((step) => step.status !== "completed");
+    .find((step) => !reportNavigationStepIsDisplayOnly(step) && step.status !== "completed");
   const state = reportNavigationScheduleState(process);
+  const completionTimeText = reportNavigationCompletionTimeText(process);
   const timingText = state.earlyDays > 0
     ? `提前 ${state.earlyDays} 天`
     : (state.overdueDays > 0
@@ -1690,6 +1731,7 @@ function updateReportNavigationScheduleProcessSummary(processCode, payload) {
   const progressBar = detail.querySelector(".report-nav-schedule-detail-progress > i > b");
   const progressValue = detail.querySelector(".report-nav-schedule-detail-progress > strong");
   const nextStepValue = detail.querySelector(".report-nav-schedule-detail-next > strong");
+  const completionTimeValue = detail.querySelector(".report-nav-schedule-detail-completed-at");
   if (summaryPercent) summaryPercent.textContent = `${percent}%`;
   if (statusValue) statusValue.textContent = state.label;
   if (timingText && !timingValue && statusBlock) {
@@ -1703,6 +1745,10 @@ function updateReportNavigationScheduleProcessSummary(processCode, payload) {
   if (progressBar) progressBar.style.width = `${percent}%`;
   if (progressValue) progressValue.textContent = `${percent}%（${completedSteps}/${totalSteps}）`;
   if (nextStepValue) nextStepValue.textContent = nextStep?.step_name || "全部步骤已完成";
+  if (completionTimeValue) {
+    completionTimeValue.textContent = completionTimeText;
+    completionTimeValue.hidden = !completionTimeText;
+  }
 }
 
 function flushDeferredReportNavigationScheduleRender() {
@@ -1783,16 +1829,12 @@ function renderReportNavigationSchedule(payload = {}) {
       ? completionIndex
       : deadlineIndex;
     const endpointAtFirstDate = endpointIndex <= 0;
+    const endpointNearFirstDate = endpointIndex === 1;
     const endpointAtLastDate = endpointIndex >= dates.length - 1;
+    const endpointNearLastDate = endpointIndex === dates.length - 2;
     const fillPosition = ["completed", "early-completed", "overdue-completed"].includes(state.code)
       ? endpointPosition
       : todayPosition;
-    const scheduleEndPosition = 100 - scheduleEdgePosition;
-    const remainingBaselineSpan = Math.max(1, scheduleEndPosition - fillPosition);
-    const earlyTailEndPosition = Math.max(0, Math.min(
-      100,
-      ((deadlinePosition - fillPosition) / remainingBaselineSpan) * 100,
-    ));
     const fillSpanPosition = Math.max(1, fillPosition - scheduleEdgePosition);
     const overdueStopPosition = Math.max(0, Math.min(
       100,
@@ -1809,8 +1851,8 @@ function renderReportNavigationSchedule(payload = {}) {
         }
         return '<i class="reached"></i>';
       }
-      if (state.code === "early-completed" && dotPosition <= deadlinePosition) {
-        return '<i class="early-target"></i>';
+      if (state.code === "early-completed" && index === deadlineIndex) {
+        return '<i class="early-original-deadline"></i>';
       }
       return "<i></i>";
     }).join("");
@@ -1819,20 +1861,32 @@ function renderReportNavigationSchedule(payload = {}) {
       ? REPORT_NAV_CHECK_ICON
       : (state.code === "risk" || state.code === "overdue" ? "!" : "");
     const deadlineText = reportNavigationDateText(process.report_date);
+    const completionText = reportNavigationDateText(completedKey);
     const endpointLabel = state.code === "early-completed"
-      ? `提前${state.earlyDays}天 · 截止${deadlineText}`
+      ? `提前${state.earlyDays}天，${completionText}完成`
       : (
         state.code === "overdue-completed"
-          ? `逾期${state.overdueDays}天 · 原截止${deadlineText}`
-          : (state.code === "overdue" ? `已逾期${state.overdueDays}天 · 原截止${deadlineText}` : deadlineText)
+          ? `逾期${state.overdueDays}天完成`
+          : (
+            state.code === "overdue"
+              ? `已逾期${state.overdueDays}天`
+              : (
+                state.code === "completed"
+                  ? `${completionText}按时完成`
+                  : (state.code === "running" ? "" : deadlineText)
+              )
+          )
       );
     const deadlineWarning = state.code === "overdue-completed"
       ? `<span class="report-nav-schedule-deadline-warning" style="--report-nav-schedule-deadline:${deadlinePosition}%" title="原截止日期：${escapeHtml(deadlineText)}" aria-label="原截止日期：${escapeHtml(deadlineText)}">!</span>`
       : "";
     const processSteps = Array.isArray(process.steps) ? process.steps : [];
-    const nextStep = processSteps.find((step) => step.status !== "completed");
+    const nextStep = processSteps.find(
+      (step) => !reportNavigationStepIsDisplayOnly(step) && step.status !== "completed",
+    );
     const stepItems = reportNavigationScheduleStepItems(process);
     const stepsPreviewId = `report-nav-schedule-steps-${processCode}`;
+    const completionTimeText = reportNavigationCompletionTimeText(process);
     const timingText = state.earlyDays > 0
       ? `提前 ${state.earlyDays} 天`
       : (state.overdueDays > 0
@@ -1842,7 +1896,7 @@ function renderReportNavigationSchedule(payload = {}) {
       <div class="report-nav-schedule-detail-spacer" aria-hidden="true"></div>
       <div class="report-nav-schedule-detail-status"><span>状态</span><strong>${escapeHtml(state.label)}</strong>${timingText ? `<small>${escapeHtml(timingText)}</small>` : ""}</div>
       <div class="report-nav-schedule-detail-progress"><span>完成进度</span><i><b style="width:${percent}%"></b></i><strong>${percent}%（${Number(process.completed_steps || 0)}/${Number(process.total_steps || 0)}）</strong></div>
-      <div class="report-nav-schedule-detail-next"><span>下一步</span><strong>${escapeHtml(nextStep?.step_name || "全部步骤已完成")}</strong></div>
+      <div class="report-nav-schedule-detail-next"><span>下一步</span><strong>${escapeHtml(nextStep?.step_name || "全部步骤已完成")}</strong><small class="report-nav-schedule-detail-completed-at"${completionTimeText ? "" : " hidden"}>${escapeHtml(completionTimeText)}</small></div>
       <div class="report-nav-schedule-steps-preview" tabindex="0" role="button" aria-label="查看步骤" aria-describedby="${stepsPreviewId}" aria-expanded="false">
         <span>查看步骤</span>
         <div class="report-nav-schedule-steps-popover" id="${stepsPreviewId}" role="tooltip" popover="manual">
@@ -1854,11 +1908,11 @@ function renderReportNavigationSchedule(payload = {}) {
     </div>` : "";
     return `<div class="report-nav-schedule-row ${state.code}${selected ? " selected" : ""}" data-report-nav-schedule-process="${processCode}" role="button" tabindex="0" aria-expanded="${selected ? "true" : "false"}">
       <div class="report-nav-schedule-summary"><strong>${escapeHtml(process.process_name || "")}</strong><span>${percent}%</span></div>
-      <div class="report-nav-schedule-track" style="--report-nav-schedule-endpoint:${endpointPosition}%;--report-nav-schedule-fill:${fillPosition}%;--report-nav-schedule-early-tail-end:${earlyTailEndPosition}%;--report-nav-schedule-overdue-stop:${overdueStopPosition}%">
+      <div class="report-nav-schedule-track" style="--report-nav-schedule-endpoint:${endpointPosition}%;--report-nav-schedule-fill:${fillPosition}%;--report-nav-schedule-overdue-stop:${overdueStopPosition}%">
         <i class="report-nav-schedule-baseline"></i><i class="report-nav-schedule-fill"></i>
         <div class="report-nav-schedule-dots">${dots}</div>
         ${deadlineWarning}
-        <span class="report-nav-schedule-endpoint${endpointAtFirstDate ? " at-first" : ""}${endpointAtLastDate ? " at-last" : ""}" data-report-nav-schedule-date="${processCode}" role="button" tabindex="0" title="${process.schedule_editable ? "右击修改截止日期" : "截止日期"}">${endpointText}<em>${escapeHtml(endpointLabel)}</em></span>
+        <span class="report-nav-schedule-endpoint${endpointAtFirstDate ? " at-first" : ""}${endpointNearFirstDate ? " near-first" : ""}${endpointAtLastDate ? " at-last" : ""}${endpointNearLastDate ? " near-last" : ""}" data-report-nav-schedule-date="${processCode}" role="button" tabindex="0" title="${process.schedule_editable ? "右击修改截止日期" : "截止日期"}">${endpointText}${endpointLabel ? `<em>${escapeHtml(endpointLabel)}</em>` : ""}</span>
       </div>
     </div>${detail}`;
   }).join("");
@@ -2239,12 +2293,17 @@ function renderReportNavigationProcessDetails(process) {
   }
   const done = process.status === "completed";
   const steps = process.steps || [];
-  const currentStepIndex = steps.findIndex((step) => step.status !== "completed");
+  const currentStepIndex = steps.findIndex(
+    (step) => !reportNavigationStepIsDisplayOnly(step) && step.status !== "completed",
+  );
   const rows = steps.map((step, index) => {
+    const displayOnly = reportNavigationStepIsDisplayOnly(step);
     const completed = step.status === "completed";
     const error = step.status === "error";
-    const current = !completed && index === currentStepIndex;
-    const stateClass = completed ? "completed" : (error ? "error" : (current ? "current" : "pending"));
+    const current = !displayOnly && !completed && index === currentStepIndex;
+    const stateClass = displayOnly
+      ? "display-only"
+      : (completed ? "completed" : (error ? "error" : (current ? "current" : "pending")));
     return `<li class="report-nav-step-row ${stateClass}">
       <span class="report-nav-step-index" aria-hidden="true">${completed ? REPORT_NAV_CHECK_ICON : ""}</span>
       <div class="report-nav-step-content"><span class="report-nav-step-order">${index + 1}、</span><strong>${escapeHtml(step.step_name || "")}</strong></div>

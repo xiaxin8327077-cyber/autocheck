@@ -99,7 +99,7 @@ INSERT INTO `report_nav_steps` (`step_code`, `process_code`, `step_name`, `displ
   ('pbc_template_4', 'pbc_template', '导入补全人行全量 SPV 码', 4, 'minimum_time_in_current_month', 1, 0, 0),
   ('pbc_template_5', 'pbc_template', '完成监管报送平台人行报表校验', 5, 'dependency_completed', 1, 0, 0),
   ('pbc_template_6', 'pbc_template', '制表人核验归档报表并上传至人行报送网站', 6, 'all_versions_present', 1, 0, 0),
-  ('pbc_template_7', 'pbc_template', '制表人填写数据调整情况说明（如有）', 7, 'date_reached', 1, 0, 1),
+  ('pbc_template_7', 'pbc_template', '归档后制表人填写数据调整情况说明（如有）', 7, 'display_only', 1, 0, 0),
   ('jr_1104_1', 'jr_1104', '导入报送外部数据', 1, 'quarterly_rows_exist', 1, 0, 0),
   ('jr_1104_2', 'jr_1104', '核查跨表资产大类科目余额与实收信托比对', 2, 'dependency_completed', 1, 0, 0),
   ('jr_1104_3', 'jr_1104', '完成监管报送平台 1104 报表校验', 3, 'dependency_completed', 1, 0, 0),
@@ -155,7 +155,8 @@ INSERT INTO `report_nav_step_sources` (`id`, `step_code`, `source_role`, `data_s
   (18, 'citic_registration_5', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
   (19, 'east5_1', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
   (20, 'five_articles_1', 'primary', 'reg-report-analysis', 'xt_reg_version', 1, 1),
-  (21, 'supplement_tasks_1', 'primary', 'bl', 'jsxt_console.rep_data_task_detail', 1, 1)
+  (21, 'supplement_tasks_1', 'primary', 'bl', 'jsxt_console.rep_data_task_detail', 1, 1),
+  (22, 'pbc_central_4', 'completion_time', 'currency_report_24', 'currency_report_duration', 3, 1)
 ON DUPLICATE KEY UPDATE `step_code`=VALUES(`step_code`), `source_role`=VALUES(`source_role`), `data_source_name`=VALUES(`data_source_name`), `table_name`=VALUES(`table_name`), `display_order`=VALUES(`display_order`), `enabled`=VALUES(`enabled`);
 
 INSERT INTO `report_nav_step_fields` (`id`, `step_source_id`, `field_role`, `column_name`) VALUES
@@ -195,16 +196,14 @@ INSERT INTO `report_nav_step_fields` (`id`, `step_source_id`, `field_role`, `col
   (36, 21, 'date_field', 'create_date'),
   (37, 21, 'status_field', 'status'),
   (38, 21, 'deleted_field', 'del_flag'),
-  (39, 13, 'update_date_field', 'update_date'),
   (40, 13, 'create_date_field', 'create_date'),
-  (41, 14, 'update_date_field', 'update_date'),
   (42, 14, 'create_date_field', 'create_date'),
-  (43, 18, 'update_date_field', 'update_date'),
   (44, 18, 'create_date_field', 'create_date'),
-  (45, 19, 'update_date_field', 'update_date'),
   (46, 19, 'create_date_field', 'create_date'),
-  (47, 20, 'update_date_field', 'update_date'),
-  (48, 20, 'create_date_field', 'create_date')
+  (48, 20, 'create_date_field', 'create_date'),
+  (50, 11, 'create_date_field', 'create_date'),
+  (51, 22, 'period_field', 'caldate'),
+  (52, 22, 'create_date_field', 'create_date')
 ON DUPLICATE KEY UPDATE `step_source_id`=VALUES(`step_source_id`), `field_role`=VALUES(`field_role`), `column_name`=VALUES(`column_name`);
 
 INSERT INTO `report_nav_step_values` (`id`, `step_code`, `value_role`, `value_text`, `value_type`, `display_order`) VALUES

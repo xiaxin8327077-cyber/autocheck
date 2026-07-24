@@ -32,14 +32,16 @@
 10. 执行 `sql/app_storage/mysql/007_report_navigation_schedule_owner.sql`，为月度报送日程补充负责人字段。
 11. 执行 `sql/app_storage/mysql/008_report_navigation_work_calendar.sql`，创建或更新法定节假日与调休工作日日历。
 12. 执行 `sql/app_storage/mysql/009_report_navigation_manual_step_permissions.sql`，规范报送步骤人工确认开关。
-13. 配置 `config.json` 的 `app_database` 节点。
-14. 启动应用并确认连接、结构版本和关键表数据。
+13. 执行 `sql/app_storage/mysql/010_pbc_template_step_seven_display_only.sql`，将资管产品模板、逐笔报送第七步调整为仅展示，并由第六步归档记录提供节点完成时间。
+14. 执行 `sql/app_storage/mysql/011_report_navigation_completion_time_sources.sql`，将归档类报送完成时间统一改为仅取 `create_date`，并配置人行大集中完成时间数据源。
+15. 配置 `config.json` 的 `app_database` 节点。
+16. 启动应用并确认连接、结构版本和关键表数据。
 
-建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产凭据或业务数据。`004`、`006` 和 `008` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 与 `007` 通过 `information_schema` 判断字段或约束是否存在后再升级。六个脚本可按顺序重复执行，不会重复建表、重复加列或删除现有数据；`008` 会幂等写入年度法定节假日和调休工作日配置，`009` 会将当前可人工确认范围规范为“资管产品模板、逐笔报送”第七步。如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
+建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产凭据或业务数据。`004`、`006` 和 `008` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 与 `007` 通过 `information_schema` 判断字段或约束是否存在后再升级。升级脚本可按顺序重复执行；`008` 会幂等写入年度法定节假日和调休工作日配置，`009` 规范历史人工确认范围，`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，并配置人行大集中从 `currency_report_24.currency_report_duration` 按报告期取最大 `create_date`。如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
 
 `user_interface_preferences` 不设置外键；用户删除后，孤儿偏好由应用在用户数据变更事务中清理。`006` 只创建表，不预插入 `id=1` 记录；当前前端不依赖该记录，后端兼容接口在记录不存在时使用代码默认色，并在显式调用保存接口时原子 upsert 唯一记录。
 
-从已完成 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`，再部署新程序。本文仅说明初始化和升级步骤，不代表已在任何线上环境执行。
+从已完成 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`，再部署新程序。本文仅说明初始化和升级步骤，不代表已在任何线上环境执行。
 
 ## 三、界面偏好完整规范 DDL
 

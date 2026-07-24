@@ -359,7 +359,7 @@ def test_version_evaluator_requires_every_configured_manage_code():
     assert incomplete.status == "incomplete"
 
 
-def test_version_evaluator_returns_latest_update_or_create_time():
+def test_version_evaluator_returns_latest_create_time_only():
     report_module = _report_navigation()
     storage_module = _storage()
     source = _source(
@@ -386,10 +386,97 @@ def test_version_evaluator_returns_latest_update_or_create_time():
 
     assert result.status == "completed"
     assert result.completed_at == completion_time
-    assert (
-        "MAX(COALESCE(`update_date`, `create_date`)) AS completion_time"
-        in executor.calls[0][1]
+    assert "MAX(`create_date`) AS completion_time" in executor.calls[0][1]
+    assert "update_date" not in executor.calls[0][1]
+
+
+def test_pbc_central_final_step_uses_max_duration_create_date_for_report_date():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    ck_result = _source(
+        storage_module,
+        role="ck_result",
+        fields={"period_field": "period", "check_id_field": "ck_id"},
     )
+    spv_detail = _source(
+        storage_module,
+        role="spv_detail",
+        fields={"period_field": "caldate"},
+    )
+    completion_time_source = _source(
+        storage_module,
+        role="completion_time",
+        fields={"period_field": "caldate", "create_date_field": "create_date"},
+    )
+    step = _step(
+        storage_module,
+        "no_ck_and_report_period",
+        sources=(ck_result, spv_detail, completion_time_source),
+        values={"target_ck_id": ("7118",)},
+    )
+    completion_time = datetime(2026, 7, 8, 16, 20, 30)
+    executor = QueueQueryExecutor(
+        [
+            {"scope_count": 0, "exception_count": 0},
+            {"scope_count": 2, "exception_count": 0},
+            {"completion_time": completion_time},
+        ]
+    )
+
+    result = report_module.evaluate(_context(report_module, step, executor))
+
+    assert result.status == "completed"
+    assert result.completed_at == completion_time
+    assert executor.calls[2][0] == "completion_time"
+    assert "MAX(`create_date`) AS completion_time" in executor.calls[2][1]
+    assert "WHERE `caldate` = %s" in executor.calls[2][1]
+    assert executor.calls[2][2] == (date(2026, 6, 30),)
+
+
+def test_display_only_step_is_not_counted_and_step_six_remains_final():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    database.connection.tables["report_nav_steps"].append(
+        {
+            "step_code": "p1_s3",
+            "process_code": "p1",
+            "step_name": "归档后制表人填写数据调整情况说明（如有）",
+            "display_order": 3,
+            "evaluator_key": "display_only",
+            "enabled": 1,
+            "default_completed": 0,
+            "manual_completion_allowed": 0,
+        }
+    )
+    archive_time = datetime(2026, 7, 15, 18, 20, 30)
+
+    def evaluator(context):
+        if context.step.evaluator_key == "display_only":
+            return report_module.evaluate(context)
+        return report_module.EvaluationResult(
+            "completed",
+            "完成",
+            completed_at=archive_time if context.step.step_code == "p1_s2" else None,
+        )
+
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+
+    result = service.collect_once(now=datetime(2026, 7, 16, 9, 30))
+    snapshot = store.load_process_snapshot("2026-07", "p1")
+    display_snapshot = store.load_step_snapshot("2026-07", "p1_s3")
+
+    assert result.status == "completed"
+    assert (snapshot.total_steps, snapshot.completed_steps) == (2, 2)
+    assert snapshot.completed_at == archive_time
+    assert display_snapshot.effective_status == "display_only"
 
 
 def test_dependency_default_and_date_evaluators_use_fixed_rules():
@@ -532,10 +619,18 @@ def test_ck_report_period_dependency_quarterly_and_waiting_report_period_rules()
         display_order=2,
         fields={"period_field": "caldate"},
     )
+    completion_source = storage_module.StepSourceConfig(
+        id=3,
+        source_role="completion_time",
+        data_source_name="currency_report_24",
+        table_name="currency_report_duration",
+        display_order=3,
+        fields={"period_field": "caldate", "create_date_field": "create_date"},
+    )
     ck_step = _step(
         storage_module,
         "no_ck_and_report_period",
-        sources=(ck_source, period_source),
+        sources=(ck_source, period_source, completion_source),
         values={"target_ck_id": ("7118",)},
     )
     assert report_module.evaluate(
@@ -546,6 +641,7 @@ def test_ck_report_period_dependency_quarterly_and_waiting_report_period_rules()
                 [
                     {"scope_count": 0, "exception_count": None},
                     {"scope_count": 6409, "exception_count": 0},
+                    {"completion_time": datetime(2026, 7, 2, 13, 13, 13)},
                 ]
             ),
         )

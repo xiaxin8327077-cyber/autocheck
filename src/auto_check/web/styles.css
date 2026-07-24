@@ -14780,6 +14780,12 @@ input.custom-input-native:disabled {
   background: var(--surface-container-lowest);
 }
 
+#page-report-navigation .report-nav-step-row.display-only .report-nav-step-index {
+  border-style: dashed;
+  border-color: var(--outline);
+  background: var(--surface-container-lowest);
+}
+
 #page-report-navigation .report-nav-step-content {
   display: flex;
   align-items: center;
@@ -14960,7 +14966,7 @@ input.custom-input-native:disabled {
     color-mix(in srgb, var(--theme-accent) 5%, var(--surface-container-lowest)) 60%,
     var(--surface-container-lowest)
   );
-  box-shadow: 0 10px 26px -14px rgba(52, 102, 217, 0.45);
+  box-shadow: none;
 }
 
 #page-report-navigation .report-nav-schedule-row:hover:not(.selected)::after,
@@ -15073,16 +15079,6 @@ input.custom-input-native:disabled {
   background: repeating-linear-gradient(90deg, var(--report-nav-schedule-baseline-color) 0 5px, transparent 5px 10px);
 }
 
-#page-report-navigation .report-nav-schedule-row.early-completed .report-nav-schedule-baseline {
-  background: linear-gradient(
-    90deg,
-    var(--report-nav-success) 0 var(--report-nav-schedule-early-tail-end),
-    var(--report-nav-schedule-baseline-color) var(--report-nav-schedule-early-tail-end) 100%
-  );
-  -webkit-mask: repeating-linear-gradient(90deg, #000000 0 5px, transparent 5px 10px);
-  mask: repeating-linear-gradient(90deg, #000000 0 5px, transparent 5px 10px);
-}
-
 #page-report-navigation .report-nav-schedule-fill {
   width: max(0px, calc(var(--report-nav-schedule-fill) - var(--report-nav-schedule-edge)));
   background: var(--report-nav-schedule-state);
@@ -15131,9 +15127,11 @@ input.custom-input-native:disabled {
   background: var(--report-nav-danger);
 }
 
-#page-report-navigation .report-nav-schedule-dots > i.early-target {
+#page-report-navigation .report-nav-schedule-dots > i.early-original-deadline {
   box-sizing: border-box;
-  border: 2px solid var(--report-nav-success);
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--report-nav-danger);
   background: var(--surface-container-lowest);
 }
 
@@ -15164,7 +15162,10 @@ input.custom-input-native:disabled {
   background: var(--report-nav-schedule-state);
 }
 
-#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-endpoint,
+#page-report-navigation .report-nav-schedule-row.running .report-nav-schedule-endpoint {
+  border-color: var(--report-nav-danger);
+}
+
 #page-report-navigation .report-nav-schedule-row.risk .report-nav-schedule-endpoint {
   width: 12px;
   height: 12px;
@@ -15198,11 +15199,19 @@ input.custom-input-native:disabled {
   transform: none;
 }
 
+#page-report-navigation .report-nav-schedule-endpoint.near-first em {
+  transform: translateX(calc(-50% + 14px));
+}
+
 #page-report-navigation .report-nav-schedule-endpoint.at-last em {
   right: 50%;
   left: auto;
   text-align: right;
   transform: none;
+}
+
+#page-report-navigation .report-nav-schedule-endpoint.near-last em {
+  transform: translateX(calc(-50% - 14px));
 }
 
 #page-report-navigation .report-nav-schedule-deadline-warning {
@@ -15212,8 +15221,8 @@ input.custom-input-native:disabled {
   z-index: 3;
   display: grid;
   place-items: center;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   color: #ffffff;
   background: var(--report-nav-danger);
@@ -15223,6 +15232,7 @@ input.custom-input-native:disabled {
   transform: translate(-50%, -50%);
 }
 
+#page-report-navigation .report-nav-schedule-row.completed .report-nav-schedule-endpoint em,
 #page-report-navigation .report-nav-schedule-row.early-completed .report-nav-schedule-endpoint em {
   color: var(--report-nav-success);
 }
@@ -15314,6 +15324,15 @@ input.custom-input-native:disabled {
 
 #page-report-navigation .report-nav-schedule-detail.early-completed small {
   color: var(--report-nav-success);
+}
+
+#page-report-navigation .report-nav-schedule-detail small.report-nav-schedule-detail-completed-at {
+  color: var(--on-surface);
+  font-size: 11px;
+}
+
+#page-report-navigation .report-nav-schedule-detail-completed-at[hidden] {
+  display: none;
 }
 
 #page-report-navigation .report-nav-schedule-detail-progress {
@@ -15501,6 +15520,11 @@ input.custom-input-native:disabled {
 #page-report-navigation .report-nav-schedule-step-list > li.running > i {
   background: var(--theme-accent);
   animation: report-nav-schedule-step-ping 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+#page-report-navigation .report-nav-schedule-step-list > li.display-only > i {
+  border: 1px dashed var(--outline);
+  background: transparent;
 }
 
 #page-report-navigation .report-nav-schedule-step-list > li > em,

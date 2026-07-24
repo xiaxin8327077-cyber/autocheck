@@ -72,14 +72,14 @@
 #### 步骤 4
 
 判断项：内部产品资金端客户（TA）与资产端交易对手（衡泰、AM）校验一致
-数据来源请填写：  系统数据源配置中数据源名称为reg-report-analysis、ass_man_reg_24
-表/API/功能请填写：  reg-report-analysis.ck_result、ass_man_reg_24.zgxgzh_spvdetail_zg08
+数据来源请填写：  系统数据源配置中数据源名称为reg-report-analysis、ass_man_reg_24、currency_report_24
+表/API/功能请填写：  reg-report-analysis.ck_result、ass_man_reg_24.zgxgzh_spvdetail_zg08、currency_report_24.currency_report_duration
 报告期过滤请填写：   reg-report-analysis.ck_result 中 period 字段=报告期，注意格式为yyyy_mm_dd；ass_man_reg_24.zgxgzh_spvdetail_zg08 中 caldate 字段=报告期
 完成条件请填写：    reg-report-analysis.ck_result 筛选报告期之后，无ck_id='7118'的数且ass_man_reg_24.zgxgzh_spvdetail_zg08有数且 caldate全部=报送期
-完成时间请填写：
+完成时间请填写：  currency_report_24.currency_report_duration 中 caldate=报告期记录的 MAX(create_date)
 异常处理请填写：  当数据源配置、表或字段不存在时需提示
 
-节点完成时间如何取值（建议取四个步骤中最晚的完成时间），请填写：  最晚的完成时间
+节点完成时间如何取值，请填写：  步骤 4 返回的 currency_report_duration 最大 create_date
 
 ### 3.2 资管产品模板、逐笔
 
@@ -143,22 +143,17 @@
 表/API/功能请填写：  xt_reg_version
 报告期过滤请填写：   无
 完成条件请填写：    manage_code in ('20002','zbbs24') 且都存在 version_num=V.当前报告期的数（ V.20260630）
-完成时间请填写：
+完成时间请填写：  匹配归档记录的 MAX(create_date)
 异常处理请填写：  当数据源配置、表或字段不存在时需提示
 
-#### 步骤 7
+节点完成时间如何取值，请填写：  以第六步归档完成时间为准
 
-判断项：制表人填写数据调整情况说明（如有）
-数据来源请填写：  默认为报送日期，可由人为确认，（用户可以点击步骤手动完成）
-表/API/功能请填写：  /
-报告期过滤请填写：  /
-完成条件请填写：  /
-完成时间请填写：  /
-异常处理请填写：  /
+#### 步骤 7（仅展示）
 
-当月不需要填写数据调整情况说明时，如何判定完成，请填写：  没有每个月都需要填写情况说明
-
-节点完成时间如何取值，请填写：  最晚的完成时间
+展示项：归档后制表人填写数据调整情况说明（如有）
+完成判断：不参与
+进度统计：不计入步骤总数和已完成数
+节点完成时间：不影响，仍以第六步归档完成时间为准
 
 ### 3.3 1104 报送
 

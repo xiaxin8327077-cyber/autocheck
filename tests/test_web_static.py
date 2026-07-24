@@ -1990,6 +1990,39 @@ def test_report_navigation_statistics_keep_the_existing_four_icon_colors():
         assert f"#page-report-navigation .report-nav-stat-card.{color} .report-nav-stat-icon" in css
 
 
+def test_report_navigation_display_only_step_is_visually_neutral():
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert "function reportNavigationStepIsDisplayOnly(step = {})" in app_js
+    assert 'Boolean(step.display_only || step.status === "display_only")' in app_js
+    assert '? "display-only"' in app_js
+    assert 'const statusMarkup = displayOnly ? ""' in app_js
+    assert '? "仅展示"' not in app_js
+    assert 'class="report-nav-step-display-only"' not in app_js
+    assert ".report-nav-step-row.display-only .report-nav-step-index" in css
+    assert ".report-nav-schedule-step-list > li.display-only > i" in css
+
+
+def test_completed_report_navigation_schedule_detail_shows_completion_time():
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert "function reportNavigationCompletionTimeText(process = {})" in app_js
+    assert 'process.status === "completed" && process.completed_at' in app_js
+    assert '`完成时间：${reportNavigationTimestampText(process.completed_at)}`' in app_js
+    assert 'class="report-nav-schedule-detail-completed-at"' in app_js
+    assert 'completionTimeValue.hidden = !completionTimeText;' in app_js
+    assert ".report-nav-schedule-detail-completed-at" in css
+    assert (
+        "#page-report-navigation .report-nav-schedule-detail "
+        "small.report-nav-schedule-detail-completed-at"
+    ) in css
+    assert "color: var(--on-surface);" in css
+    assert "#page-report-navigation .report-nav-schedule-detail-completed-at[hidden]" in css
+    assert "全部完成时在展开详情的“下一步”区域显示“完成时间：YYYY-MM-DD HH:mm:ss”" in _read(README_MD)
+
+
 def test_report_navigation_process_cards_select_readonly_step_details():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
@@ -2497,6 +2530,17 @@ def test_report_navigation_month_label_uses_snapshot_while_period_only_reloads_s
     assert "report_month=" not in app_js
 
 
+def test_report_navigation_schedule_extends_through_overdue_completion_date():
+    app_js = _read(APP_JS)
+
+    assert "const completionDates = processes" in app_js
+    assert 'process.status === "completed"' in app_js
+    assert ".map((process) => reportNavigationDateOnly(process.completed_at))" in app_js
+    assert "const latestCompletion = completionDates.length" in app_js
+    assert "latestCompletion.getTime()," in app_js
+    assert "hasOverdueIncomplete ? today.getTime() : latestDeadline.getTime()," in app_js
+
+
 def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
@@ -2577,7 +2621,8 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert 'class="report-nav-schedule-steps-arrow" aria-hidden="true"' in app_js
     assert 'class="report-nav-schedule-detail-spacer" aria-hidden="true"' in app_js
     assert "`${index + 1}、${escapeHtml(reportNavigationStepDisplayName(step))}`" in app_js
-    assert 'const firstIncompleteStepIndex = processSteps.findIndex((step) => step.status !== "completed");' in app_js
+    assert "const firstIncompleteStepIndex = processSteps.findIndex(" in app_js
+    assert '(step) => !reportNavigationStepIsDisplayOnly(step) && step.status !== "completed"' in app_js
     assert 'index === firstIncompleteStepIndex ? "running" : "waiting"' in app_js
     assert 'stepState === "completed" ? "已完成" : (stepState === "running" ? "进行中" : "未完成")' in app_js
     assert "function positionReportNavigationScheduleStepsPopover" in app_js
@@ -2587,6 +2632,9 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "reportNavigationScheduleDates(payload.report_month, processes)" in app_js
     assert "const deadlines = processes" in app_js
     assert "const latestDeadline = new Date(Math.max(...deadlines.map((item) => item.getTime())));" in app_js
+    assert "const hasOverdueIncomplete = processes.some((process) => {" in app_js
+    assert 'process.status !== "completed" && deadline && today > deadline' in app_js
+    assert "cursor <= scheduleEndDate" in app_js
     assert "const deadlinePosition = ((deadlineIndex + 0.5) / dates.length) * 100;" in app_js
     assert "const completionOffsetDays" in app_js
     assert 'code: "early-completed", label: "提前完成"' in app_js
@@ -2596,24 +2644,36 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert ': deadlinePosition;' in app_js
     assert 'const fillPosition = ["completed", "early-completed", "overdue-completed"].includes(state.code)' in app_js
     assert ': todayPosition;' in app_js
-    assert '`提前${state.earlyDays}天 · 截止${deadlineText}`' in app_js
-    assert '`逾期${state.overdueDays}天 · 原截止${deadlineText}`' in app_js
-    assert '`已逾期${state.overdueDays}天 · 原截止${deadlineText}`' in app_js
-    assert '`逾期${state.overdueDays}天完成`' in app_js
+    assert "const completionText = reportNavigationDateText(completedKey);" in app_js
+    assert '`提前${state.earlyDays}天，${completionText}完成`' in app_js
+    assert 'state.code === "completed"' in app_js
+    assert '`${completionText}按时完成`' in app_js
+    assert 'state.code === "running" ? "" : deadlineText' in app_js
+    assert '`逾期${state.overdueDays}天 · 原截止${deadlineText}`' not in app_js
+    assert "const todayText = reportNavigationDateText(todayKey);" not in app_js
+    assert '`已逾期${state.overdueDays}天`' in app_js
+    assert app_js.count('`逾期${state.overdueDays}天完成`') >= 2
     assert 'class="report-nav-schedule-deadline-warning"' in app_js
+    assert 'aria-label="原截止日期：${escapeHtml(deadlineText)}">!</span>' in app_js
+    assert "const adjacentOverdueCompletionLabels" not in app_js
     assert '--report-nav-schedule-deadline:${deadlinePosition}%' in app_js
     assert 'class="report-nav-schedule-early-tail"' not in app_js
     assert 'class="report-nav-schedule-early-deadline"' not in app_js
     assert "const scheduleEdgePosition = 50 / dates.length;" in app_js
-    assert "const scheduleEndPosition = 100 - scheduleEdgePosition;" in app_js
-    assert "const earlyTailEndPosition" in app_js
+    assert "const scheduleEndPosition" not in app_js
+    assert "const earlyTailEndPosition" not in app_js
+    assert "const earlyDeadlineOffsetPosition" not in app_js
     assert "const overdueStopPosition" in app_js
-    assert '--report-nav-schedule-early-tail-end:${earlyTailEndPosition}%' in app_js
+    assert "--report-nav-schedule-early-tail-end" not in app_js
+    assert "--report-nav-schedule-early-deadline-offset" not in app_js
     assert '--report-nav-schedule-overdue-stop:${overdueStopPosition}%' in app_js
     assert "const dotPosition = ((index + 0.5) / dates.length) * 100;" in app_js
     assert "dotPosition <= fillPosition" in app_js
     assert 'class="reached"' in app_js
-    assert 'class="early-target"' in app_js
+    assert 'class="early-target"' not in app_js
+    assert 'class="early-original-deadline"' in app_js
+    assert 'class="after-early-completion"' not in app_js
+    assert 'class="report-nav-schedule-original-deadline-label' not in app_js
     assert 'class="reached before-deadline"' in app_js
     assert 'class="reached after-deadline"' in app_js
     assert "dates.push(new Date(cursor));" in app_js
@@ -2722,6 +2782,7 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "background: linear-gradient(" in schedule_hover_rule.group("body")
     assert "color-mix(in srgb, var(--theme-accent) 12%, var(--surface-container-lowest))" in schedule_hover_rule.group("body")
     assert "background: var(--theme-focus-ring);" not in schedule_hover_rule.group("body")
+    assert "box-shadow: none;" in schedule_hover_rule.group("body")
     assert ".report-nav-schedule-row:hover:not(.selected)::after" in css
     assert ".report-nav-schedule-row:focus-visible:not(.selected)::after" in css
     assert "width: 3px;" in css
@@ -2763,7 +2824,7 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert schedule_line_rule is not None
     assert "height: 3px;" in schedule_line_rule.group("body")
     assert "var(--report-nav-schedule-baseline-color) 0 5px" in css
-    assert "var(--report-nav-success) 0 var(--report-nav-schedule-early-tail-end)" in css
+    assert "var(--report-nav-schedule-early-tail-end)" not in css
     assert "#page-report-navigation .report-nav-schedule-dots > i.reached" in css
     assert "background: var(--report-nav-schedule-state);" in css
     assert ".report-nav-schedule-row.pending," not in css
@@ -2771,11 +2832,27 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert ".report-nav-schedule-row.early-completed" in css
     assert ".report-nav-schedule-row.overdue-completed," in css
     assert "left: var(--report-nav-schedule-endpoint);" in css
+    running_deadline_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-row\.running "
+        r"\.report-nav-schedule-endpoint\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert running_deadline_rule is not None
+    assert "border-color: var(--report-nav-danger);" in running_deadline_rule.group("body")
     assert "const endpointAtLastDate = endpointIndex >= dates.length - 1;" in app_js
     assert "const endpointAtFirstDate = endpointIndex <= 0;" in app_js
-    assert '${endpointAtFirstDate ? " at-first" : ""}${endpointAtLastDate ? " at-last" : ""}' in app_js
+    assert "const endpointNearLastDate = endpointIndex === dates.length - 2;" in app_js
+    assert "const endpointNearFirstDate = endpointIndex === 1;" in app_js
+    assert "const deadlineAtLastDate" not in app_js
+    assert "const deadlineAtFirstDate" not in app_js
+    assert "const deadlineNearLastDate" not in app_js
+    assert "const deadlineNearFirstDate" not in app_js
+    assert '${endpointNearLastDate ? " near-last" : ""}' in app_js
     assert "#page-report-navigation .report-nav-schedule-endpoint.at-first em" in css
     assert "#page-report-navigation .report-nav-schedule-endpoint.at-last em" in css
+    assert "#page-report-navigation .report-nav-schedule-endpoint.near-first em" in css
+    assert "#page-report-navigation .report-nav-schedule-endpoint.near-last em" in css
+    assert "translateX(calc(-50% - 14px));" in css
     assert "right: 50%;" in css
     assert "text-align: right;" in css
     assert "#page-report-navigation .report-nav-schedule-deadline-warning" in css
@@ -2785,22 +2862,48 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
         css,
     )
     assert schedule_deadline_warning_rule is not None
-    assert "width: 12px;" in schedule_deadline_warning_rule.group("body")
-    assert "height: 12px;" in schedule_deadline_warning_rule.group("body")
+    assert "width: 14px;" in schedule_deadline_warning_rule.group("body")
+    assert "height: 14px;" in schedule_deadline_warning_rule.group("body")
+    assert "#page-report-navigation .report-nav-schedule-deadline-warning em" not in css
     assert "#page-report-navigation .report-nav-schedule-row.overdue .report-nav-schedule-endpoint" in css
+    overdue_endpoint_size_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-endpoint\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert overdue_endpoint_size_rule is not None
+    assert "width: 14px;" in overdue_endpoint_size_rule.group("body")
+    assert "height: 14px;" in overdue_endpoint_size_rule.group("body")
+    overdue_endpoint_color_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-row\.overdue "
+        r"\.report-nav-schedule-endpoint,\s*"
+        r"#page-report-navigation \.report-nav-schedule-row\.risk "
+        r"\.report-nav-schedule-endpoint\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert overdue_endpoint_color_rule is not None
+    assert "width:" not in overdue_endpoint_color_rule.group("body")
+    assert "height:" not in overdue_endpoint_color_rule.group("body")
     assert "#page-report-navigation .report-nav-schedule-early-tail" not in css
     assert "#page-report-navigation .report-nav-schedule-early-deadline" not in css
-    assert ".report-nav-schedule-row.early-completed .report-nav-schedule-baseline" in css
-    assert "var(--report-nav-schedule-baseline-color) var(--report-nav-schedule-early-tail-end) 100%" in css
-    assert "mask: repeating-linear-gradient" in css
-    assert "#page-report-navigation .report-nav-schedule-dots > i.early-target" in css
-    assert "border: 2px solid var(--report-nav-success);" in css
+    assert ".report-nav-schedule-row.early-completed .report-nav-schedule-baseline" not in css
+    assert "#page-report-navigation .report-nav-schedule-dots > i.after-early-completion" not in css
+    early_original_deadline_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-dots > i\.early-original-deadline\s*"
+        r"\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert early_original_deadline_rule is not None
+    assert "width: 14px;" in early_original_deadline_rule.group("body")
+    assert "height: 14px;" in early_original_deadline_rule.group("body")
+    assert "border: 2px solid var(--report-nav-danger);" in early_original_deadline_rule.group("body")
+    assert "#page-report-navigation .report-nav-schedule-original-deadline-label" not in css
     assert ".report-nav-schedule-row.overdue .report-nav-schedule-fill" in css
     assert ".report-nav-schedule-row.overdue-completed .report-nav-schedule-fill" in css
     assert "var(--theme-accent) 0 var(--report-nav-schedule-overdue-stop)" in css
     assert "var(--report-nav-danger) var(--report-nav-schedule-overdue-stop) 100%" in css
     assert ".report-nav-schedule-dots > i.reached.before-deadline" in css
     assert ".report-nav-schedule-dots > i.reached.after-deadline" in css
+    assert "#page-report-navigation .report-nav-schedule-row.completed .report-nav-schedule-endpoint em" in css
     schedule_endpoint_label_rule = re.search(
         r"#page-report-navigation \.report-nav-schedule-endpoint em\s*\{(?P<body>[^}]*)\}",
         css,
@@ -2878,9 +2981,9 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
         css,
     ).group("body")
     assert "鼠标悬浮“查看步骤”以状态面板展示该流程的全部步骤" in _read(README_MD)
-    assert "提前完成使用绿色并在完成日结束" in _read(README_MD)
-    assert "原灰色虚线段改为绿色" in _read(README_MD)
-    assert "期间日期圆点显示为绿色空心圈" in _read(README_MD)
+    assert "提前完成使用绿色并在实际完成日结束" in _read(README_MD)
+    assert "实际完成日后保留原灰色虚线和灰色圆点" in _read(README_MD)
+    assert "原截止日仅显示与完成勾同尺寸的红色空心圈" in _read(README_MD)
     assert "截止日及之前保持主题蓝" in _read(README_MD)
     assert "超过截止日后改为红色" in _read(README_MD)
     assert "不显示今天文字标签，保留当天日期圆圈" in _read(README_MD)

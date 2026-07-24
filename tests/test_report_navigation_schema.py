@@ -10,6 +10,8 @@ SEED_SQL = ROOT / "sql" / "app_storage" / "mysql" / "003_report_navigation_seed.
 OWNER_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "007_report_navigation_schedule_owner.sql"
 WORK_CALENDAR_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "008_report_navigation_work_calendar.sql"
 MANUAL_STEP_PERMISSIONS_SQL = ROOT / "sql" / "app_storage" / "mysql" / "009_report_navigation_manual_step_permissions.sql"
+PBC_TEMPLATE_STEP_SEVEN_DISPLAY_ONLY_SQL = ROOT / "sql" / "app_storage" / "mysql" / "010_pbc_template_step_seven_display_only.sql"
+COMPLETION_TIME_SOURCES_SQL = ROOT / "sql" / "app_storage" / "mysql" / "011_report_navigation_completion_time_sources.sql"
 
 REPORT_NAV_TABLES = {
     "report_nav_processes",
@@ -113,6 +115,24 @@ def test_manual_step_permission_migration_only_enables_current_confirmable_step(
     assert "DROP " not in migration_sql.upper()
 
 
+def test_pbc_template_step_seven_is_display_only_and_step_six_is_final():
+    seed_sql = SEED_SQL.read_text(encoding="utf-8")
+    migration_sql = PBC_TEMPLATE_STEP_SEVEN_DISPLAY_ONLY_SQL.read_text(encoding="utf-8")
+
+    assert (
+        "('pbc_template_7', 'pbc_template', "
+        "'归档后制表人填写数据调整情况说明（如有）', 7, 'display_only', 1, 0, 0)"
+        in seed_sql
+    )
+    assert "(50, 11, 'create_date_field', 'create_date')" in seed_sql
+    assert "INSERT INTO `report_nav_steps`" in migration_sql
+    assert "'归档后制表人填写数据调整情况说明（如有）'" in migration_sql
+    assert "'display_only'" in migration_sql
+    assert "'create_date_field', 'create_date'" in migration_sql
+    assert "DROP " not in migration_sql.upper()
+    assert "TRUNCATE " not in migration_sql.upper()
+
+
 def test_report_navigation_tables_do_not_redefine_schema_version():
     sql = SCHEMA_SQL.read_text(encoding="utf-8")
 
@@ -125,6 +145,9 @@ def test_pbc_central_step_four_uses_caldate_report_period_mapping():
     assert "('pbc_central_4', 'pbc_central', '内部产品资金端客户与资产端交易对手校验一致', 4, 'no_ck_and_report_period'" in sql
     assert "(12, 6, 'period_field', 'caldate')" in sql
     assert "(12, 6, 'time_field', 'tbtime')" not in sql
+    assert "(22, 'pbc_central_4', 'completion_time', 'currency_report_24', 'currency_report_duration', 3, 1)" in sql
+    assert "(51, 22, 'period_field', 'caldate')" in sql
+    assert "(52, 22, 'create_date_field', 'create_date')" in sql
 
 
 def test_pbc_process_names_match_report_date_labels():
@@ -137,18 +160,30 @@ def test_pbc_process_names_match_report_date_labels():
     assert "('east5_1', 'east5', '归档并上传 EAST5.0 报送'" in sql
 
 
-def test_archive_steps_map_update_and_create_dates_for_completion_time():
+def test_archive_steps_map_create_date_only_for_completion_time():
     sql = SEED_SQL.read_text(encoding="utf-8")
 
-    for source_id in (13, 14, 18, 19, 20):
-        assert re.search(
-            rf"\(\d+, {source_id}, 'update_date_field', 'update_date'\)",
-            sql,
-        )
+    for source_id in (11, 13, 14, 18, 19, 20):
         assert re.search(
             rf"\(\d+, {source_id}, 'create_date_field', 'create_date'\)",
             sql,
         )
+        assert not re.search(
+            rf"\(\d+, {source_id}, 'update_date_field', 'update_date'\)",
+            sql,
+        )
+
+
+def test_completion_time_migration_configures_create_date_only():
+    sql = COMPLETION_TIME_SOURCES_SQL.read_text(encoding="utf-8")
+
+    assert "'pbc_central_4', 'completion_time', 'currency_report_24'," in sql
+    assert "'currency_report_duration', 3, 1" in sql
+    assert "'period_field', 'caldate'" in sql
+    assert "'create_date_field', 'create_date'" in sql
+    assert "`field_role` = 'update_date_field'" in sql
+    assert "DROP " not in sql.upper()
+    assert "TRUNCATE " not in sql.upper()
 
 
 def test_citic_registration_import_step_only_uses_asset_credit_source():

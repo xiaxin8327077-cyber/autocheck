@@ -30,6 +30,7 @@ from auto_check.app.time_utils import beijing_now
 
 COMPLETED = "completed"
 INCOMPLETE = "incomplete"
+DISPLAY_ONLY = "display_only"
 WAITING_REPORT_PERIOD = "waiting_report_period"
 ERROR = "error"
 MANUAL_REFRESH_COOLDOWN_SECONDS = 300
@@ -167,6 +168,10 @@ def evaluate_date_reached(context: EvaluationContext) -> EvaluationResult:
     return EvaluationResult(INCOMPLETE, f"等待报送日期 {context.schedule.report_date.isoformat()}")
 
 
+def evaluate_display_only(context: EvaluationContext) -> EvaluationResult:
+    return EvaluationResult(DISPLAY_ONLY, "仅展示，不参与完成判断")
+
+
 def evaluate_all_rows_match_report_date(context: EvaluationContext) -> EvaluationResult:
     return _evaluate_all_rows_match_report_date(context, _source(context, "primary"))
 
@@ -234,7 +239,28 @@ def evaluate_no_ck_and_report_period(context: EvaluationContext) -> EvaluationRe
     )
     if ck_result.status != COMPLETED:
         return ck_result
-    return _evaluate_all_rows_match_report_date(context, _source(context, "spv_detail"))
+    report_period_result = _evaluate_all_rows_match_report_date(
+        context,
+        _source(context, "spv_detail"),
+    )
+    if report_period_result.status != COMPLETED:
+        return report_period_result
+    completion_source = _source(context, "completion_time")
+    period = _column(context, completion_source, "period_field")
+    create_date = _column(context, completion_source, "create_date_field")
+    row = context.query.fetch_one(
+        completion_source,
+        (
+            f"SELECT MAX({create_date}) AS completion_time "
+            f"FROM {_table(context, completion_source)} WHERE {period} = %s"
+        ),
+        (report_date,),
+    )
+    return EvaluationResult(
+        COMPLETED,
+        report_period_result.message,
+        completed_at=_coerce_datetime((row or {}).get("completion_time")),
+    )
 
 
 def evaluate_no_pending_status(context: EvaluationContext) -> EvaluationResult:
@@ -373,14 +399,10 @@ def _evaluate_versions(context: EvaluationContext, *, require_all: bool) -> Eval
         raise ValueError("未配置 manage_code")
     placeholders = ", ".join(["%s"] * len(codes))
     completion_projection = ""
-    update_date_field = source.fields.get("update_date_field")
     create_date_field = source.fields.get("create_date_field")
-    if update_date_field and create_date_field:
-        update_date = context.query.quote_column(source, update_date_field)
+    if create_date_field:
         create_date = context.query.quote_column(source, create_date_field)
-        completion_projection = (
-            f", MAX(COALESCE({update_date}, {create_date})) AS completion_time"
-        )
+        completion_projection = f", MAX({create_date}) AS completion_time"
     sql = (
         f"SELECT COUNT(DISTINCT {manage_code}) AS matched_count{completion_projection} "
         f"FROM {_table(context, source)} "
@@ -480,6 +502,7 @@ EVALUATORS: dict[str, Callable[[EvaluationContext], EvaluationResult]] = {
     "dependency_completed": evaluate_dependency_completed,
     "all_versions_present": _evaluate_with_report_period_status(evaluate_all_versions_present),
     "date_reached": evaluate_date_reached,
+    "display_only": evaluate_display_only,
     "quarterly_rows_exist": evaluate_quarterly_rows_exist,
     "current_month_rows_in_all_sources": evaluate_current_month_rows_in_all_sources,
     "version_present": _evaluate_with_report_period_status(evaluate_version_present),
@@ -632,6 +655,11 @@ class ReportNavigationService:
             process_statuses: list[str] = []
 
             for process in processes:
+                judged_steps = [
+                    step
+                    for step in process.steps
+                    if step.evaluator_key != "display_only"
+                ]
                 schedule = self.store.ensure_schedule(
                     report_month, process.process_code, now=current
                 )
@@ -649,6 +677,7 @@ class ReportNavigationService:
                 completed_steps = 0
                 has_error = False
                 for step in _steps_in_dependency_order(process.steps):
+                    display_only = step.evaluator_key == "display_only"
                     logic_result = self._evaluator(
                         EvaluationContext(
                             step=step,
@@ -660,9 +689,10 @@ class ReportNavigationService:
                         )
                     )
                     override = overrides.get(step.step_code)
-                    is_manual = bool(override and override.completed)
+                    is_manual = bool(not display_only and override and override.completed)
                     if (
-                        schedule_overdue
+                        not display_only
+                        and schedule_overdue
                         and logic_result.status != COMPLETED
                         and not is_manual
                     ):
@@ -678,7 +708,7 @@ class ReportNavigationService:
                         automatic = logic_result
                         effective_status = COMPLETED if is_manual else automatic.status
                         completion_source = "manual" if is_manual else "auto"
-                    if effective_status == COMPLETED:
+                    if not display_only and effective_status == COMPLETED:
                         completed_steps += 1
                     if automatic.status == ERROR:
                         failed_steps += 1
@@ -714,7 +744,7 @@ class ReportNavigationService:
                         ),
                         preserve_auto_completed_at=automatic.completed_at is None,
                     )
-                total_steps = len(process.steps)
+                total_steps = len(judged_steps)
                 if total_steps > 0 and completed_steps == total_steps:
                     process_status = COMPLETED
                     completed_processes += 1
@@ -724,8 +754,8 @@ class ReportNavigationService:
                     process_status = INCOMPLETE
                 process_statuses.append(process_status)
                 final_step = (
-                    max(process.steps, key=lambda item: item.display_order)
-                    if process.steps
+                    max(judged_steps, key=lambda item: item.display_order)
+                    if judged_steps
                     else None
                 )
                 archive_completed_at = (
@@ -1013,6 +1043,7 @@ class ReportNavigationService:
             for step in process.steps:
                 snapshot = step_snapshots.get(step.step_code)
                 override = overrides.get(step.step_code)
+                display_only = step.evaluator_key == "display_only"
                 steps.append(
                     {
                         "step_code": step.step_code,
@@ -1027,15 +1058,20 @@ class ReportNavigationService:
                             is_admin
                             and process.allow_manual_step_completion
                             and step.manual_completion_allowed
+                            and not display_only
                         ),
+                        "display_only": display_only,
                     }
                 )
+            judged_steps = [
+                step for step in process.steps if step.evaluator_key != "display_only"
+            ]
             process_payload.append(
                 {
                     "process_code": process.process_code,
                     "process_name": process.process_name,
                     "status": process_snapshot.status if process_snapshot else "pending",
-                    "total_steps": process_snapshot.total_steps if process_snapshot else len(process.steps),
+                    "total_steps": process_snapshot.total_steps if process_snapshot else len(judged_steps),
                     "completed_steps": process_snapshot.completed_steps if process_snapshot else 0,
                     "completed_at": _datetime_text(process_snapshot.completed_at) if process_snapshot else "",
                     "report_date": schedule.report_date.isoformat() if schedule else "",
@@ -1285,10 +1321,13 @@ class ReportNavigationService:
         completed_steps = sum(
             1
             for step in process.steps
+            if step.evaluator_key != "display_only"
             if snapshots.get(step.step_code)
             and snapshots[step.step_code].effective_status == COMPLETED
         )
-        total_steps = len(process.steps)
+        total_steps = sum(
+            1 for step in process.steps if step.evaluator_key != "display_only"
+        )
         status = COMPLETED if total_steps > 0 and completed_steps == total_steps else INCOMPLETE
         run_id = max(
             (snapshot.run_id or 0 for snapshot in snapshots.values()),
