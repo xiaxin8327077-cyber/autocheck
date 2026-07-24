@@ -269,6 +269,7 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
         function applySavedUserTheme() {}
         function updateCurrentUsername() {}
         function applyRoleAccess() {}
+        function clearReportNavigationCache() {}
         function revealAuthenticatedApp() {
           revealCount += 1;
         }
@@ -2057,6 +2058,14 @@ def test_report_navigation_has_first_load_placeholder_and_accessible_loading_sta
     assert '#page-report-navigation[data-loading-state="initial-loading"] > :not(.report-nav-initial-loading)' in css
     assert '#page-report-navigation[data-loading-state="error-empty"] > :not(.report-nav-initial-loading)' in css
     assert "@keyframes report-nav-loading-spin" in css
+
+
+def test_report_navigation_refresh_optimization_is_documented():
+    readme = _read(README_MD)
+    app_js = _read(APP_JS)
+
+    assert "浏览器刷新时优先恢复当前用户和统计周期的最近成功画面" in readme
+    assert "<li>系统优化及BUG修复。</li>" in app_js
 
 
 def test_report_navigation_statistics_keep_the_existing_four_icon_colors():
