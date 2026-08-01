@@ -609,16 +609,44 @@ def test_registry_accepts_analyzable_module_owned_ddl(statement):
     registry.validate_statement(statement)
 
 
-def test_sql_lexer_handles_escaped_strings_without_exposing_a_second_statement():
+def test_sql_lexer_accepts_doubled_quote_strings():
     registry = ModuleSchemaRegistry("alpha")
     registry.add("alpha_items", {"id", "note"})
 
     registry.validate_statement(
-        "ALTER TABLE alpha_items ADD CONSTRAINT alpha_note CHECK (note <> 'it\\'s')"
-    )
-    registry.validate_statement(
         "ALTER TABLE alpha_items ADD CONSTRAINT alpha_note_2 CHECK (note <> 'it''s')"
     )
+
+
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_sql_lexer_rejects_backslash_quoted_string_that_can_hide_cross_table_reference(
+    quote,
+):
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id"})
+    statement = (
+        f"CREATE TABLE alpha_items (c varchar(10) DEFAULT {quote}\\{quote}, "
+        "x int, FOREIGN KEY (x) REFERENCES users(id) # "
+        f"{quote}\n)"
+    )
+
+    with pytest.raises(ModuleMigrationError):
+        registry.validate_statement(statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE TABLE alpha_items (c varchar(10) DEFAULT 'safe')",
+        "CREATE TABLE alpha_items (c varchar(10) DEFAULT 'it''s safe')",
+        "CREATE TABLE alpha_items (c int DEFAULT 0) -- ordinary comment\n",
+    ],
+)
+def test_sql_lexer_keeps_safe_default_values_and_comments_analyzable(statement):
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id"})
+
+    registry.validate_statement(statement)
 
 
 def test_runner_rejects_cross_namespace_sql_before_database_execution(

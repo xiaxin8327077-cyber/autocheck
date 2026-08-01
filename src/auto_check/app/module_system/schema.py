@@ -381,8 +381,7 @@ def _consume_sql_string(statement: str, index: int, quote: str) -> int:
     cursor = index + 1
     while cursor < len(statement):
         if statement[cursor] == "\\":
-            cursor += 2
-            continue
+            raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
         if statement[cursor] == quote:
             if cursor + 1 < len(statement) and statement[cursor + 1] == quote:
                 cursor += 2
