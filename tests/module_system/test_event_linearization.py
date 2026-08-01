@@ -4,6 +4,14 @@ from time import monotonic, sleep
 from auto_check.app.module_system.events import EventDeliveryReport, ModuleEvents
 
 
+class _TrackedSubscription:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
 def test_close_waits_for_an_inflight_module_publish_before_returning():
     publish_entered = Event()
     release_publish = Event()
@@ -42,3 +50,40 @@ def test_close_waits_for_an_inflight_module_publish_before_returning():
 
     assert close_returned.is_set()
     assert deliveries == [("alpha:changed", {"id": "1"})]
+
+
+def test_close_waits_for_an_inflight_subscription_to_be_tracked_and_closed():
+    subscribe_entered = Event()
+    release_subscribe = Event()
+    close_returned = Event()
+    subscription = _TrackedSubscription()
+    subscribed = []
+
+    def subscribe(event_name, handler):
+        subscribe_entered.set()
+        assert release_subscribe.wait(1)
+        return subscription
+
+    events = ModuleEvents(
+        subscribe=subscribe,
+        publish=lambda event_name, payload: EventDeliveryReport(0, 0, ()),
+    )
+    subscribing = Thread(
+        target=lambda: subscribed.append(events.subscribe("system:ready", lambda payload: None))
+    )
+    closing = Thread(target=lambda: (events.close(), close_returned.set()))
+
+    subscribing.start()
+    assert subscribe_entered.wait(1)
+    closing.start()
+    try:
+        sleep(0.01)
+        assert not close_returned.is_set()
+    finally:
+        release_subscribe.set()
+        subscribing.join(timeout=1)
+        closing.join(timeout=1)
+
+    assert close_returned.is_set()
+    assert subscribed == [subscription]
+    assert subscription.closed is True

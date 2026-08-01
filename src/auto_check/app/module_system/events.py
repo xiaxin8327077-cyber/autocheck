@@ -195,11 +195,10 @@ class ModuleEvents:
                 self._condition.notify_all()
 
     def subscribe(self, event_name: str, handler: Callable[[object], None]) -> Subscription:
-        subscription = self._subscribe(event_name, handler)
         with self._lock:
             if self._closed:
-                subscription.close()
                 raise RuntimeError("module event view is closed")
+            subscription = self._subscribe(event_name, handler)
             self._subscriptions.append(subscription)
         return subscription
 
