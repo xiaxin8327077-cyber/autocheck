@@ -175,7 +175,10 @@ def _table_prefix(payload: Mapping[str, object], module_id: str) -> str:
     value = payload.get("table_prefix", f"{module_id}_")
     if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]*_", value):
         raise ModuleManifestError("table_prefix must be a lowercase table prefix")
-    if value == "app_" or not value.startswith(module_id.split("_")[0] + "_"):
+    allowed = {f"{module_id}_"}
+    if module_id.endswith("s"):
+        allowed.add(f"{module_id[:-1]}_")
+    if value.startswith("app_") or value not in allowed:
         raise ModuleManifestError("table_prefix is not in the module namespace")
     return value
 

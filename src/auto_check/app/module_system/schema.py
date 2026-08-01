@@ -243,25 +243,48 @@ class ModuleSchemaRegistry:
         self._tables[normalized_name] = normalized_columns
 
     def validate_statement(self, statement: str) -> None:
-        """Allow only a small, analyzable SQL subset over declared module tables."""
+        """Allow only a small, analyzable DDL subset over this module's table prefix."""
         tokens = _sql_tokens(statement)
         if tokens[-1:] == (";",):
             tokens = tokens[:-1]
         if not tokens or ";" in tokens:
             raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
         upper = [token.upper() for token in tokens]
-        if any(token in {"PROCEDURE", "FUNCTION", "VIEW", "TRIGGER", "PREPARE", "EXECUTE", "CALL", "SELECT", "JOIN", "AS", "LIKE", "RENAME", "FROM"} for token in upper):
+        if any(
+            token
+            in {
+                "PROCEDURE",
+                "FUNCTION",
+                "VIEW",
+                "TRIGGER",
+                "PREPARE",
+                "EXECUTE",
+                "CALL",
+                "SELECT",
+                "JOIN",
+                "AS",
+                "LIKE",
+            }
+            for token in upper
+        ):
             raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
         references: list[str] = []
         if upper[:2] == ["CREATE", "TABLE"]:
             table_index = 5 if upper[2:5] == ["IF", "NOT", "EXISTS"] else 2
             references.append(_table_after(tokens, table_index))
         elif upper[:2] == ["ALTER", "TABLE"]:
+            if any(token in {"RENAME", "EXCHANGE", "WITH"} for token in upper[3:]):
+                raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
             references.append(_table_after(tokens, 2))
         elif upper[:2] == ["DROP", "TABLE"]:
             table_index = 4 if upper[2:4] == ["IF", "EXISTS"] else 2
-            references.append(_table_after(tokens, table_index))
-        elif upper[:2] == ["CREATE", "INDEX"]:
+            references.extend(_drop_table_targets(tokens, table_index))
+        elif upper[:2] == ["CREATE", "INDEX"] or (
+            len(upper) >= 3
+            and upper[0] == "CREATE"
+            and upper[1] in {"UNIQUE", "FULLTEXT", "SPATIAL"}
+            and upper[2] == "INDEX"
+        ):
             references.append(_table_after(tokens, _require_token(upper, "ON") + 1))
         elif upper[:2] == ["DROP", "INDEX"]:
             references.append(_table_after(tokens, _require_token(upper, "ON") + 1))
@@ -271,10 +294,17 @@ class ModuleSchemaRegistry:
             if token == "REFERENCES":
                 references.append(_table_after(tokens, index + 1))
         for table_name in references:
-            if table_name not in self._tables or (
-                self._table_prefix is not None and not table_name.startswith(self._table_prefix)
-            ):
+            if not self._owns_table(table_name):
                 raise ModuleMigrationError("模块迁移 SQL 引用了未声明或越界的数据表")
+
+    def _owns_table(self, table_name: str) -> bool:
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", table_name):
+            return False
+        if table_name in EXPECTED_APP_SCHEMA:
+            return False
+        if self._table_prefix is None:
+            return table_name in self._tables
+        return table_name.startswith(self._table_prefix)
 
     def validate(self, connection: Any) -> None:
         rows = connection.execute(
@@ -308,9 +338,8 @@ def _sql_tokens(statement: str) -> tuple[str, ...]:
         elif statement.startswith("--", index):
             newline = statement.find("\n", index)
             index = len(statement) if newline < 0 else newline + 1
-        elif char in "`\"":
-            quote = char
-            end = statement.find(quote, index + 1)
+        elif char == "`":
+            end = statement.find("`", index + 1)
             if end < 0:
                 raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
             identifier = statement[index + 1 : end]
@@ -318,12 +347,9 @@ def _sql_tokens(statement: str) -> tuple[str, ...]:
                 raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
             tokens.append(identifier)
             index = end + 1
-        elif char == "'":
-            end = statement.find("'", index + 1)
-            if end < 0:
-                raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+        elif char in "'\"":
+            index = _consume_sql_string(statement, index, char)
             tokens.append("STRING")
-            index = end + 1
         elif char.isalpha() or char == "_":
             end = index + 1
             while end < len(statement) and (statement[end].isalnum() or statement[end] == "_"):
@@ -349,6 +375,36 @@ def _require_token(tokens: list[str], token: str) -> int:
         return tokens.index(token)
     except ValueError:
         raise ModuleMigrationError("模块迁移 SQL 不可安全分析") from None
+
+
+def _consume_sql_string(statement: str, index: int, quote: str) -> int:
+    cursor = index + 1
+    while cursor < len(statement):
+        if statement[cursor] == "\\":
+            cursor += 2
+            continue
+        if statement[cursor] == quote:
+            if cursor + 1 < len(statement) and statement[cursor + 1] == quote:
+                cursor += 2
+                continue
+            return cursor + 1
+        cursor += 1
+    raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+
+
+def _drop_table_targets(tokens: tuple[str, ...], index: int) -> tuple[str, ...]:
+    targets: list[str] = []
+    while index < len(tokens):
+        targets.append(_table_after(tokens, index))
+        index += 1
+        if index == len(tokens):
+            break
+        if tokens[index].upper() in {"RESTRICT", "CASCADE"} and index == len(tokens) - 1:
+            break
+        if tokens[index] != ",":
+            raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+        index += 1
+    return tuple(targets)
 
 
 def _table_after(tokens: tuple[str, ...], index: int) -> str:

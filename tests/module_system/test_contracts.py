@@ -37,6 +37,21 @@ def test_manifest_parses_valid_payload():
     assert manifest.api_prefix == "/api/modules/custom-reports"
     assert manifest.navigation[0].permission == "custom_reports.view"
     assert manifest.schema_version == 0
+    assert manifest.table_prefix == "custom_reports_"
+
+
+def test_manifest_accepts_documented_singular_table_prefix():
+    manifest = ModuleManifest.from_mapping(
+        {**VALID_MANIFEST, "table_prefix": "custom_report_"}
+    )
+
+    assert manifest.table_prefix == "custom_report_"
+
+
+@pytest.mark.parametrize("table_prefix", ["app_", "app_modules_", "custom_other_", "Other_"])
+def test_manifest_rejects_reserved_or_unrelated_table_prefix(table_prefix):
+    with pytest.raises(ModuleManifestError, match="table_prefix"):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "table_prefix": table_prefix})
 
 
 @pytest.mark.parametrize(

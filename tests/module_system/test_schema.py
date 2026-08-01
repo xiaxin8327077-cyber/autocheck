@@ -573,6 +573,14 @@ def test_registry_rejects_core_and_foreign_table_names_and_exposes_read_only_nam
         "ALTER TABLE auto_check.alpha_items ADD COLUMN note text",
         "ALTER TABLE alpha_items ADD COLUMN note text; DROP TABLE alpha_items",
         "CREATE PROCEDURE alpha_proc() SELECT 1",
+        "UPDATE alpha_items JOIN users ON 1 = 1 SET users.username = 'owned'",
+        "ALTER TABLE alpha_items RENAME TO beta_items",
+        "ALTER TABLE alpha_items EXCHANGE PARTITION p WITH TABLE users",
+        "CREATE TABLE alpha_copy LIKE users",
+        "CREATE TABLE alpha_copy AS SELECT id FROM users",
+        "INSERT INTO alpha_items SELECT id FROM users",
+        "UPDATE alpha_items SET id = (SELECT id FROM users LIMIT 1)",
+        "DROP TABLE alpha_items, users",
     ],
 )
 def test_registry_rejects_unsafe_or_out_of_namespace_migration_statements(statement):
@@ -581,3 +589,69 @@ def test_registry_rejects_unsafe_or_out_of_namespace_migration_statements(statem
 
     with pytest.raises(ModuleMigrationError):
         registry.validate_statement(statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE TABLE alpha_items (id bigint PRIMARY KEY);",
+        "CREATE TABLE IF NOT EXISTS alpha_items (id bigint PRIMARY KEY)",
+        "ALTER TABLE alpha_items ADD COLUMN note text",
+        "CREATE UNIQUE INDEX alpha_items_name_idx ON alpha_items (id)",
+        "DROP INDEX alpha_items_name_idx ON alpha_items",
+        "DROP TABLE IF EXISTS alpha_legacy, alpha_archive RESTRICT",
+    ],
+)
+def test_registry_accepts_analyzable_module_owned_ddl(statement):
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id"})
+
+    registry.validate_statement(statement)
+
+
+def test_sql_lexer_handles_escaped_strings_without_exposing_a_second_statement():
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id", "note"})
+
+    registry.validate_statement(
+        "ALTER TABLE alpha_items ADD CONSTRAINT alpha_note CHECK (note <> 'it\\'s')"
+    )
+    registry.validate_statement(
+        "ALTER TABLE alpha_items ADD CONSTRAINT alpha_note_2 CHECK (note <> 'it''s')"
+    )
+
+
+def test_runner_rejects_cross_namespace_sql_before_database_execution(
+    tmp_path, monkeypatch, fake_module_database
+):
+    package = tmp_path / "unsafe_alpha"
+    migrations = package / "migrations"
+    migrations.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    unsafe_sql = "DROP TABLE alpha_items, users"
+    (migrations / "001_initial.sql").write_text(unsafe_sql, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    manifest = ModuleManifest.from_mapping(
+        {
+            "id": "alpha",
+            "name": "Alpha",
+            "version": "1.0.0",
+            "platform_api": 1,
+            "required": False,
+            "backend_entry": "unsafe_alpha.module:create_module",
+            "api_prefix": "/api/modules/alpha",
+            "frontend_entry": "/module-assets/alpha/index.js",
+            "frontend_style": "/module-assets/alpha/styles.css",
+            "navigation": [],
+            "permissions": ["alpha.view"],
+            "dependencies": [],
+            "schema_version": 1,
+        }
+    )
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id"})
+
+    with pytest.raises(ModuleMigrationError, match="越界"):
+        ModuleMigrationRunner(fake_module_database, registry).run(manifest, "unsafe_alpha")
+
+    assert unsafe_sql not in fake_module_database.sql

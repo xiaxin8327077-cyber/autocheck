@@ -18,6 +18,7 @@ from auto_check.app.module_system.runtime import (
     ModuleRuntimeError,
     ModuleStartupError,
     ModuleTaskLimitError,
+    _module_temp_root,
 )
 
 
@@ -135,7 +136,7 @@ class _LifecycleModule:
 
 
 @pytest.fixture
-def isolated_runtime_factory(monkeypatch):
+def isolated_runtime_factory(monkeypatch, tmp_path):
     import auto_check.app.module_system.runtime as runtime_module
 
     monkeypatch.setattr(runtime_module, "ModuleStateStore", _StateStore)
@@ -154,7 +155,7 @@ def isolated_runtime_factory(monkeypatch):
         context = ModuleBootstrapContext(
             application_database=object(),
             config_path=Path("config.json"),
-            temp_root=Path("temp"),
+            temp_root=tmp_path / "module-data",
             now=lambda: None,
         )
         return ModuleRuntime(context, discovered)
@@ -703,3 +704,63 @@ def test_background_read_calls_do_not_deadlock_during_stop(isolated_runtime_fact
     assert observed[0] == []
     assert observed[1] == "enabled"
     assert observed[2] == 404
+
+
+def test_runtime_gives_each_module_a_distinct_temporary_directory(
+    isolated_runtime_factory,
+):
+    runtime = isolated_runtime_factory(
+        [
+            _LifecycleModule(_manifest("alpha"), []),
+            _LifecycleModule(_manifest("beta"), []),
+        ]
+    )
+
+    runtime.start()
+
+    alpha_root = runtime.context_for("alpha").temp_root
+    beta_root = runtime.context_for("beta").temp_root
+    assert alpha_root.name == "alpha"
+    assert beta_root.name == "beta"
+    assert alpha_root.parent == beta_root.parent
+    assert alpha_root != beta_root
+    runtime.stop()
+
+
+def test_module_temporary_root_rejects_root_symlink(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    link = tmp_path / "module-data"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    with pytest.raises(ModuleRuntimeError, match="unsafe"):
+        _module_temp_root(link, "alpha")
+
+
+def test_unsafe_module_temp_directory_does_not_block_a_sibling(
+    isolated_runtime_factory, tmp_path
+):
+    runtime = isolated_runtime_factory(
+        [
+            _LifecycleModule(_manifest("alpha"), []),
+            _LifecycleModule(_manifest("beta"), []),
+        ]
+    )
+    root = runtime._context.temp_root
+    root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        (root / "alpha").symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlink creation unavailable: {error}")
+
+    runtime.start()
+
+    assert runtime.status("alpha").value == "startup_failed"
+    assert runtime.status("beta").value == "enabled"
+    assert runtime.context_for("beta").temp_root.parent == root.resolve()
+    runtime.stop()
