@@ -13,20 +13,21 @@
 5. 执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入报送导航种子配置。
 6. 执行 `sql/app_storage/mysql/004_user_interface_preferences.sql` 新增第 36 张用户界面偏好表。
 7. 执行 `sql/app_storage/mysql/005_user_appearance_preferences.sql`，为用户偏好表增加折线图风格和两个可空的未来个人主题色字段及检查约束。
-8. 执行 `sql/app_storage/mysql/006_system_interface_preferences.sql` 新增第 39 张系统界面偏好表；完整应用结构共 39 张表，`app_schema_version` 仍为 `1`。
+8. 执行 `sql/app_storage/mysql/006_system_interface_preferences.sql` 新增第 39 张系统界面偏好表；此时为模块系统升级前的 39 张表状态，随后继续按编号执行后续升级脚本。
 9. 执行 `sql/app_storage/mysql/007_report_navigation_schedule_owner.sql`，为月度报送日程补充负责人字段。
 10. 执行 `sql/app_storage/mysql/008_report_navigation_work_calendar.sql`，创建或更新法定节假日与调休工作日日历。
 11. 执行 `sql/app_storage/mysql/009_report_navigation_manual_step_permissions.sql`，将当前允许人工确认的范围规范为“资管产品模板、逐笔报送”第七步。
 12. 执行 `sql/app_storage/mysql/010_pbc_template_step_seven_display_only.sql`，将该第七步调整为仅展示，并将第六步作为最终完成节点。
 13. 执行 `sql/app_storage/mysql/011_report_navigation_completion_time_sources.sql`，将归档类完成时间统一改为仅取 `create_date`，并配置人行大集中完成时间数据源。
-14. `/home/autocheck/data/config.json` 中只保留 `app_database` 启动连接信息和必要启动参数，动态配置、用户和历史记录不再写回 JSON。
-15. `AUTO_CHECK_SECRET_KEY` 必须与旧环境保持一致，避免旧数据源加密密码无法解密。
-16. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
-17. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 39 张应用存储表结构与配置升级（依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`）齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+14. 生产升级必须先备份 MySQL 应用库，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 3 张模块平台表；完整应用结构共 42 张表，`app_schema_version` 仍为 `1`。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`。
+15. `/home/autocheck/data/config.json` 中只保留 `app_database` 启动连接信息和必要启动参数，动态配置、用户和历史记录不再写回 JSON。
+16. `AUTO_CHECK_SECRET_KEY` 必须与旧环境保持一致，避免旧数据源加密密码无法解密。
+17. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
+18. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 42 张应用存储表结构与配置升级（执行至 `011_report_navigation_completion_time_sources.sql` 后，在备份下人工执行 `012_module_system.sql`）齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
 
-升级脚本中，`004`、`006` 和 `008` 使用 `CREATE TABLE IF NOT EXISTS`，`005` 与 `007` 通过 `information_schema` 判断结构是否存在；`004` 至 `011` 均按可重复执行方式编写。上线前仍须停机、备份并按顺序人工执行。
+升级脚本中，`004`、`006`、`008` 和 `012_module_system.sql` 使用 `CREATE TABLE IF NOT EXISTS`，`005` 与 `007` 通过 `information_schema` 判断结构是否存在；`004` 至 `012` 均按可重复执行方式编写。上线前仍须停机、备份并按顺序人工执行。`012_module_system.sql` 不修改全局 schema version，生产环境不得由应用自动执行。
 
-`user_interface_preferences` 按每个用户独立保存界面圆角和折线图风格，并预留两个可空的个人主题色，不设置外键，删除用户后的孤儿偏好由应用清理。`system_interface_preferences` 只保存系统级活力/沉稳纯色主题及最后修改人；主题色绝不写入 `app_settings`。从已执行 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`，再替换应用。`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，并配置人行大集中从 `currency_report_24.currency_report_duration` 按报告期取最大 `create_date`。表已存在时仍需人工核对结构。本文仅描述运维步骤，不代表已在任何线上环境执行。
+`user_interface_preferences` 按每个用户独立保存界面圆角和折线图风格，并预留两个可空的个人主题色，不设置外键，删除用户后的孤儿偏好由应用清理。`system_interface_preferences` 只保存系统级活力/沉稳纯色主题及最后修改人；主题色绝不写入 `app_settings`。从已执行 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`；执行 `011` 后先备份并确认备份可用，再由运维人工执行 `012_module_system.sql`，再替换应用。`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，并配置人行大集中从 `currency_report_24.currency_report_duration` 按报告期取最大 `create_date`。表已存在时仍需人工核对结构。本文仅描述运维步骤，不代表已在任何线上环境执行。
 
 `app_database` 配置示例：
 

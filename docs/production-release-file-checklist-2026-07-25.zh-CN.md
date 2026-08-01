@@ -25,13 +25,15 @@
 8. `009_report_navigation_manual_step_permissions.sql`
 9. `010_pbc_template_step_seven_display_only.sql`
 10. `011_report_navigation_completion_time_sources.sql`
+11. `012_module_system.sql`
 
 注意：
 
 - 不执行 `001_init_schema.sql`，现有 20 张表已经对应其结构。
 - 不执行 `007_report_navigation_comparison_delta.sql`，`002` 已包含该字段。
 - 不执行 `008_report_navigation_manual_history.sql`，`002` 已包含该表。
-- 执行结束后表数量应为 39 张，`app_schema_version` 仍为 `1`。
+- 执行 `012_module_system.sql` 前必须完成生产 MySQL 备份，并由运维人工执行；应用不得自动执行该生产升级。
+- 执行结束后平台应用表数量应为 42 张，`app_schema_version` 仍为 `1`；模块业务表不加入全局 `EXPECTED_APP_SCHEMA`。
 
 ## 3. 生产配置
 
@@ -45,13 +47,13 @@
 
 - [ ] 当前正在运行的旧程序
 - [ ] 当前生产 `config.json`
-- [ ] MySQL `auto_check` 20 张表的完整备份
+- [ ] MySQL `auto_check` 当前 39 张表的完整备份（执行 `012_module_system.sql` 前）
 - [ ] 当前生产数据目录
 - [ ] 当前生产密钥和启动参数的安全备份
 
 ## 5. 执行后检查
 
-- [ ] MySQL 表数量为 39
+- [ ] MySQL 平台应用表数量为 42
 - [ ] 原 20 张表及数据未丢失
 - [ ] 新增 19 张表均已建立
 - [ ] 应用能够正常启动和登录

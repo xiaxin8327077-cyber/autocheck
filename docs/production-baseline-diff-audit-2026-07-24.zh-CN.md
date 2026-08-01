@@ -32,7 +32,7 @@ ZIP 内工作树存在未提交改动，因此基线比较以解压后的实际�
 
 - 配置、用户、认证、三类执行历史、界面偏好、报送导航配置和快照均保存到 MySQL。
 - `config.json` 必须包含 `app_database`，应用库后端仅接受 MySQL。
-- 启动时只连接并校验 39 张表、字段和 `app_schema_version=1`。
+- 启动时只连接并校验 42 张平台应用表、字段和 `app_schema_version=1`；模块业务表由各模块独立迁移，且不加入全局 `EXPECTED_APP_SCHEMA`。
 - 应用不会自动建库、建表、升级或迁移。
 - 旧 SQLite 运行时迁移已禁用；需停机后对 SQLite 备份副本运行 `scripts/export_sqlite_to_mysql.py`，再由运维人工执行 SQL。
 - 迁移导出覆盖 20 张旧应用存储目标表；报送导航为候选新增数据，由 DDL 和种子脚本创建。
@@ -76,7 +76,7 @@ ZIP 内工作树存在未提交改动，因此基线比较以解压后的实际�
 
 以下任一项未关闭时禁止投产：
 
-1. MySQL 39 张表、字段、约束或 `app_schema_version=1` 未完全满足。
+1. MySQL 42 张平台应用表、字段、约束或 `app_schema_version=1` 未完全满足。
 2. SQLite 迁移前后 20 张目标表行数、抽样内容不一致。
 3. 用户、配置、三类历史、数据源密码或下载文件迁移后不可用。
 4. `AUTO_CHECK_SECRET_KEY` 不确定，或更换服务账户导致密钥派生变化。
@@ -94,8 +94,19 @@ ZIP 内工作树存在未提交改动，因此基线比较以解压后的实际�
 3. 备份程序、完整数据目录、SQLite、JSON 历史、上传/结果文件、配置、服务参数、环境变量和密钥。
 4. 对 SQLite 备份副本执行只读导出，保存 schema SQL、data SQL、迁移报告和哈希。
 5. 在隔离 MySQL 空库执行导出 SQL。
-6. 按完整文件名执行 `007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`。
-7. 核对 39 张表结构和迁移报告中 20 张表的数据。
+6. 在空 MySQL 库完成导出 SQL 后，按完整文件名依次执行 `002_report_navigation.sql`、`003_report_navigation_seed.sql`、`004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`；再确认生产备份可恢复后，由运维人员人工执行 `012_module_system.sql`。不得跳过 `002`–`006` 后直接从 `007` 开始。
+   - `002：依赖导出的 20 张基础表`，创建报送导航表。
+   - `003：依赖 `002` 创建的报送导航表`，写入报送导航种子数据。
+   - `004：独立创建用户界面偏好表`。
+   - `005：依赖 `004` 创建的 `user_interface_preferences`，补充用户偏好字段和约束。
+   - `006：独立创建系统界面偏好表`。
+   - `007：依赖 `002` 创建的 `report_nav_monthly_schedules`，补充负责人字段。
+   - `008：独立创建工作日日历表`。
+   - `009：依赖 `002` 创建的 `report_nav_steps`，规范人工确认权限。
+   - `010：依赖 `002` 创建的报送导航表`，调整第七步展示和关联记录。
+   - `011：依赖 `002` 创建的报送导航表`，调整完成时间来源。
+   - `012：仅创建模块平台表`，不修改已有业务表或全局 `app_schema_version`。
+7. 核对 42 张平台应用表结构和迁移报告中 20 张表的数据。
 8. 使用独立候选配置和原 `AUTO_CHECK_SECRET_KEY`，在非生产端口启动。
 9. 完成登录、配置、三类历史、下载、自动对数、报送导航和后台调度验收。
 10. 演练停止候选、恢复旧程序及完整旧数据目录和环境变量，验证旧版可用。
