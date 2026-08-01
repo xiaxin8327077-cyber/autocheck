@@ -673,3 +673,52 @@ def test_module_host_cancels_stale_legacy_intent_after_newer_navigation(tmp_path
         assert.equal(env.locationRef.hash, "#beta");
         """,
     )
+
+
+def test_module_host_does_not_start_a_stale_module_redirect(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#alpha");
+        const intentReady = deferred();
+        const releaseAlpha = deferred();
+        let alphaContext;
+        let betaActivations = 0;
+        const instances = {
+          alpha: {
+            mount: async (context) => { alphaContext = context; },
+            activate: async (route) => {
+              if (route !== "alpha-alt") return;
+              assert.equal(await alphaContext.navigate("beta"), true);
+              intentReady.resolve();
+              await releaseAlpha.promise;
+            },
+            deactivate: async () => {}, unmount: async () => {},
+          },
+          beta: { mount: async () => {}, activate: async () => { betaActivations += 1; }, deactivate: async () => {}, unmount: async () => {} },
+          gamma: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} },
+        };
+        const host = createModuleHost({
+          ...env,
+          importModule: async (url) => ({ default: instances[url.includes("beta") ? "beta" : (url.includes("gamma") ? "gamma" : "alpha")] }),
+        });
+        const platform = {
+          api: async () => ({ modules: [
+            { id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }, { id: "alpha-alt", label: "Alpha alt", route: "alpha-alt" }] },
+            { id: "beta", frontend_entry: "/beta.js", frontend_style: "/beta.css", navigation: [{ id: "beta", label: "Beta", route: "beta" }] },
+            { id: "gamma", frontend_entry: "/gamma.js", frontend_style: "/gamma.css", navigation: [{ id: "gamma", label: "Gamma", route: "gamma" }] },
+          ] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await host.initialize(platform), true);
+        const staleRequest = host.activate("alpha-alt");
+        await intentReady.promise;
+        const currentRequest = host.activate("gamma");
+        releaseAlpha.resolve();
+        await Promise.all([staleRequest, currentRequest]);
+        assert.equal(betaActivations, 0);
+        const roots = env.elements.modulePageHost.children.filter((child) => child.dataset.module);
+        assert.equal(roots.find((root) => root.dataset.module === "gamma").hidden, false);
+        assert.equal(env.locationRef.hash, "#gamma");
+        """,
+    )

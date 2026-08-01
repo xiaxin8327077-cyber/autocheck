@@ -411,6 +411,7 @@
             recordModuleIssue(moduleId, "导航切换停用失败");
           }
           record.root.hidden = true;
+          if (redirectedRoute.version !== lifecycleVersion) return true;
           if (state.routes.has(redirectedRoute.route)) {
             return activateNow(
               redirectedRoute.route,
