@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 import re
+from concurrent.futures import Future
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
+
+from auto_check.app.module_system.events import ModuleEvents
+from auto_check.app.module_system.services import ModuleServices
 
 
 PLATFORM_API_VERSION = 1
@@ -211,12 +216,22 @@ class ModuleBootstrapContext:
     now: Callable[[], Any]
 
 
+class ModuleTaskExecutor(Protocol):
+    """Module-owned background task executor supplied by the runtime."""
+
+    def submit(self, callable: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future:
+        """Submit one module-owned task."""
+
+    def shutdown(self, cancel_pending: bool) -> None:
+        """Stop this module's executor and optionally cancel queued tasks."""
+
+
 @dataclass(frozen=True)
 class ModuleContext(ModuleBootstrapContext):
-    services: Any
-    events: Any
-    logger: Any
-    background_executor: Any
+    services: ModuleServices
+    events: ModuleEvents
+    logger: logging.LoggerAdapter
+    background_executor: ModuleTaskExecutor
 
 
 class AutoCheckModule(Protocol):
