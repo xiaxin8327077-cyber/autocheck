@@ -105,6 +105,23 @@ def test_router_returns_allowed_methods_for_matching_path(valid_manifest):
     assert response.headers == (("Allow", "GET, POST"),)
 
 
+def test_router_rejects_requests_larger_than_the_route_limit(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add(
+        "POST",
+        "/templates",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.publish",
+        max_body_bytes=4,
+    )
+
+    response = router.dispatch(
+        _request("POST", "/api/modules/custom-reports/templates", ADMIN), body_size=5
+    )
+
+    assert response == ModuleHttpResponse.json(413, {"error": "request body too large"})
+
+
 def test_router_maps_value_error_to_sanitized_bad_request(valid_manifest):
     router = ModuleRouter(valid_manifest, default_permission_evaluator)
 

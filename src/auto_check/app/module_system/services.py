@@ -74,6 +74,13 @@ class ServiceRegistry:
 
         return ModuleServices(register=register_for_owner, resolve=self.resolve)
 
+    def unregister_owner(self, owner: str) -> None:
+        """Remove public services when their owning module stops."""
+        _validate_module_id(owner)
+        for name, registration in tuple(self._services.items()):
+            if registration.owner == owner:
+                del self._services[name]
+
 
 class ModuleServices:
     """Module-scoped service registration and read-only resolution view."""

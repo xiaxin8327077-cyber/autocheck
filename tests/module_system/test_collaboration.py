@@ -65,6 +65,18 @@ def test_module_service_view_only_registers_its_own_namespace():
     assert not hasattr(services, "_registry")
 
 
+def test_service_registry_removes_services_owned_by_a_stopped_module():
+    registry = ServiceRegistry()
+    registry.register("alpha.lookup", 1, object(), owner="alpha")
+    registry.register("beta.lookup", 1, object(), owner="beta")
+
+    registry.unregister_owner("alpha")
+
+    with pytest.raises(KeyError):
+        registry.resolve("alpha.lookup", 1)
+    assert registry.resolve("beta.lookup", 1)
+
+
 def test_event_bus_isolates_failing_subscriber():
     calls = []
     bus = EventBus()

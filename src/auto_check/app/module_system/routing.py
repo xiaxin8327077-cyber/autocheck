@@ -67,7 +67,9 @@ class ModuleRouter:
             )
         )
 
-    def dispatch(self, request: ModuleRequest) -> ModuleHttpResponse | None:
+    def dispatch(self, request: ModuleRequest, *, body_size: int = 0) -> ModuleHttpResponse | None:
+        if type(body_size) is not int or body_size < 0:
+            return ModuleHttpResponse.json(400, {"error": "invalid request"})
         relative_path = self._relative_path(request.path)
         if relative_path is None:
             return None
@@ -95,6 +97,8 @@ class ModuleRouter:
 
         route, match = method_matches[0]
         try:
+            if body_size > route.max_body_bytes:
+                return ModuleHttpResponse.json(413, {"error": "request body too large"})
             if not self._permission_evaluator(request.current_user, route.permission):
                 return ModuleHttpResponse.json(403, {"error": "permission denied"})
             path_params = {
