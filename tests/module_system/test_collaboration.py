@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Barrier, Thread
 from typing import get_type_hints
 
@@ -221,3 +221,27 @@ def test_module_context_uses_collaboration_types_and_task_executor_protocol():
     assert context_hints["services"].__name__ == "ModuleServices"
     assert context_hints["events"].__name__ == "ModuleEvents"
     assert executor_hints["return"] is Future
+
+
+def test_event_subscription_close_is_idempotent_under_concurrency():
+    bus = EventBus()
+    calls = []
+    subscription = bus.subscribe("alpha:published", calls.append, owner="alpha")
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(subscription.close) for _ in range(20)]
+        for future in futures:
+            future.result(timeout=1)
+
+    assert bus.publish("alpha:published", {"id": "1"}).delivered == 0
+    assert calls == []
+
+
+def test_closed_module_event_view_rejects_new_work():
+    events = EventBus().for_module("alpha")
+    events.close()
+
+    with pytest.raises(RuntimeError, match="closed"):
+        events.subscribe("system:ready", lambda payload: None)
+    with pytest.raises(RuntimeError, match="closed"):
+        events.publish("alpha:published", {})

@@ -3263,10 +3263,11 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "not found"})
             return
         etag = f'"{asset.etag}"'
+        asset_headers = [("ETag", etag), ("Cache-Control", "private, no-cache")]
         if self._if_none_match_matches(etag):
-            self._send_bytes(304, b"", asset.content_type, headers=[("ETag", etag)])
+            self._send_bytes(304, b"", asset.content_type, headers=asset_headers)
             return
-        self._send_bytes(200, asset.content, asset.content_type, headers=[("ETag", etag)])
+        self._send_bytes(200, asset.content, asset.content_type, headers=asset_headers)
 
     def _read_module_json_body(self, method: str) -> dict[str, Any] | None:
         length = self._request_content_length()

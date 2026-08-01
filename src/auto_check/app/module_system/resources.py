@@ -22,6 +22,7 @@ _CONTENT_TYPES = {
 }
 _MAX_ASSET_PATH_LENGTH = 2048
 _MAX_PERCENT_DECODING_ROUNDS = 8
+_MAX_MODULE_ASSET_BYTES = 5 * 1024 * 1024
 
 
 class ModuleAssetNotFound(LookupError):
@@ -103,7 +104,14 @@ def read_module_asset(module: DiscoveredModule, relative_path: str) -> ModuleAss
             package_root, web_root, asset_path
         ):
             raise ModuleAssetNotFound("module asset not found")
+        try:
+            if Path(asset_path).stat().st_size > _MAX_MODULE_ASSET_BYTES:
+                raise ModuleAssetNotFound("module asset not found")
+        except TypeError:
+            pass
         content = asset_path.read_bytes()
+        if len(content) > _MAX_MODULE_ASSET_BYTES:
+            raise ModuleAssetNotFound("module asset not found")
     except ModuleAssetNotFound:
         raise
     except (ModuleNotFoundError, OSError, ValueError):

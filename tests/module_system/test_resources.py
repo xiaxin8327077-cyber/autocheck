@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import pytest
 
+import auto_check.app.module_system.resources as resources_module
 from auto_check.app.module_system.discovery import discover_modules
 from auto_check.app.module_system.resources import (
     ModuleAssetNotFound,
@@ -190,3 +191,11 @@ def test_does_not_leak_resource_path_for_missing_asset(alpha_module):
         read_module_asset(alpha_module, "missing.js")
 
     assert str(FIXTURE_PARENT) not in str(error.value)
+
+
+def test_rejects_oversized_module_asset_before_serving(temporary_asset_package, monkeypatch):
+    module, _ = temporary_asset_package({"large.js": b"12345"})
+    monkeypatch.setattr(resources_module, "_MAX_MODULE_ASSET_BYTES", 4)
+
+    with pytest.raises(ModuleAssetNotFound):
+        read_module_asset(module, "large.js")

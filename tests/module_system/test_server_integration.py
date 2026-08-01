@@ -228,6 +228,7 @@ def test_module_asset_uses_etag(module_server):
 
     assert status == 200
     assert headers["etag"]
+    assert headers["cache-control"] == "private, no-cache"
     status, data, headers = _request(
         server,
         "GET",
@@ -236,6 +237,7 @@ def test_module_asset_uses_etag(module_server):
     )
     assert status == 304
     assert data == b""
+    assert headers["cache-control"] == "private, no-cache"
     status, data, headers = _request(
         server,
         "GET",
