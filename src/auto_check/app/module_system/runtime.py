@@ -219,6 +219,26 @@ class LoadedModule:
     health_future: Future | None = None
 
 
+@dataclass(frozen=True)
+class _ModuleBootstrapResult:
+    instance: AutoCheckModule
+    router: ModuleRouter
+
+
+class _ModuleBootstrapProgress:
+    def __init__(self) -> None:
+        self._stage = "load_module_factory"
+        self._lock = Lock()
+
+    def set_stage(self, stage: str) -> None:
+        with self._lock:
+            self._stage = stage
+
+    def current_stage(self) -> str:
+        with self._lock:
+            return self._stage
+
+
 class ModuleRuntime:
     """Own discovery, loading, visibility and cleanup of built-in modules."""
 
@@ -565,17 +585,26 @@ class ModuleRuntime:
     def _start_loaded(self, loaded: LoadedModule) -> None:
         manifest = loaded.discovered.manifest
         self._set_status(loaded, ModuleStatus.LOADING)
-        factory = load_module_factory(manifest.backend_entry)
-        instance = factory()
-        if instance.manifest.id != manifest.id:
-            raise ValueError("module instance manifest does not match discovered manifest")
-        router = ModuleRouter(manifest, default_permission_evaluator)
-        instance.register_routes(router)
-        schema_registry = ModuleSchemaRegistry(manifest.id, table_prefix=manifest.table_prefix)
-        instance.register_schema(schema_registry)
-        ModuleMigrationRunner(self._context.application_database, schema_registry).run(
-            manifest, loaded.discovered.package_name
+        bootstrap_progress = _ModuleBootstrapProgress()
+        bootstrap_future = self._module_call(
+            self._bootstrap_module,
+            loaded.discovered,
+            bootstrap_progress,
+            name=f"module-{manifest.id}-bootstrap",
         )
+        try:
+            bootstrap = bootstrap_future.result(timeout=self._lifecycle_timeout_seconds)
+        except FutureTimeoutError:
+            self._record_isolation_until_complete(loaded, bootstrap_future)
+            if bootstrap_progress.current_stage() == "migration":
+                raise ModuleMigrationError("module migration timed out") from None
+            raise ModuleLifecycleTimeout("module bootstrap timed out") from None
+        except ModuleMigrationError:
+            raise
+        except BaseException:
+            raise ModuleRuntimeError("module bootstrap failed") from None
+        instance = bootstrap.instance
+        router = bootstrap.router
         events = self._events.for_module(manifest.id)
         executor = _ModuleTaskExecutor(self._shared_executor)
         module_context = ModuleContext(
@@ -628,6 +657,31 @@ class ModuleRuntime:
                     self._contexts.pop(manifest.id, None)
             raise ModuleRuntimeError("module start failed") from None
         self._set_status(loaded, ModuleStatus.ENABLED)
+
+    def _bootstrap_module(
+        self,
+        discovered: DiscoveredModule,
+        progress: _ModuleBootstrapProgress,
+    ) -> _ModuleBootstrapResult:
+        manifest = discovered.manifest
+        factory = load_module_factory(manifest.backend_entry)
+        progress.set_stage("factory")
+        instance = factory()
+        if instance.manifest.id != manifest.id:
+            raise ValueError("module instance manifest does not match discovered manifest")
+        progress.set_stage("register_routes")
+        router = ModuleRouter(manifest, default_permission_evaluator)
+        instance.register_routes(router)
+        progress.set_stage("register_schema")
+        schema_registry = ModuleSchemaRegistry(
+            manifest.id, table_prefix=manifest.table_prefix
+        )
+        instance.register_schema(schema_registry)
+        progress.set_stage("migration")
+        ModuleMigrationRunner(self._context.application_database, schema_registry).run(
+            manifest, discovered.package_name
+        )
+        return _ModuleBootstrapResult(instance=instance, router=router)
 
     def _stop_loaded_reverse(self, loaded_modules: list[LoadedModule]) -> None:
         for loaded in reversed(loaded_modules):
@@ -704,6 +758,21 @@ class ModuleRuntime:
                 for future in (*loaded.isolated_futures, *futures)
                 if not future.done()
             )
+
+    def _record_isolation_until_complete(
+        self, loaded: LoadedModule, future: Future
+    ) -> None:
+        self._record_isolation(loaded, (future,))
+
+        def discard(completed: Future) -> None:
+            with self._lifecycle_lock:
+                loaded.isolated_futures = tuple(
+                    item
+                    for item in loaded.isolated_futures
+                    if item is not completed and not item.done()
+                )
+
+        future.add_done_callback(discard)
 
     def _require_not_isolated(self, loaded: LoadedModule) -> None:
         with self._lifecycle_lock:

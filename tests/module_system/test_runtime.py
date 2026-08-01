@@ -965,6 +965,281 @@ def test_start_failure_stops_partially_started_module_before_resource_cleanup(
         runtime._services.resolve("alpha.worker", 1)
 
 
+@pytest.mark.parametrize(
+    "stuck_stage",
+    [
+        "load_module_factory",
+        "factory",
+        "register_routes",
+        "register_schema",
+        "migration",
+    ],
+)
+def test_stuck_bootstrap_stage_is_bounded_and_does_not_hide_healthy_sibling(
+    monkeypatch,
+    isolated_runtime_factory,
+    stuck_stage,
+):
+    import auto_check.app.module_system.runtime as runtime_module
+
+    release_bootstrap = Event()
+    bootstrap_entered = Event()
+    bootstrap_threads = []
+    calls = []
+    alpha = _LifecycleModule(_manifest("alpha"), calls)
+    beta = _LifecycleModule(_manifest("beta"), calls)
+    runtime = isolated_runtime_factory(
+        [alpha, beta],
+        lifecycle_timeout_seconds=0.05,
+        task_shutdown_timeout_seconds=0.05,
+    )
+
+    def block_bootstrap():
+        bootstrap_threads.append(current_thread().daemon)
+        bootstrap_entered.set()
+        release_bootstrap.wait()
+
+    def load_factory(entry):
+        module = alpha if entry == alpha.manifest.backend_entry else beta
+        if module is alpha and stuck_stage == "load_module_factory":
+            block_bootstrap()
+
+        def create_module():
+            if module is alpha and stuck_stage == "factory":
+                block_bootstrap()
+            return module
+
+        return create_module
+
+    monkeypatch.setattr(runtime_module, "load_module_factory", load_factory)
+    if stuck_stage == "register_routes":
+        alpha.register_routes = lambda router: block_bootstrap()
+    if stuck_stage == "register_schema":
+        alpha.register_schema = lambda registry: block_bootstrap()
+    if stuck_stage == "migration":
+        original_run = _MigrationRunner.run
+
+        def run_migration(self, manifest, package_name):
+            if manifest.id == "alpha":
+                block_bootstrap()
+            return original_run(self, manifest, package_name)
+
+        monkeypatch.setattr(_MigrationRunner, "run", run_migration)
+
+    watchdog = Timer(0.4, release_bootstrap.set)
+    watchdog.start()
+    started_at = monotonic()
+    runtime.start()
+    watchdog.cancel()
+    watchdog.join(0.1)
+
+    assert monotonic() - started_at < 0.3
+    assert bootstrap_entered.is_set()
+    assert bootstrap_threads == [True]
+    assert calls == ["beta:start"]
+    expected_status = "migration_failed" if stuck_stage == "migration" else "startup_failed"
+    assert runtime.status("alpha").value == expected_status
+    assert runtime.status("beta").value == "enabled"
+    assert runtime._find("alpha").instance is None
+    assert runtime._find("alpha").router is None
+    assert "alpha" not in runtime._contexts
+    assert any(
+        not future.done() for future in runtime._find("alpha").isolated_futures
+    )
+
+    release_bootstrap.set()
+    deadline = monotonic() + 0.5
+    while runtime._find("alpha").isolated_futures and monotonic() < deadline:
+        sleep(0.01)
+    assert runtime._find("alpha").isolated_futures == ()
+    assert runtime._find("alpha").instance is None
+    assert runtime._find("alpha").router is None
+    assert "alpha" not in runtime._contexts
+    runtime.stop()
+
+
+def test_successful_bootstrap_callbacks_run_on_daemon_thread(
+    monkeypatch,
+    isolated_runtime_factory,
+):
+    import auto_check.app.module_system.runtime as runtime_module
+
+    bootstrap_threads = []
+    module = _LifecycleModule(_manifest("alpha"), [])
+    runtime = isolated_runtime_factory([module])
+
+    def load_factory(entry):
+        bootstrap_threads.append(("load", current_thread().daemon))
+
+        def create_module():
+            bootstrap_threads.append(("factory", current_thread().daemon))
+            return module
+
+        return create_module
+
+    def register_routes(router):
+        bootstrap_threads.append(("routes", current_thread().daemon))
+
+    def register_schema(registry):
+        bootstrap_threads.append(("schema", current_thread().daemon))
+
+    def run_migration(self, manifest, package_name):
+        bootstrap_threads.append(("migration", current_thread().daemon))
+        return manifest.schema_version
+
+    monkeypatch.setattr(runtime_module, "load_module_factory", load_factory)
+    monkeypatch.setattr(_MigrationRunner, "run", run_migration)
+    module.register_routes = register_routes
+    module.register_schema = register_schema
+
+    runtime.start()
+
+    assert bootstrap_threads == [
+        ("load", True),
+        ("factory", True),
+        ("routes", True),
+        ("schema", True),
+        ("migration", True),
+    ]
+    assert runtime.status("alpha").value == "enabled"
+    runtime.stop()
+
+
+def test_bootstrap_exception_is_sanitized_and_does_not_hide_healthy_sibling(
+    monkeypatch,
+    isolated_runtime_factory,
+):
+    import auto_check.app.module_system.runtime as runtime_module
+
+    calls = []
+    broken = _LifecycleModule(_manifest("broken"), calls)
+    healthy = _LifecycleModule(_manifest("healthy"), calls)
+    runtime = isolated_runtime_factory([broken, healthy])
+
+    def load_factory(entry):
+        module = broken if entry == broken.manifest.backend_entry else healthy
+
+        def create_module():
+            if module is broken:
+                raise RuntimeError(
+                    r"postgres://user:password@db.internal/app C:\private token=secret"
+                )
+            return module
+
+        return create_module
+
+    monkeypatch.setattr(runtime_module, "load_module_factory", load_factory)
+
+    runtime.start()
+
+    error = runtime._find("broken").error
+    assert runtime.status("broken").value == "startup_failed"
+    assert runtime.status("healthy").value == "enabled"
+    assert calls == ["healthy:start"]
+    assert error == "ModuleRuntimeError: module lifecycle operation failed"
+    assert all(secret not in error.lower() for secret in ("password", "private", "secret"))
+    runtime.stop()
+
+
+def test_timed_out_migration_cannot_retry_concurrently_or_publish_late_result(
+    monkeypatch,
+    isolated_runtime_factory,
+):
+    release_migration = Event()
+    migration_entered = Event()
+    migration_calls = 0
+    active_migrations = 0
+    maximum_active_migrations = 0
+    calls = []
+    module = _LifecycleModule(_manifest("alpha"), calls)
+    runtime = isolated_runtime_factory(
+        [module], lifecycle_timeout_seconds=0.05, task_shutdown_timeout_seconds=0.05
+    )
+
+    def run_migration(self, manifest, package_name):
+        nonlocal migration_calls, active_migrations, maximum_active_migrations
+        migration_calls += 1
+        active_migrations += 1
+        maximum_active_migrations = max(maximum_active_migrations, active_migrations)
+        try:
+            if migration_calls == 1:
+                migration_entered.set()
+                release_migration.wait()
+            return manifest.schema_version
+        finally:
+            active_migrations -= 1
+
+    monkeypatch.setattr(_MigrationRunner, "run", run_migration)
+    watchdog = Timer(0.4, release_migration.set)
+    watchdog.start()
+    runtime.start()
+    watchdog.cancel()
+    watchdog.join(0.1)
+
+    assert migration_entered.is_set()
+    assert runtime.status("alpha").value == "migration_failed"
+    with pytest.raises(ModuleRuntimeError, match="isolated"):
+        runtime.set_enabled("alpha", True, {"role": "admin"})
+    assert migration_calls == 1
+    assert maximum_active_migrations == 1
+
+    release_migration.set()
+    deadline = monotonic() + 0.5
+    while runtime._find("alpha").isolated_futures and monotonic() < deadline:
+        sleep(0.01)
+    assert runtime._find("alpha").isolated_futures == ()
+    assert runtime._find("alpha").instance is None
+    assert runtime._find("alpha").router is None
+    assert "alpha" not in runtime._contexts
+
+    runtime.set_enabled("alpha", True, {"role": "admin"})
+
+    assert migration_calls == 2
+    assert maximum_active_migrations == 1
+    assert calls == ["alpha:start"]
+    assert runtime.status("alpha").value == "enabled"
+    runtime.stop()
+
+
+def test_required_bootstrap_timeout_rolls_back_healthy_module(
+    monkeypatch,
+    isolated_runtime_factory,
+):
+    release_migration = Event()
+    migration_entered = Event()
+    calls = []
+    healthy = _LifecycleModule(_manifest("healthy"), calls)
+    required = _LifecycleModule(_manifest("required", required=True), calls)
+    runtime = isolated_runtime_factory(
+        [healthy, required],
+        lifecycle_timeout_seconds=0.05,
+        task_shutdown_timeout_seconds=0.05,
+    )
+    original_run = _MigrationRunner.run
+
+    def run_migration(self, manifest, package_name):
+        if manifest.id == "required":
+            migration_entered.set()
+            release_migration.wait()
+        return original_run(self, manifest, package_name)
+
+    monkeypatch.setattr(_MigrationRunner, "run", run_migration)
+    watchdog = Timer(0.4, release_migration.set)
+    watchdog.start()
+    with pytest.raises(ModuleStartupError, match="required"):
+        runtime.start()
+    watchdog.cancel()
+    watchdog.join(0.1)
+
+    assert migration_entered.is_set()
+    assert calls == ["healthy:start", "healthy:stop"]
+    assert runtime.status("required").value == "migration_failed"
+    assert runtime._contexts == {}
+    assert runtime._shared_executor_shutdown is True
+
+    release_migration.set()
+
+
 def test_stuck_start_is_isolated_without_concurrent_stop_and_other_modules_start(
     isolated_runtime_factory,
 ):
