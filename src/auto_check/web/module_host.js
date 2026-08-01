@@ -214,9 +214,9 @@
       });
     }
 
-    async function invokeLifecycle(lifecycleState, phase, callback) {
+    async function invokeLifecycle(lifecycleState, phase, callback, route = "") {
       const previous = lifecycleState.frame;
-      const frame = { phase, navigation: "" };
+      const frame = { phase, route, navigation: null };
       lifecycleState.frame = frame;
       try {
         return { value: await callback(), navigation: frame.navigation };
@@ -225,10 +225,13 @@
       }
     }
 
-    function scheduleLegacyNavigation(route) {
+    function scheduleLegacyNavigation(intent) {
       const currentQueue = lifecycleQueue;
       currentQueue
-        .then(() => state.platform?.legacyNavigate(route))
+        .then(() => {
+          if (!state.initialized || intent.version !== lifecycleVersion) return undefined;
+          return state.platform?.legacyNavigate(intent.route);
+        })
         .catch(() => recordModuleIssue("system", "传统页面导航失败"));
     }
 
@@ -244,12 +247,14 @@
           const frame = lifecycleState.frame;
           if (frame) {
             if (frame.phase === "mount" || frame.phase === "activate") {
-              frame.navigation = routeName;
+              if (frame.phase === "activate" && frame.route === routeName) return true;
+              lifecycleState.acceptNavigation = false;
+              frame.navigation = { route: routeName, version: ++lifecycleVersion };
               return state.routes.has(routeName);
             }
             return false;
           }
-          if (state.activeModuleId !== module.id) return false;
+          if (!lifecycleState.acceptNavigation || state.activeModuleId !== module.id) return false;
           if (await activate(routeName)) return true;
           await state.platform.legacyNavigate(routeName);
           return false;
@@ -326,6 +331,7 @@
       const activeId = state.activeModuleId;
       const active = state.instances.get(activeId);
       if (active) {
+        active.lifecycleState.acceptNavigation = false;
         try {
           const instance = active.instance;
           await invokeLifecycle(active.lifecycleState, "deactivate", () => instance.deactivate());
@@ -356,6 +362,8 @@
         return true;
       }
       if (state.activeModuleId === moduleId && state.activeRoute === routeName && !pageHost()?.hidden) {
+        const current = state.instances.get(moduleId);
+        if (current) current.lifecycleState.acceptNavigation = true;
         if (syncHash) updateHash(routeName);
         return true;
       }
@@ -389,9 +397,10 @@
           record.lifecycleState,
           "activate",
           () => instance.activate(route),
+          routeName,
         );
         const redirectedRoute = activation.navigation;
-        if (redirectedRoute && redirectedRoute !== routeName) {
+        if (redirectedRoute && redirectedRoute.route !== routeName) {
           try {
             await invokeLifecycle(
               record.lifecycleState,
@@ -402,10 +411,10 @@
             recordModuleIssue(moduleId, "导航切换停用失败");
           }
           record.root.hidden = true;
-          if (state.routes.has(redirectedRoute)) {
+          if (state.routes.has(redirectedRoute.route)) {
             return activateNow(
-              redirectedRoute,
-              ++lifecycleVersion,
+              redirectedRoute.route,
+              redirectedRoute.version,
               { syncHash: true },
               [...redirectTrail, routeName],
             );
@@ -419,7 +428,7 @@
           clearModulePageState();
           setLegacyVisibility(false);
           scheduleLegacyNavigation(redirectedRoute);
-          return false;
+          return true;
         }
         if (version !== lifecycleVersion) {
           try {
@@ -436,6 +445,7 @@
         }
         state.activeModuleId = moduleId;
         state.activeRoute = routeName;
+        record.lifecycleState.acceptNavigation = true;
         if (syncHash) updateHash(routeName);
       } catch (_) {
         if (version !== lifecycleVersion) {
@@ -453,11 +463,15 @@
 
     async function activate(route, options) {
       const version = ++lifecycleVersion;
+      const active = state.instances.get(state.activeModuleId);
+      if (active) active.lifecycleState.acceptNavigation = false;
       return enqueue(() => activateNow(route, version, options));
     }
 
     async function deactivate() {
       lifecycleVersion += 1;
+      const active = state.instances.get(state.activeModuleId);
+      if (active) active.lifecycleState.acceptNavigation = false;
       return enqueue(() => deactivateNow());
     }
 
@@ -495,7 +509,7 @@
 
     async function initializeNow() {
       let payload;
-      let mountedNavigation = "";
+      let mountedNavigation = null;
       try {
         payload = await state.platform.api("/api/system/modules");
       } catch (_) {
@@ -518,7 +532,7 @@
       for (const module of state.modules.values()) {
         let instance = null;
         let root = null;
-        const lifecycleState = { frame: null };
+        const lifecycleState = { frame: null, acceptNavigation: false };
         try {
           await loadStyle(module);
           const namespace = await importModule(module.frontend_entry);
@@ -551,9 +565,13 @@
       bindNavigation();
       bindHashChange();
       state.initialized = true;
-      const route = mountedNavigation || String(locationRef?.hash || "").replace(/^#/, "");
-      if (await activateNow(route, ++lifecycleVersion)) return true;
-      if (mountedNavigation) scheduleLegacyNavigation(route);
+      const route = mountedNavigation?.route || String(locationRef?.hash || "").replace(/^#/, "");
+      const version = mountedNavigation?.version || ++lifecycleVersion;
+      if (await activateNow(route, version)) return true;
+      if (mountedNavigation) {
+        scheduleLegacyNavigation(mountedNavigation);
+        return true;
+      }
       return false;
     }
 
@@ -603,6 +621,9 @@
 
     async function unmount() {
       lifecycleVersion += 1;
+      state.instances.forEach((record) => {
+        record.lifecycleState.acceptNavigation = false;
+      });
       return enqueue(unmountNow);
     }
 

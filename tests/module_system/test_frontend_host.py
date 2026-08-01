@@ -557,10 +557,10 @@ def test_module_host_defers_legacy_navigation_until_lifecycle_queue_is_released(
           api: async () => ({ modules }), user: () => ({}), notify: () => {}, confirm: async () => true,
           legacyNavigate: async (route) => { await mountHost.deactivate(); mountLegacyRoutes.push(route); },
         };
-        await Promise.race([
+        assert.equal(await Promise.race([
           mountHost.initialize(mountPlatform),
           new Promise((_, reject) => setTimeout(() => reject(new Error("mount legacy navigation deadlocked")), 100)),
-        ]);
+        ]), true);
         await new Promise((resolve) => setImmediate(resolve));
         await flush();
         assert.deepEqual(mountLegacyRoutes, ["report-navigation"]);
@@ -584,10 +584,10 @@ def test_module_host_defers_legacy_navigation_until_lifecycle_queue_is_released(
             legacyRoutes.push(route);
           },
         };
-        await Promise.race([
+        assert.equal(await Promise.race([
           host.initialize(platform),
           new Promise((_, reject) => setTimeout(() => reject(new Error("legacy navigation deadlocked")), 100)),
-        ]);
+        ]), true);
         await new Promise((resolve) => setImmediate(resolve));
         await flush();
         assert.deepEqual(legacyRoutes, ["report-navigation"]);
@@ -621,6 +621,53 @@ def test_module_host_does_not_attribute_stale_navigation_to_another_module(tmp_p
         assert.equal(await alphaContext.navigate("alpha"), false);
         betaActivation.resolve();
         assert.equal(await activatingBeta, true);
+        const roots = env.elements.modulePageHost.children.filter((child) => child.dataset.module);
+        assert.equal(roots.find((root) => root.dataset.module === "beta").hidden, false);
+        assert.equal(env.locationRef.hash, "#beta");
+        """,
+    )
+
+
+def test_module_host_cancels_stale_legacy_intent_after_newer_navigation(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#alpha");
+        const intentReady = deferred();
+        const releaseAlpha = deferred();
+        const legacyRoutes = [];
+        let alphaContext;
+        const instances = {
+          alpha: {
+            mount: async (context) => { alphaContext = context; },
+            activate: async (route) => {
+              if (route !== "alpha-alt") return;
+              assert.equal(await alphaContext.navigate("report-navigation"), false);
+              intentReady.resolve();
+              await releaseAlpha.promise;
+            },
+            deactivate: async () => {}, unmount: async () => {},
+          },
+          beta: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} },
+        };
+        const host = createModuleHost({ ...env, importModule: async (url) => ({ default: instances[url.includes("beta") ? "beta" : "alpha"] }) });
+        const platform = {
+          api: async () => ({ modules: [
+            { id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }, { id: "alpha-alt", label: "Alpha alt", route: "alpha-alt" }] },
+            { id: "beta", frontend_entry: "/beta.js", frontend_style: "/beta.css", navigation: [{ id: "beta", label: "Beta", route: "beta" }] },
+          ] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true,
+          legacyNavigate: async (route) => { legacyRoutes.push(route); await host.deactivate(); },
+        };
+        assert.equal(await host.initialize(platform), true);
+        const staleRequest = host.activate("alpha-alt");
+        await intentReady.promise;
+        const currentRequest = host.activate("beta");
+        releaseAlpha.resolve();
+        await Promise.all([staleRequest, currentRequest]);
+        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
+        assert.deepEqual(legacyRoutes, []);
         const roots = env.elements.modulePageHost.children.filter((child) => child.dataset.module);
         assert.equal(roots.find((root) => root.dataset.module === "beta").hidden, false);
         assert.equal(env.locationRef.hash, "#beta");
