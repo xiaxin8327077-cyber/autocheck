@@ -82,6 +82,7 @@ class ModuleManifest:
     permissions: tuple[str, ...]
     dependencies: tuple[str, ...]
     schema_version: int
+    table_prefix: str
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> ModuleManifest:
@@ -166,7 +167,17 @@ class ModuleManifest:
             permissions=permissions,
             dependencies=dependencies,
             schema_version=_required_int(payload, "schema_version", minimum=0),
+            table_prefix=_table_prefix(payload, module_id),
         )
+
+
+def _table_prefix(payload: Mapping[str, object], module_id: str) -> str:
+    value = payload.get("table_prefix", f"{module_id}_")
+    if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]*_", value):
+        raise ModuleManifestError("table_prefix must be a lowercase table prefix")
+    if value == "app_" or not value.startswith(module_id.split("_")[0] + "_"):
+        raise ModuleManifestError("table_prefix is not in the module namespace")
+    return value
 
 
 @dataclass(frozen=True)

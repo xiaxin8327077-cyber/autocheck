@@ -245,24 +245,26 @@ class ModuleSchemaRegistry:
     def validate_statement(self, statement: str) -> None:
         """Allow only a small, analyzable SQL subset over declared module tables."""
         tokens = _sql_tokens(statement)
+        if tokens[-1:] == (";",):
+            tokens = tokens[:-1]
         if not tokens or ";" in tokens:
             raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
         upper = [token.upper() for token in tokens]
-        if any(token in {"PROCEDURE", "FUNCTION", "VIEW", "TRIGGER", "PREPARE", "EXECUTE", "CALL"} for token in upper):
+        if any(token in {"PROCEDURE", "FUNCTION", "VIEW", "TRIGGER", "PREPARE", "EXECUTE", "CALL", "SELECT", "JOIN", "AS", "LIKE", "RENAME", "FROM"} for token in upper):
             raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
         references: list[str] = []
-        if upper[:2] in (["CREATE", "TABLE"], ["ALTER", "TABLE"], ["DROP", "TABLE"]):
+        if upper[:2] == ["CREATE", "TABLE"]:
+            table_index = 5 if upper[2:5] == ["IF", "NOT", "EXISTS"] else 2
+            references.append(_table_after(tokens, table_index))
+        elif upper[:2] == ["ALTER", "TABLE"]:
             references.append(_table_after(tokens, 2))
+        elif upper[:2] == ["DROP", "TABLE"]:
+            table_index = 4 if upper[2:4] == ["IF", "EXISTS"] else 2
+            references.append(_table_after(tokens, table_index))
         elif upper[:2] == ["CREATE", "INDEX"]:
             references.append(_table_after(tokens, _require_token(upper, "ON") + 1))
         elif upper[:2] == ["DROP", "INDEX"]:
             references.append(_table_after(tokens, _require_token(upper, "ON") + 1))
-        elif upper[:2] == ["INSERT", "INTO"]:
-            references.append(_table_after(tokens, 2))
-        elif upper[:1] == ["UPDATE"]:
-            references.append(_table_after(tokens, 1))
-        elif upper[:2] == ["DELETE", "FROM"]:
-            references.append(_table_after(tokens, 2))
         else:
             raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
         for index, token in enumerate(upper):

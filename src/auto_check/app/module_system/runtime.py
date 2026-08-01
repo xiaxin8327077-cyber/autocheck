@@ -358,7 +358,7 @@ class ModuleRuntime:
             raise ValueError("module instance manifest does not match discovered manifest")
         router = ModuleRouter(manifest, default_permission_evaluator)
         instance.register_routes(router)
-        schema_registry = ModuleSchemaRegistry(manifest.id)
+        schema_registry = ModuleSchemaRegistry(manifest.id, table_prefix=manifest.table_prefix)
         instance.register_schema(schema_registry)
         ModuleMigrationRunner(self._context.application_database, schema_registry).run(
             manifest, loaded.discovered.package_name
