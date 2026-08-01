@@ -22,7 +22,6 @@
     let initializePromise = null;
     let lifecycleQueue = Promise.resolve();
     let lifecycleVersion = 0;
-    let lifecycleFrame = null;
     let hashListener = null;
 
     function enqueue(operation) {
@@ -172,7 +171,11 @@
         const onError = () => finish(new Error("模块样式加载失败"));
         link.addEventListener?.("load", onLoad);
         link.addEventListener?.("error", onError);
-        documentRef.head.appendChild(link);
+        try {
+          documentRef.head.appendChild(link);
+        } catch (error) {
+          finish(error);
+        }
       });
     }
 
@@ -211,18 +214,25 @@
       });
     }
 
-    async function invokeLifecycle(phase, callback) {
-      const previous = lifecycleFrame;
+    async function invokeLifecycle(lifecycleState, phase, callback) {
+      const previous = lifecycleState.frame;
       const frame = { phase, navigation: "" };
-      lifecycleFrame = frame;
+      lifecycleState.frame = frame;
       try {
         return { value: await callback(), navigation: frame.navigation };
       } finally {
-        lifecycleFrame = previous;
+        lifecycleState.frame = previous;
       }
     }
 
-    function createContext(module, root) {
+    function scheduleLegacyNavigation(route) {
+      const currentQueue = lifecycleQueue;
+      currentQueue
+        .then(() => state.platform?.legacyNavigate(route))
+        .catch(() => recordModuleIssue("system", "传统页面导航失败"));
+    }
+
+    function createContext(module, root, lifecycleState) {
       const context = {
         root,
         api: state.platform.api,
@@ -231,13 +241,15 @@
         confirm: state.platform.confirm,
         navigate: async (route) => {
           const routeName = String(route || "");
-          if (lifecycleFrame) {
-            if (lifecycleFrame.phase === "mount" || lifecycleFrame.phase === "activate") {
-              lifecycleFrame.navigation = routeName;
+          const frame = lifecycleState.frame;
+          if (frame) {
+            if (frame.phase === "mount" || frame.phase === "activate") {
+              frame.navigation = routeName;
               return state.routes.has(routeName);
             }
             return false;
           }
+          if (state.activeModuleId !== module.id) return false;
           if (await activate(routeName)) return true;
           await state.platform.legacyNavigate(routeName);
           return false;
@@ -316,7 +328,7 @@
       if (active) {
         try {
           const instance = active.instance;
-          await invokeLifecycle("deactivate", () => instance.deactivate());
+          await invokeLifecycle(active.lifecycleState, "deactivate", () => instance.deactivate());
         } catch (_) {
           recordModuleIssue(activeId, "停用失败");
         }
@@ -373,11 +385,19 @@
         setModulePageState(moduleId);
         setModuleNavigationActive(routeName);
         const instance = record.instance;
-        const activation = await invokeLifecycle("activate", () => instance.activate(route));
+        const activation = await invokeLifecycle(
+          record.lifecycleState,
+          "activate",
+          () => instance.activate(route),
+        );
         const redirectedRoute = activation.navigation;
         if (redirectedRoute && redirectedRoute !== routeName) {
           try {
-            await invokeLifecycle("deactivate", () => instance.deactivate());
+            await invokeLifecycle(
+              record.lifecycleState,
+              "deactivate",
+              () => instance.deactivate(),
+            );
           } catch (_) {
             recordModuleIssue(moduleId, "导航切换停用失败");
           }
@@ -398,12 +418,16 @@
           setModuleNavigationActive("");
           clearModulePageState();
           setLegacyVisibility(false);
-          await state.platform.legacyNavigate(redirectedRoute);
+          scheduleLegacyNavigation(redirectedRoute);
           return false;
         }
         if (version !== lifecycleVersion) {
           try {
-            await invokeLifecycle("deactivate", () => instance.deactivate());
+            await invokeLifecycle(
+              record.lifecycleState,
+              "deactivate",
+              () => instance.deactivate(),
+            );
           } catch (_) {
             recordModuleIssue(moduleId, "过期激活停用失败");
           }
@@ -494,21 +518,26 @@
       for (const module of state.modules.values()) {
         let instance = null;
         let root = null;
+        const lifecycleState = { frame: null };
         try {
           await loadStyle(module);
           const namespace = await importModule(module.frontend_entry);
           instance = namespace?.default || namespace;
           if (!validateInstance(instance)) throw new Error("模块生命周期接口不完整");
           root = createRoot(module);
-          const context = createContext(module, root);
-          const mounted = await invokeLifecycle("mount", () => instance.mount(context));
+          const context = createContext(module, root, lifecycleState);
+          const mounted = await invokeLifecycle(
+            lifecycleState,
+            "mount",
+            () => instance.mount(context),
+          );
           if (mounted.navigation) mountedNavigation = mounted.navigation;
-          state.instances.set(module.id, { instance, root, context });
+          state.instances.set(module.id, { instance, root, context, lifecycleState });
         } catch (_) {
           failures.set(module.id, "模块资源未能加载");
           if (instance) {
             try {
-              await invokeLifecycle("unmount", () => instance.unmount());
+              await invokeLifecycle(lifecycleState, "unmount", () => instance.unmount());
             } catch (_) {
               recordModuleIssue(module.id, "失败模块卸载失败");
             }
@@ -524,7 +553,7 @@
       state.initialized = true;
       const route = mountedNavigation || String(locationRef?.hash || "").replace(/^#/, "");
       if (await activateNow(route, ++lifecycleVersion)) return true;
-      if (mountedNavigation) await state.platform.legacyNavigate(route);
+      if (mountedNavigation) scheduleLegacyNavigation(route);
       return false;
     }
 
@@ -547,7 +576,7 @@
       for (const [moduleId, record] of state.instances) {
         try {
           const instance = record.instance;
-          await invokeLifecycle("unmount", () => instance.unmount());
+          await invokeLifecycle(record.lifecycleState, "unmount", () => instance.unmount());
         } catch (_) {
           recordModuleIssue(moduleId, "卸载失败");
         }

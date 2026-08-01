@@ -448,6 +448,55 @@ def test_module_host_waits_for_styles_and_contains_style_failures(tmp_path: Path
     )
 
 
+def test_module_host_waits_for_style_success_and_times_out_safely(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const successEnv = makeEnvironment("#alpha");
+        let pendingLink;
+        let imports = 0;
+        successEnv.documentRef.head.appendChild = function appendPendingStyle(child) {
+          this.children.push(child);
+          child.parentNode = this;
+          pendingLink = child;
+          return child;
+        };
+        const successHost = createModuleHost({
+          ...successEnv,
+          stylesheetTimeoutMs: 100,
+          importModule: async () => { imports += 1; return { default: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} } }; },
+        });
+        const platform = {
+          api: async () => ({ modules: [{ id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] }] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        const initialized = successHost.initialize(platform);
+        await flush();
+        assert.equal(imports, 0);
+        pendingLink.dispatch("load");
+        assert.equal(await initialized, true);
+        assert.equal(imports, 1);
+
+        const timeoutEnv = makeEnvironment("#alpha");
+        timeoutEnv.documentRef.head.appendChild = function appendNeverLoadedStyle(child) {
+          this.children.push(child);
+          child.parentNode = this;
+          return child;
+        };
+        let timeoutImports = 0;
+        const timeoutHost = createModuleHost({
+          ...timeoutEnv,
+          stylesheetTimeoutMs: 10,
+          importModule: async () => { timeoutImports += 1; throw new Error("must not import"); },
+        });
+        assert.equal(await timeoutHost.initialize(platform), true);
+        assert.equal(timeoutImports, 0);
+        assert.equal(timeoutEnv.documentRef.head.children.length, 0);
+        assert.ok(timeoutEnv.elements.modulePageHost.querySelector("[data-module-host-error]"));
+        """,
+    )
+
+
 def test_module_host_defers_lifecycle_navigation_without_queue_deadlock(tmp_path: Path):
     _run_module_host_scenario(
         tmp_path,
@@ -487,5 +536,93 @@ def test_module_host_defers_lifecycle_navigation_without_queue_deadlock(tmp_path
         const activateRoots = activateEnv.elements.modulePageHost.children.filter((child) => child.dataset.module);
         assert.equal(activateRoots.find((root) => root.dataset.module === "beta").hidden, false);
         assert.equal(activateEnv.locationRef.hash, "#beta");
+        """,
+    )
+
+
+def test_module_host_defers_legacy_navigation_until_lifecycle_queue_is_released(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const modules = [{ id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] }];
+        const mountEnv = makeEnvironment("#alpha");
+        let mountHost;
+        const mountLegacyRoutes = [];
+        const mountInstance = {
+          mount: async (value) => { assert.equal(await value.navigate("report-navigation"), false); },
+          activate: async () => {}, deactivate: async () => {}, unmount: async () => {},
+        };
+        mountHost = createModuleHost({ ...mountEnv, importModule: async () => ({ default: mountInstance }) });
+        const mountPlatform = {
+          api: async () => ({ modules }), user: () => ({}), notify: () => {}, confirm: async () => true,
+          legacyNavigate: async (route) => { await mountHost.deactivate(); mountLegacyRoutes.push(route); },
+        };
+        await Promise.race([
+          mountHost.initialize(mountPlatform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("mount legacy navigation deadlocked")), 100)),
+        ]);
+        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
+        assert.deepEqual(mountLegacyRoutes, ["report-navigation"]);
+
+        const env = makeEnvironment("#alpha");
+        let context;
+        let host;
+        const legacyRoutes = [];
+        const instance = {
+          mount: async (value) => { context = value; },
+          activate: async () => { assert.equal(await context.navigate("report-navigation"), false); },
+          deactivate: async () => {},
+          unmount: async () => {},
+        };
+        host = createModuleHost({ ...env, importModule: async () => ({ default: instance }) });
+        const platform = {
+          api: async () => ({ modules }),
+          user: () => ({}), notify: () => {}, confirm: async () => true,
+          legacyNavigate: async (route) => {
+            await host.deactivate();
+            legacyRoutes.push(route);
+          },
+        };
+        await Promise.race([
+          host.initialize(platform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("legacy navigation deadlocked")), 100)),
+        ]);
+        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
+        assert.deepEqual(legacyRoutes, ["report-navigation"]);
+        assert.equal(env.elements.modulePageHost.hidden, true);
+        """,
+    )
+
+
+def test_module_host_does_not_attribute_stale_navigation_to_another_module(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#alpha");
+        const betaActivation = deferred();
+        let alphaContext;
+        const instances = {
+          alpha: { mount: async (context) => { alphaContext = context; }, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} },
+          beta: { mount: async () => {}, activate: async () => betaActivation.promise, deactivate: async () => {}, unmount: async () => {} },
+        };
+        const host = createModuleHost({ ...env, importModule: async (url) => ({ default: instances[url.includes("beta") ? "beta" : "alpha"] }) });
+        const platform = {
+          api: async () => ({ modules: [
+            { id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] },
+            { id: "beta", frontend_entry: "/beta.js", frontend_style: "/beta.css", navigation: [{ id: "beta", label: "Beta", route: "beta" }] },
+          ] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await host.initialize(platform), true);
+        const activatingBeta = host.activate("beta");
+        await flush();
+        assert.equal(await alphaContext.navigate("alpha"), false);
+        betaActivation.resolve();
+        assert.equal(await activatingBeta, true);
+        const roots = env.elements.modulePageHost.children.filter((child) => child.dataset.module);
+        assert.equal(roots.find((root) => root.dataset.module === "beta").hidden, false);
+        assert.equal(env.locationRef.hash, "#beta");
         """,
     )
