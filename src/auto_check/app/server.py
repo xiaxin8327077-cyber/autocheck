@@ -3322,7 +3322,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             response.status,
             response.wire_body,
             response.content_type,
-            headers=list(response.headers),
+            headers=[*response.headers, ("Cache-Control", "private, no-store")],
         )
 
     def _send_early_json(
@@ -3376,11 +3376,15 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         remaining = min(length, maximum)
         complete = length == 0
         previous_timeout = self.connection.gettimeout()
+        deadline = time.monotonic() + EARLY_DRAIN_TIMEOUT_SECONDS
         try:
-            self.connection.settimeout(EARLY_DRAIN_TIMEOUT_SECONDS)
             while remaining:
+                remaining_timeout = deadline - time.monotonic()
+                if remaining_timeout <= 0:
+                    break
+                self.connection.settimeout(remaining_timeout)
                 try:
-                    chunk = self.rfile.read(min(remaining, 64 * 1024))
+                    chunk = self.rfile.read1(min(remaining, 64 * 1024))
                 except (OSError, TimeoutError):
                     break
                 if not chunk:

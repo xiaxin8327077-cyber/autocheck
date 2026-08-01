@@ -20,7 +20,7 @@ _BACKEND_ENTRY_PATTERN = re.compile(
 _SERVICE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
 _HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _MODULE_RESPONSE_HEADERS = frozenset(
-    {"allow", "cache-control", "content-disposition", "etag", "last-modified", "location", "retry-after"}
+    {"allow", "content-disposition", "etag", "last-modified", "location", "retry-after"}
 )
 MAX_MODULE_RESPONSE_BYTES = 50 * 1024 * 1024
 
@@ -243,28 +243,28 @@ class ModuleHttpResponse:
     wire_body: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if type(self.status) is not int or not 100 <= self.status <= 599:
+        if type(self.status) is not int or not 200 <= self.status <= 599:
             raise ModuleResponseError("module response status is invalid")
-        if not isinstance(self.content_type, str) or not _safe_header_value(self.content_type):
+        if type(self.content_type) is not str or not _safe_header_value(self.content_type):
             raise ModuleResponseError("module response content type is invalid")
         if "/" not in self.content_type or len(self.content_type) > 255:
             raise ModuleResponseError("module response content type is invalid")
-        if not isinstance(self.headers, tuple):
+        if type(self.headers) is not tuple:
             raise ModuleResponseError("module response headers are invalid")
         seen_headers: set[str] = set()
         for header in self.headers:
-            if not isinstance(header, tuple) or len(header) != 2:
+            if type(header) is not tuple or len(header) != 2:
                 raise ModuleResponseError("module response headers are invalid")
             name, value = header
-            if not isinstance(name, str) or _HEADER_NAME_PATTERN.fullmatch(name) is None:
+            if type(name) is not str or _HEADER_NAME_PATTERN.fullmatch(name) is None:
                 raise ModuleResponseError("module response header name is invalid")
             normalized_name = name.lower()
             if normalized_name not in _MODULE_RESPONSE_HEADERS or normalized_name in seen_headers:
                 raise ModuleResponseError("module response header is not allowed")
-            if not isinstance(value, str) or not _safe_header_value(value) or len(value) > 8192:
+            if type(value) is not str or not _safe_header_value(value) or len(value) > 8192:
                 raise ModuleResponseError("module response header value is invalid")
             seen_headers.add(normalized_name)
-        if isinstance(self.body, bytes):
+        if type(self.body) is bytes:
             wire_body = self.body
         elif isinstance(self.body, Mapping):
             if any(not isinstance(key, str) for key in self.body):
@@ -283,6 +283,8 @@ class ModuleHttpResponse:
             raise ModuleResponseError("module response body is invalid")
         if len(wire_body) > MAX_MODULE_RESPONSE_BYTES:
             raise ModuleResponseError("module response body is too large")
+        if self.status in {204, 205, 304} and wire_body:
+            raise ModuleResponseError("module response status does not allow a body")
         object.__setattr__(self, "wire_body", wire_body)
 
     @classmethod
@@ -302,7 +304,9 @@ class ModuleHttpResponse:
 
 
 def _safe_header_value(value: str) -> bool:
-    return bool(value) and all(ord(character) >= 32 and ord(character) != 127 for character in value)
+    return bool(value) and all(
+        32 <= ord(character) <= 255 and ord(character) != 127 for character in value
+    )
 
 
 def validate_module_response(response: object) -> ModuleHttpResponse:

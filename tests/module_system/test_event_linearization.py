@@ -1,7 +1,7 @@
 from threading import Event, Thread
 from time import monotonic, sleep
 
-from auto_check.app.module_system.events import EventDeliveryReport, ModuleEvents
+from auto_check.app.module_system.events import EventBus, EventDeliveryReport, ModuleEvents
 
 
 class _TrackedSubscription:
@@ -87,3 +87,35 @@ def test_close_waits_for_an_inflight_subscription_to_be_tracked_and_closed():
     assert close_returned.is_set()
     assert subscribed == [subscription]
     assert subscription.closed is True
+
+
+def test_close_waits_for_an_inflight_inbound_subscription_handler():
+    handler_entered = Event()
+    release_handler = Event()
+    close_returned = Event()
+    effects = []
+    bus = EventBus()
+    events = bus.for_module("beta")
+
+    def handler(payload):
+        handler_entered.set()
+        assert release_handler.wait(1)
+        effects.append(payload)
+
+    events.subscribe("alpha:changed", handler)
+    publishing = Thread(target=lambda: bus.publish("alpha:changed", {"id": "1"}))
+    closing = Thread(target=lambda: (events.close(), close_returned.set()))
+
+    publishing.start()
+    assert handler_entered.wait(1)
+    closing.start()
+    try:
+        sleep(0.01)
+        assert not close_returned.is_set()
+    finally:
+        release_handler.set()
+        publishing.join(timeout=1)
+        closing.join(timeout=1)
+
+    assert effects == [{"id": "1"}]
+    assert close_returned.is_set()

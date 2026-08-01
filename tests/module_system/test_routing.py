@@ -214,7 +214,6 @@ def test_router_allows_documented_module_download_headers(valid_manifest):
             content_type="text/plain; charset=utf-8",
             headers=(
                 ("Content-Disposition", 'attachment; filename="result.txt"'),
-                ("Cache-Control", "private, no-cache"),
                 ("ETag", '"result"'),
             ),
         ),
@@ -226,3 +225,7 @@ def test_router_allows_documented_module_download_headers(valid_manifest):
 
     assert response.status == 200
     assert response.body == b"ok"
+    assert response.headers == (
+        ("Content-Disposition", 'attachment; filename="result.txt"'),
+        ("ETag", '"result"'),
+    )

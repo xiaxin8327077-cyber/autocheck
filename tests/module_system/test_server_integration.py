@@ -337,6 +337,45 @@ def test_incomplete_early_rejection_has_bounded_drain_and_closes_connection(modu
     assert headers["connection"].lower() == "close"
 
 
+def test_slow_early_rejection_body_uses_a_total_drain_deadline(module_server, monkeypatch):
+    server, _ = module_server
+    monkeypatch.setattr(server_module, "EARLY_DRAIN_TIMEOUT_SECONDS", 0.15)
+    connection = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=1)
+    reader = connection.makefile("rb")
+    sender_errors = []
+
+    def send_remaining_body():
+        for _ in range(3):
+            time.sleep(0.1)
+            try:
+                connection.sendall(b"x")
+            except OSError as error:
+                sender_errors.append(error)
+                return
+
+    try:
+        connection.sendall(
+            b"POST /api/modules/alpha/tiny HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 4\r\n\r\n"
+            b"x"
+        )
+        sender = threading.Thread(target=send_remaining_body)
+        started = time.monotonic()
+        sender.start()
+        status, _, headers = _read_http_response(reader)
+        elapsed = time.monotonic() - started
+        sender.join(timeout=1)
+    finally:
+        reader.close()
+        connection.close()
+
+    assert status == 401
+    assert elapsed < 0.25
+    assert headers["connection"].lower() == "close"
+
+
 def test_complete_early_rejection_drains_before_next_request(module_server):
     server, _ = module_server
     connection = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=2)
@@ -551,6 +590,20 @@ def test_module_api_sends_the_verified_response_snapshot(authenticated_module_se
 
     assert status == 200
     assert json.loads(data) == {"top": "before", "nested": {"value": "before"}}
+
+
+def test_authenticated_module_api_forces_private_no_store_cache(authenticated_module_server):
+    server, auth_headers = authenticated_module_server
+
+    status, _, headers = _request(
+        server,
+        "GET",
+        "/api/modules/alpha/whoami",
+        headers=auth_headers,
+    )
+
+    assert status == 200
+    assert headers["cache-control"] == "private, no-store"
 
 
 def test_short_module_body_is_rejected_before_dispatch(authenticated_module_server):

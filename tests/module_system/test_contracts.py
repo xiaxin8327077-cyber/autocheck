@@ -6,6 +6,7 @@ from auto_check.app.module_system.contracts import (
     ModuleHttpResponse,
     ModuleManifest,
     ModuleManifestError,
+    ModuleResponseError,
 )
 
 
@@ -60,6 +61,84 @@ def test_module_response_keeps_a_verified_wire_snapshot_after_mapping_mutates():
     body["nested"]["value"] = "after"
 
     assert response.wire_body == b'{"top":"before","nested":{"value":"before"}}'
+
+
+class _StringSubclass(str):
+    pass
+
+
+class _BytesSubclass(bytes):
+    pass
+
+
+class _TupleSubclass(tuple):
+    pass
+
+
+@pytest.mark.parametrize(
+    "response_factory",
+    [
+        lambda: ModuleHttpResponse.bytes(
+            200,
+            _BytesSubclass(b"ok"),
+            content_type="text/plain",
+        ),
+        lambda: ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type=_StringSubclass("text/plain"),
+        ),
+        lambda: ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain",
+            headers=_TupleSubclass((("ETag", '"safe"'),)),
+        ),
+        lambda: ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain",
+            headers=(("ETag", _StringSubclass('"safe"')),),
+        ),
+    ],
+)
+def test_module_response_rejects_non_exact_wire_types(response_factory):
+    with pytest.raises(ModuleResponseError):
+        response_factory()
+
+
+@pytest.mark.parametrize(
+    "response_factory",
+    [
+        lambda: ModuleHttpResponse.bytes(101, b"", content_type="text/plain"),
+        lambda: ModuleHttpResponse.bytes(204, b"payload", content_type="text/plain"),
+        lambda: ModuleHttpResponse.bytes(304, b"payload", content_type="text/plain"),
+    ],
+)
+def test_module_response_rejects_interim_or_body_forbidden_statuses(response_factory):
+    with pytest.raises(ModuleResponseError):
+        response_factory()
+
+
+def test_module_response_allows_an_empty_no_content_response():
+    assert ModuleHttpResponse.bytes(204, b"", content_type="text/plain").wire_body == b""
+
+
+def test_module_response_rejects_non_latin1_and_module_cache_headers():
+    with pytest.raises(ModuleResponseError):
+        ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain",
+            headers=(("Content-Disposition", "附件"),),
+        )
+    with pytest.raises(ModuleResponseError):
+        ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain",
+            headers=(("Cache-Control", "public, max-age=3600"),),
+        )
 
 
 def test_manifest_defaults_services_and_validates_declared_service_namespace_and_version():

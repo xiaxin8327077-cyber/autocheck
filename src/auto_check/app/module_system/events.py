@@ -43,6 +43,7 @@ class _Subscriber:
     owner: str
     handler: Callable[[object], None]
     active: bool = True
+    inflight: int = 0
 
 
 class Subscription:
@@ -69,6 +70,8 @@ class EventBus:
     def __init__(self) -> None:
         self._subscribers: dict[str, list[_Subscriber]] = {}
         self._lock = RLock()
+        self._condition = Condition(self._lock)
+        self._delivery_threads: dict[int, int] = {}
 
     def subscribe(
         self, event_name: str, handler: Callable[[object], None], owner: str
@@ -83,7 +86,8 @@ class EventBus:
             subscribers.append(subscriber)
 
         def close() -> None:
-            with self._lock:
+            closer = get_ident()
+            with self._condition:
                 if not subscriber.active:
                     return
                 subscriber.active = False
@@ -91,6 +95,9 @@ class EventBus:
                     subscribers.remove(subscriber)
                 if not subscribers:
                     self._subscribers.pop(event_name, None)
+                if self._delivery_threads.get(closer, 0) == 0:
+                    while subscriber.inflight:
+                        self._condition.wait()
 
         return Subscription(close)
 
@@ -106,10 +113,14 @@ class EventBus:
         with self._lock:
             subscribers = tuple(self._subscribers.get(event_name, ()))
         for subscriber in subscribers:
-            with self._lock:
-                active = subscriber.active
-            if not active:
-                continue
+            delivery_thread = get_ident()
+            with self._condition:
+                if not subscriber.active:
+                    continue
+                subscriber.inflight += 1
+                self._delivery_threads[delivery_thread] = (
+                    self._delivery_threads.get(delivery_thread, 0) + 1
+                )
             try:
                 subscriber.handler(payload)
             except Exception as exc:
@@ -121,6 +132,15 @@ class EventBus:
                 )
             else:
                 delivered += 1
+            finally:
+                with self._condition:
+                    subscriber.inflight -= 1
+                    remaining = self._delivery_threads[delivery_thread] - 1
+                    if remaining:
+                        self._delivery_threads[delivery_thread] = remaining
+                    else:
+                        self._delivery_threads.pop(delivery_thread, None)
+                    self._condition.notify_all()
         return EventDeliveryReport(delivered=delivered, failed=len(errors), errors=tuple(errors))
 
     def for_module(self, owner: str) -> ModuleEvents:

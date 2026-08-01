@@ -73,7 +73,7 @@ src/auto_check/modules/<module_id>/
 
 路由处理器从 `ModuleRequest.current_user` 取得已鉴权的当前用户。`ModuleContext` 不携带当前用户；它只提供 `application_database`、`config_path`、当前模块独占的 `temp_root`、`now`、`services`、`events`、`logger` 和 `background_executor`。SQL 参数化，标识符来自白名单；API 和日志不返回密码、令牌、连接串、SQL、驱动堆栈或本地绝对路径。模块间不得导入对方 `service.py`、`storage.py` 或私有对象，只能使用版本化公开服务或可序列化的命名空间事件。模块只能注册清单 `services` 中声明的服务，只能解析自身服务或清单 `dependencies` 中依赖模块的公开服务，版本必须精确匹配；依赖未启用时不得启动当前模块，提供方仍有已启用依赖方时不得停用。事件订阅者失败只记录自身错误，不阻断其他订阅者；模块关闭后不能再发布、订阅或注册服务。
 
-模块 API 的有请求体方法必须声明 `max_body_bytes`。宿主执行总读取时限和请求大小限制，短读、慢速分段超时或非法 JSON 均不会进入处理器。模块响应只允许 JSON 映射或字节，最大 50 MiB；JSON 在校验时固化为发送快照，后续修改原对象不会改变响应。响应头仅允许 `Allow`、`Cache-Control`、`Content-Disposition`、`ETag`、`Last-Modified`、`Location` 和 `Retry-After`，连接、长度和安全响应头由宿主统一生成。后台任务和 `start()`、`stop()`、`health()` 都必须自行支持快速退出；宿主还会执行并发限制、有界等待和故障隔离，但同进程 Python 不能强制终止任意模块代码，超时模块在未结束前不得重复启用。
+模块 API 的有请求体方法必须声明 `max_body_bytes`。宿主执行总读取时限和请求大小限制，短读、慢速分段超时或非法 JSON 均不会进入处理器。模块响应只允许 JSON 映射或字节，最大 50 MiB；JSON 在校验时固化为发送快照，后续修改原对象不会改变响应。响应头仅允许 `Allow`、`Content-Disposition`、`ETag`、`Last-Modified`、`Location` 和 `Retry-After`，连接、长度、安全响应头及 `Cache-Control: private, no-store` 由宿主统一生成。后台任务和 `start()`、`stop()`、`health()` 都必须自行支持快速退出；宿主还会执行并发限制、有界等待和故障隔离，但同进程 Python 不能强制终止任意模块代码，超时模块在未结束前不得重复启用。
 
 ## 4. 数据库迁移与运维
 
