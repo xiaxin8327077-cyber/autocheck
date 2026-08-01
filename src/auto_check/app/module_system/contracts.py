@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from concurrent.futures import Future
@@ -17,10 +18,19 @@ _BACKEND_ENTRY_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+:[A-Za-z_][A-Za-z0-9_]*"
 )
 _SERVICE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
+_HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+_MODULE_RESPONSE_HEADERS = frozenset(
+    {"allow", "cache-control", "content-disposition", "etag", "last-modified", "location", "retry-after"}
+)
+MAX_MODULE_RESPONSE_BYTES = 50 * 1024 * 1024
 
 
 class ModuleManifestError(ValueError):
     """Raised when a module manifest does not satisfy the platform contract."""
+
+
+class ModuleResponseError(RuntimeError):
+    """Raised when a module returns an unsafe or incompatible HTTP response."""
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:
@@ -231,6 +241,48 @@ class ModuleHttpResponse:
     content_type: str
     headers: tuple[tuple[str, str], ...] = ()
 
+    def __post_init__(self) -> None:
+        if type(self.status) is not int or not 100 <= self.status <= 599:
+            raise ModuleResponseError("module response status is invalid")
+        if not isinstance(self.content_type, str) or not _safe_header_value(self.content_type):
+            raise ModuleResponseError("module response content type is invalid")
+        if "/" not in self.content_type or len(self.content_type) > 255:
+            raise ModuleResponseError("module response content type is invalid")
+        if not isinstance(self.headers, tuple):
+            raise ModuleResponseError("module response headers are invalid")
+        seen_headers: set[str] = set()
+        for header in self.headers:
+            if not isinstance(header, tuple) or len(header) != 2:
+                raise ModuleResponseError("module response headers are invalid")
+            name, value = header
+            if not isinstance(name, str) or _HEADER_NAME_PATTERN.fullmatch(name) is None:
+                raise ModuleResponseError("module response header name is invalid")
+            normalized_name = name.lower()
+            if normalized_name not in _MODULE_RESPONSE_HEADERS or normalized_name in seen_headers:
+                raise ModuleResponseError("module response header is not allowed")
+            if not isinstance(value, str) or not _safe_header_value(value) or len(value) > 8192:
+                raise ModuleResponseError("module response header value is invalid")
+            seen_headers.add(normalized_name)
+        if isinstance(self.body, bytes):
+            body_size = len(self.body)
+        elif isinstance(self.body, Mapping):
+            if any(not isinstance(key, str) for key in self.body):
+                raise ModuleResponseError("module JSON response keys must be strings")
+            if not self.content_type.lower().startswith("application/json"):
+                raise ModuleResponseError("module JSON response content type is invalid")
+            try:
+                body_size = len(
+                    json.dumps(dict(self.body), ensure_ascii=False, separators=(",", ":")).encode(
+                        "utf-8"
+                    )
+                )
+            except (TypeError, ValueError, OverflowError):
+                raise ModuleResponseError("module JSON response is not serializable") from None
+        else:
+            raise ModuleResponseError("module response body is invalid")
+        if body_size > MAX_MODULE_RESPONSE_BYTES:
+            raise ModuleResponseError("module response body is too large")
+
     @classmethod
     def json(cls, status: int, body: Mapping[str, Any]) -> ModuleHttpResponse:
         return cls(status=status, body=body, content_type="application/json; charset=utf-8")
@@ -245,6 +297,16 @@ class ModuleHttpResponse:
         headers: tuple[tuple[str, str], ...] = (),
     ) -> ModuleHttpResponse:
         return cls(status=status, body=body, content_type=content_type, headers=headers)
+
+
+def _safe_header_value(value: str) -> bool:
+    return bool(value) and all(ord(character) >= 32 and ord(character) != 127 for character in value)
+
+
+def validate_module_response(response: object) -> ModuleHttpResponse:
+    if not isinstance(response, ModuleHttpResponse):
+        raise ModuleResponseError("module handler returned an invalid response")
+    return response
 
 
 @dataclass(frozen=True)

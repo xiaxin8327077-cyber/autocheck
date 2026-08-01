@@ -106,6 +106,13 @@ def module_server(monkeypatch, tmp_path):
             permission="alpha.view",
             max_body_bytes=1,
         )
+        router.add(
+            "POST",
+            "/echo",
+            tiny_handler,
+            permission="alpha.view",
+            max_body_bytes=1024,
+        )
 
     route_calls = []
     monkeypatch.setattr(alpha_module.AlphaModule, "register_routes", register_routes)
@@ -461,3 +468,55 @@ def test_get_without_body_framing_continues_to_dispatch(authenticated_module_ser
     assert status == 200
     assert json.loads(data)["username"] == "admin"
     assert len(server.module_route_calls) == 1
+
+
+def test_authenticated_module_body_read_timeout_is_bounded_and_closes_connection(
+    authenticated_module_server, monkeypatch
+):
+    server, auth_headers = authenticated_module_server
+    monkeypatch.setattr(server_module, "MODULE_BODY_READ_TIMEOUT_SECONDS", 0.1)
+    connection = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=1)
+    reader = connection.makefile("rb")
+    try:
+        connection.sendall(
+            b"POST /api/modules/alpha/echo HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 20\r\n"
+            + f"Cookie: {auth_headers['Cookie']}\r\n".encode("ascii")
+            + f"X-CSRF-Token: {auth_headers['X-CSRF-Token']}\r\n\r\n".encode("ascii")
+            + b"{"
+        )
+        status, _, response_headers = _read_http_response(reader)
+    finally:
+        reader.close()
+        connection.close()
+
+    assert status == 408
+    assert response_headers["connection"].lower() == "close"
+    assert server.module_route_calls == []
+
+
+def test_short_module_body_is_rejected_before_dispatch(authenticated_module_server):
+    server, auth_headers = authenticated_module_server
+    connection = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=2)
+    reader = connection.makefile("rb")
+    try:
+        connection.sendall(
+            b"POST /api/modules/alpha/echo HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 4\r\n"
+            + f"Cookie: {auth_headers['Cookie']}\r\n".encode("ascii")
+            + f"X-CSRF-Token: {auth_headers['X-CSRF-Token']}\r\n\r\n".encode("ascii")
+            + b"{}"
+        )
+        connection.shutdown(socket.SHUT_WR)
+        status, _, response_headers = _read_http_response(reader)
+    finally:
+        reader.close()
+        connection.close()
+
+    assert status == 400
+    assert response_headers["connection"].lower() == "close"
+    assert server.module_route_calls == []

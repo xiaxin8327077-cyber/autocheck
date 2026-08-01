@@ -128,6 +128,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_EARLY_DRAIN_BYTES = 64 * 1024
 EARLY_DRAIN_TIMEOUT_SECONDS = 0.25
+MODULE_BODY_READ_TIMEOUT_SECONDS = 5.0
 
 
 def _serialize_interface_preferences(value: UserInterfacePreferences) -> dict[str, object]:
@@ -3275,7 +3276,22 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         if length > MAX_UPLOAD_BYTES:
             self._send_early_json(method, 413, {"error": "request body too large"})
             return None
-        raw_body = self.rfile.read(length) if length else b""
+        previous_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(MODULE_BODY_READ_TIMEOUT_SECONDS)
+            raw_body = self.rfile.read(length) if length else b""
+        except (OSError, TimeoutError):
+            self.close_connection = True
+            self._module_request_body_size = 0
+            self._send_json(408, {"error": "request body timeout"})
+            return None
+        finally:
+            self.connection.settimeout(previous_timeout)
+        if len(raw_body) != length:
+            self.close_connection = True
+            self._module_request_body_size = len(raw_body)
+            self._send_json(400, {"error": "incomplete request body"})
+            return None
         self._module_request_body_size = len(raw_body)
         try:
             body = json.loads(raw_body.decode("utf-8") or "{}")

@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping
 from urllib.parse import unquote
 
-from .contracts import ModuleHttpResponse, ModuleManifest, ModuleRequest
+from .contracts import ModuleHttpResponse, ModuleManifest, ModuleRequest, validate_module_response
 
 
 RouteHandler = Callable[[ModuleRequest], ModuleHttpResponse]
@@ -114,7 +114,9 @@ class ModuleRouter:
                 name: unquote(value)
                 for name, value in match.groupdict().items()
             }
-            return route.handler(replace(request, path_params=path_params))
+            return validate_module_response(
+                route.handler(replace(request, path_params=path_params))
+            )
         except ValueError:
             return ModuleHttpResponse.json(400, {"error": "invalid request"})
         except Exception:

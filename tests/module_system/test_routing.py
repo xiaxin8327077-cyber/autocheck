@@ -170,3 +170,59 @@ def test_router_sanitizes_unexpected_errors_and_includes_tracking_fields(valid_m
     assert isinstance(response.body["error_id"], str)
     assert response.body["error_id"]
     assert "password" not in str(response.body)
+
+
+@pytest.mark.parametrize(
+    "handler",
+    [
+        lambda request: object(),
+        lambda request: ModuleHttpResponse(99, {}, "application/json"),
+        lambda request: ModuleHttpResponse(200, b"ok", "text/plain\r\nX-Injected: yes"),
+        lambda request: ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain",
+            headers=(("Content-Length", "2"),),
+        ),
+        lambda request: ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain",
+            headers=(("ETag", '"safe"\r\nX-Injected: yes'),),
+        ),
+    ],
+)
+def test_router_sanitizes_invalid_module_response_contracts(valid_manifest, handler):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add("GET", "/download", handler, permission="custom_reports.view", max_body_bytes=0)
+
+    response = router.dispatch(_request("GET", "/api/modules/custom-reports/download"))
+
+    assert response.status == 500
+    assert response.body["error"] == "internal server error"
+    assert response.body["module_id"] == "custom_reports"
+
+
+def test_router_allows_documented_module_download_headers(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add(
+        "GET",
+        "/download",
+        lambda request: ModuleHttpResponse.bytes(
+            200,
+            b"ok",
+            content_type="text/plain; charset=utf-8",
+            headers=(
+                ("Content-Disposition", 'attachment; filename="result.txt"'),
+                ("Cache-Control", "private, no-cache"),
+                ("ETag", '"result"'),
+            ),
+        ),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+    )
+
+    response = router.dispatch(_request("GET", "/api/modules/custom-reports/download"))
+
+    assert response.status == 200
+    assert response.body == b"ok"
