@@ -28,6 +28,8 @@ python3.12 -m PyInstaller \
   --paths src \
   --add-data "$ROOT/src/auto_check/web:auto_check/web" \
   --add-data "$ROOT/src/auto_check/resources:auto_check/resources" \
+  --collect-submodules auto_check.modules \
+  --collect-data auto_check.modules \
   --hidden-import py7zr \
   --hidden-import rarfile \
   --hidden-import psycopg \
