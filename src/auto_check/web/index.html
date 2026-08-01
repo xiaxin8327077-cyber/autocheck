@@ -17,6 +17,7 @@
       })();
     </script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/module_host.css" />
   </head>
   <body>
     <aside class="sidebar">
@@ -58,6 +59,7 @@
           <span class="nav-icon nav-icon-users" aria-hidden="true"></span>
           <span>用户管理</span>
         </a>
+        <div id="moduleSideNavigation"></div>
       </nav>
       <div class="sidebar-footer">
         <div class="sidebar-footer-main">
@@ -102,6 +104,7 @@
         <a class="top-nav-item" data-page="tools" href="#">工具</a>
         <a class="top-nav-item" data-page="settings" href="#">系统设置</a>
         <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
+        <div id="moduleTopNavigation"></div>
       </nav>
       <div class="top-nav-actions">
         <div class="user-menu user-menu--top" id="topUserMenu">
@@ -1705,6 +1708,7 @@
           </div>
         </div>
       </div>
+      <section id="modulePageHost" class="auto-check-module-host" hidden></section>
     </main>
 
     <!-- Toast container -->
@@ -1713,6 +1717,7 @@
 
     <script src="/crypto_fallback.js"></script>
     <script src="/export_detail.js"></script>
+    <script src="/module_host.js"></script>
     <script src="/app.js?v=20260701"></script>
   </body>
 </html>

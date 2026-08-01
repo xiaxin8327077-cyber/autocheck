@@ -17,10 +17,36 @@ SERVER_PY = ROOT / "src" / "auto_check" / "app" / "server.py"
 STYLES_CSS = ROOT / "src" / "auto_check" / "web" / "styles.css"
 README_MD = ROOT / "README.md"
 PYINSTALLER_SPEC = ROOT / "auto-check.spec"
+MODULE_HOST_JS = ROOT / "src" / "auto_check" / "web" / "module_host.js"
+MODULE_HOST_CSS = ROOT / "src" / "auto_check" / "web" / "module_host.css"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def test_module_host_assets_are_loaded_before_legacy_app():
+    html = _read(INDEX_HTML)
+
+    assert html.count('href="/module_host.css"') == 1
+    assert html.count('src="/module_host.js') == 1
+    assert html.index('src="/module_host.js') < html.index('src="/app.js')
+    assert 'id="moduleSideNavigation"' in html
+    assert 'id="moduleTopNavigation"' in html
+    assert 'id="modulePageHost"' in html
+
+
+def test_module_host_assets_keep_module_styles_scoped():
+    css = _read(MODULE_HOST_CSS)
+    script = _read(MODULE_HOST_JS)
+
+    assert ".auto-check-module" in css
+    assert "\nbutton {" not in css
+    assert "\ninput {" not in css
+    assert "\ntable {" not in css
+    assert "Object.freeze(context)" in script
+    assert "hashchange" in script
+    assert "await window.AutoCheckModuleHost?.deactivate();" in _read(APP_JS)
 
 
 def test_semantic_action_tokens_and_disabled_priority_are_centralized():

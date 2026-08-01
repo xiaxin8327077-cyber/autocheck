@@ -1348,6 +1348,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function switchPage(name, options = {}) {
+  await window.AutoCheckModuleHost?.deactivate();
   const previousPage = document.documentElement.getAttribute("data-page") || "";
   if (name === "users" && authState.user?.role !== "admin") {
     showToast("普通用户无权访问用户管理", "error");
@@ -11770,12 +11771,21 @@ window.addEventListener("resize", syncReportNavigationTodoCardHeight);
     loadSettings();
   }
   loadTheme();
-  const savedPage = location.hash.slice(1);
-  if (savedPage && document.getElementById("page-" + savedPage)) {
-    await switchPage(savedPage, { forceHomeRefresh: savedPage === "home" });
-  } else {
-    // 默认显示报送导航
-    await switchPage("report-navigation");
+  const moduleHandled = await window.AutoCheckModuleHost.initialize({
+    api,
+    user: () => ({ ...authState.user }),
+    notify: showToast,
+    confirm: showConfirm,
+    legacyNavigate: switchPage,
+  });
+  if (!moduleHandled) {
+    const savedPage = location.hash.slice(1);
+    if (savedPage && document.getElementById("page-" + savedPage)) {
+      await switchPage(savedPage, { forceHomeRefresh: savedPage === "home" });
+    } else {
+      // 默认显示报送导航
+      await switchPage("report-navigation");
+    }
   }
   try { const d = await api("/api/config"); if (!runDate.value) runDate.value = d.default_run_date || settingsPayload?.api_default_run_date || ""; } catch (_) { if (!runDate.value) runDate.value = settingsPayload?.api_default_run_date || ""; }
   restoreLatestResultsSnapshot();
