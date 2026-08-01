@@ -1,0 +1,15 @@
+{
+  "id": "broken_required",
+  "name": "Broken required",
+  "version": "1.0.0",
+  "platform_api": 1,
+  "required": true,
+  "backend_entry": "module_packages.broken_required.module:create_module",
+  "api_prefix": "/api/modules/broken-required",
+  "frontend_entry": "/module-assets/broken_required/index.js",
+  "frontend_style": "/module-assets/broken_required/styles.css",
+  "navigation": [],
+  "permissions": ["broken_required.view"],
+  "dependencies": [],
+  "schema_version": 0
+}

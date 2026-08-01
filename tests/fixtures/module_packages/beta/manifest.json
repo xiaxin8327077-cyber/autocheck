@@ -1,0 +1,23 @@
+{
+  "id": "beta",
+  "name": "Beta",
+  "version": "1.0.0",
+  "platform_api": 1,
+  "required": false,
+  "backend_entry": "module_packages.beta.module:create_module",
+  "api_prefix": "/api/modules/beta",
+  "frontend_entry": "/module-assets/beta/index.js",
+  "frontend_style": "/module-assets/beta/styles.css",
+  "navigation": [
+    {
+      "id": "beta",
+      "label": "Beta",
+      "route": "beta",
+      "order": 20,
+      "permission": "beta.view"
+    }
+  ],
+  "permissions": ["beta.view"],
+  "dependencies": ["alpha"],
+  "schema_version": 0
+}
