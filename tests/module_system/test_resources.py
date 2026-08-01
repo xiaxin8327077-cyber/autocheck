@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import io
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -199,3 +200,55 @@ def test_rejects_oversized_module_asset_before_serving(temporary_asset_package, 
 
     with pytest.raises(ModuleAssetNotFound):
         read_module_asset(module, "large.js")
+
+
+def test_non_filesystem_asset_uses_a_bounded_streaming_read(monkeypatch):
+    class StreamingAsset:
+        def __init__(self):
+            self.read_sizes = []
+
+        def is_file(self):
+            return True
+
+        def read_bytes(self):
+            raise AssertionError("asset must not be read all at once")
+
+        def open(self, mode):
+            assert mode == "rb"
+            asset = self
+
+            class Reader(io.BytesIO):
+                def read(self, size=-1):
+                    asset.read_sizes.append(size)
+                    return super().read(size)
+
+            return Reader(b"12345")
+
+    class WebRoot:
+        def __init__(self, asset):
+            self.asset = asset
+
+        def joinpath(self, *parts):
+            assert parts == ("large.js",)
+            return self.asset
+
+    class PackageRoot:
+        def __init__(self, web_root):
+            self.web_root = web_root
+
+        def joinpath(self, *parts):
+            assert parts == ("web",)
+            return self.web_root
+
+    asset = StreamingAsset()
+    monkeypatch.setattr(
+        resources_module.resources,
+        "files",
+        lambda package_name: PackageRoot(WebRoot(asset)),
+    )
+    monkeypatch.setattr(resources_module, "_MAX_MODULE_ASSET_BYTES", 4)
+
+    with pytest.raises(ModuleAssetNotFound):
+        read_module_asset(SimpleNamespace(package_name="streaming_asset"), "large.js")
+
+    assert asset.read_sizes == [5]

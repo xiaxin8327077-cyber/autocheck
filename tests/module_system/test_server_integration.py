@@ -92,6 +92,13 @@ def module_server(monkeypatch, tmp_path):
             route_calls.append(request)
             return ModuleHttpResponse.json(200, {"ok": True})
 
+        def snapshot_handler(request):
+            body = {"top": "before", "nested": {"value": "before"}}
+            response = ModuleHttpResponse.json(200, body)
+            body["top"] = "after"
+            body["nested"]["value"] = "after"
+            return response
+
         router.add(
             "GET",
             "/whoami",
@@ -112,6 +119,13 @@ def module_server(monkeypatch, tmp_path):
             tiny_handler,
             permission="alpha.view",
             max_body_bytes=1024,
+        )
+        router.add(
+            "GET",
+            "/snapshot",
+            snapshot_handler,
+            permission="alpha.view",
+            max_body_bytes=0,
         )
 
     route_calls = []
@@ -497,6 +511,46 @@ def test_authenticated_module_body_read_timeout_is_bounded_and_closes_connection
     assert status == 408
     assert response_headers["connection"].lower() == "close"
     assert server.module_route_calls == []
+
+
+def test_slow_module_body_exceeds_total_deadline_without_dispatch(
+    authenticated_module_server, monkeypatch
+):
+    server, auth_headers = authenticated_module_server
+    monkeypatch.setattr(server_module, "MODULE_BODY_READ_TIMEOUT_SECONDS", 0.2)
+    connection = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=1)
+    reader = connection.makefile("rb")
+    try:
+        connection.sendall(
+            b"POST /api/modules/alpha/echo HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: 4\r\n"
+            + f"Cookie: {auth_headers['Cookie']}\r\n".encode("ascii")
+            + f"X-CSRF-Token: {auth_headers['X-CSRF-Token']}\r\n\r\n".encode("ascii")
+            + b"{"
+        )
+        for chunk in (b"}", b" "):
+            time.sleep(0.08)
+            connection.sendall(chunk)
+        connection.settimeout(0.12)
+        status, _, response_headers = _read_http_response(reader)
+    finally:
+        reader.close()
+        connection.close()
+
+    assert status == 408
+    assert response_headers["connection"].lower() == "close"
+    assert server.module_route_calls == []
+
+
+def test_module_api_sends_the_verified_response_snapshot(authenticated_module_server):
+    server, auth_headers = authenticated_module_server
+
+    status, data, _ = _request(server, "GET", "/api/modules/alpha/snapshot", headers=auth_headers)
+
+    assert status == 200
+    assert json.loads(data) == {"top": "before", "nested": {"value": "before"}}
 
 
 def test_short_module_body_is_rejected_before_dispatch(authenticated_module_server):

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from auto_check.app.module_system.contracts import ModuleManifest, ModuleManifestError
+from auto_check.app.module_system.contracts import (
+    ModuleHttpResponse,
+    ModuleManifest,
+    ModuleManifestError,
+)
 
 
 VALID_MANIFEST = {
@@ -46,6 +50,16 @@ def test_manifest_accepts_documented_singular_table_prefix():
     )
 
     assert manifest.table_prefix == "custom_report_"
+
+
+def test_module_response_keeps_a_verified_wire_snapshot_after_mapping_mutates():
+    body = {"top": "before", "nested": {"value": "before"}}
+
+    response = ModuleHttpResponse.json(200, body)
+    body["top"] = "after"
+    body["nested"]["value"] = "after"
+
+    assert response.wire_body == b'{"top":"before","nested":{"value":"before"}}'
 
 
 def test_manifest_defaults_services_and_validates_declared_service_namespace_and_version():

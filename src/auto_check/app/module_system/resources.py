@@ -109,7 +109,8 @@ def read_module_asset(module: DiscoveredModule, relative_path: str) -> ModuleAss
                 raise ModuleAssetNotFound("module asset not found")
         except TypeError:
             pass
-        content = asset_path.read_bytes()
+        with asset_path.open("rb") as source:
+            content = source.read(_MAX_MODULE_ASSET_BYTES + 1)
         if len(content) > _MAX_MODULE_ASSET_BYTES:
             raise ModuleAssetNotFound("module asset not found")
     except ModuleAssetNotFound:

@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
@@ -240,6 +240,7 @@ class ModuleHttpResponse:
     body: Mapping[str, Any] | bytes
     content_type: str
     headers: tuple[tuple[str, str], ...] = ()
+    wire_body: bytes = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if type(self.status) is not int or not 100 <= self.status <= 599:
@@ -264,24 +265,25 @@ class ModuleHttpResponse:
                 raise ModuleResponseError("module response header value is invalid")
             seen_headers.add(normalized_name)
         if isinstance(self.body, bytes):
-            body_size = len(self.body)
+            wire_body = self.body
         elif isinstance(self.body, Mapping):
             if any(not isinstance(key, str) for key in self.body):
                 raise ModuleResponseError("module JSON response keys must be strings")
             if not self.content_type.lower().startswith("application/json"):
                 raise ModuleResponseError("module JSON response content type is invalid")
             try:
-                body_size = len(
-                    json.dumps(dict(self.body), ensure_ascii=False, separators=(",", ":")).encode(
-                        "utf-8"
-                    )
+                wire_body = json.dumps(
+                    dict(self.body), ensure_ascii=False, separators=(",", ":")
+                ).encode(
+                    "utf-8"
                 )
             except (TypeError, ValueError, OverflowError):
                 raise ModuleResponseError("module JSON response is not serializable") from None
         else:
             raise ModuleResponseError("module response body is invalid")
-        if body_size > MAX_MODULE_RESPONSE_BYTES:
+        if len(wire_body) > MAX_MODULE_RESPONSE_BYTES:
             raise ModuleResponseError("module response body is too large")
+        object.__setattr__(self, "wire_body", wire_body)
 
     @classmethod
     def json(cls, status: int, body: Mapping[str, Any]) -> ModuleHttpResponse:

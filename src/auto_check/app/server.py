@@ -8,6 +8,7 @@ import shutil
 import socket
 import sys
 import threading
+import time
 import uuid
 import webbrowser
 from calendar import monthrange
@@ -3279,8 +3280,20 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return None
         previous_timeout = self.connection.gettimeout()
         try:
-            self.connection.settimeout(MODULE_BODY_READ_TIMEOUT_SECONDS)
-            raw_body = self.rfile.read(length) if length else b""
+            deadline = time.monotonic() + MODULE_BODY_READ_TIMEOUT_SECONDS
+            remaining = length
+            chunks: list[bytes] = []
+            while remaining:
+                remaining_timeout = deadline - time.monotonic()
+                if remaining_timeout <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(remaining_timeout)
+                chunk = self.rfile.read1(min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw_body = b"".join(chunks)
         except (OSError, TimeoutError):
             self.close_connection = True
             self._module_request_body_size = 0
@@ -3305,11 +3318,12 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         return body
 
     def _send_module_response(self, response: ModuleHttpResponse) -> None:
-        headers = list(response.headers)
-        if isinstance(response.body, bytes):
-            self._send_bytes(response.status, response.body, response.content_type, headers=headers)
-            return
-        self._send_json(response.status, dict(response.body), headers=headers)
+        self._send_bytes(
+            response.status,
+            response.wire_body,
+            response.content_type,
+            headers=list(response.headers),
+        )
 
     def _send_early_json(
         self,
