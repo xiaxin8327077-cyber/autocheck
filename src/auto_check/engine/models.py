@@ -36,6 +36,17 @@ class ValuationRow:
     def account_tail_code(self) -> str:
         return self.account_code.rsplit(".", 1)[-1]
 
+    @property
+    def account_business_code(self) -> str:
+        parts = self.account_code.split(".")
+        hierarchy_end = 1
+        for part in parts[1:4]:
+            if len(part) != 2 or not part.isdigit():
+                break
+            hierarchy_end += 1
+        business_parts = parts[hierarchy_end:]
+        return ".".join(business_parts) if business_parts else self.account_tail_code
+
 
 @dataclass(frozen=True)
 class ValuationMatch:

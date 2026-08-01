@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import unicodedata
 from decimal import Decimal
 from difflib import SequenceMatcher
@@ -32,6 +33,7 @@ from auto_check.engine.money import amounts_equal, to_decimal
 
 DISPLAY_CANDIDATE_GROUP_LIMIT = 5
 ASSET_AM_CONFIRM_CANDIDATE_GROUP_LIMIT = 200
+COMBINATION_TIME_BUDGET_SECONDS = 60.0
 JIANGSU_TRUST_TEXT = "\u6c5f\u82cf\u4fe1\u6258"
 CHINESE_PAREN_RE = re.compile(r"\uff08[^\uff08\uff09]*\uff09")
 COMMON_RECEIVABLE_ASSET_TYPE = "应收账款_共同类"
@@ -136,6 +138,7 @@ class ReconcileEngine:
         self.max_combination_rows = max_combination_rows
         self.progress_logger = progress_logger
         self.cancel_event = cancel_event
+        self._combination_deadline: float | None = None
 
     def run(self, date: str) -> list[ReconcileResult]:
         results = []
@@ -178,6 +181,7 @@ class ReconcileEngine:
         self._log(f"{project.project_code}：{message}", None, step)
 
     def _reconcile_project(self, project: ProjectBalance, date: str) -> ReconcileResult:
+        self._combination_deadline = None
         self._check_cancelled()
         # 第一优先级：用估值表 0004 资产合计校验 zf_detail.a0001。
         # 只要资产合计不一致，就先走资产缺失/资产重复判断，不继续判断 c1000。
@@ -238,6 +242,8 @@ class ReconcileEngine:
 
         # 匹配金额使用绝对差额，因为这里已经通过大小关系确定了缺失或重复方向。
         self._project_log(project, f"匹配估值表资产端候选科目金额，目标={asset_gap}，候选={len(valuation_rows)} 行", "金额匹配")
+        self._project_log(project, f"本次执行组合候选阈值={self.max_combination_rows}", "金额匹配")
+        match_start = time.perf_counter()
         valuation_match = find_valuation_matches(
             valuation_rows,
             asset_gap,
@@ -245,6 +251,8 @@ class ReconcileEngine:
             detect_ambiguous_combinations=True,
             max_ambiguous_groups=ASSET_AM_CONFIRM_CANDIDATE_GROUP_LIMIT,
             cancel_checker=self._check_cancelled,
+            deadline=self._get_combination_deadline(),
+            progress_callback=lambda message: self._project_log(project, message, "组合匹配"),
         )
         bond_overflow_groups: set[str] = set()
         if valuation_match.match_type == "combination_overflow":
@@ -253,11 +261,23 @@ class ReconcileEngine:
                 asset_gap,
                 detect_ambiguous_combinations=True,
                 max_ambiguous_groups=ASSET_AM_CONFIRM_CANDIDATE_GROUP_LIMIT,
+                project=project,
             )
+        elif valuation_match.match_type == "ambiguous_combination" and len(valuation_rows) > self.max_combination_rows:
+            grouped_match, grouped_overflow_groups = self._find_natural_group_match(
+                valuation_rows,
+                asset_gap,
+                detect_ambiguous_combinations=True,
+                max_ambiguous_groups=ASSET_AM_CONFIRM_CANDIDATE_GROUP_LIMIT,
+                project=project,
+            )
+            if self._is_resolved(grouped_match) or grouped_match.match_type == "ambiguous_combination":
+                valuation_match = grouped_match
+                bond_overflow_groups = grouped_overflow_groups
         self._check_cancelled()
         self._project_log(
             project,
-            f"估值表资产端候选科目匹配结果={valuation_match.match_type}，命中金额={valuation_match.total}{'，' + valuation_match.message if valuation_match.message else ''}",
+            f"估值表资产端候选科目匹配结果={valuation_match.match_type}，命中行数={len(valuation_match.rows)}，命中金额={valuation_match.total}{'，' + valuation_match.message if valuation_match.message else ''}，耗时={time.perf_counter() - match_start:.1f}s",
             "金额匹配",
         )
         details = [
@@ -416,6 +436,8 @@ class ReconcileEngine:
         detail_rows = []
         market_total = Decimal("0")
         invest_total = Decimal("0")
+        refine_start = time.perf_counter()
+        self._project_log(project, "进入资产差异细分：债券DM核对→合同投融资核对→逆回购核对", "资产差异细分")
         bond_rows = self._bond_security_balance_difference_rows(project, date, valuation_rows, bond_overflow_groups or set())
         for row in bond_rows:
             market_total += Decimal(row["market_value"])
@@ -423,14 +445,19 @@ class ReconcileEngine:
             row["index"] = _circled_index(len(detail_rows) + 1)
             detail_rows.append(row)
 
-        for row in valuation_rows:
+        contract_check_rows = [
+            (row, _asset_difference_contract_type(row)) for row in valuation_rows if _asset_difference_contract_type(row) is not None
+        ]
+        contract_check_total = len(contract_check_rows)
+        for contract_index, (row, contract_type) in enumerate(contract_check_rows, start=1):
             self._check_cancelled()
-            contract_type = _asset_difference_contract_type(row)
-            if contract_type is None:
-                continue
 
-            pact_id = row.account_tail_code
-            self._project_log(project, f"查询{contract_type}投融资余额，合同{pact_id}，估值金额={row.market_value}", "资产差异合同核对")
+            pact_id = row.account_business_code
+            self._project_log(
+                project,
+                f"查询{contract_type}投融资余额，合同{pact_id}，估值金额={row.market_value}（第{contract_index}/共{contract_check_total}个）",
+                "资产差异合同核对",
+            )
             if contract_type == "贷款合同":
                 dm_row = self.repository.get_dm_project_invest_contract_balance(project.project_code, date, pact_id)
                 invest_balance = None if dm_row is None else to_decimal(dm_row.get("pin_acbalance"))
@@ -467,6 +494,7 @@ class ReconcileEngine:
 
         reverse_repo_rows = [row for row in valuation_rows if _is_reverse_repo_account(row.account_code)]
         reverse_repo_market_total = _valuation_market_total(reverse_repo_rows)
+        self._project_log(project, "开始核对逆回购存续回购业务表金额", "资产差异回购核对")
         reverse_repo_business_amount = self.repository.get_reverse_repo_business_amount(project.project_code)
         reverse_repo_difference = reverse_repo_business_amount - reverse_repo_market_total
         if not amounts_equal(reverse_repo_difference, Decimal("0")):
@@ -494,6 +522,11 @@ class ReconcileEngine:
             )
 
         difference_total = invest_total - market_total
+        self._project_log(
+            project,
+            f"资产差异细分完成：差异合计={difference_total}，耗时={time.perf_counter() - refine_start:.1f}s",
+            "资产差异细分",
+        )
         is_full_match = bool(detail_rows) and amounts_equal(difference_total, asset_total_gap)
         if is_full_match:
             specific_reason = _asset_difference_full_reason(detail_rows)
@@ -621,17 +654,29 @@ class ReconcileEngine:
             match_difference,
             combination_rows,
             detect_ambiguous_combinations=should_detect_ambiguous_main_difference,
+            project=project,
         )
         if valuation_match.match_type == "combination_overflow":
             valuation_match, match_target, _overflow_groups = self._find_natural_group_match_with_target(
                 combination_rows,
                 match_difference,
                 detect_ambiguous_combinations=should_detect_ambiguous_main_difference,
+                project=project,
             )
+        elif valuation_match.match_type == "ambiguous_combination" and len(combination_rows) > self.max_combination_rows:
+            grouped_match, grouped_target, _overflow_groups = self._find_natural_group_match_with_target(
+                combination_rows,
+                match_difference,
+                detect_ambiguous_combinations=should_detect_ambiguous_main_difference,
+                project=project,
+            )
+            if self._is_resolved(grouped_match) or grouped_match.match_type == "ambiguous_combination":
+                valuation_match = grouped_match
+                match_target = grouped_target
         self._check_cancelled()
         self._project_log(
             project,
-            f"负债权益科目匹配结果={valuation_match.match_type}，匹配目标={match_target}，命中金额={valuation_match.total}{'，' + valuation_match.message if valuation_match.message else ''}",
+            f"负债权益科目匹配结果={valuation_match.match_type}，匹配目标={match_target}，命中行数={len(valuation_match.rows)}，命中金额={valuation_match.total}{'，' + valuation_match.message if valuation_match.message else ''}",
             "负债权益科目匹配",
         )
         resolved = self._is_resolved(valuation_match)
@@ -958,6 +1003,7 @@ class ReconcileEngine:
         combination_rows: list[ValuationRow] | None = None,
         *,
         detect_ambiguous_combinations: bool = False,
+        project: ProjectBalance | None = None,
     ) -> tuple[ValuationMatch, Decimal]:
         self._check_cancelled()
         # 先按主差异原符号匹配；如果主差异为负且未命中，再尝试绝对值。
@@ -969,8 +1015,18 @@ class ReconcileEngine:
             max_combination_rows=self.max_combination_rows,
             detect_ambiguous_combinations=detect_ambiguous_combinations,
             cancel_checker=self._check_cancelled,
+            deadline=self._get_combination_deadline(),
+            progress_callback=(
+                (lambda message: self._project_log(project, message, "组合匹配"))
+                if project is not None
+                else None
+            ),
         )
-        if self._is_resolved(valuation_match) or valuation_match.match_type == "ambiguous_combination" or target >= 0:
+        if (
+            self._is_resolved(valuation_match)
+            or valuation_match.match_type in {"ambiguous_combination", "combination_timeout"}
+            or target >= 0
+        ):
             return valuation_match, target
 
         absolute_target = abs(target)
@@ -981,6 +1037,12 @@ class ReconcileEngine:
             max_combination_rows=self.max_combination_rows,
             detect_ambiguous_combinations=detect_ambiguous_combinations,
             cancel_checker=self._check_cancelled,
+            deadline=self._get_combination_deadline(),
+            progress_callback=(
+                (lambda message: self._project_log(project, message, "组合匹配"))
+                if project is not None
+                else None
+            ),
         )
         self._check_cancelled()
         if self._is_resolved(absolute_match) or absolute_match.match_type == "ambiguous_combination":
@@ -994,12 +1056,14 @@ class ReconcileEngine:
         *,
         detect_ambiguous_combinations: bool = False,
         max_ambiguous_groups: int = DISPLAY_CANDIDATE_GROUP_LIMIT,
+        project: ProjectBalance | None = None,
     ) -> tuple[ValuationMatch, set[str]]:
         valuation_match, _target, overflow_groups = self._find_natural_group_match_with_target(
             valuation_rows,
             target,
             detect_ambiguous_combinations=detect_ambiguous_combinations,
             max_ambiguous_groups=max_ambiguous_groups,
+            project=project,
         )
         return valuation_match, overflow_groups
 
@@ -1010,14 +1074,20 @@ class ReconcileEngine:
         *,
         detect_ambiguous_combinations: bool = False,
         max_ambiguous_groups: int = DISPLAY_CANDIDATE_GROUP_LIMIT,
+        project: ProjectBalance | None = None,
     ) -> tuple[ValuationMatch, Decimal, set[str]]:
         valuation_match, overflow_groups = self._find_natural_group_match_for_target(
             valuation_rows,
             target,
             detect_ambiguous_combinations=detect_ambiguous_combinations,
             max_ambiguous_groups=max_ambiguous_groups,
+            project=project,
         )
-        if self._is_resolved(valuation_match) or valuation_match.match_type == "ambiguous_combination" or target >= 0:
+        if (
+            self._is_resolved(valuation_match)
+            or valuation_match.match_type in {"ambiguous_combination", "combination_timeout"}
+            or target >= 0
+        ):
             return valuation_match, target, overflow_groups
 
         absolute_match, absolute_overflow_groups = self._find_natural_group_match_for_target(
@@ -1025,6 +1095,7 @@ class ReconcileEngine:
             abs(target),
             detect_ambiguous_combinations=detect_ambiguous_combinations,
             max_ambiguous_groups=max_ambiguous_groups,
+            project=project,
         )
         overflow_groups.update(absolute_overflow_groups)
         if self._is_resolved(absolute_match) or absolute_match.match_type == "ambiguous_combination":
@@ -1038,12 +1109,23 @@ class ReconcileEngine:
         *,
         detect_ambiguous_combinations: bool = False,
         max_ambiguous_groups: int = DISPLAY_CANDIDATE_GROUP_LIMIT,
+        project: ProjectBalance | None = None,
     ) -> tuple[ValuationMatch, set[str]]:
         overflow_messages: list[str] = []
         overflow_groups: set[str] = set()
         resolved_group_matches: list[tuple[str, ValuationMatch]] = []
-        for group_key, group_rows in _natural_grouped_valuation_rows(valuation_rows).items():
+        grouped_rows = _natural_grouped_valuation_rows(valuation_rows)
+        group_total = len(grouped_rows)
+        if project is not None:
+            max_group_rows = max((len(rows) for rows in grouped_rows.values()), default=0)
+            self._project_log(
+                project,
+                f"分类组合兜底：共 {group_total} 个四级科目分组，最大组 {max_group_rows} 行",
+                "分类组合兜底",
+            )
+        for group_index, (group_key, group_rows) in enumerate(grouped_rows.items(), start=1):
             self._check_cancelled()
+            group_start = time.perf_counter()
             group_match = find_valuation_matches(
                 group_rows,
                 target,
@@ -1051,7 +1133,19 @@ class ReconcileEngine:
                 detect_ambiguous_combinations=detect_ambiguous_combinations,
                 max_ambiguous_groups=max_ambiguous_groups,
                 cancel_checker=self._check_cancelled,
+                deadline=self._get_combination_deadline(),
+                progress_callback=(
+                    (lambda message: self._project_log(project, message, "组合匹配"))
+                    if project is not None
+                    else None
+                ),
             )
+            if project is not None:
+                self._project_log(
+                    project,
+                    f"分类组合兜底 组{group_index}/{group_total}：四级科目={group_key}，行数={len(group_rows)}，结果={group_match.match_type}，耗时={time.perf_counter() - group_start:.1f}s",
+                    "分类组合兜底",
+                )
             if group_match.match_type == "ambiguous_combination":
                 candidate_groups = _rank_candidate_row_groups(group_match.candidate_groups)
                 return (
@@ -1063,6 +1157,8 @@ class ReconcileEngine:
                     ),
                     overflow_groups,
                 )
+            if group_match.match_type == "combination_timeout":
+                return group_match, overflow_groups
             if self._is_resolved(group_match):
                 if detect_ambiguous_combinations:
                     resolved_group_matches.append((group_key, group_match))
@@ -1136,12 +1232,24 @@ class ReconcileEngine:
         fa_amounts: dict[tuple[str, str], Decimal] = {}
         fa_account_codes: dict[tuple[str, str], str] = {}
         for row in fa_rows:
-            key = (row.account_tail_code, row.account_name)
+            key = (row.account_business_code, row.account_name)
             fa_amounts[key] = fa_amounts.get(key, Decimal("0")) + row.market_value
             fa_account_codes.setdefault(key, row.account_code)
 
         dm_amounts: dict[tuple[str, str], Decimal] = {}
-        for row in self.repository.list_security_balance_amounts(project.project_code, date):
+        self._project_log(
+            project,
+            f"开始查询DM证券余额，进行债券FA与DM双边对账（FA债券本金科目 {len(fa_rows)} 行）",
+            "资产差异债券DM核对",
+        )
+        dm_query_start = time.perf_counter()
+        dm_balance_rows = self.repository.list_security_balance_amounts(project.project_code, date)
+        self._project_log(
+            project,
+            f"DM证券余额查询完成：{len(dm_balance_rows)} 条，耗时 {time.perf_counter() - dm_query_start:.1f}s",
+            "资产差异债券DM核对",
+        )
+        for row in dm_balance_rows:
             stock_code = str(row.get("stock_code") or "")
             security_name = str(row.get("security_name") or "")
             if not stock_code or not security_name:
@@ -1189,6 +1297,7 @@ class ReconcileEngine:
     ) -> tuple[str, DifferenceDetail] | None:
         self._check_cancelled()
         # 只有资产缺失且命中特定目的载体四级科目时，才进入 AM 标的和合同投融资余额复核。
+        self._project_log(project, f"AM标的复核：共 {len(valuation_rows)} 行待复核", "AM标的复核")
         self._project_log(project, "读取项目AM资产信息", "AM标的复核")
         project_pact_assets = self.repository.list_project_pact_assets(project.project_code, date)
         self._check_cancelled()
@@ -1219,7 +1328,12 @@ class ReconcileEngine:
         self._project_log(project, "资产缺失候选不唯一，尝试用AM复核确认候选组合", "AM标的复核")
         project_pact_assets = self.repository.list_project_pact_assets(project.project_code, date)
         confirmed: list[tuple[int, list[ValuationRow], list[DifferenceDetail]]] = []
-        for group_index, group in enumerate(_rank_candidate_row_groups(valuation_match.candidate_groups), start=1):
+        ranked_groups = _rank_candidate_row_groups(valuation_match.candidate_groups)
+        self._project_log(project, f"AM复核候选组：共 {len(ranked_groups)} 组", "AM标的复核")
+        for group_index, group in enumerate(ranked_groups, start=1):
+            log_group_details = _should_log_candidate_group(group_index, len(ranked_groups))
+            if log_group_details:
+                self._project_log(project, f"复核候选组合{group_index}/{len(ranked_groups)}（{len(group)} 行）", "AM标的复核")
             abnormal_amount = Decimal("0")
             abnormal_details: list[DifferenceDetail] = []
             for valuation_row in group:
@@ -1228,6 +1342,7 @@ class ReconcileEngine:
                     date,
                     valuation_row,
                     project_pact_assets,
+                    log_details=log_group_details,
                 )
                 if check_result is None:
                     continue
@@ -1257,21 +1372,33 @@ class ReconcileEngine:
         date: str,
         valuation_row: ValuationRow,
         project_pact_assets: list[PactAssetRow],
+        *,
+        log_details: bool = True,
     ) -> tuple[str, DifferenceDetail, bool] | None:
+        def log(message: str, step: str = "AM标的复核") -> None:
+            if log_details:
+                self._project_log(project, message, step)
+
         if not _is_special_purpose_vehicle_account(valuation_row.account_code):
-            self._project_log(project, f"科目{valuation_row.account_code}不是特定目的载体四级科目，跳过AM复核", "AM标的复核")
+            log(f"科目{valuation_row.account_code}不是特定目的载体四级科目，跳过AM复核")
             return None
 
-        self._project_log(project, f"按科目名称匹配AM资产：{valuation_row.account_name}", "AM标的复核")
-        matched_assets = self._select_pact_assets_for_am_check(project, date, valuation_row, project_pact_assets)
+        log(f"按科目名称匹配AM资产：{valuation_row.account_name}")
+        matched_assets = self._select_pact_assets_for_am_check(
+            project,
+            date,
+            valuation_row,
+            project_pact_assets,
+            log_details=log_details,
+        )
         if not matched_assets:
-            self._project_log(project, "未匹配到AM资产名称", "AM标的复核")
+            log("未匹配到AM资产名称")
             return "AM标的缺失", DifferenceDetail(
                 kind="am_missing",
                 data={
                     "fa_account_code": valuation_row.account_code,
                     "fa_account_name": valuation_row.account_name,
-                    "fa_tail_code": valuation_row.account_tail_code,
+                    "fa_tail_code": valuation_row.account_business_code,
                     "fa_market_value": str(valuation_row.market_value),
                     "expected_account_level": _fourth_level_account_code(valuation_row.account_code),
                     "specific_reason": "AM标的缺失",
@@ -1284,25 +1411,21 @@ class ReconcileEngine:
                 key=lambda p: p.contract_start_date or "",
                 reverse=True,
             )
-            self._project_log(
-                project,
+            log(
                 f"多个AM候选标的，按合同开始日取最新：{matched_assets[0].asset_name}（{matched_assets[0].contract_start_date}）",
-                "AM标的复核",
             )
 
         latest_asset = matched_assets[0]
-        if latest_asset.stock_code != valuation_row.account_tail_code:
-            self._project_log(
-                project,
-                f"最新AM标的数量不一致，FA尾码={valuation_row.account_tail_code}，最新AM标的={latest_asset.stock_code}",
-                "AM标的复核",
+        if latest_asset.stock_code != valuation_row.account_business_code:
+            log(
+                f"最新AM标的数量不一致，FA尾码={valuation_row.account_business_code}，最新AM标的={latest_asset.stock_code}",
             )
             return "FA与AM标的不一致", DifferenceDetail(
                 kind="fa_am",
                 data={
                     "fa_account_code": valuation_row.account_code,
                     "fa_account_name": valuation_row.account_name,
-                    "fa_tail_code": valuation_row.account_tail_code,
+                    "fa_tail_code": valuation_row.account_business_code,
                     "fa_market_value": str(valuation_row.market_value),
                     "am_asset_name": latest_asset.asset_name,
                     "am_stock_code": latest_asset.stock_code,
@@ -1314,21 +1437,21 @@ class ReconcileEngine:
 
         stock_matched_asset = latest_asset
 
-        self._project_log(project, f"读取AM合同投融资余额，合同{stock_matched_asset.pact_id}", "合同投融资余额核对")
+        log(f"读取AM合同投融资余额，合同{stock_matched_asset.pact_id}", "合同投融资余额核对")
         project_invest_balance = self.repository.get_project_invest_balance(
             project.project_code,
             date,
             stock_matched_asset.pact_id,
         )
         self._check_cancelled()
-        self._project_log(project, f"AM合同投融资余额={project_invest_balance}", "合同投融资余额核对")
+        log(f"AM合同投融资余额={project_invest_balance}", "合同投融资余额核对")
         is_zero_balance = amounts_equal(project_invest_balance or Decimal("0"), Decimal("0"))
         detail = DifferenceDetail(
             kind="project_invest_balance",
             data={
                 "fa_account_code": valuation_row.account_code,
                 "fa_account_name": valuation_row.account_name,
-                "fa_tail_code": valuation_row.account_tail_code,
+                "fa_tail_code": valuation_row.account_business_code,
                 "fa_market_value": str(valuation_row.market_value),
                 "am_asset_name": stock_matched_asset.asset_name,
                 "am_stock_code": stock_matched_asset.stock_code,
@@ -1351,6 +1474,8 @@ class ReconcileEngine:
         date: str,
         valuation_row: ValuationRow,
         project_pact_assets: list[PactAssetRow],
+        *,
+        log_details: bool = True,
     ) -> list[PactAssetRow]:
         matched_assets = _matching_pact_assets(valuation_row.account_name, project_pact_assets)
         if matched_assets:
@@ -1359,17 +1484,24 @@ class ReconcileEngine:
         stock_code_assets = [
             pact_asset
             for pact_asset in project_pact_assets
-            if pact_asset.stock_code == valuation_row.account_tail_code
+            if pact_asset.stock_code == valuation_row.account_business_code
         ]
         if stock_code_assets:
-            self._project_log(
-                project,
-                f"AM fallback by FA tail code: {valuation_row.account_tail_code}",
-                "AM标的复核",
-            )
+            if log_details:
+                self._project_log(
+                    project,
+                    f"AM fallback by FA tail code: {valuation_row.account_business_code}",
+                    "AM标的复核",
+                )
             return stock_code_assets
 
-        return self._jiangsu_trust_parentheses_fallback_assets(project, date, valuation_row, project_pact_assets)
+        return self._jiangsu_trust_parentheses_fallback_assets(
+            project,
+            date,
+            valuation_row,
+            project_pact_assets,
+            log_details=log_details,
+        )
 
     def _jiangsu_trust_parentheses_fallback_assets(
         self,
@@ -1377,6 +1509,8 @@ class ReconcileEngine:
         date: str,
         valuation_row: ValuationRow,
         project_pact_assets: list[PactAssetRow],
+        *,
+        log_details: bool = True,
     ) -> list[PactAssetRow]:
         account_name = valuation_row.account_name or ""
         if JIANGSU_TRUST_TEXT not in account_name:
@@ -1408,11 +1542,12 @@ class ReconcileEngine:
         if not fa_has_parentheses:
             candidate_asset_keys = _distinct_am_asset_keys(candidates)
             if len(candidate_asset_keys) != 1:
-                self._project_log(
-                    project,
-                    f"Jiangsu Trust parentheses fallback found {len(candidate_asset_keys)} AM candidates",
-                    "AM标的复核",
-                )
+                if log_details:
+                    self._project_log(
+                        project,
+                        f"Jiangsu Trust parentheses fallback found {len(candidate_asset_keys)} AM candidates",
+                        "AM标的复核",
+                    )
                 return []
 
         report_match_count = self.repository.count_report_project_name_matches_without_chinese_parentheses(
@@ -1420,18 +1555,20 @@ class ReconcileEngine:
             fa_base_name,
         )
         if report_match_count != 1:
-            self._project_log(
-                project,
-                f"Jiangsu Trust report project match count is {report_match_count}",
-                "AM标的复核",
-            )
+            if log_details:
+                self._project_log(
+                    project,
+                    f"Jiangsu Trust report project match count is {report_match_count}",
+                    "AM标的复核",
+                )
             return []
 
-        self._project_log(
-            project,
-            "Jiangsu Trust one-sided parentheses fallback matched AM asset",
-            "AM标的复核",
-        )
+        if log_details:
+            self._project_log(
+                project,
+                "Jiangsu Trust one-sided parentheses fallback matched AM asset",
+                "AM标的复核",
+            )
         return candidates
 
     def _asset_missing_refinement_detail(
@@ -1506,7 +1643,7 @@ class ReconcileEngine:
             key_field = "c_spv_type/c_assettype"
             project_pact_assets = self.repository.list_project_pact_assets(project.project_code, date)
             matched_asset = next(
-                (pact_asset for pact_asset in project_pact_assets if pact_asset.stock_code == valuation_row.account_tail_code),
+                (pact_asset for pact_asset in project_pact_assets if pact_asset.stock_code == valuation_row.account_business_code),
                 None,
             )
             if matched_asset is not None:
@@ -1519,7 +1656,7 @@ class ReconcileEngine:
             "asset_type": asset_type,
             "asset_name": asset_name,
             "fa_account_code": valuation_row.account_code,
-            "account_tail": valuation_row.account_tail_code,
+            "account_tail": valuation_row.account_business_code,
             "fa_market_value": str(valuation_row.market_value),
             "check_table": check_table,
             "check_result": reason or "无异常",
@@ -1572,7 +1709,7 @@ class ReconcileEngine:
             "asset_type": asset_type,
             "asset_name": asset_name,
             "fa_account_code": valuation_row.account_code,
-            "account_tail": valuation_row.account_tail_code,
+            "account_tail": valuation_row.account_business_code,
             "fa_market_value": str(valuation_row.market_value),
             "check_table": check_table,
             "check_result": reason or "无异常",
@@ -1593,7 +1730,7 @@ class ReconcileEngine:
         security = self.repository.get_security_balance_refinement(
             project.project_code,
             date,
-            valuation_row.account_tail_code,
+            valuation_row.account_business_code,
             valuation_row.account_name,
         )
         if security is None:
@@ -1632,7 +1769,7 @@ class ReconcileEngine:
         valuation_row: ValuationRow,
     ) -> tuple[str, str, str]:
         check_table = "dm.am_projinvest_zgxg_dm"
-        if self.repository.get_dm_project_invest_refinement(project.project_code, date, valuation_row.account_tail_code) is None:
+        if self.repository.get_dm_project_invest_refinement(project.project_code, date, valuation_row.account_business_code) is None:
             return f"该贷款在{DM_PROJECT_INVEST_TABLE_LABEL}不存在或投融资余额为0", check_table, ""
         report_table = ("currency_report_24", "currency_detail_project_2_1_2")
         if not self.repository.has_report_rows(report_table, date):
@@ -1646,7 +1783,7 @@ class ReconcileEngine:
         valuation_row: ValuationRow,
     ) -> tuple[str, str, str]:
         check_table = "dm.am_projinvest_zgxg_dm"
-        row = self.repository.get_dm_project_invest_refinement(project.project_code, date, valuation_row.account_tail_code)
+        row = self.repository.get_dm_project_invest_refinement(project.project_code, date, valuation_row.account_business_code)
         if row is None:
             return f"该股权投资在{DM_PROJECT_INVEST_TABLE_LABEL}不存在或投融资余额为0", check_table, ""
         if _is_blank(row.get("pin_gqtype_h")):
@@ -1663,7 +1800,7 @@ class ReconcileEngine:
         valuation_row: ValuationRow,
     ) -> tuple[str, str, str]:
         check_table = "dm.am_projinvest_spv_zgxg_dm"
-        if self.repository.get_spv_project_invest_refinement(project.project_code, date, valuation_row.account_tail_code) is None:
+        if self.repository.get_spv_project_invest_refinement(project.project_code, date, valuation_row.account_business_code) is None:
             return f"该信托计划收益权在{DM_SPV_PROJECT_INVEST_TABLE_LABEL}不存在或余额为0", check_table, ""
         report_table = ("currency_report_24", "currency_detail_project_2_1_6")
         if not self.repository.has_report_rows(report_table, date):
@@ -1677,7 +1814,7 @@ class ReconcileEngine:
         valuation_row: ValuationRow,
     ) -> tuple[str, str, str]:
         check_table = "zgxg_zhbs.ccqxx"
-        if self.repository.get_property_right_refinement(project.project_code, valuation_row.account_tail_code) is None:
+        if self.repository.get_property_right_refinement(project.project_code, valuation_row.account_business_code) is None:
             return f"该财产权在{PROPERTY_RIGHT_CONTRACT_TABLE_LABEL}不存在或投融资余额为0", check_table, ""
         report_table = ("currency_report_24", "currency_detail_project_2_1_9")
         if not self.repository.has_report_rows(report_table, date):
@@ -1710,7 +1847,7 @@ class ReconcileEngine:
 
         # 先取最新合同，再判断stock_code是否匹配
         latest_asset = matched_assets[0]
-        if latest_asset.stock_code != valuation_row.account_tail_code:
+        if latest_asset.stock_code != valuation_row.account_business_code:
             return "FA和AM标的不一致", "am_pactasset_dws", "c_stockcode", _pact_asset_detail_fields(latest_asset)
 
         stock_matched_asset = latest_asset
@@ -1747,9 +1884,14 @@ class ReconcileEngine:
             return "已解释"
         if valuation_match.match_type == "ambiguous_combination":
             return "候选不唯一"
-        if valuation_match.match_type == "combination_overflow":
+        if valuation_match.match_type in {"combination_overflow", "combination_timeout"}:
             return "组合候选过多"
         return "未解释"
+
+    def _get_combination_deadline(self) -> float:
+        if self._combination_deadline is None:
+            self._combination_deadline = time.perf_counter() + COMBINATION_TIME_BUDGET_SECONDS
+        return self._combination_deadline
 
     def _is_resolved(self, valuation_match: ValuationMatch) -> bool:
         return valuation_match.match_type in {"single", "grouped", "combination"}
@@ -1917,7 +2059,7 @@ def _candidate_groups_payload(candidate_groups: list[list[ValuationRow]]) -> lis
                     {
                         "account_code": row.account_code,
                         "account_name": row.account_name,
-                        "account_tail": row.account_tail_code,
+                        "account_tail": row.account_business_code,
                         "market_value": str(row.market_value),
                     }
                     for row in group
@@ -1935,6 +2077,10 @@ def _rank_candidate_row_groups(candidate_groups: list[list[ValuationRow]], limit
     if limit is None:
         return ranked
     return ranked[:limit]
+
+
+def _should_log_candidate_group(index: int, total: int) -> bool:
+    return index <= 5 or index == total or index % 20 == 0
 
 
 def _liability_equity_refinement_row(row: ValuationRow, direction: str, index: int) -> dict[str, str]:
@@ -1959,7 +2105,7 @@ def _liability_equity_refinement_row(row: ValuationRow, direction: str, index: i
         "account_type": account_type,
         "account_name": asset_name,
         "account_code": row.account_code,
-        "account_tail": row.account_tail_code,
+        "account_tail": row.account_business_code,
         "market_value": str(row.market_value),
         "direction": direction,
         "check_result": "命中",
@@ -2054,7 +2200,7 @@ def _is_trust_plan_income_right_name(account_name: str) -> bool:
 def _asset_difference_contract_type(row: ValuationRow) -> str | None:
     if (
         (row.account_code.startswith("1303.01.01") or row.account_code.startswith("1501.04.05.01"))
-        and (row.account_tail_code.startswith("DK") or row.account_tail_code.startswith("ZQ"))
+        and (row.account_business_code.startswith("DK") or row.account_business_code.startswith("ZQ"))
     ):
         return "贷款合同"
     if row.account_code.startswith("1541"):

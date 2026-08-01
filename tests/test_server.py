@@ -396,6 +396,35 @@ def test_get_config_returns_defaults(tmp_path):
     assert payload["default_run_date"] == previous_month_end()
 
 
+def test_create_runner_routes_sql_diagnostics_to_backend_only(monkeypatch, tmp_path, capsys):
+    captured = {}
+
+    class CapturingRepository:
+        def __init__(self, _config, **kwargs):
+            captured.update(kwargs)
+
+    class CapturingEngine:
+        def __init__(self, repository, **kwargs):
+            self.repository = repository
+
+    monkeypatch.setattr(server_module, "AutoCheckRepository", CapturingRepository)
+    monkeypatch.setattr(server_module, "ReconcileEngine", CapturingEngine)
+    progress_messages = []
+    router = ApiRouter(config_path=tmp_path / "config.json")
+
+    router._create_runner(
+        server_module.default_config(),
+        max_combination_rows=50,
+        progress_logger=lambda message, progress, step: progress_messages.append(message),
+    )
+    captured["sql_logger"]("数据库=postgresql://db.example:5432/dwdb\nSQL:\nSELECT 1\n参数=()")
+
+    output = capsys.readouterr().out
+    assert progress_messages == []
+    assert "[auto-check][sql]" in output
+    assert "SELECT 1" in output
+
+
 def test_api_router_passes_one_shared_application_database_to_config_handlers(
     monkeypatch, tmp_path
 ):

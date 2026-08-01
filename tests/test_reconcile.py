@@ -1,7 +1,85 @@
 from decimal import Decimal
 
-from auto_check.engine.models import PactAssetRow, ProjectBalance, ValuationRow
+import auto_check.engine.reconcile as reconcile_module
+from auto_check.engine.models import PactAssetRow, ProjectBalance, ValuationMatch, ValuationRow
 from auto_check.engine.reconcile import NoSourceReportData, ReconcileEngine
+
+
+def test_valuation_row_business_code_preserves_dots_inside_identifier():
+    assert ValuationRow(
+        "1501.03.03.01.JS0508-2.51",
+        "2021NJC0104金信添利-2.51",
+        Decimal("450000000"),
+    ).account_business_code == "JS0508-2.51"
+
+    assert ValuationRow("1101.02.15.01.244733", "债券", Decimal("1")).account_business_code == "244733"
+    assert ValuationRow("1303.01.01.DK20260531001", "贷款", Decimal("1")).account_business_code == "DK20260531001"
+    assert ValuationRow("1541.01.CC8250MX", "财产权", Decimal("1")).account_business_code == "CC8250MX"
+
+
+def test_am_candidate_group_progress_logs_are_throttled():
+    logged = [
+        index
+        for index in range(1, 201)
+        if reconcile_module._should_log_candidate_group(index, 200)
+    ]
+
+    assert logged == [1, 2, 3, 4, 5, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200]
+
+
+def test_ambiguous_am_check_suppresses_row_logs_for_unsampled_groups(monkeypatch):
+    repo = FakeRepo()
+    flags = []
+    engine = ReconcileEngine(repo)
+    candidate_groups = [
+        [ValuationRow(f"1101.05.03.01.CODE{index}", f"Asset {index}", Decimal("1"))]
+        for index in range(1, 8)
+    ]
+
+    def fake_check(*args, log_details=True, **kwargs):
+        flags.append(log_details)
+        return None
+
+    monkeypatch.setattr(engine, "_asset_missing_am_check_for_row", fake_check)
+    engine._confirm_ambiguous_asset_missing_by_am(
+        ProjectBalance("P1", "Project", Decimal("1"), Decimal("2")),
+        "2026-06-01",
+        ValuationMatch(match_type="ambiguous_combination", candidate_groups=candidate_groups),
+        Decimal("99"),
+    )
+
+    assert flags == [True, True, True, True, True, False, True]
+
+
+def test_project_combination_searches_share_one_deadline(monkeypatch):
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("900"), Decimal("1000"))]
+    repo.asset_total["P1"] = Decimal("1000")
+    repo.valuation["P1"] = [
+        ValuationRow("1201.01.01.01.A", "Asset A", Decimal("20")),
+        ValuationRow("1202.01.01.01.B", "Asset B", Decimal("30")),
+    ]
+    deadlines = []
+
+    def overflow_match(*args, **kwargs):
+        deadlines.append(kwargs.get("deadline"))
+        return ValuationMatch(match_type="combination_overflow", message="test overflow")
+
+    monkeypatch.setattr(reconcile_module, "find_valuation_matches", overflow_match)
+
+    ReconcileEngine(repo, max_combination_rows=1).run("2026-06-01")
+
+    assert len(deadlines) >= 3
+    assert deadlines[0] is not None
+    assert all(deadline == deadlines[0] for deadline in deadlines)
+
+
+def test_project_combination_deadline_allows_sixty_seconds(monkeypatch):
+    repo = FakeRepo()
+    engine = ReconcileEngine(repo)
+    monkeypatch.setattr(reconcile_module.time, "perf_counter", lambda: 100.0)
+
+    assert engine._get_combination_deadline() == 160.0
 
 
 class FakeRepo:
@@ -1213,6 +1291,34 @@ def test_progress_logs_include_project_level_steps():
     assert any("P1：读取估值表资产端候选科目" in message for message in logs)
     assert any("P1：查询财产权合同投融资余额，合同PACTA" in message for message in logs)
     assert any("P1：合同PACTA：AM余额=0，估值=5000000，差异=-5000000" in message for message in logs)
+    assert any("命中行数=" in message for message in logs)
+
+
+def test_progress_logs_include_group_based_combination_and_refinement_steps():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("7000"), Decimal("20000"))]
+    repo.asset_total["P1"] = Decimal("20000")
+    repo.valuation["P1"] = [
+        ValuationRow("1001.01.01.01.A", "同类资产A", Decimal("3000")),
+        ValuationRow("1001.01.01.01.B", "同类资产B", Decimal("4000")),
+        ValuationRow("1001.02.01.01.C", "其他资产C", Decimal("2000")),
+        ValuationRow("1001.02.01.01.D", "其他资产D", Decimal("1000")),
+    ]
+    repo.project_invest_balances[("P1", "PACTA")] = Decimal("0")
+    logs = []
+
+    ReconcileEngine(
+        repo,
+        max_combination_rows=2,
+        progress_logger=lambda message, progress, step: logs.append(message),
+    ).run("2026-06-01")
+
+    assert any("P1：分类组合兜底：共 2 个四级科目分组" in message for message in logs)
+    assert any("P1：分类组合兜底 组1/2：四级科目=1001.01.01.01，行数=2，结果=" in message for message in logs)
+    assert any("P1：分类组合兜底 组2/2：四级科目=1001.02.01.01，行数=2，结果=" in message for message in logs)
+    assert any("P1：本次执行组合候选阈值=2" in message for message in logs)
+    assert any("P1：进入资产差异细分" in message for message in logs)
+    assert any("P1：资产差异细分完成" in message for message in logs)
 
 
 def test_received_trust_error_when_c1000_differs_from_fa4001_by_main_difference():
@@ -1966,6 +2072,26 @@ def test_asset_missing_150103_spv_account_falls_back_to_stock_code():
     assert results[0].details[1].data["fa_account_code"] == "1501.03.12.01.SPV001"
     assert results[0].details[1].data["am_stock_code"] == "SPV001"
     assert results[0].details[-1].data["specific_reason"] == "①特定目的载体缺失：SPV Asset；原因：合同投融资余额为0但FA科目余额不为0"
+
+
+def test_asset_missing_am_target_uses_complete_dotted_business_code():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("0"), Decimal("450000000"))]
+    repo.asset_total["P1"] = Decimal("450000000")
+    account_code = "1501.03.03.01.JS0508-2.51"
+    asset_name = "2021NJC0104金信添利-2.51"
+    repo.valuation["P1"] = [ValuationRow(account_code, asset_name, Decimal("450000000"))]
+    repo.pact_assets[("P1", asset_name)] = [
+        PactAssetRow("P1", asset_name, "JS0508-2.51", "PACT1")
+    ]
+    repo.project_invest_balances[("P1", "PACT1")] = Decimal("0")
+
+    results = ReconcileEngine(repo).run("2026-07-31")
+
+    assert results[0].details[1].kind == "project_invest_balance"
+    assert results[0].details[1].data["fa_tail_code"] == "JS0508-2.51"
+    assert results[0].details[1].data["am_stock_code"] == "JS0508-2.51"
+    assert results[0].details[-1].data["rows"][0]["account_tail"] == "JS0508-2.51"
 
 
 def test_asset_missing_am_target_missing_shows_actual_spv_account_level():

@@ -383,6 +383,7 @@ def test_repository_loads_security_balance_amounts_from_dm_table():
     assert '"dm"."fa_security_balance_zgxg_dm"' in sql
     assert "GROUP BY sbm_stockcode, sbm_sename" in sql
     assert "COALESCE(sbm_balamoney_cost, 0)" in sql
+    assert "TRIM(COALESCE(sbm_seclas_h2024, '')) <> ''" in sql
     assert params == ("P1", "2026-04-30")
 
 

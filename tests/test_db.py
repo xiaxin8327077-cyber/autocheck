@@ -45,6 +45,45 @@ def test_qualified_name_quotes_database_for_mysql():
     assert qualified_name(config, "currency_report_duration") == "`biz`.`currency_report_duration`"
 
 
+def test_database_client_sends_full_select_and_params_to_diagnostic_logger(monkeypatch):
+    config = DataSourceConfig("postgresql", "db.example", 5432, "dwdb", "dws", "u", "secret")
+    messages = []
+    client = DatabaseClient(config, query_logger=messages.append)
+
+    class FakeCursor:
+        description = [("value",)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, _sql, _params):
+            pass
+
+        def fetchall(self):
+            return [(1,)]
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+    @contextmanager
+    def fake_connect(_self):
+        yield FakeConnection()
+
+    monkeypatch.setattr(DatabaseClient, "_connect", fake_connect)
+
+    client.fetch_all("SELECT value FROM dws.demo WHERE project_code = %s", ("P001",))
+
+    assert len(messages) == 1
+    assert "postgresql://db.example:5432/dwdb" in messages[0]
+    assert "SELECT value FROM dws.demo WHERE project_code = %s" in messages[0]
+    assert "参数=('P001',)" in messages[0]
+    assert "secret" not in messages[0]
+
+
 def test_quote_identifier_accepts_plain_configured_names_and_rejects_sql_fragments():
     assert hasattr(db_module, "quote_identifier"), "quote_identifier is missing"
     assert db_module.quote_identifier("mysql", "ck_result") == "`ck_result`"

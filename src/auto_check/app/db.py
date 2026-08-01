@@ -53,14 +53,27 @@ def build_clear_table_sql(db_type: str, table: TableRef) -> str:
 
 
 class DatabaseClient:
-    def __init__(self, config: DataSourceConfig):
+    def __init__(
+        self,
+        config: DataSourceConfig,
+        *,
+        query_logger: Callable[[str], None] | None = None,
+    ):
         self.config = config
+        self.query_logger = query_logger
 
     def fetch_all(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         ensure_select_only(sql)
+        bound_params = tuple(params)
+        if self.query_logger is not None:
+            schema_text = f"，schema={self.config.schema}" if self.config.schema else ""
+            self.query_logger(
+                f"数据库={self.config.db_type}://{self.config.host}:{self.config.port}/{self.config.database}"
+                f"{schema_text}\nSQL:\n{sql.strip()}\n参数={bound_params!r}"
+            )
         with self._connect() as connection:
             with connection.cursor() as cursor:
-                cursor.execute(self._sql_for_driver(sql), tuple(params))
+                cursor.execute(self._sql_for_driver(sql), bound_params)
                 columns = [column[0].lower() for column in cursor.description or []]
                 return [dict(zip(columns, row)) for row in cursor.fetchall()]
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 import re
+import time
 import unicodedata
+from typing import Callable
 
 from auto_check.app.config import AppConfig, DataSourceConfig
 from auto_check.app.db import DatabaseClient, qualified_name
@@ -224,10 +226,14 @@ class AutoCheckRepository:
         schema: ReconcileSchemaSettings | None = None,
         source_configs: dict[str, DataSourceConfig] | None = None,
         source_clients: dict[str, DatabaseClient] | None = None,
+        query_logger: Callable[[str], None] | None = None,
+        sql_logger: Callable[[str], None] | None = None,
     ):
         self.config = config
-        self.dws_client = dws_client or DatabaseClient(config.dws)
-        self.business_client = business_client or DatabaseClient(config.business)
+        self._query_logger = query_logger
+        self._sql_logger = sql_logger
+        self.dws_client = dws_client or DatabaseClient(config.dws, query_logger=sql_logger)
+        self.business_client = business_client or DatabaseClient(config.business, query_logger=sql_logger)
         self.schema = schema or ReconcileSchemaSettings()
         self._source_configs: dict[str, DataSourceConfig] = {
             "dws": config.dws,
@@ -251,6 +257,10 @@ class AutoCheckRepository:
         self._project_invest_contract_start_cache: dict[str, dict[tuple[str, str], str]] = {}
         self._ta_balance_totals_cache: dict[str, dict[str, tuple[Decimal, Decimal]]] = {}
         self._blank_ta_client_type_cache: dict[str, dict[str, list[dict[str, Decimal | str]]]] = {}
+
+    def _log_query(self, message: str) -> None:
+        if self._query_logger is not None:
+            self._query_logger(message)
 
     def _table_schema(self, logical_key: str) -> ReconcileTableSchema:
         default = DEFAULT_RECONCILE_TABLES[logical_key]
@@ -299,7 +309,10 @@ class AutoCheckRepository:
         if client is None:
             if config is None:
                 raise ValueError(f"自动对账表配置的数据源不存在: {source_key}")
-            client = self._owned_source_clients.setdefault(source_key, DatabaseClient(config))
+            client = self._owned_source_clients.setdefault(
+                source_key,
+                DatabaseClient(config, query_logger=self._sql_logger),
+            )
             self._source_clients[source_key] = client
         if config is None:
             config = getattr(client, "config", None)
@@ -682,6 +695,7 @@ class AutoCheckRepository:
             "balance_fair",
             "balance_interest",
         )
+        bond_category = self._field("fa_security_balance_dm", "bond_category")
         rows = client.fetch_all(
             f"""
             SELECT
@@ -691,6 +705,7 @@ class AutoCheckRepository:
             FROM {table}
             WHERE {project_code_field} = %s
               AND {check_date} = %s
+              AND TRIM(COALESCE({bond_category}, '')) <> ''
             GROUP BY {stock_code_field}, {security_name_field}
             HAVING SUM({amount_expression}) <> 0
             """,
@@ -877,6 +892,8 @@ class AutoCheckRepository:
         close_date = self._field("am_project_invest", "close_date")
         pact_id = self._field("am_project_invest", "pact_id")
         invest_balance = self._field("am_project_invest", "invest_balance")
+        self._log_query(f"开始加载AM投融资余额全表（日期={date}，表={table}）")
+        load_start = time.perf_counter()
         rows = client.fetch_all(
             f"""
             SELECT
@@ -889,6 +906,7 @@ class AutoCheckRepository:
             """,
             (date,),
         )
+        self._log_query(f"AM投融资余额全表加载完成：{len(rows)} 行，耗时 {time.perf_counter() - load_start:.1f}s")
         self._project_invest_balance_cache[date] = {
             (str(row["c_projcode"]), str(row.get("c_pactid") or "")): to_decimal(row.get("acbalance"))
             for row in rows
@@ -904,6 +922,8 @@ class AutoCheckRepository:
         close_date = self._field("am_project_invest", "close_date")
         pact_id = self._field("am_project_invest", "pact_id")
         contract_start = self._field("am_project_invest", "contract_start_date")
+        self._log_query(f"开始加载AM合同开始日全表（日期={date}，表={table}）")
+        load_start = time.perf_counter()
         rows = client.fetch_all(
             f"""
             SELECT
@@ -917,6 +937,7 @@ class AutoCheckRepository:
             """,
             (date,),
         )
+        self._log_query(f"AM合同开始日全表加载完成：{len(rows)} 行，耗时 {time.perf_counter() - load_start:.1f}s")
         self._project_invest_contract_start_cache[date] = {
             (str(row["c_projcode"]), str(row.get("c_pactid") or "")): str(row.get("d_bdate") or "")
             for row in rows
@@ -944,6 +965,8 @@ class AutoCheckRepository:
         invest_contract_start = self._field("am_project_invest", "contract_start_date")
         can_join_contract = client is invest_client
         rows = None
+        self._log_query(f"开始加载AM资产信息全表（日期={date}，表={table}）")
+        load_start = time.perf_counter()
         for include_contract_start in (True, False):
             include_contract_start = include_contract_start and can_join_contract
             select_columns = [
@@ -987,6 +1010,7 @@ class AutoCheckRepository:
             break
         if rows is None:
             rows = []
+        self._log_query(f"AM资产信息全表加载完成：{len(rows)} 行，耗时 {time.perf_counter() - load_start:.1f}s")
         contract_starts = {} if can_join_contract else self._project_invest_contract_starts_by_date(date)
         grouped_assets: dict[tuple[str, str], list[PactAssetRow]] = defaultdict(list)
         for row in rows:

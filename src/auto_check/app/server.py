@@ -1601,8 +1601,21 @@ class ApiRouter:
     ) -> Any:
         if self.runner_factory is not None:
             return self.runner_factory(config)
+        query_logger = None
+        if progress_logger is not None:
+            def query_logger(message: str) -> None:
+                progress_logger(message, None, "数据加载")
+
+        def sql_logger(message: str) -> None:
+            print(f"[auto-check][sql] {message}", flush=True)
         return ReconcileEngine(
-            AutoCheckRepository(config, schema=reconcile_schema, source_configs=source_configs),
+            AutoCheckRepository(
+                config,
+                schema=reconcile_schema,
+                source_configs=source_configs,
+                query_logger=query_logger,
+                sql_logger=sql_logger,
+            ),
             max_combination_rows=max_combination_rows,
             progress_logger=progress_logger,
             cancel_event=cancel_event,
@@ -3611,7 +3624,7 @@ def _valuation_rows_section(result: ReconcileResult) -> dict[str, Any]:
         "table": {
             "headers": ["科目代码", "科目名称", "科目尾段代码", "金额"],
             "rows": [
-                [row.account_code, row.account_name, row.account_tail_code, str(row.market_value)]
+                [row.account_code, row.account_name, row.account_business_code, str(row.market_value)]
                 for row in result.valuation_match.rows
             ],
         },
@@ -3894,6 +3907,7 @@ def _match_type_label(match_type: str) -> str:
         "ambiguous_combination": "候选不唯一",
         "property_right_invest": "1541财产权合同投融资差异命中",
         "combination_overflow": "组合候选过多，未继续穷举",
+        "combination_timeout": "组合匹配达到时间上限",
         "none": "未找到可解释金额的估值科目",
     }
     return labels.get(match_type, match_type or "无")
