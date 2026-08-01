@@ -23,6 +23,29 @@ def _columns(*names: str) -> frozenset[str]:
 EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "app_schema_version": _columns("version", "applied_at"),
+        "app_modules": _columns(
+            "module_id",
+            "module_version",
+            "enabled",
+            "status",
+            "last_error",
+            "installed_at",
+            "updated_at",
+        ),
+        "app_module_schema_versions": _columns(
+            "module_id", "schema_version", "applied_at", "checksum"
+        ),
+        "app_module_migration_history": _columns(
+            "id",
+            "module_id",
+            "from_version",
+            "to_version",
+            "status",
+            "checksum",
+            "started_at",
+            "finished_at",
+            "error_message",
+        ),
         "data_sources": _columns(
             "id",
             "name",
