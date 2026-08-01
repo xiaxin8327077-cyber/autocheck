@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from threading import RLock
+from threading import Condition, RLock, get_ident
 from typing import Callable
 
 
@@ -145,7 +145,17 @@ class EventBus:
 class ModuleEvents:
     """Module-scoped event view that tracks owned subscriptions."""
 
-    __slots__ = ("_publish", "_subscribe", "_subscriptions", "_closed", "_lock")
+    __slots__ = (
+        "_publish",
+        "_subscribe",
+        "_subscriptions",
+        "_closed",
+        "_lock",
+        "_condition",
+        "_inflight_publishes",
+        "_publishing_threads",
+        "_subscriptions_closed",
+    )
 
     def __init__(
         self,
@@ -158,12 +168,31 @@ class ModuleEvents:
         self._subscriptions: list[Subscription] = []
         self._closed = False
         self._lock = RLock()
+        self._condition = Condition(self._lock)
+        self._inflight_publishes = 0
+        self._publishing_threads: dict[int, int] = {}
+        self._subscriptions_closed = False
 
     def publish(self, event_name: str, payload: object) -> EventDeliveryReport:
+        publisher = get_ident()
         with self._lock:
             if self._closed:
                 raise RuntimeError("module event view is closed")
-        return self._publish(event_name, payload)
+            self._inflight_publishes += 1
+            self._publishing_threads[publisher] = (
+                self._publishing_threads.get(publisher, 0) + 1
+            )
+        try:
+            return self._publish(event_name, payload)
+        finally:
+            with self._condition:
+                self._inflight_publishes -= 1
+                remaining = self._publishing_threads[publisher] - 1
+                if remaining:
+                    self._publishing_threads[publisher] = remaining
+                else:
+                    self._publishing_threads.pop(publisher, None)
+                self._condition.notify_all()
 
     def subscribe(self, event_name: str, handler: Callable[[object], None]) -> Subscription:
         subscription = self._subscribe(event_name, handler)
@@ -175,11 +204,25 @@ class ModuleEvents:
         return subscription
 
     def close(self) -> None:
+        closer = get_ident()
         with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            subscriptions = tuple(self._subscriptions)
-            self._subscriptions.clear()
-        for subscription in subscriptions:
-            subscription.close()
+            if not self._closed:
+                self._closed = True
+                subscriptions = tuple(self._subscriptions)
+                self._subscriptions.clear()
+            else:
+                subscriptions = None
+        if subscriptions is not None:
+            try:
+                for subscription in subscriptions:
+                    subscription.close()
+            finally:
+                with self._condition:
+                    self._subscriptions_closed = True
+                    self._condition.notify_all()
+        with self._condition:
+            while not self._subscriptions_closed:
+                self._condition.wait()
+            own_publishes = self._publishing_threads.get(closer, 0)
+            while self._inflight_publishes > own_publishes:
+                self._condition.wait()
