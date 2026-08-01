@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import pkgutil
+from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from importlib import resources
@@ -78,6 +79,55 @@ def sort_modules(modules: Iterable[DiscoveredModule]) -> list[DiscoveredModule]:
         cycle_members = ", ".join(sorted(remaining))
         raise ModuleDiscoveryError(f"检测到循环依赖: {cycle_members}")
     return ordered
+
+
+def declaration_conflicts(modules: Iterable[DiscoveredModule]) -> dict[str, str]:
+    """Return stable declaration errors without importing any module factories."""
+    discovered = tuple(modules)
+    errors: dict[str, list[str]] = defaultdict(list)
+
+    for module in discovered:
+        entry_module, _, _ = module.manifest.backend_entry.partition(":")
+        if entry_module != module.package_name and not entry_module.startswith(
+            f"{module.package_name}."
+        ):
+            errors[module.manifest.id].append("backend_entry does not belong to the discovered package")
+
+    claims: dict[str, dict[str, list[str]]] = {
+        "api_prefix": defaultdict(list),
+        "navigation.id": defaultdict(list),
+        "navigation.route": defaultdict(list),
+        "permission": defaultdict(list),
+        "service": defaultdict(list),
+    }
+    prefixes: list[tuple[str, str]] = []
+    for module in discovered:
+        manifest = module.manifest
+        claims["api_prefix"][manifest.api_prefix].append(manifest.id)
+        for item in manifest.navigation:
+            claims["navigation.id"][item.id].append(manifest.id)
+            claims["navigation.route"][item.route].append(manifest.id)
+        for permission in manifest.permissions:
+            claims["permission"][permission].append(manifest.id)
+        for service in manifest.services:
+            claims["service"][service.name].append(manifest.id)
+        prefixes.append((manifest.id, manifest.table_prefix))
+
+    for kind, values in claims.items():
+        for value, owners in values.items():
+            if len(owners) > 1:
+                for owner in owners:
+                    errors[owner].append(f"duplicate {kind}: {value}")
+    for index, (left_id, left_prefix) in enumerate(prefixes):
+        for right_id, right_prefix in prefixes[index + 1 :]:
+            if left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix):
+                errors[left_id].append(f"conflicting table_prefix: {left_prefix}, {right_prefix}")
+                errors[right_id].append(f"conflicting table_prefix: {left_prefix}, {right_prefix}")
+
+    return {
+        module_id: "; ".join(sorted(set(messages)))
+        for module_id, messages in sorted(errors.items())
+    }
 
 
 def load_module_factory(entry: str) -> Callable[[], AutoCheckModule]:

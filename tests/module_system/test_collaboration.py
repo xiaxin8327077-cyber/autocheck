@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+from threading import Barrier, Thread
 from typing import get_type_hints
 
 import pytest
 
 from auto_check.app.module_system.contracts import ModuleContext, ModuleTaskExecutor
 from auto_check.app.module_system.events import EventBus
-from auto_check.app.module_system.services import ServiceRegistry, ServiceVersionError
+from auto_check.app.module_system.services import (
+    ServiceAccessError,
+    ServiceRegistry,
+    ServiceUnavailableError,
+    ServiceVersionError,
+)
 
 
 def test_service_registry_resolves_compatible_public_service():
@@ -57,12 +63,70 @@ def test_service_registry_rejects_incompatible_version():
 
 
 def test_module_service_view_only_registers_its_own_namespace():
-    services = ServiceRegistry().for_module("alpha")
+    services = ServiceRegistry().for_module(
+        "alpha", declared_services={"alpha.lookup": 1}, dependencies=()
+    )
 
-    with pytest.raises(ValueError, match="namespace"):
+    with pytest.raises(ServiceAccessError):
         services.register("beta.lookup", 1, object())
 
     assert not hasattr(services, "_registry")
+
+
+def test_module_service_view_requires_a_declared_service_with_the_declared_version():
+    services = ServiceRegistry().for_module(
+        "alpha", declared_services={"alpha.lookup": 2}, dependencies=()
+    )
+
+    with pytest.raises(ServiceAccessError):
+        services.register("alpha.other", 1, object())
+    with pytest.raises(ServiceVersionError):
+        services.register("alpha.lookup", 1, object())
+
+
+def test_module_service_view_only_resolves_own_or_declared_dependency_services():
+    registry = ServiceRegistry()
+    registry.register("beta.lookup", 1, object(), owner="beta")
+    view = registry.for_module("alpha", declared_services={}, dependencies=("beta",))
+
+    assert view.resolve("beta.lookup", 1)
+    with pytest.raises(ServiceAccessError):
+        view.resolve("gamma.lookup", 1)
+    with pytest.raises(ServiceUnavailableError):
+        view.resolve("beta.missing", 1)
+
+
+def test_service_registry_operations_are_safe_under_concurrent_registration_and_resolution():
+    registry = ServiceRegistry()
+    barrier = Barrier(3)
+    errors = []
+
+    def register():
+        barrier.wait()
+        try:
+            registry.register("alpha.lookup", 1, object(), owner="alpha")
+        except ValueError:
+            pass
+        except Exception as error:
+            errors.append(error)
+
+    def resolve():
+        barrier.wait()
+        for _ in range(100):
+            try:
+                registry.resolve("alpha.lookup", 1)
+            except ServiceUnavailableError:
+                pass
+            except Exception as error:
+                errors.append(error)
+
+    threads = [Thread(target=register), Thread(target=register), Thread(target=resolve)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
 
 
 def test_service_registry_removes_services_owned_by_a_stopped_module():

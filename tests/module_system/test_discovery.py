@@ -5,8 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from auto_check.app.module_system.contracts import ServiceDeclaration
 from auto_check.app.module_system.discovery import (
     ModuleDiscoveryError,
+    declaration_conflicts,
     discover_modules,
     load_module_factory,
     sort_modules,
@@ -95,3 +97,47 @@ def test_rejects_invalid_or_missing_factory(monkeypatch, entry):
 
     with pytest.raises(ModuleDiscoveryError):
         load_module_factory(entry)
+
+
+def test_declaration_preflight_rejects_an_entry_outside_its_discovered_package(monkeypatch):
+    monkeypatch.syspath_prepend(str(FIXTURE_PARENT))
+    modules = discover_modules("module_packages")
+    alpha = next(module for module in modules if module.manifest.id == "alpha")
+    foreign_entry = replace(
+        alpha,
+        manifest=replace(alpha.manifest, backend_entry="module_packages.beta.module:create_module"),
+    )
+
+    conflicts = declaration_conflicts([foreign_entry])
+
+    assert "alpha" in conflicts
+    assert "backend_entry" in conflicts["alpha"]
+
+
+@pytest.mark.parametrize("kind", ["api_prefix", "navigation.id", "navigation.route", "permission", "service"])
+def test_declaration_preflight_reports_each_global_declaration_conflict(monkeypatch, kind):
+    monkeypatch.syspath_prepend(str(FIXTURE_PARENT))
+    alpha, beta = [
+        next(module for module in discover_modules("module_packages") if module.manifest.id == module_id)
+        for module_id in ("alpha", "beta")
+    ]
+    if kind == "api_prefix":
+        beta = replace(beta, manifest=replace(beta.manifest, api_prefix=alpha.manifest.api_prefix))
+    elif kind == "navigation.id":
+        beta_navigation = replace(beta.manifest.navigation[0], id=alpha.manifest.navigation[0].id)
+        beta = replace(beta, manifest=replace(beta.manifest, navigation=(beta_navigation,)))
+    elif kind == "navigation.route":
+        beta_navigation = replace(beta.manifest.navigation[0], route=alpha.manifest.navigation[0].route)
+        beta = replace(beta, manifest=replace(beta.manifest, navigation=(beta_navigation,)))
+    elif kind == "permission":
+        beta = replace(beta, manifest=replace(beta.manifest, permissions=alpha.manifest.permissions))
+    else:
+        service = ServiceDeclaration("alpha.lookup", 1)
+        alpha = replace(alpha, manifest=replace(alpha.manifest, services=(service,)))
+        beta = replace(beta, manifest=replace(beta.manifest, services=(service,)))
+
+    conflicts = declaration_conflicts([alpha, beta])
+
+    assert alpha.manifest.id in conflicts
+    assert beta.manifest.id in conflicts
+    assert kind in conflicts[alpha.manifest.id]

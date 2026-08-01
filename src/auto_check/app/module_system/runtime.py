@@ -19,7 +19,13 @@ from .contracts import (
     ModuleRequest,
     ModuleStatus,
 )
-from .discovery import DiscoveredModule, discover_modules, load_module_factory, sort_modules
+from .discovery import (
+    DiscoveredModule,
+    declaration_conflicts,
+    discover_modules,
+    load_module_factory,
+    sort_modules,
+)
 from .events import EventBus
 from .permissions import default_permission_evaluator
 from .resources import ModuleAsset, ModuleAssetNotFound, read_module_asset
@@ -39,6 +45,10 @@ class ModuleTaskLimitError(RuntimeError):
 
 class ModuleRuntimeError(RuntimeError):
     """Raised when a lifecycle transition cannot safely be performed."""
+
+
+class ModuleDependencyError(ModuleRuntimeError):
+    """Raised when a module's declared provider is not enabled."""
 
 
 class _ModuleTaskExecutor:
@@ -107,6 +117,7 @@ class ModuleRuntime:
     ) -> None:
         self._context = context
         self._loaded = [LoadedModule(item) for item in discovered]
+        self._declaration_conflicts = declaration_conflicts(discovered)
         self._state_store = ModuleStateStore(context.application_database)
         self._services = ServiceRegistry()
         self._events = EventBus()
@@ -145,11 +156,21 @@ class ModuleRuntime:
             if status == ModuleStatus.ENABLED:
                 continue
             self._state_store.save_discovered(loaded.discovered.manifest)
+            if loaded.discovered.manifest.id in self._declaration_conflicts:
+                self._mark_incompatible(loaded)
+                if loaded.discovered.manifest.required:
+                    self._stop_loaded_reverse(started_this_time)
+                    self._shutdown_shared_executor()
+                    raise ModuleStartupError(
+                        f"required module {loaded.discovered.manifest.id} has incompatible declarations"
+                    )
+                continue
             enabled = self._state_store.load_enabled(loaded.discovered.manifest.id)
             if enabled is False:
                 self._set_status(loaded, ModuleStatus.DISABLED)
                 continue
             try:
+                self._require_dependencies_enabled(loaded)
                 self._start_loaded(loaded)
             except ModuleMigrationError as error:
                 self._fail_loaded(loaded, ModuleStatus.MIGRATION_FAILED, error)
@@ -330,6 +351,14 @@ class ModuleRuntime:
             status = loaded.status
         if not enabled and required:
             raise ValueError("required module cannot be disabled")
+        if not enabled:
+            dependents = self._enabled_dependents(module_id)
+            if dependents:
+                raise ValueError(f"enabled dependent modules prevent disabling: {', '.join(dependents)}")
+        if enabled and module_id in self._declaration_conflicts:
+            raise ValueError("module declarations are incompatible")
+        if enabled and status != ModuleStatus.ENABLED:
+            self._require_dependencies_enabled(loaded)
         self._state_store.save_discovered(loaded.discovered.manifest)
         self._state_store.set_enabled(module_id, enabled)
         if not enabled:
@@ -370,7 +399,11 @@ class ModuleRuntime:
             config_path=self._context.config_path,
             temp_root=_module_temp_root(self._context.temp_root, manifest.id),
             now=self._context.now,
-            services=self._services.for_module(manifest.id),
+            services=self._services.for_module(
+                manifest.id,
+                declared_services={service.name: service.version for service in manifest.services},
+                dependencies=manifest.dependencies,
+            ),
             events=events,
             logger=logging.LoggerAdapter(logging.getLogger(__name__), {"module_id": manifest.id}),
             background_executor=executor,
@@ -440,11 +473,49 @@ class ModuleRuntime:
     def _set_status(self, loaded: LoadedModule, status: ModuleStatus) -> None:
         with self._lifecycle_lock:
             loaded.status = status
-            if status not in {ModuleStatus.MIGRATION_FAILED, ModuleStatus.STARTUP_FAILED}:
+            if status not in {
+                ModuleStatus.INCOMPATIBLE,
+                ModuleStatus.MIGRATION_FAILED,
+                ModuleStatus.STARTUP_FAILED,
+            }:
                 loaded.error = ""
             module_id = loaded.discovered.manifest.id
             error = loaded.error
         self._state_store.set_status(module_id, status, error)
+
+    def _mark_incompatible(self, loaded: LoadedModule) -> None:
+        module_id = loaded.discovered.manifest.id
+        with self._lifecycle_lock:
+            loaded.error = self._declaration_conflicts[module_id]
+        self._set_status(loaded, ModuleStatus.INCOMPATIBLE)
+
+    def _require_dependencies_enabled(self, loaded: LoadedModule) -> None:
+        unavailable = [
+            dependency
+            for dependency in loaded.discovered.manifest.dependencies
+            if self._find(dependency).status != ModuleStatus.ENABLED
+        ]
+        if unavailable:
+            raise ModuleDependencyError(f"module dependencies are unavailable: {', '.join(unavailable)}")
+
+    def _enabled_dependents(self, module_id: str) -> list[str]:
+        dependents: set[str] = set()
+        pending = [module_id]
+        while pending:
+            provider = pending.pop()
+            for loaded in self._loaded:
+                dependent_id = loaded.discovered.manifest.id
+                if (
+                    provider in loaded.discovered.manifest.dependencies
+                    and dependent_id not in dependents
+                ):
+                    dependents.add(dependent_id)
+                    pending.append(dependent_id)
+        return sorted(
+            module_id
+            for module_id in dependents
+            if self._find(module_id).status == ModuleStatus.ENABLED
+        )
 
     def _health_for(
         self,

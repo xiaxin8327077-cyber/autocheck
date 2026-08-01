@@ -48,6 +48,37 @@ def test_manifest_accepts_documented_singular_table_prefix():
     assert manifest.table_prefix == "custom_report_"
 
 
+def test_manifest_defaults_services_and_validates_declared_service_namespace_and_version():
+    assert ModuleManifest.from_mapping(VALID_MANIFEST).services == ()
+
+    manifest = ModuleManifest.from_mapping(
+        {
+            **VALID_MANIFEST,
+            "services": [{"name": "custom_reports.lookup", "version": 2}],
+        }
+    )
+
+    assert [(service.name, service.version) for service in manifest.services] == [
+        ("custom_reports.lookup", 2)
+    ]
+
+
+@pytest.mark.parametrize(
+    "services",
+    [
+        [{"name": "other.lookup", "version": 1}],
+        [{"name": "custom_reports.lookup", "version": 0}],
+        [
+            {"name": "custom_reports.lookup", "version": 1},
+            {"name": "custom_reports.lookup", "version": 2},
+        ],
+    ],
+)
+def test_manifest_rejects_invalid_service_declarations(services):
+    with pytest.raises(ModuleManifestError):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "services": services})
+
+
 @pytest.mark.parametrize("table_prefix", ["app_", "app_modules_", "custom_other_", "Other_"])
 def test_manifest_rejects_reserved_or_unrelated_table_prefix(table_prefix):
     with pytest.raises(ModuleManifestError, match="table_prefix"):

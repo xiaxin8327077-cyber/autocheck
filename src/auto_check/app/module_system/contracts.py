@@ -16,6 +16,7 @@ PLATFORM_API_VERSION = 1
 _BACKEND_ENTRY_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+:[A-Za-z_][A-Za-z0-9_]*"
 )
+_SERVICE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
 
 
 class ModuleManifestError(ValueError):
@@ -68,6 +69,12 @@ class NavigationDeclaration:
 
 
 @dataclass(frozen=True)
+class ServiceDeclaration:
+    name: str
+    version: int
+
+
+@dataclass(frozen=True)
 class ModuleManifest:
     id: str
     name: str
@@ -83,6 +90,7 @@ class ModuleManifest:
     dependencies: tuple[str, ...]
     schema_version: int
     table_prefix: str
+    services: tuple[ServiceDeclaration, ...]
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> ModuleManifest:
@@ -153,6 +161,28 @@ class ModuleManifest:
         if not isinstance(required, bool):
             raise ModuleManifestError("required must be a boolean")
 
+        services_payload = payload.get("services", [])
+        if not isinstance(services_payload, list):
+            raise ModuleManifestError("services must be a list")
+        services = tuple(
+            ServiceDeclaration(
+                name=_required_text(item, "name"),
+                version=_required_int(item, "version", minimum=1),
+            )
+            for item in services_payload
+            if isinstance(item, Mapping)
+        )
+        if len(services) != len(services_payload):
+            raise ModuleManifestError("service declarations must be objects")
+        if any(
+            not _SERVICE_NAME_PATTERN.fullmatch(service.name)
+            or not service.name.startswith(f"{module_id}.")
+            for service in services
+        ):
+            raise ModuleManifestError("service name must use the module namespace")
+        if len({service.name for service in services}) != len(services):
+            raise ModuleManifestError("service declarations contain duplicate names")
+
         return cls(
             id=module_id,
             name=_required_text(payload, "name"),
@@ -168,6 +198,7 @@ class ModuleManifest:
             dependencies=dependencies,
             schema_version=_required_int(payload, "schema_version", minimum=0),
             table_prefix=_table_prefix(payload, module_id),
+            services=services,
         )
 
 

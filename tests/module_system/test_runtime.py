@@ -14,6 +14,7 @@ from auto_check.app.module_system.contracts import (
 )
 from auto_check.app.module_system.discovery import DiscoveredModule
 from auto_check.app.module_system.runtime import (
+    ModuleDependencyError,
     ModuleRuntime,
     ModuleRuntimeError,
     ModuleStartupError,
@@ -88,6 +89,10 @@ def _manifest(
     *,
     required: bool = False,
     api_prefix: str | None = None,
+    dependencies: tuple[str, ...] = (),
+    table_prefix: str | None = None,
+    services: list[dict[str, object]] | None = None,
+    backend_entry: str | None = None,
 ) -> ModuleManifest:
     return ModuleManifest.from_mapping(
         {
@@ -96,14 +101,16 @@ def _manifest(
             "version": "1.0.0",
             "platform_api": 1,
             "required": required,
-            "backend_entry": f"fixture.{module_id}.module:create_module",
+            "backend_entry": backend_entry or f"fixture.{module_id}.module:create_module",
             "api_prefix": api_prefix or f"/api/modules/{module_id}",
             "frontend_entry": f"/module-assets/{module_id}/index.js",
             "frontend_style": f"/module-assets/{module_id}/styles.css",
             "navigation": [],
             "permissions": [f"{module_id}.view"],
-            "dependencies": [],
+            "dependencies": list(dependencies),
             "schema_version": 0,
+            **({"table_prefix": table_prefix} if table_prefix is not None else {}),
+            **({"services": services} if services is not None else {}),
         }
     )
 
@@ -172,7 +179,7 @@ def test_runtime_starts_modules_in_dependency_order(runtime_factory):
     assert [item["id"] for item in runtime.public_modules({"role": "admin"})] == ["alpha", "beta"]
 
 
-def test_runtime_preflight_continues_to_later_router_with_same_api_prefix(
+def test_runtime_marks_optional_api_prefix_conflicts_incompatible_without_loading_them(
     isolated_runtime_factory,
 ):
     class RouteModule(_LifecycleModule):
@@ -194,10 +201,128 @@ def test_runtime_preflight_continues_to_later_router_with_same_api_prefix(
     )
     runtime.start()
 
-    preflight = runtime.preflight(method="POST", path="/api/modules/shared/target")
+    assert runtime.status("first").value == "incompatible"
+    assert runtime.status("second").value == "incompatible"
+    assert runtime.preflight(method="POST", path="/api/modules/shared/target").status == 404
 
-    assert preflight.status == 200
-    assert preflight.max_body_bytes == 1
+
+@pytest.mark.parametrize(
+    "left,right",
+    [
+        (
+            _manifest("custom_report", table_prefix="custom_report_"),
+            _manifest("custom_reports", table_prefix="custom_report_"),
+        ),
+        (_manifest("foo", table_prefix="foo_"), _manifest("foo_s", table_prefix="foo_s_")),
+    ],
+)
+def test_runtime_rejects_exact_and_nested_table_prefix_conflicts_before_factories(
+    isolated_runtime_factory, left, right
+):
+    calls = []
+    runtime = isolated_runtime_factory([
+        _LifecycleModule(left, calls),
+        _LifecycleModule(right, calls),
+    ])
+
+    runtime.start()
+
+    assert calls == []
+    assert runtime.status(left.id).value == "incompatible"
+    assert runtime.status(right.id).value == "incompatible"
+
+
+def test_required_declaration_conflict_aborts_and_rolls_back_healthy_modules(isolated_runtime_factory):
+    calls = []
+    healthy = _LifecycleModule(_manifest("healthy"), calls)
+    required = _LifecycleModule(
+        _manifest("required", required=True, backend_entry="fixture.foreign.module:create_module"), calls
+    )
+    runtime = isolated_runtime_factory([healthy, required])
+
+    with pytest.raises(ModuleStartupError, match="required"):
+        runtime.start()
+
+    assert calls == ["healthy:start", "healthy:stop"]
+
+
+def test_optional_foreign_backend_entry_is_incompatible_without_calling_its_factory(
+    isolated_runtime_factory,
+):
+    calls = []
+    foreign = _LifecycleModule(
+        _manifest("alpha", backend_entry="fixture.other.module:create_module"), calls
+    )
+    runtime = isolated_runtime_factory([foreign])
+
+    runtime.start()
+
+    assert calls == []
+    assert foreign.context is None
+    assert runtime.status("alpha").value == "incompatible"
+
+
+def test_dependency_failure_prevents_dependent_factory_and_start(isolated_runtime_factory):
+    calls = []
+    provider = _LifecycleModule(_manifest("provider"), calls, start_action=lambda context: (_ for _ in ()).throw(RuntimeError()))
+    dependent = _LifecycleModule(_manifest("dependent", dependencies=("provider",)), calls)
+    runtime = isolated_runtime_factory([provider, dependent])
+
+    runtime.start()
+
+    assert calls == ["provider:start", "provider:stop"]
+    assert runtime.status("dependent").value == "startup_failed"
+    assert dependent.context is None
+
+
+def test_required_dependent_aborts_when_provider_is_unavailable(isolated_runtime_factory):
+    calls = []
+    provider = _LifecycleModule(
+        _manifest("provider"), calls, start_action=lambda context: (_ for _ in ()).throw(RuntimeError())
+    )
+    required = _LifecycleModule(
+        _manifest("required", required=True, dependencies=("provider",)), calls
+    )
+    runtime = isolated_runtime_factory([provider, required])
+
+    with pytest.raises(ModuleStartupError, match="required"):
+        runtime.start()
+
+    assert required.context is None
+
+
+def test_enabling_dependent_requires_an_enabled_provider_before_persisting_state(
+    isolated_runtime_factory,
+):
+    calls = []
+    provider = _LifecycleModule(_manifest("provider"), calls)
+    dependent = _LifecycleModule(_manifest("dependent", dependencies=("provider",)), calls)
+    runtime = isolated_runtime_factory([provider, dependent])
+    runtime.set_enabled("dependent", False, {"role": "admin"})
+    runtime.start()
+    runtime.set_enabled("provider", False, {"role": "admin"})
+
+    with pytest.raises(ModuleDependencyError):
+        runtime.set_enabled("dependent", True, {"role": "admin"})
+
+    assert runtime._state_store.enabled["dependent"] is False
+
+
+def test_disabling_provider_with_enabled_transitive_dependents_is_rejected_without_state_change(
+    isolated_runtime_factory,
+):
+    calls = []
+    provider = _LifecycleModule(_manifest("provider"), calls)
+    direct = _LifecycleModule(_manifest("direct", dependencies=("provider",)), calls)
+    transitive = _LifecycleModule(_manifest("transitive", dependencies=("direct",)), calls)
+    runtime = isolated_runtime_factory([provider, direct, transitive])
+    runtime.start()
+
+    with pytest.raises(ValueError, match="dependent"):
+        runtime.set_enabled("provider", False, {"role": "admin"})
+
+    assert runtime._state_store.enabled["provider"] is True
+    assert runtime.status("provider").value == "enabled"
 
 
 def test_optional_module_failure_does_not_block_healthy_modules(runtime_factory):
