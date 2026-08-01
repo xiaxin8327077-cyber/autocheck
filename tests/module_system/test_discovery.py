@@ -7,10 +7,12 @@ import pytest
 
 from auto_check.app.module_system.contracts import ServiceDeclaration
 from auto_check.app.module_system.discovery import (
+    ModuleDiscoveryReport,
     ModuleDiscoveryError,
     declaration_conflicts,
     discover_modules,
     load_module_factory,
+    plan_module_runtime,
     sort_modules,
 )
 
@@ -82,6 +84,31 @@ def test_rejects_dependency_cycle(monkeypatch):
 
     with pytest.raises(ModuleDiscoveryError, match="循环依赖"):
         sort_modules([cycled_alpha, beta])
+
+
+def test_runtime_plan_isolates_duplicate_ids_and_invalid_dependency_graphs(monkeypatch):
+    monkeypatch.syspath_prepend(str(FIXTURE_PARENT))
+    modules = discover_modules("module_packages")
+    alpha = next(module for module in modules if module.manifest.id == "alpha")
+    beta = next(module for module in modules if module.manifest.id == "beta")
+    duplicate_a = replace(alpha, package_name="module_packages.duplicate_a")
+    duplicate_b = replace(alpha, package_name="module_packages.duplicate_b")
+    missing = replace(
+        beta,
+        manifest=replace(beta.manifest, dependencies=("not_installed",)),
+    )
+
+    plan = plan_module_runtime(
+        ModuleDiscoveryReport(
+            modules=(duplicate_a, duplicate_b, missing),
+            issues=(),
+        )
+    )
+
+    assert [module.manifest.id for module in plan.modules] == ["beta"]
+    assert plan.incompatibilities == {"beta": "module dependency is missing"}
+    assert [issue.module_id for issue in plan.issues] == ["duplicate_a", "duplicate_b"]
+    assert all(issue.error == "module manifest id is duplicated" for issue in plan.issues)
 
 
 @pytest.mark.parametrize(

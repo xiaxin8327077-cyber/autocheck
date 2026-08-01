@@ -21,10 +21,11 @@ from .contracts import (
 )
 from .discovery import (
     DiscoveredModule,
+    ModuleDiscoveryIssue,
     declaration_conflicts,
-    discover_modules,
+    discover_module_report,
     load_module_factory,
-    sort_modules,
+    plan_module_runtime,
 )
 from .events import EventBus
 from .permissions import default_permission_evaluator
@@ -226,6 +227,8 @@ class ModuleRuntime:
         context: ModuleBootstrapContext,
         discovered: list[DiscoveredModule],
         *,
+        discovery_issues: tuple[ModuleDiscoveryIssue, ...] = (),
+        preflight_incompatibilities: Mapping[str, str] | None = None,
         lifecycle_timeout_seconds: float = 1.0,
         health_timeout_seconds: float = 0.5,
         task_shutdown_timeout_seconds: float = 1.0,
@@ -238,7 +241,16 @@ class ModuleRuntime:
             raise ValueError("module timeouts must be positive")
         self._context = context
         self._loaded = [LoadedModule(item) for item in discovered]
-        self._declaration_conflicts = declaration_conflicts(discovered)
+        self._discovery_issues = tuple(discovery_issues)
+        preflight_conflicts = dict(preflight_incompatibilities or {})
+        declaration_candidates = [
+            module
+            for module in discovered
+            if module.manifest.id not in preflight_conflicts
+        ]
+        self._declaration_conflicts = declaration_conflicts(declaration_candidates)
+        self._declaration_conflicts.update(preflight_conflicts)
+        self._propagate_declaration_conflicts()
         self._state_store = ModuleStateStore(context.application_database)
         self._services = ServiceRegistry()
         self._events = EventBus()
@@ -261,9 +273,12 @@ class ModuleRuntime:
         package_name: str = "auto_check.modules",
         **runtime_options: Any,
     ) -> ModuleRuntime:
+        plan = plan_module_runtime(discover_module_report(package_name))
         return cls(
             context,
-            sort_modules(discover_modules(package_name)),
+            list(plan.modules),
+            discovery_issues=plan.issues,
+            preflight_incompatibilities=plan.incompatibilities,
             **runtime_options,
         )
 
@@ -274,11 +289,24 @@ class ModuleRuntime:
 
     def start(self) -> None:
         self._run_transition(
-            tuple(loaded.discovered.manifest.id for loaded in self._loaded), self._start
+            (
+                *(loaded.discovered.manifest.id for loaded in self._loaded),
+                *(issue.module_id for issue in self._discovery_issues),
+            ),
+            self._start,
         )
 
     def _start(self) -> None:
         self._ensure_shared_executor()
+        required_issue = next(
+            (issue for issue in self._discovery_issues if issue.required),
+            None,
+        )
+        if required_issue is not None:
+            self._shutdown_shared_executor()
+            raise ModuleStartupError(
+                f"required module {required_issue.module_id} is incompatible"
+            )
         started_this_time: list[LoadedModule] = []
         for loaded in self._loaded:
             with self._lifecycle_lock:
@@ -292,7 +320,7 @@ class ModuleRuntime:
                     self._stop_loaded_reverse(started_this_time)
                     self._shutdown_shared_executor()
                     raise ModuleStartupError(
-                        f"required module {loaded.discovered.manifest.id} has incompatible declarations"
+                        f"required module {loaded.discovered.manifest.id} is incompatible"
                     )
                 continue
             enabled = self._state_store.load_enabled(loaded.discovered.manifest.id)
@@ -333,7 +361,12 @@ class ModuleRuntime:
 
     def status(self, module_id: str) -> ModuleStatus:
         with self._lifecycle_lock:
-            return self._find(module_id).status
+            try:
+                return self._find(module_id).status
+            except KeyError:
+                if any(issue.module_id == module_id for issue in self._discovery_issues):
+                    return ModuleStatus.INCOMPATIBLE
+                raise
 
     def context_for(self, module_id: str) -> ModuleContext:
         with self._lifecycle_lock:
@@ -421,6 +454,8 @@ class ModuleRuntime:
                 for item in manifest.navigation
                 if default_permission_evaluator(current_user, item.permission)
             ]
+            if not navigation:
+                continue
             result.append(
                 {
                     "id": manifest.id,
@@ -464,6 +499,22 @@ class ModuleRuntime:
                     "status": status.value,
                     "health": {"healthy": health.healthy, "message": health.message[:500]},
                     "error": error[:500],
+                }
+            )
+        for issue in self._discovery_issues:
+            result.append(
+                {
+                    "id": issue.module_id,
+                    "name": issue.name,
+                    "version": issue.version,
+                    "required": issue.required,
+                    "enabled": True,
+                    "status": ModuleStatus.INCOMPATIBLE.value,
+                    "health": {
+                        "healthy": False,
+                        "message": "module is not running",
+                    },
+                    "error": issue.error,
                 }
             )
         return result
@@ -796,6 +847,8 @@ class ModuleRuntime:
                 with self._lifecycle_lock:
                     if loaded.health_future is health_future:
                         loaded.health_future = None
+        if not isinstance(health, ModuleHealth):
+            return ModuleHealth(healthy=False, message="health check unavailable")
         return ModuleHealth(
             healthy=bool(health.healthy),
             message="healthy" if health.healthy else "unhealthy",
@@ -858,6 +911,23 @@ class ModuleRuntime:
             if loaded.discovered.manifest.id == module_id:
                 return loaded
         raise KeyError(module_id)
+
+    def _propagate_declaration_conflicts(self) -> None:
+        changed = True
+        while changed:
+            changed = False
+            for loaded in self._loaded:
+                manifest = loaded.discovered.manifest
+                if manifest.id in self._declaration_conflicts:
+                    continue
+                if any(
+                    dependency in self._declaration_conflicts
+                    for dependency in manifest.dependencies
+                ):
+                    self._declaration_conflicts[manifest.id] = (
+                        "module dependency is incompatible"
+                    )
+                    changed = True
 
     def _ensure_shared_executor(self) -> None:
         if self._shared_executor_shutdown:

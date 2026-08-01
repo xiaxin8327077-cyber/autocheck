@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib
+import json
+import sys
 from pathlib import Path
 from concurrent.futures import CancelledError
+from dataclasses import replace
 from threading import Event, Thread, Timer, current_thread
 from time import monotonic, sleep
 
@@ -12,6 +16,7 @@ from auto_check.app.module_system.contracts import (
     ModuleHealth,
     ModuleHttpResponse,
     ModuleManifest,
+    NavigationDeclaration,
 )
 from auto_check.app.module_system.discovery import DiscoveredModule
 from auto_check.app.module_system.runtime import (
@@ -116,6 +121,32 @@ def _manifest(
     )
 
 
+def _manifest_payload(
+    package_name: str,
+    child_name: str,
+    *,
+    module_id: str | None = None,
+    required: bool = False,
+    dependencies: tuple[str, ...] = (),
+) -> dict[str, object]:
+    resolved_id = module_id or child_name
+    return {
+        "id": resolved_id,
+        "name": resolved_id.title(),
+        "version": "1.0.0",
+        "platform_api": 1,
+        "required": required,
+        "backend_entry": f"{package_name}.{child_name}.module:create_module",
+        "api_prefix": f"/api/modules/{resolved_id}",
+        "frontend_entry": f"/module-assets/{resolved_id}/index.js",
+        "frontend_style": f"/module-assets/{resolved_id}/styles.css",
+        "navigation": [],
+        "permissions": [f"{resolved_id}.view"],
+        "dependencies": list(dependencies),
+        "schema_version": 0,
+    }
+
+
 class _LifecycleModule:
     def __init__(self, manifest, calls, *, start_action=None, health_message=""):
         self.manifest = manifest
@@ -169,6 +200,262 @@ def isolated_runtime_factory(monkeypatch, tmp_path):
         return ModuleRuntime(context, discovered, **runtime_options)
 
     return create
+
+
+@pytest.fixture
+def discovered_runtime_factory(monkeypatch, tmp_path):
+    import auto_check.app.module_system.discovery as discovery_module
+    import auto_check.app.module_system.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "ModuleStateStore", _StateStore)
+    monkeypatch.setattr(runtime_module, "ModuleMigrationRunner", _MigrationRunner)
+    original_files = discovery_module.resources.files
+    sequence = 0
+
+    def create(
+        manifests: dict[str, dict[str, object] | str],
+        *,
+        import_failures: set[str] | None = None,
+        unreadable: set[str] | None = None,
+    ):
+        nonlocal sequence
+        sequence += 1
+        package_name = f"dynamic_module_packages_{sequence}"
+        package_root = tmp_path / package_name
+        package_root.mkdir()
+        (package_root / "__init__.py").write_text("", encoding="utf-8")
+        for child_name, payload in manifests.items():
+            child_root = package_root / child_name
+            child_root.mkdir()
+            init_source = (
+                "import dependency_that_must_not_be_disclosed\n"
+                if child_name in (import_failures or set())
+                else ""
+            )
+            (child_root / "__init__.py").write_text(init_source, encoding="utf-8")
+            manifest_text = payload if isinstance(payload, str) else json.dumps(payload)
+            (child_root / "manifest.json").write_text(manifest_text, encoding="utf-8")
+
+        if unreadable:
+            class UnreadableManifest:
+                def is_file(self):
+                    return True
+
+                def read_text(self, *, encoding):
+                    raise OSError(r"C:\private\manifest.json token=secret")
+
+            class UnreadableRoot:
+                def joinpath(self, name):
+                    assert name == "manifest.json"
+                    return UnreadableManifest()
+
+            def files(package):
+                child_name = package.rsplit(".", maxsplit=1)[-1]
+                if child_name in unreadable:
+                    return UnreadableRoot()
+                return original_files(package)
+
+            monkeypatch.setattr(discovery_module.resources, "files", files)
+
+        monkeypatch.syspath_prepend(str(tmp_path))
+        for imported_name in tuple(sys.modules):
+            if imported_name == package_name or imported_name.startswith(f"{package_name}."):
+                sys.modules.pop(imported_name, None)
+        importlib.invalidate_caches()
+        context = ModuleBootstrapContext(
+            application_database=object(),
+            config_path=Path("config.json"),
+            temp_root=tmp_path / f"module-data-{sequence}",
+            now=lambda: None,
+        )
+        runtime = ModuleRuntime.build(context, package_name=package_name)
+        calls: list[str] = []
+        factories = {}
+        for loaded in runtime._loaded:
+            module = _LifecycleModule(loaded.discovered.manifest, calls)
+            factories[loaded.discovered.manifest.backend_entry] = lambda module=module: module
+        monkeypatch.setattr(runtime_module, "load_module_factory", lambda entry: factories[entry])
+        return runtime, calls
+
+    return create
+
+
+def test_build_isolates_manifest_and_resource_failures_and_starts_healthy_sibling(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    invalid_manifest = _manifest_payload(package_name, "invalid_manifest")
+    invalid_manifest["version"] = r"C:\private\not-a-version token=secret"
+    runtime, calls = discovered_runtime_factory(
+        {
+            "healthy": _manifest_payload(package_name, "healthy"),
+            "invalid_json": r'{"secret":"C:\\private\\manifest.json"',
+            "invalid_manifest": invalid_manifest,
+            "unreadable": _manifest_payload(package_name, "unreadable"),
+            "unimportable": _manifest_payload(package_name, "unimportable"),
+        },
+        import_failures={"unimportable"},
+        unreadable={"unreadable"},
+    )
+
+    runtime.start()
+
+    assert calls == ["healthy:start"]
+    statuses = {item["id"]: item for item in runtime.admin_statuses({"role": "admin"})}
+    assert statuses["healthy"]["status"] == "enabled"
+    for issue_id in ("invalid_json", "invalid_manifest", "unreadable", "unimportable"):
+        assert runtime.status(issue_id).value == "incompatible"
+        assert statuses[issue_id]["status"] == "incompatible"
+        assert statuses[issue_id]["health"]["healthy"] is False
+        assert all(
+            secret not in statuses[issue_id]["error"].lower()
+            for secret in ("private", "secret", "dependency_that_must_not_be_disclosed")
+        )
+    assert runtime._state_store.discovered == {"healthy"}
+
+
+def test_required_invalid_manifest_aborts_start_when_required_flag_is_reliable(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    invalid_required = _manifest_payload(
+        package_name,
+        "invalid_required",
+        required=True,
+    )
+    invalid_required["version"] = "invalid"
+    runtime, calls = discovered_runtime_factory({"invalid_required": invalid_required})
+
+    with pytest.raises(ModuleStartupError, match="invalid_required"):
+        runtime.start()
+
+    assert calls == []
+    assert runtime.status("invalid_required").value == "incompatible"
+
+
+def test_duplicate_manifest_ids_are_unique_issues_and_never_written_to_module_state(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    runtime, calls = discovered_runtime_factory(
+        {
+            "duplicate_a": _manifest_payload(
+                package_name,
+                "duplicate_a",
+                module_id="duplicate",
+            ),
+            "duplicate_b": _manifest_payload(
+                package_name,
+                "duplicate_b",
+                module_id="duplicate",
+            ),
+            "healthy": _manifest_payload(package_name, "healthy"),
+        }
+    )
+
+    runtime.start()
+
+    assert calls == ["healthy:start"]
+    assert runtime.status("duplicate_a").value == "incompatible"
+    assert runtime.status("duplicate_b").value == "incompatible"
+    assert runtime._state_store.discovered == {"healthy"}
+    assert [loaded.discovered.manifest.id for loaded in runtime._loaded] == ["healthy"]
+
+
+def test_missing_dependencies_cycles_and_their_dependents_are_isolated(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    runtime, calls = discovered_runtime_factory(
+        {
+            "cycle_a": _manifest_payload(
+                package_name,
+                "cycle_a",
+                dependencies=("cycle_b",),
+            ),
+            "cycle_b": _manifest_payload(
+                package_name,
+                "cycle_b",
+                dependencies=("cycle_a",),
+            ),
+            "cycle_dependent": _manifest_payload(
+                package_name,
+                "cycle_dependent",
+                dependencies=("cycle_a",),
+            ),
+            "healthy": _manifest_payload(package_name, "healthy"),
+            "missing": _manifest_payload(
+                package_name,
+                "missing",
+                dependencies=("not_installed",),
+            ),
+            "missing_dependent": _manifest_payload(
+                package_name,
+                "missing_dependent",
+                dependencies=("missing",),
+            ),
+        }
+    )
+
+    runtime.start()
+
+    assert calls == ["healthy:start"]
+    assert runtime.status("healthy").value == "enabled"
+    for module_id in (
+        "cycle_a",
+        "cycle_b",
+        "cycle_dependent",
+        "missing",
+        "missing_dependent",
+    ):
+        assert runtime.status(module_id).value == "incompatible"
+
+
+def test_preflight_incompatible_declarations_cannot_poison_healthy_sibling(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    healthy = _manifest_payload(package_name, "healthy")
+    missing = _manifest_payload(
+        package_name,
+        "missing",
+        dependencies=("not_installed",),
+    )
+    missing["api_prefix"] = healthy["api_prefix"]
+    runtime, calls = discovered_runtime_factory(
+        {
+            "healthy": healthy,
+            "missing": missing,
+        }
+    )
+
+    runtime.start()
+
+    assert calls == ["healthy:start"]
+    assert runtime.status("healthy").value == "enabled"
+    assert runtime.status("missing").value == "incompatible"
+
+
+def test_required_module_with_missing_dependency_aborts_start(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    runtime, calls = discovered_runtime_factory(
+        {
+            "healthy": _manifest_payload(package_name, "healthy"),
+            "required_missing": _manifest_payload(
+                package_name,
+                "required_missing",
+                required=True,
+                dependencies=("not_installed",),
+            ),
+        }
+    )
+
+    with pytest.raises(ModuleStartupError, match="required_missing"):
+        runtime.start()
+
+    assert calls == ["healthy:start", "healthy:stop"]
 
 
 def test_runtime_starts_modules_in_dependency_order(runtime_factory):
@@ -370,6 +657,34 @@ def test_regular_user_only_receives_view_navigation(runtime_factory):
             "permission": "alpha.view",
         }
     ]
+
+
+def test_regular_user_does_not_receive_frontend_module_when_all_navigation_is_unauthorized(
+    isolated_runtime_factory,
+):
+    calls = []
+    manifest = replace(
+        _manifest("restricted"),
+        navigation=(
+            NavigationDeclaration(
+                id="restricted",
+                label="Restricted",
+                route="restricted",
+                order=10,
+                permission="restricted.manage",
+            ),
+        ),
+        permissions=("restricted.manage",),
+    )
+    runtime = isolated_runtime_factory([_LifecycleModule(manifest, calls)])
+    runtime.start()
+
+    assert runtime.public_modules({"role": "user"}) == []
+    assert [item["id"] for item in runtime.public_modules({"role": "admin"})] == [
+        "restricted"
+    ]
+    assert runtime.status("restricted").value == "enabled"
+    assert runtime.admin_statuses({"role": "admin"})[0]["id"] == "restricted"
 
 
 def test_admin_statuses_include_disabled_and_failed_modules(runtime_factory):
@@ -845,6 +1160,26 @@ def test_stuck_health_is_bounded_deduplicated_and_does_not_hide_healthy_siblings
     assert health_calls == 2
     assert health_threads == [True, True]
     runtime.stop()
+
+
+@pytest.mark.parametrize("invalid_health", [None, {"healthy": True}, object()])
+def test_invalid_health_result_is_fixed_unhealthy_without_hiding_healthy_sibling(
+    isolated_runtime_factory,
+    invalid_health,
+):
+    invalid = _LifecycleModule(_manifest("invalid"), [])
+    invalid.health = lambda: invalid_health
+    healthy = _LifecycleModule(_manifest("healthy"), [])
+    runtime = isolated_runtime_factory([invalid, healthy])
+    runtime.start()
+
+    statuses = {item["id"]: item for item in runtime.admin_statuses({"role": "admin"})}
+
+    assert statuses["invalid"]["health"] == {
+        "healthy": False,
+        "message": "health check unavailable",
+    }
+    assert statuses["healthy"]["health"]["healthy"] is True
 
 
 def test_normal_lifecycle_callbacks_complete_on_daemon_isolation_threads(
