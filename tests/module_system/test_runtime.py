@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from concurrent.futures import CancelledError
-from threading import Event, Thread, Timer
+from threading import Event, Thread, Timer, current_thread
+from time import monotonic, sleep
 
 import pytest
 
@@ -149,7 +150,7 @@ def isolated_runtime_factory(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime_module, "ModuleStateStore", _StateStore)
     monkeypatch.setattr(runtime_module, "ModuleMigrationRunner", _MigrationRunner)
 
-    def create(modules):
+    def create(modules, **runtime_options):
         factories = {}
         discovered = []
         for module in modules:
@@ -165,7 +166,7 @@ def isolated_runtime_factory(monkeypatch, tmp_path):
             temp_root=tmp_path / "module-data",
             now=lambda: None,
         )
-        return ModuleRuntime(context, discovered)
+        return ModuleRuntime(context, discovered, **runtime_options)
 
     return create
 
@@ -427,6 +428,189 @@ def test_module_task_executor_limits_module_to_two_outstanding_tasks(runtime_fac
     runtime.stop()
 
 
+def test_background_tasks_use_daemon_threads_and_keep_a_global_running_limit(
+    isolated_runtime_factory,
+):
+    release = Event()
+    started = [Event() for _ in range(4)]
+    modules = [
+        _LifecycleModule(_manifest(module_id), [])
+        for module_id in ("alpha", "beta", "gamma", "delta", "epsilon")
+    ]
+    runtime = isolated_runtime_factory(modules)
+    runtime.start()
+
+    futures = []
+    for index, module_id in enumerate(("alpha", "alpha", "beta", "beta")):
+        def task(index=index):
+            started[index].set()
+            release.wait()
+            return current_thread().daemon
+
+        futures.append(runtime.context_for(module_id).background_executor.submit(task))
+    assert all(event.wait(0.2) for event in started)
+
+    pending = [
+        runtime.context_for(module_id).background_executor.submit(lambda: True)
+        for module_id in ("gamma", "gamma", "delta", "delta")
+    ]
+    sleep(0.05)
+    assert all(not future.running() for future in pending)
+    assert all(not future.done() for future in pending)
+    with pytest.raises(ModuleTaskLimitError, match="global"):
+        runtime.context_for("epsilon").background_executor.submit(lambda: True)
+
+    release.set()
+    assert all(future.result(timeout=1) is True for future in futures)
+    assert all(future.result(timeout=1) is True for future in pending)
+    runtime.stop()
+
+
+def test_stuck_background_task_does_not_block_stop_and_prevents_duplicate_reenable(
+    isolated_runtime_factory,
+):
+    release = Event()
+    task_started = Event()
+    calls = []
+    futures = []
+
+    def start_task(context):
+        def stuck_task():
+            task_started.set()
+            release.wait()
+
+        futures.append(context.background_executor.submit(stuck_task))
+
+    module = _LifecycleModule(_manifest("alpha"), calls, start_action=start_task)
+    runtime = isolated_runtime_factory(
+        [module], task_shutdown_timeout_seconds=0.05, lifecycle_timeout_seconds=0.05
+    )
+    runtime.start()
+    assert task_started.wait(0.2)
+
+    started_at = monotonic()
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    assert monotonic() - started_at < 0.3
+    assert runtime.status("alpha").value == "disabled"
+    assert not futures[0].done()
+
+    with pytest.raises(ModuleRuntimeError, match="isolated"):
+        runtime.set_enabled("alpha", True, {"role": "admin"})
+
+    release.set()
+    futures[0].result(timeout=1)
+    runtime.set_enabled("alpha", True, {"role": "admin"})
+    assert runtime.status("alpha").value == "enabled"
+    runtime.stop()
+
+
+def test_isolated_running_tasks_keep_real_global_slots_until_they_finish(
+    isolated_runtime_factory,
+):
+    alpha_release = Event()
+    beta_release = Event()
+    alpha_started = [Event(), Event()]
+    beta_started = [Event(), Event()]
+    gamma_started = [Event(), Event()]
+    modules = [
+        _LifecycleModule(_manifest(module_id), [])
+        for module_id in ("alpha", "beta", "gamma")
+    ]
+    runtime = isolated_runtime_factory(
+        modules, task_shutdown_timeout_seconds=0.05, lifecycle_timeout_seconds=0.05
+    )
+    runtime.start()
+
+    def blocking_task(started, release):
+        started.set()
+        release.wait()
+
+    alpha_futures = [
+        runtime.context_for("alpha").background_executor.submit(
+            blocking_task, started, alpha_release
+        )
+        for started in alpha_started
+    ]
+    beta_futures = [
+        runtime.context_for("beta").background_executor.submit(
+            blocking_task, started, beta_release
+        )
+        for started in beta_started
+    ]
+    assert all(event.wait(0.2) for event in (*alpha_started, *beta_started))
+
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    gamma_futures = [
+        runtime.context_for("gamma").background_executor.submit(
+            lambda started=started: started.set()
+        )
+        for started in gamma_started
+    ]
+    sleep(0.1)
+    assert not any(event.is_set() for event in gamma_started)
+
+    alpha_release.set()
+    assert all(event.wait(0.5) for event in gamma_started)
+    assert all(future.result(timeout=1) is None for future in alpha_futures)
+    assert all(future.result(timeout=1) is None for future in gamma_futures)
+    beta_release.set()
+    assert all(future.result(timeout=1) is None for future in beta_futures)
+    runtime.stop()
+
+
+def test_stuck_event_publish_cannot_block_runtime_cleanup_or_duplicate_reenable(
+    isolated_runtime_factory,
+):
+    publish_started = Event()
+    release_publish = Event()
+    publish_futures = []
+
+    def start_publish(context):
+        if publish_futures:
+            return
+
+        def stuck_handler(payload):
+            publish_started.set()
+            release_publish.wait()
+
+        context.events.subscribe("alpha:changed", stuck_handler)
+        publish_futures.append(
+            context.background_executor.submit(
+                context.events.publish, "alpha:changed", {"id": "1"}
+            )
+        )
+
+    module = _LifecycleModule(_manifest("alpha"), [], start_action=start_publish)
+    runtime = isolated_runtime_factory(
+        [module], task_shutdown_timeout_seconds=0.05, lifecycle_timeout_seconds=0.05
+    )
+    runtime.start()
+    assert publish_started.wait(0.2)
+
+    watchdog = Timer(0.4, release_publish.set)
+    watchdog.start()
+    started_at = monotonic()
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    watchdog.cancel()
+    watchdog.join(0.1)
+    assert monotonic() - started_at < 0.3
+    assert runtime.status("alpha").value == "disabled"
+    assert runtime._contexts == {}
+    with pytest.raises(ModuleRuntimeError, match="isolated"):
+        runtime.set_enabled("alpha", True, {"role": "admin"})
+
+    release_publish.set()
+    publish_futures[0].result(timeout=1)
+    deadline = monotonic() + 0.5
+    while any(
+        not future.done() for future in runtime._find("alpha").isolated_futures
+    ) and monotonic() < deadline:
+        sleep(0.01)
+    runtime.set_enabled("alpha", True, {"role": "admin"})
+    assert runtime.status("alpha").value == "enabled"
+    runtime.stop()
+
+
 def test_admin_operations_require_an_administrator(runtime_factory):
     runtime, calls = runtime_factory(["alpha"])
 
@@ -464,6 +648,233 @@ def test_start_failure_stops_partially_started_module_before_resource_cleanup(
     assert runtime._contexts == {}
     with pytest.raises(KeyError):
         runtime._services.resolve("alpha.worker", 1)
+
+
+def test_stuck_start_is_isolated_without_concurrent_stop_and_other_modules_start(
+    isolated_runtime_factory,
+):
+    release_start = Event()
+    start_entered = Event()
+    delayed_stop_called = Event()
+    start_finished = Event()
+    late_service_errors = []
+    start_threads = []
+    calls = []
+
+    def block_first_start(context):
+        start_threads.append(current_thread().daemon)
+        if len(start_threads) != 1:
+            return
+        start_entered.set()
+        release_start.wait()
+        try:
+            context.services.register("alpha.worker", 1, object())
+        except Exception as error:
+            late_service_errors.append(error)
+        start_finished.set()
+
+    alpha = _LifecycleModule(
+        _manifest("alpha", services=[{"name": "alpha.worker", "version": 1}]),
+        calls,
+        start_action=block_first_start,
+    )
+    original_stop = alpha.stop
+
+    def tracked_stop():
+        delayed_stop_called.set()
+        original_stop()
+
+    alpha.stop = tracked_stop
+    beta = _LifecycleModule(_manifest("beta"), calls)
+    runtime = isolated_runtime_factory(
+        [alpha, beta], lifecycle_timeout_seconds=0.05, task_shutdown_timeout_seconds=0.05
+    )
+
+    watchdog = Timer(0.4, release_start.set)
+    watchdog.start()
+    started_at = monotonic()
+    runtime.start()
+    watchdog.cancel()
+    watchdog.join(0.1)
+    assert monotonic() - started_at < 0.3
+    assert start_entered.is_set()
+    assert runtime.status("alpha").value == "startup_failed"
+    assert runtime.status("beta").value == "enabled"
+    assert not delayed_stop_called.is_set()
+    assert runtime._contexts.get("alpha") is None
+
+    with pytest.raises(ModuleRuntimeError, match="isolated"):
+        runtime.set_enabled("alpha", True, {"role": "admin"})
+    assert len(start_threads) == 1
+
+    release_start.set()
+    assert start_finished.wait(0.5)
+    assert delayed_stop_called.wait(0.5)
+    assert len(late_service_errors) == 1
+    assert "closed" in str(late_service_errors[0])
+
+    deadline = monotonic() + 0.5
+    while any(
+        not future.done() for future in runtime._find("alpha").isolated_futures
+    ) and monotonic() < deadline:
+        sleep(0.01)
+    runtime.set_enabled("alpha", True, {"role": "admin"})
+    assert runtime.status("alpha").value == "enabled"
+    assert start_threads == [True, True]
+    runtime.stop()
+
+
+def test_stuck_stop_cannot_block_teardown_and_records_a_safe_disabled_error(
+    isolated_runtime_factory,
+):
+    release_stop = Event()
+    stop_entered = Event()
+    calls = []
+    module = _LifecycleModule(
+        _manifest("alpha", services=[{"name": "alpha.worker", "version": 1}]), calls
+    )
+    original_start = module.start
+
+    def start_with_service(context):
+        original_start(context)
+        context.services.register("alpha.worker", 1, object())
+
+    module.start = start_with_service
+    stop_calls = 0
+
+    def block_first_stop():
+        nonlocal stop_calls
+        stop_calls += 1
+        if stop_calls == 1:
+            stop_entered.set()
+            release_stop.wait()
+            raise RuntimeError("password=must-not-leak")
+        calls.append("alpha:stop")
+
+    module.stop = block_first_stop
+    runtime = isolated_runtime_factory(
+        [module], lifecycle_timeout_seconds=0.05, task_shutdown_timeout_seconds=0.05
+    )
+    runtime.start()
+
+    watchdog = Timer(0.4, release_stop.set)
+    watchdog.start()
+    started_at = monotonic()
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    watchdog.cancel()
+    watchdog.join(0.1)
+    assert monotonic() - started_at < 0.3
+    assert stop_entered.is_set()
+    assert runtime.status("alpha").value == "disabled"
+    assert runtime._contexts == {}
+    assert "timed out" in runtime._find("alpha").error
+    assert "password" not in runtime._find("alpha").error
+    with pytest.raises(KeyError):
+        runtime._services.resolve("alpha.worker", 1)
+    with pytest.raises(ModuleRuntimeError, match="isolated"):
+        runtime.set_enabled("alpha", True, {"role": "admin"})
+
+    release_stop.set()
+    deadline = monotonic() + 0.5
+    while any(
+        not future.done() for future in runtime._find("alpha").isolated_futures
+    ) and monotonic() < deadline:
+        sleep(0.01)
+    runtime.set_enabled("alpha", True, {"role": "admin"})
+    assert runtime.status("alpha").value == "enabled"
+    runtime.stop()
+
+
+def test_stuck_health_is_bounded_deduplicated_and_does_not_hide_healthy_siblings(
+    isolated_runtime_factory,
+):
+    release_health = Event()
+    health_entered = Event()
+    health_calls = 0
+    health_threads = []
+    alpha = _LifecycleModule(_manifest("alpha"), [])
+
+    def block_first_health():
+        nonlocal health_calls
+        health_calls += 1
+        health_threads.append(current_thread().daemon)
+        if health_calls == 1:
+            health_entered.set()
+            release_health.wait()
+        return ModuleHealth(healthy=True)
+
+    alpha.health = block_first_health
+    beta = _LifecycleModule(_manifest("beta"), [])
+    runtime = isolated_runtime_factory(
+        [alpha, beta],
+        lifecycle_timeout_seconds=0.05,
+        health_timeout_seconds=0.05,
+        task_shutdown_timeout_seconds=0.05,
+    )
+    runtime.start()
+
+    watchdog = Timer(0.4, release_health.set)
+    watchdog.start()
+    started_at = monotonic()
+    statuses = runtime.admin_statuses({"role": "admin"})
+    watchdog.cancel()
+    watchdog.join(0.1)
+    assert monotonic() - started_at < 0.3
+    assert health_entered.is_set()
+    assert statuses[0]["health"] == {
+        "healthy": False,
+        "message": "module health check timed out",
+    }
+    assert statuses[1]["health"]["healthy"] is True
+
+    runtime.admin_statuses({"role": "admin"})
+    assert health_calls == 1
+
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    with pytest.raises(ModuleRuntimeError, match="isolated"):
+        runtime.set_enabled("alpha", True, {"role": "admin"})
+
+    release_health.set()
+    deadline = monotonic() + 0.5
+    while any(
+        not future.done() for future in runtime._find("alpha").isolated_futures
+    ) and monotonic() < deadline:
+        sleep(0.01)
+    runtime.set_enabled("alpha", True, {"role": "admin"})
+    runtime.admin_statuses({"role": "admin"})
+    assert health_calls == 2
+    assert health_threads == [True, True]
+    runtime.stop()
+
+
+def test_normal_lifecycle_callbacks_complete_on_daemon_isolation_threads(
+    isolated_runtime_factory,
+):
+    callback_threads = []
+    module = _LifecycleModule(
+        _manifest("alpha"),
+        [],
+        start_action=lambda context: callback_threads.append(("start", current_thread().daemon)),
+    )
+    original_stop = module.stop
+
+    def tracked_stop():
+        callback_threads.append(("stop", current_thread().daemon))
+        original_stop()
+
+    def tracked_health():
+        callback_threads.append(("health", current_thread().daemon))
+        return ModuleHealth(healthy=True)
+
+    module.stop = tracked_stop
+    module.health = tracked_health
+    runtime = isolated_runtime_factory([module])
+
+    runtime.start()
+    assert runtime.admin_statuses({"role": "admin"})[0]["health"]["healthy"] is True
+    runtime.stop()
+
+    assert callback_threads == [("start", True), ("health", True), ("stop", True)]
 
 
 def test_teardown_closes_executor_before_module_stop_and_cancels_pending_tasks(
@@ -633,7 +1044,7 @@ def test_partial_start_cancels_queued_task_before_module_stop(isolated_runtime_f
     assert calls == ["alpha:start", "alpha:stop"]
 
 
-def test_restart_creates_a_new_pool_only_after_the_old_pool_is_closed(
+def test_restart_reopens_the_same_pool_without_bypassing_old_running_slots(
     isolated_runtime_factory,
 ):
     calls = []
@@ -644,9 +1055,8 @@ def test_restart_creates_a_new_pool_only_after_the_old_pool_is_closed(
     runtime.stop()
     runtime.start()
 
-    with pytest.raises(RuntimeError):
-        old_pool.submit(lambda: None)
-    assert runtime._shared_executor is not old_pool
+    assert runtime._shared_executor is old_pool
+    assert old_pool.submit(lambda: "ok").result(timeout=1) == "ok"
     runtime.stop()
 
 

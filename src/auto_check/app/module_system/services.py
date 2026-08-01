@@ -121,7 +121,7 @@ class ServiceRegistry:
 class ModuleServices:
     """Module-scoped service registration and read-only resolution view."""
 
-    __slots__ = ("_register", "_resolve")
+    __slots__ = ("_register", "_resolve", "_closed", "_lock")
 
     def __init__(
         self,
@@ -131,9 +131,22 @@ class ModuleServices:
     ) -> None:
         self._register = register
         self._resolve = resolve
+        self._closed = False
+        self._lock = RLock()
 
     def register(self, name: str, version: int, provider: object) -> None:
-        self._register(name, version, provider)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("module service view is closed")
+            self._register(name, version, provider)
 
     def resolve(self, name: str, minimum_version: int) -> object:
-        return self._resolve(name, minimum_version)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("module service view is closed")
+            return self._resolve(name, minimum_version)
+
+    def close(self) -> None:
+        """Reject late access after the owning module has been isolated or stopped."""
+        with self._lock:
+            self._closed = True

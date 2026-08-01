@@ -96,6 +96,23 @@ def test_module_service_view_only_resolves_own_or_declared_dependency_services()
         view.resolve("beta.missing", 1)
 
 
+def test_closed_module_service_view_rejects_late_registration_and_resolution():
+    registry = ServiceRegistry()
+    registry.register("beta.lookup", 1, object(), owner="beta")
+    view = registry.for_module(
+        "alpha",
+        declared_services={"alpha.worker": 1},
+        dependencies=("beta",),
+    )
+
+    view.close()
+
+    with pytest.raises(RuntimeError, match="closed"):
+        view.register("alpha.worker", 1, object())
+    with pytest.raises(RuntimeError, match="closed"):
+        view.resolve("beta.lookup", 1)
+
+
 def test_service_registry_operations_are_safe_under_concurrent_registration_and_resolution():
     registry = ServiceRegistry()
     barrier = Barrier(3)

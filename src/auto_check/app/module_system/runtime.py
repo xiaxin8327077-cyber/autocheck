@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError, wait
 from dataclasses import dataclass
-from threading import Condition, Lock, RLock, get_ident
+from threading import BoundedSemaphore, Condition, Lock, RLock, Thread, get_ident
 from time import monotonic
 from typing import Any, Callable, Mapping
 
@@ -51,10 +51,120 @@ class ModuleDependencyError(ModuleRuntimeError):
     """Raised when a module's declared provider is not enabled."""
 
 
+class ModuleLifecycleTimeout(ModuleRuntimeError):
+    """Raised with a fixed safe message when trusted in-process module code hangs."""
+
+
+def _daemon_call(
+    callable: Callable[..., Any], /, *args: Any, name: str, **kwargs: Any
+) -> Future:
+    """Invoke trusted module code without letting an unkillable call own host shutdown.
+
+    CPython cannot safely terminate an arbitrary running thread. Timed-out calls therefore
+    remain daemon-isolated until they cooperate and return; callers must retain their Future
+    to prevent duplicate lifecycle calls while that isolation is active.
+    """
+    future: Future = Future()
+
+    def run() -> None:
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            result = callable(*args, **kwargs)
+        except BaseException as error:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+
+    Thread(target=run, name=name, daemon=True).start()
+    return future
+
+
+class _DaemonTaskPool:
+    """Run bounded module work on daemon threads so abandoned work cannot hold process exit."""
+
+    def __init__(self, maximum_workers: int, maximum_tasks: int) -> None:
+        self._slots = BoundedSemaphore(maximum_workers)
+        self._maximum_tasks = maximum_tasks
+        self._futures: set[Future] = set()
+        self._running: set[Future] = set()
+        self._lock = Lock()
+        self._closed = False
+
+    def submit(self, callable: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("module task pool is stopped")
+            if len(self._futures) >= self._maximum_tasks:
+                raise ModuleTaskLimitError("global module background task limit reached")
+            future: Future = Future()
+            self._futures.add(future)
+
+        def run() -> None:
+            while not future.cancelled():
+                if self._slots.acquire(timeout=0.05):
+                    break
+            else:
+                return
+            with self._lock:
+                if future.cancelled():
+                    self._slots.release()
+                    return
+                self._running.add(future)
+            try:
+                if not future.set_running_or_notify_cancel():
+                    return
+                try:
+                    result = callable(*args, **kwargs)
+                except BaseException as error:
+                    future.set_exception(error)
+                else:
+                    future.set_result(result)
+            finally:
+                self._release_running(future)
+
+        def discard(completed: Future) -> None:
+            with self._lock:
+                self._futures.discard(completed)
+
+        future.add_done_callback(discard)
+        thread = Thread(target=run, name="module-task", daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            future.cancel()
+            with self._lock:
+                self._futures.discard(future)
+            raise
+        return future
+
+    def _release_running(self, future: Future) -> None:
+        """Release a physical worker slot only after its callable actually returns."""
+        with self._lock:
+            if future not in self._running:
+                return
+            self._running.remove(future)
+        self._slots.release()
+
+    def reopen(self) -> None:
+        with self._lock:
+            self._closed = False
+
+    def shutdown(self, *, cancel_futures: bool) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            futures = tuple(self._futures)
+        if cancel_futures:
+            for future in futures:
+                future.cancel()
+
+
 class _ModuleTaskExecutor:
     """A module-owned, bounded view over the host's shared worker pool."""
 
-    def __init__(self, executor: ThreadPoolExecutor, maximum_tasks: int = 2) -> None:
+    def __init__(self, executor: _DaemonTaskPool, maximum_tasks: int = 2) -> None:
         self._executor = executor
         self._maximum_tasks = maximum_tasks
         self._futures: set[Future] = set()
@@ -87,15 +197,14 @@ class _ModuleTaskExecutor:
             for future in futures:
                 future.cancel()
 
-    def wait_for_completion(self) -> None:
-        """Wait for the module's already-running tasks after queued work is cancelled."""
+    def wait_for_completion(self, timeout: float) -> tuple[Future, ...]:
+        """Wait briefly, then detach daemon work that Python cannot safely terminate."""
         with self._lock:
             futures = tuple(self._futures)
-        for future in futures:
-            try:
-                future.result()
-            except Exception:
-                pass
+        if not futures:
+            return ()
+        _, outstanding = wait(futures, timeout=timeout)
+        return tuple(outstanding)
 
 
 @dataclass
@@ -105,6 +214,8 @@ class LoadedModule:
     router: ModuleRouter | None = None
     status: ModuleStatus = ModuleStatus.DISCOVERED
     error: str = ""
+    isolated_futures: tuple[Future, ...] = ()
+    health_future: Future | None = None
 
 
 class ModuleRuntime:
@@ -114,33 +225,52 @@ class ModuleRuntime:
         self,
         context: ModuleBootstrapContext,
         discovered: list[DiscoveredModule],
+        *,
+        lifecycle_timeout_seconds: float = 1.0,
+        health_timeout_seconds: float = 0.5,
+        task_shutdown_timeout_seconds: float = 1.0,
     ) -> None:
+        if (
+            lifecycle_timeout_seconds <= 0
+            or health_timeout_seconds <= 0
+            or task_shutdown_timeout_seconds <= 0
+        ):
+            raise ValueError("module timeouts must be positive")
         self._context = context
         self._loaded = [LoadedModule(item) for item in discovered]
         self._declaration_conflicts = declaration_conflicts(discovered)
         self._state_store = ModuleStateStore(context.application_database)
         self._services = ServiceRegistry()
         self._events = EventBus()
-        self._shared_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="module")
+        self._shared_executor = _DaemonTaskPool(maximum_workers=4, maximum_tasks=8)
         self._shared_executor_shutdown = False
+        self._lifecycle_timeout_seconds = lifecycle_timeout_seconds
+        self._health_timeout_seconds = health_timeout_seconds
+        self._task_shutdown_timeout_seconds = task_shutdown_timeout_seconds
         self._contexts: dict[str, ModuleContext] = {}
         self._lifecycle_lock = RLock()
         self._transition_condition = Condition(self._lifecycle_lock)
         self._transition_owner: int | None = None
         self._transitioning_modules: set[str] = set()
+        self._lifecycle_callback_threads: set[int] = set()
 
     @classmethod
     def build(
         cls,
         context: ModuleBootstrapContext,
         package_name: str = "auto_check.modules",
+        **runtime_options: Any,
     ) -> ModuleRuntime:
-        return cls(context, sort_modules(discover_modules(package_name)))
+        return cls(
+            context,
+            sort_modules(discover_modules(package_name)),
+            **runtime_options,
+        )
 
     @classmethod
-    def empty(cls, context: ModuleBootstrapContext) -> ModuleRuntime:
+    def empty(cls, context: ModuleBootstrapContext, **runtime_options: Any) -> ModuleRuntime:
         """Create a runtime that deliberately performs no package discovery."""
-        return cls(context, [])
+        return cls(context, [], **runtime_options)
 
     def start(self) -> None:
         self._run_transition(
@@ -170,6 +300,7 @@ class ModuleRuntime:
                 self._set_status(loaded, ModuleStatus.DISABLED)
                 continue
             try:
+                self._require_not_isolated(loaded)
                 self._require_dependencies_enabled(loaded)
                 self._start_loaded(loaded)
             except ModuleMigrationError as error:
@@ -312,15 +443,16 @@ class ModuleRuntime:
                     loaded.error,
                     loaded.instance,
                     loaded.discovered.manifest.id in self._transitioning_modules,
+                    loaded,
                 )
                 for loaded in self._loaded
             )
         result: list[dict[str, object]] = []
-        for manifest, status, error, instance, transitioning in snapshots:
+        for manifest, status, error, instance, transitioning, loaded in snapshots:
             health = (
                 ModuleHealth(healthy=False, message="module transition in progress")
                 if transitioning
-                else self._health_for(status, instance, manifest.id)
+                else self._health_for(loaded, status, instance, manifest.id)
             )
             result.append(
                 {
@@ -358,6 +490,7 @@ class ModuleRuntime:
         if enabled and module_id in self._declaration_conflicts:
             raise ValueError("module declarations are incompatible")
         if enabled and status != ModuleStatus.ENABLED:
+            self._require_not_isolated(loaded)
             self._require_dependencies_enabled(loaded)
         self._state_store.save_discovered(loaded.discovered.manifest)
         self._state_store.set_enabled(module_id, enabled)
@@ -412,20 +545,37 @@ class ModuleRuntime:
             loaded.instance = instance
             loaded.router = router
             self._contexts[manifest.id] = module_context
+        start_future = self._module_call(
+            instance.start,
+            module_context,
+            name=f"module-{manifest.id}-start",
+        )
         try:
-            instance.start(module_context)
-        except Exception:
+            start_future.result(timeout=self._lifecycle_timeout_seconds)
+        except FutureTimeoutError:
+            self._schedule_stop_after_start(loaded, instance, start_future)
             module_context.background_executor.shutdown(cancel_pending=True)
-            try:
-                instance.stop()
-            except Exception as error:
-                self._log_lifecycle_error(manifest.id, error)
-            self._cleanup_resources(manifest.id, module_context)
+            outstanding = self._cleanup_resources(manifest.id, module_context)
+            self._record_isolation(loaded, outstanding)
             with self._lifecycle_lock:
                 loaded.instance = None
                 loaded.router = None
                 self._contexts.pop(manifest.id, None)
-            raise
+            raise ModuleLifecycleTimeout("module start timed out") from None
+        except BaseException:
+            module_context.background_executor.shutdown(cancel_pending=True)
+            try:
+                self._best_effort_stop(loaded, instance)
+            except Exception as error:
+                self._log_lifecycle_error(manifest.id, error)
+            finally:
+                outstanding = self._cleanup_resources(manifest.id, module_context)
+                self._record_isolation(loaded, outstanding)
+                with self._lifecycle_lock:
+                    loaded.instance = None
+                    loaded.router = None
+                    self._contexts.pop(manifest.id, None)
+            raise ModuleRuntimeError("module start failed") from None
         self._set_status(loaded, ModuleStatus.ENABLED)
 
     def _stop_loaded_reverse(self, loaded_modules: list[LoadedModule]) -> None:
@@ -440,29 +590,116 @@ class ModuleRuntime:
         with self._lifecycle_lock:
             context = self._contexts.get(module_id)
             instance = loaded.instance
+            health_future = loaded.health_future
+            loaded.health_future = None
+        if health_future is not None and not health_future.done():
+            self._record_isolation(loaded, (health_future,))
         if context is not None:
             context.background_executor.shutdown(cancel_pending=True)
+        stop_timed_out = False
         if instance is not None:
             try:
-                instance.stop()
-            except Exception as error:
+                self._best_effort_stop(loaded, instance)
+            except ModuleLifecycleTimeout:
+                stop_timed_out = True
+            except BaseException as error:
                 self._log_lifecycle_error(module_id, error)
         with self._lifecycle_lock:
             context = self._contexts.pop(module_id, None)
         if context is not None:
-            self._cleanup_resources(module_id, context)
+            outstanding = self._cleanup_resources(module_id, context)
+            self._record_isolation(loaded, outstanding)
         with self._lifecycle_lock:
             loaded.instance = None
             loaded.router = None
-        self._set_status(loaded, status)
+            if stop_timed_out:
+                loaded.error = "ModuleLifecycleTimeout: module stop timed out"
+        self._set_status(loaded, status, preserve_error=stop_timed_out)
 
-    def _cleanup_resources(self, module_id: str, context: ModuleContext) -> None:
+    def _cleanup_resources(
+        self, module_id: str, context: ModuleContext
+    ) -> tuple[Future, ...]:
         context.background_executor.shutdown(cancel_pending=True)
-        context.events.close()
+        events_close_future = _daemon_call(
+            context.events.close,
+            name=f"module-{module_id}-events-close",
+        )
+        event_outstanding: tuple[Future, ...] = ()
+        try:
+            events_close_future.result(timeout=self._task_shutdown_timeout_seconds)
+        except FutureTimeoutError:
+            event_outstanding = (events_close_future,)
+        except BaseException as error:
+            self._log_lifecycle_error(module_id, error)
+        context.services.close()
         self._services.unregister_owner(module_id)
         if isinstance(context.background_executor, _ModuleTaskExecutor):
-            context.background_executor.wait_for_completion()
+            return (
+                *event_outstanding,
+                *context.background_executor.wait_for_completion(
+                    self._task_shutdown_timeout_seconds
+                ),
+            )
+        return event_outstanding
 
+    def _record_isolation(
+        self, loaded: LoadedModule, futures: tuple[Future, ...]
+    ) -> None:
+        if not futures:
+            return
+        with self._lifecycle_lock:
+            loaded.isolated_futures = tuple(
+                future
+                for future in (*loaded.isolated_futures, *futures)
+                if not future.done()
+            )
+
+    def _require_not_isolated(self, loaded: LoadedModule) -> None:
+        with self._lifecycle_lock:
+            loaded.isolated_futures = tuple(
+                future for future in loaded.isolated_futures if not future.done()
+            )
+            isolated = bool(loaded.isolated_futures)
+        if isolated:
+            raise ModuleRuntimeError("module remains isolated while abandoned work is running")
+
+    def _best_effort_stop(self, loaded: LoadedModule, instance: AutoCheckModule) -> None:
+        module_id = loaded.discovered.manifest.id
+        stop_future = self._module_call(instance.stop, name=f"module-{module_id}-stop")
+        try:
+            stop_future.result(timeout=self._lifecycle_timeout_seconds)
+        except FutureTimeoutError:
+            self._record_isolation(loaded, (stop_future,))
+            raise ModuleLifecycleTimeout("module stop timed out") from None
+        except BaseException:
+            raise ModuleRuntimeError("module stop failed") from None
+
+    def _schedule_stop_after_start(
+        self,
+        loaded: LoadedModule,
+        instance: AutoCheckModule,
+        start_future: Future,
+    ) -> None:
+        """Stop once a timed-out start eventually returns, never concurrently with start."""
+        cleanup_finished: Future = Future()
+        self._record_isolation(loaded, (cleanup_finished,))
+
+        def stop_after_completion(completed: Future) -> None:
+            try:
+                try:
+                    completed.result()
+                except BaseException:
+                    pass
+                try:
+                    self._best_effort_stop(loaded, instance)
+                except ModuleLifecycleTimeout:
+                    pass
+                except BaseException as error:
+                    self._log_lifecycle_error(loaded.discovered.manifest.id, error)
+            finally:
+                cleanup_finished.set_result(None)
+
+        start_future.add_done_callback(stop_after_completion)
 
     def _fail_loaded(self, loaded: LoadedModule, status: ModuleStatus, error: Exception) -> None:
         self._log_lifecycle_error(loaded.discovered.manifest.id, error)
@@ -470,10 +707,16 @@ class ModuleRuntime:
             loaded.error = f"{type(error).__name__}: module lifecycle operation failed"
         self._set_status(loaded, status)
 
-    def _set_status(self, loaded: LoadedModule, status: ModuleStatus) -> None:
+    def _set_status(
+        self,
+        loaded: LoadedModule,
+        status: ModuleStatus,
+        *,
+        preserve_error: bool = False,
+    ) -> None:
         with self._lifecycle_lock:
             loaded.status = status
-            if status not in {
+            if not preserve_error and status not in {
                 ModuleStatus.INCOMPATIBLE,
                 ModuleStatus.MIGRATION_FAILED,
                 ModuleStatus.STARTUP_FAILED,
@@ -519,17 +762,40 @@ class ModuleRuntime:
 
     def _health_for(
         self,
+        loaded: LoadedModule,
         status: ModuleStatus,
         instance: AutoCheckModule | None,
         module_id: str,
     ) -> ModuleHealth:
         if status != ModuleStatus.ENABLED or instance is None:
             return ModuleHealth(healthy=False, message="module is not running")
+        with self._lifecycle_lock:
+            health_future = loaded.health_future
+            if health_future is not None and not health_future.done():
+                return ModuleHealth(
+                    healthy=False,
+                    message="module health check timed out",
+                )
+            health_future = self._module_call(
+                instance.health,
+                name=f"module-{module_id}-health",
+            )
+            loaded.health_future = health_future
         try:
-            health = instance.health()
-        except Exception as error:
+            health = health_future.result(timeout=self._health_timeout_seconds)
+        except FutureTimeoutError:
+            return ModuleHealth(
+                healthy=False,
+                message="module health check timed out",
+            )
+        except BaseException as error:
             self._log_lifecycle_error(module_id, error)
             return ModuleHealth(healthy=False, message="health check unavailable")
+        finally:
+            if health_future.done():
+                with self._lifecycle_lock:
+                    if loaded.health_future is health_future:
+                        loaded.health_future = None
         return ModuleHealth(
             healthy=bool(health.healthy),
             message="healthy" if health.healthy else "unhealthy",
@@ -544,11 +810,31 @@ class ModuleRuntime:
         finally:
             self._finish_transition()
 
+    def _module_call(
+        self,
+        callable: Callable[..., Any],
+        /,
+        *args: Any,
+        name: str,
+        **kwargs: Any,
+    ) -> Future:
+        def guarded_call() -> Any:
+            owner = get_ident()
+            with self._lifecycle_lock:
+                self._lifecycle_callback_threads.add(owner)
+            try:
+                return callable(*args, **kwargs)
+            finally:
+                with self._lifecycle_lock:
+                    self._lifecycle_callback_threads.discard(owner)
+
+        return _daemon_call(guarded_call, name=name)
+
     def _begin_transition(self, module_ids: tuple[str, ...]) -> None:
         owner = get_ident()
         deadline = monotonic() + 5.0
         with self._transition_condition:
-            if self._transition_owner == owner:
+            if self._transition_owner == owner or owner in self._lifecycle_callback_threads:
                 raise ModuleRuntimeError("module lifecycle callbacks cannot re-enter the runtime")
             while self._transition_owner is not None:
                 remaining = deadline - monotonic()
@@ -575,12 +861,12 @@ class ModuleRuntime:
 
     def _ensure_shared_executor(self) -> None:
         if self._shared_executor_shutdown:
-            self._shared_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="module")
+            self._shared_executor.reopen()
             self._shared_executor_shutdown = False
 
     def _shutdown_shared_executor(self) -> None:
         if not self._shared_executor_shutdown:
-            self._shared_executor.shutdown(wait=True, cancel_futures=True)
+            self._shared_executor.shutdown(cancel_futures=True)
             self._shared_executor_shutdown = True
 
     @staticmethod
@@ -589,7 +875,7 @@ class ModuleRuntime:
             raise PermissionError("administrator permission required")
 
     @staticmethod
-    def _log_lifecycle_error(module_id: str, error: Exception) -> None:
+    def _log_lifecycle_error(module_id: str, error: BaseException) -> None:
         logging.getLogger(__name__).warning(
             "module lifecycle operation failed", extra={"module_id": module_id, "error_type": type(error).__name__}
         )
