@@ -5,6 +5,7 @@
     windowRef = typeof window === "undefined" ? null : window,
     importModule = (url) => import(url),
     stylesheetTimeoutMs = 5000,
+    lifecycleTimeoutMs = 10000,
   } = {}) {
     const state = {
       platform: null,
@@ -218,9 +219,17 @@
       const previous = lifecycleState.frame;
       const frame = { phase, route, navigation: null };
       lifecycleState.frame = frame;
+      let timeout = null;
       try {
-        return { value: await callback(), navigation: frame.navigation };
+        const value = await Promise.race([
+          Promise.resolve().then(callback),
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("模块生命周期执行超时")), lifecycleTimeoutMs);
+          }),
+        ]);
+        return { value, navigation: frame.navigation };
       } finally {
+        clearTimeout(timeout);
         lifecycleState.frame = previous;
       }
     }

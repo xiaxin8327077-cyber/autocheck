@@ -722,3 +722,45 @@ def test_module_host_does_not_start_a_stale_module_redirect(tmp_path: Path):
         assert.equal(env.locationRef.hash, "#gamma");
         """,
     )
+
+
+def test_module_host_bounds_stuck_lifecycle_callbacks(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const mountEnv = makeEnvironment("#alpha");
+        const never = new Promise(() => {});
+        let imports = 0;
+        const stuckMountHost = createModuleHost({
+          ...mountEnv,
+          lifecycleTimeoutMs: 10,
+          importModule: async () => {
+            imports += 1;
+            return { default: { mount: async () => never, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} } };
+          },
+        });
+        const platform = {
+          api: async () => ({ modules: [{ id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] }] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await Promise.race([
+          stuckMountHost.initialize(platform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("mount timeout did not release host")), 100)),
+        ]), true);
+        assert.equal(imports, 1);
+        assert.ok(mountEnv.elements.modulePageHost.querySelector("[data-module-host-error]"));
+
+        const unmountEnv = makeEnvironment("#alpha");
+        const stuckUnmountHost = createModuleHost({
+          ...unmountEnv,
+          lifecycleTimeoutMs: 10,
+          importModule: async () => ({ default: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => never } }),
+        });
+        assert.equal(await stuckUnmountHost.initialize(platform), true);
+        await Promise.race([
+          stuckUnmountHost.unmount(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("unmount timeout did not release host")), 100)),
+        ]);
+        assert.equal(unmountEnv.elements.modulePageHost.children.length, 0);
+        """,
+    )
