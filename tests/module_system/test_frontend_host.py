@@ -497,6 +497,38 @@ def test_module_host_waits_for_style_success_and_times_out_safely(tmp_path: Path
     )
 
 
+def test_module_host_contains_an_import_that_never_settles(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#alpha");
+        const never = new Promise(() => {});
+        let imports = 0;
+        const host = createModuleHost({
+          ...env,
+          moduleImportTimeoutMs: 10,
+          importModule: async () => { imports += 1; return never; },
+        });
+        const platform = {
+          api: async () => ({ modules: [{ id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] }] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+
+        const started = Date.now();
+        const initialized = await Promise.race([
+          host.initialize(platform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("module import deadlocked")), 250)),
+        ]);
+        assert.equal(initialized, true);
+
+        assert.ok(Date.now() - started < 250);
+        assert.equal(imports, 1);
+        assert.equal(env.documentRef.head.children.length, 0);
+        assert.ok(env.elements.modulePageHost.querySelector("[data-module-host-error]"));
+        """,
+    )
+
+
 def test_module_host_defers_lifecycle_navigation_without_queue_deadlock(tmp_path: Path):
     _run_module_host_scenario(
         tmp_path,

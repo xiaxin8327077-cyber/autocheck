@@ -211,3 +211,31 @@ def test_manifest_rejects_invalid_backend_entry_format(backend_entry):
 
     with pytest.raises(ModuleManifestError, match="backend_entry"):
         ModuleManifest.from_mapping(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("frontend_entry", "/module-assets/custom_reports/../other/index.js"),
+        ("frontend_entry", "/module-assets/custom_reports/%2e%2e/other/index.js"),
+        ("frontend_entry", "/module-assets/custom_reports/%252e%252e/other/index.js"),
+        ("frontend_entry", "/module-assets/custom_reports//index.js"),
+        ("frontend_entry", "/module-assets/custom_reports/index.js?module=other"),
+        ("frontend_style", "/module-assets/custom_reports/..\\other\\styles.css"),
+        ("frontend_style", "/module-assets/custom_reports/styles.css#other"),
+    ],
+)
+def test_manifest_rejects_unsafe_module_asset_urls(field, value):
+    with pytest.raises(ModuleManifestError, match=field):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, field: value})
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["report-navigation", "home", "auto-check", "history", "tools", "settings", "users"],
+)
+def test_manifest_rejects_legacy_application_navigation_routes(route):
+    navigation = [{**VALID_MANIFEST["navigation"][0], "route": route}]
+
+    with pytest.raises(ModuleManifestError, match="navigation route"):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "navigation": navigation})

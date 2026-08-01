@@ -18,6 +18,10 @@ _BACKEND_ENTRY_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+:[A-Za-z_][A-Za-z0-9_]*"
 )
 _SERVICE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
+_NAVIGATION_ROUTE_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
+_RESERVED_NAVIGATION_ROUTES = frozenset(
+    {"report-navigation", "home", "auto-check", "history", "tools", "settings", "users"}
+)
 _HEADER_NAME_PATTERN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 _MODULE_RESPONSE_HEADERS = frozenset(
     {"allow", "content-disposition", "etag", "last-modified", "location", "retry-after"}
@@ -158,14 +162,15 @@ class ModuleManifest:
             raise ModuleManifestError("navigation contains a duplicate id")
         if len({item.route for item in navigation}) != len(navigation):
             raise ModuleManifestError("navigation contains a duplicate route")
+        if any(
+            _NAVIGATION_ROUTE_PATTERN.fullmatch(item.route) is None
+            or item.route in _RESERVED_NAVIGATION_ROUTES
+            for item in navigation
+        ):
+            raise ModuleManifestError("navigation route is invalid or reserved")
 
-        frontend_entry = _required_text(payload, "frontend_entry")
-        frontend_style = _required_text(payload, "frontend_style")
-        resource_prefix = f"/module-assets/{module_id}/"
-        if not frontend_entry.startswith(resource_prefix):
-            raise ModuleManifestError("frontend_entry must use the module asset namespace")
-        if not frontend_style.startswith(resource_prefix):
-            raise ModuleManifestError("frontend_style must use the module asset namespace")
+        frontend_entry = _module_asset_url(payload, "frontend_entry", module_id, ".js")
+        frontend_style = _module_asset_url(payload, "frontend_style", module_id, ".css")
 
         required = payload.get("required")
         if not isinstance(required, bool):
@@ -210,6 +215,27 @@ class ModuleManifest:
             table_prefix=_table_prefix(payload, module_id),
             services=services,
         )
+
+
+def _module_asset_url(
+    payload: Mapping[str, object], key: str, module_id: str, extension: str
+) -> str:
+    value = _required_text(payload, key)
+    prefix = f"/module-assets/{module_id}/"
+    if (
+        not value.startswith(prefix)
+        or not value.endswith(extension)
+        or "%" in value
+        or "?" in value
+        or "#" in value
+        or "\\" in value
+        or ":" in value
+    ):
+        raise ModuleManifestError(f"{key} must use a safe module asset namespace")
+    relative_parts = value[len(prefix) :].split("/")
+    if any(part in {"", ".", ".."} for part in relative_parts):
+        raise ModuleManifestError(f"{key} must use a safe module asset namespace")
+    return value
 
 
 def _table_prefix(payload: Mapping[str, object], module_id: str) -> str:

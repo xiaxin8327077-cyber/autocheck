@@ -41,7 +41,7 @@
 }
 ```
 
-模块 ID 以小写字母开始，只包含小写字母、数字和下划线。API 必须使用模块独占的 `/api/modules/` 前缀，API 前缀之间也不得形成父子嵌套；权限使用 `<module_id>.<action>`；表名、静态资源、事件和 DOM 根节点分别使用模块前缀，例如 `example_module_items`、`/module-assets/example_module/`、`example_module:item_created`、`data-module="example_module"`。`table_prefix` 默认是 `<module_id>_`，仅名称以 `s` 结尾的模块可显式选择对应单数前缀。清单 ID、API、导航 ID/路由、权限、表前缀和公开服务均须全局唯一，表前缀也不得互相包含；冲突模块会在导入工厂和执行迁移前停止加载。
+模块 ID 以小写字母开始，只包含小写字母、数字和下划线。API 必须使用模块独占的 `/api/modules/` 前缀，API 前缀之间也不得形成父子嵌套；权限使用 `<module_id>.<action>`；表名、静态资源、事件和 DOM 根节点分别使用模块前缀，例如 `example_module_items`、`/module-assets/example_module/`、`example_module:item_created`、`data-module="example_module"`。前端资源 URL 不得包含编码字符、查询、片段、反斜杠、空路径段或 `.`/`..`，导航路由不得占用 `report-navigation`、`home`、`auto-check`、`history`、`tools`、`settings`、`users` 等既有页面。`table_prefix` 默认是 `<module_id>_`，仅名称以 `s` 结尾的模块可显式选择对应单数前缀。清单 ID、API、导航 ID/路由、权限、表前缀和公开服务均须全局唯一，表前缀也不得互相包含；冲突模块会在导入工厂和执行迁移前停止加载。
 
 新业务模块默认 `required=false`：导入、迁移或启动失败只禁用该模块，不能阻止核心系统及其他模块启动。只有发布包中的可信代码可被发现和加载。
 
@@ -91,7 +91,7 @@ MySQL DDL 往往无法安全回滚。上线前备份，人工执行，记录版�
 
 ## 5. 前端生命周期、资源与样式
 
-前端入口由清单和宿主动态加载，必须导出 `mount(context)`、`activate(route)`、`deactivate()` 与 `unmount()`。宿主 `src/auto_check/web/module_host.js` 的 `createContext` 为每个模块创建并以 `Object.freeze` 冻结普通对象；该对象提供 `root`、`api`、`user`、`notify`、`confirm`、`navigate`、`events`。只能在宿主分配的模块根节点内读写 DOM；`deactivate()` 停止轮询和可取消任务，`unmount()` 清理监听器、定时器、轮询、AbortController 和临时 DOM。样式必须加载成功后才会导入和挂载脚本；单次前端生命周期回调最长等待 10 秒，超时只隔离当前模块。连续导航采用最后一次意图，旧模块的迟到跳转不能覆盖更新页面。
+前端入口由清单和宿主动态加载，必须导出 `mount(context)`、`activate(route)`、`deactivate()` 与 `unmount()`。宿主 `src/auto_check/web/module_host.js` 的 `createContext` 为每个模块创建并以 `Object.freeze` 冻结普通对象；该对象提供 `root`、`api`、`user`、`notify`、`confirm`、`navigate`、`events`。只能在宿主分配的模块根节点内读写 DOM；`deactivate()` 停止轮询和可取消任务，`unmount()` 清理监听器、定时器、轮询、AbortController 和临时 DOM。样式必须加载成功后才会导入和挂载脚本；脚本导入和单次前端生命周期回调最长等待 10 秒，超时只隔离当前模块。连续导航采用最后一次意图，旧模块的迟到跳转不能覆盖更新页面。
 
 全部模块 CSS 必须以 `.auto-check-module[data-module="<module_id>"]` 为顶层作用域，不得编写无作用域 `button`、`input`、`table` 或 `.card`。通过上述冻结对象调用请求、用户信息、消息、确认框、路由和事件；不得读取 `app.js` 的非公开变量。沿用亮色活力主题、`--ui-radius` 和既有语义色；主操作可使用固定 `#3466D9` 到 `#6AA4FF` 渐变，不建立新主题，且悬浮不使用主题光晕。资源必须位于模块资源命名空间，单个静态资源最大 5 MiB，响应使用私有重新验证缓存；JS/CSS 加载失败时只显示本模块错误状态。
 

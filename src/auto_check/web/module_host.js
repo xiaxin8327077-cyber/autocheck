@@ -5,6 +5,7 @@
     windowRef = typeof window === "undefined" ? null : window,
     importModule = (url) => import(url),
     stylesheetTimeoutMs = 5000,
+    moduleImportTimeoutMs = 10000,
     lifecycleTimeoutMs = 10000,
   } = {}) {
     const state = {
@@ -183,6 +184,23 @@
     function removeStyle(moduleId) {
       removeElement(styleElements.get(moduleId));
       styleElements.delete(moduleId);
+    }
+
+    async function loadModuleCode(module) {
+      let timeout = null;
+      try {
+        return await Promise.race([
+          Promise.resolve().then(() => importModule(module.frontend_entry)),
+          new Promise((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error("模块脚本加载超时")),
+              moduleImportTimeoutMs,
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout !== null) clearTimeout(timeout);
+      }
     }
 
     function moduleEventBus(moduleId) {
@@ -545,7 +563,7 @@
         const lifecycleState = { frame: null, acceptNavigation: false };
         try {
           await loadStyle(module);
-          const namespace = await importModule(module.frontend_entry);
+          const namespace = await loadModuleCode(module);
           instance = namespace?.default || namespace;
           if (!validateInstance(instance)) throw new Error("模块生命周期接口不完整");
           root = createRoot(module);
