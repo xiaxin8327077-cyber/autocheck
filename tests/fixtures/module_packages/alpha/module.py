@@ -35,7 +35,7 @@ class AlphaModule:
                 ],
                 "permissions": ["alpha.view"],
                 "dependencies": [],
-                "schema_version": 0,
+                "schema_version": 2,
             }
         )
     )
@@ -44,7 +44,7 @@ class AlphaModule:
         return None
 
     def register_schema(self, registry: Any) -> None:
-        return None
+        registry.add("alpha_items", {"id", "note"})
 
     def start(self, context: Any) -> None:
         self.calls.append("alpha:start")
