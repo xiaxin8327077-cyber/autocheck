@@ -43,7 +43,7 @@
 
 模块 ID 以小写字母开始，只包含小写字母、数字和下划线。API 必须使用模块独占的 `/api/modules/` 前缀，API 前缀之间也不得形成父子嵌套；权限使用 `<module_id>.<action>`；表名、静态资源、事件和 DOM 根节点分别使用模块前缀，例如 `example_module_items`、`/module-assets/example_module/`、`example_module:item_created`、`data-module="example_module"`。前端资源 URL 不得包含编码字符、查询、片段、反斜杠、空路径段或 `.`/`..`，导航路由不得占用 `report-navigation`、`home`、`auto-check`、`history`、`tools`、`settings`、`users` 等既有页面。`table_prefix` 默认是 `<module_id>_`，仅名称以 `s` 结尾的模块可显式选择对应单数前缀。清单 ID、API、导航 ID/路由、权限、表前缀和公开服务均须全局唯一，表前缀也不得互相包含；冲突模块会在导入工厂和执行迁移前停止加载。
 
-新业务模块默认 `required=false`：导入、迁移或启动失败只禁用该模块，不能阻止核心系统及其他模块启动。只有发布包中的可信代码可被发现和加载。
+新业务模块默认 `required=false`：包资源、清单读取/解析/校验、依赖规划、迁移或启动失败只隔离该模块及其依赖方，不能阻止核心系统及无关健康模块启动；管理员状态中仅展示固定脱敏原因。只有清单中可可靠识别的 `required=true` 问题才按必选模块阻止启动。只有发布包中的可信代码可被发现和加载。
 
 ## 2. 推荐目录和职责
 
@@ -79,7 +79,7 @@ src/auto_check/modules/<module_id>/
 
 应用库先由运维在备份后人工执行 `sql/app_storage/mysql/012_module_system.sql`，将平台应用表从 39 张增至 42 张，`app_schema_version` 仍为 `1`。该脚本建立模块注册、模块 schema 版本和迁移历史；生产环境禁止由应用自动执行。模块业务表**不加入**全局 `EXPECTED_APP_SCHEMA`，而由模块自己的 `migrations/` 和清单 `schema_version` 管理。
 
-每个模块从 `001` 起顺序编号迁移。发布后的迁移文件不可修改；后续调整必须新增迁移。模块宿主会校验 checksum，并以同模块串行执行和迁移锁防止并发；checksum 不匹配或迁移失败时禁用当前可选模块并记录脱敏错误。迁移只允许受控的 `CREATE/ALTER/DROP TABLE` 和 `CREATE/DROP INDEX` DDL，所有目标表、引用表和多表语句中的每个表都必须属于清单 `table_prefix`；禁止 DML、查询、跨 schema、动态 SQL、存储过程、视图、触发器及改名绕过。禁止用运行时 `CREATE TABLE IF NOT EXISTS` 绕开登记迁移。
+每个模块从 `001` 起顺序编号迁移。发布后的迁移文件不可修改；后续调整必须新增迁移。模块宿主会校验 checksum，并以同模块串行执行和迁移锁防止并发；checksum 不匹配或迁移失败时禁用当前可选模块并记录脱敏错误。迁移只允许受控的 `CREATE/ALTER/DROP TABLE` 和 `CREATE/DROP INDEX` DDL，所有目标表、引用表和多表语句中的每个表都必须属于清单 `table_prefix`；禁止 DML、查询、跨 schema、动态 SQL、存储过程、视图、触发器及改名绕过。为避免依赖 MySQL `sql_mode` 产生不同解析结果，迁移字符串字面量禁止反斜杠转义；字符串内的引号只能写成连续两个同类引号。禁止用运行时 `CREATE TABLE IF NOT EXISTS` 绕开登记迁移。
 
 单个 SQL 文件中需要分段时，使用独占一行的分隔符：
 
