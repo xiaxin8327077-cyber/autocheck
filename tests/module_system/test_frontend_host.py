@@ -90,9 +90,17 @@ def test_module_host_lifecycle_and_failure_isolation(tmp_path: Path):
             this.className = "";
             this.textContent = "";
           }
-          appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+          appendChild(child) {
+            this.children.push(child);
+            child.parentNode = this;
+            if (this.tagName === "HEAD" && child.tagName === "LINK") {
+              queueMicrotask(() => child.listeners.get("load")?.({ target: child }));
+            }
+            return child;
+          }
           replaceChildren(...children) { this.children = []; children.forEach((child) => this.appendChild(child)); }
           addEventListener(type, listener) { this.listeners.set(type, listener); }
+          removeEventListener(type) { this.listeners.delete(type); }
           click(target = this) { return this.listeners.get("click")?.({ target, preventDefault() {} }); }
           closest(selector) {
             if (selector === "[data-module-route]" && this.dataset.moduleRoute) return this;
@@ -181,11 +189,19 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
               contains: (name) => this.classList.values.has(name),
             };
           }
-          appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+          appendChild(child) {
+            this.children.push(child);
+            child.parentNode = this;
+            if (this.tagName === "HEAD" && child.tagName === "LINK") {
+              queueMicrotask(() => child.dispatch("load"));
+            }
+            return child;
+          }
           replaceChildren(...children) { this.children.slice().forEach((child) => { child.parentNode = null; }); this.children = []; children.forEach((child) => this.appendChild(child)); }
           remove() { if (!this.parentNode) return; this.parentNode.children = this.parentNode.children.filter((child) => child !== this); this.parentNode = null; }
           contains(target) { return this.children.includes(target) || this.children.some((child) => child.contains?.(target)); }
           addEventListener(type, listener) { this.listeners.set(type, listener); }
+          removeEventListener(type) { this.listeners.delete(type); }
           dispatch(type, target = this) { return this.listeners.get(type)?.({ target, preventDefault() {} }); }
           closest(selector) { return selector === "[data-module-route]" && this.dataset.moduleRoute ? this : null; }
           setAttribute(name, value) { this.attributes.set(name, String(value)); }
@@ -394,5 +410,82 @@ def test_module_host_hashchange_avoids_legacy_reload_and_contains_errors(tmp_pat
         await new Promise((resolve) => setImmediate(resolve));
         assert.equal(notifyCalls.length, 0);
         assert.ok(errorEnv.elements.modulePageHost.querySelector("[data-module-host-diagnostic]"));
+        """,
+    )
+
+
+def test_module_host_waits_for_styles_and_contains_style_failures(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#alpha");
+        let imports = 0;
+        let mounts = 0;
+        env.documentRef.head.appendChild = function appendFailingStyle(child) {
+          this.children.push(child);
+          child.parentNode = this;
+          queueMicrotask(() => child.dispatch("error"));
+          return child;
+        };
+        const host = createModuleHost({
+          ...env,
+          stylesheetTimeoutMs: 25,
+          importModule: async () => {
+            imports += 1;
+            return { default: { mount: async () => { mounts += 1; }, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} } };
+          },
+        });
+        const platform = {
+          api: async () => ({ modules: [{ id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] }] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await host.initialize(platform), true);
+        assert.equal(imports, 0);
+        assert.equal(mounts, 0);
+        assert.equal(env.documentRef.head.children.length, 0);
+        assert.ok(env.elements.modulePageHost.querySelector("[data-module-host-error]"));
+        """,
+    )
+
+
+def test_module_host_defers_lifecycle_navigation_without_queue_deadlock(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const modules = [
+          { id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] },
+          { id: "beta", frontend_entry: "/beta.js", frontend_style: "/beta.css", navigation: [{ id: "beta", label: "Beta", route: "beta" }] },
+        ];
+        const platform = {
+          api: async () => ({ modules }), user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+
+        const mountEnv = makeEnvironment("#alpha");
+        const mountInstances = {
+          alpha: { mount: async (context) => { assert.equal(await context.navigate("beta"), true); }, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} },
+          beta: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} },
+        };
+        const mountHost = createModuleHost({ ...mountEnv, importModule: async (url) => ({ default: mountInstances[url.includes("beta") ? "beta" : "alpha"] }) });
+        await Promise.race([
+          mountHost.initialize(platform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("mount navigation deadlocked")), 100)),
+        ]);
+        const mountRoots = mountEnv.elements.modulePageHost.children.filter((child) => child.dataset.module);
+        assert.equal(mountRoots.find((root) => root.dataset.module === "beta").hidden, false);
+
+        const activateEnv = makeEnvironment("#alpha");
+        let alphaContext;
+        const activateInstances = {
+          alpha: { mount: async (context) => { alphaContext = context; }, activate: async () => { assert.equal(await alphaContext.navigate("beta"), true); }, deactivate: async () => {}, unmount: async () => {} },
+          beta: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} },
+        };
+        const activateHost = createModuleHost({ ...activateEnv, importModule: async (url) => ({ default: activateInstances[url.includes("beta") ? "beta" : "alpha"] }) });
+        await Promise.race([
+          activateHost.initialize(platform),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("activate navigation deadlocked")), 100)),
+        ]);
+        const activateRoots = activateEnv.elements.modulePageHost.children.filter((child) => child.dataset.module);
+        assert.equal(activateRoots.find((root) => root.dataset.module === "beta").hidden, false);
+        assert.equal(activateEnv.locationRef.hash, "#beta");
         """,
     )

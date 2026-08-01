@@ -4,6 +4,7 @@
     locationRef = window.location,
     windowRef = typeof window === "undefined" ? null : window,
     importModule = (url) => import(url),
+    stylesheetTimeoutMs = 5000,
   } = {}) {
     const state = {
       platform: null,
@@ -21,6 +22,7 @@
     let initializePromise = null;
     let lifecycleQueue = Promise.resolve();
     let lifecycleVersion = 0;
+    let lifecycleFrame = null;
     let hashListener = null;
 
     function enqueue(operation) {
@@ -141,14 +143,37 @@
     }
 
     function loadStyle(module) {
-      if (!module.frontend_style || !documentRef?.head) return null;
+      if (!module.frontend_style || !documentRef?.head) return Promise.resolve(null);
       const link = documentRef.createElement("link");
       link.rel = "stylesheet";
       link.href = module.frontend_style;
       link.dataset.moduleStyle = module.id;
-      documentRef.head.appendChild(link);
       styleElements.set(module.id, link);
-      return link;
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(() => finish(new Error("模块样式加载超时")), stylesheetTimeoutMs);
+        const cleanup = () => {
+          clearTimeout(timeout);
+          link.removeEventListener?.("load", onLoad);
+          link.removeEventListener?.("error", onError);
+        };
+        const finish = (error) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (error) {
+            removeStyle(module.id);
+            reject(error);
+            return;
+          }
+          resolve(link);
+        };
+        const onLoad = () => finish(null);
+        const onError = () => finish(new Error("模块样式加载失败"));
+        link.addEventListener?.("load", onLoad);
+        link.addEventListener?.("error", onError);
+        documentRef.head.appendChild(link);
+      });
     }
 
     function removeStyle(moduleId) {
@@ -186,6 +211,17 @@
       });
     }
 
+    async function invokeLifecycle(phase, callback) {
+      const previous = lifecycleFrame;
+      const frame = { phase, navigation: "" };
+      lifecycleFrame = frame;
+      try {
+        return { value: await callback(), navigation: frame.navigation };
+      } finally {
+        lifecycleFrame = previous;
+      }
+    }
+
     function createContext(module, root) {
       const context = {
         root,
@@ -194,8 +230,16 @@
         notify: state.platform.notify,
         confirm: state.platform.confirm,
         navigate: async (route) => {
-          if (await activate(route)) return true;
-          await state.platform.legacyNavigate(route);
+          const routeName = String(route || "");
+          if (lifecycleFrame) {
+            if (lifecycleFrame.phase === "mount" || lifecycleFrame.phase === "activate") {
+              lifecycleFrame.navigation = routeName;
+              return state.routes.has(routeName);
+            }
+            return false;
+          }
+          if (await activate(routeName)) return true;
+          await state.platform.legacyNavigate(routeName);
           return false;
         },
         events: moduleEventBus(module.id),
@@ -272,7 +316,7 @@
       if (active) {
         try {
           const instance = active.instance;
-          await instance.deactivate();
+          await invokeLifecycle("deactivate", () => instance.deactivate());
         } catch (_) {
           recordModuleIssue(activeId, "停用失败");
         }
@@ -290,10 +334,15 @@
       }
     }
 
-    async function activateNow(route, version, { syncHash = true } = {}) {
+    async function activateNow(route, version, { syncHash = true } = {}, redirectTrail = []) {
       const routeName = String(route || "");
       const moduleId = state.routes.get(routeName);
       if (!moduleId) return false;
+      if (redirectTrail.includes(routeName)) {
+        failures.set(moduleId, "模块导航形成循环");
+        showModuleError(moduleId, "模块导航形成循环");
+        return true;
+      }
       if (state.activeModuleId === moduleId && state.activeRoute === routeName && !pageHost()?.hidden) {
         if (syncHash) updateHash(routeName);
         return true;
@@ -324,10 +373,37 @@
         setModulePageState(moduleId);
         setModuleNavigationActive(routeName);
         const instance = record.instance;
-        await instance.activate(route);
+        const activation = await invokeLifecycle("activate", () => instance.activate(route));
+        const redirectedRoute = activation.navigation;
+        if (redirectedRoute && redirectedRoute !== routeName) {
+          try {
+            await invokeLifecycle("deactivate", () => instance.deactivate());
+          } catch (_) {
+            recordModuleIssue(moduleId, "导航切换停用失败");
+          }
+          record.root.hidden = true;
+          if (state.routes.has(redirectedRoute)) {
+            return activateNow(
+              redirectedRoute,
+              ++lifecycleVersion,
+              { syncHash: true },
+              [...redirectTrail, routeName],
+            );
+          }
+          hideModuleRoots();
+          const host = pageHost();
+          if (host) host.hidden = true;
+          state.activeModuleId = "";
+          state.activeRoute = "";
+          setModuleNavigationActive("");
+          clearModulePageState();
+          setLegacyVisibility(false);
+          await state.platform.legacyNavigate(redirectedRoute);
+          return false;
+        }
         if (version !== lifecycleVersion) {
           try {
-            await instance.deactivate();
+            await invokeLifecycle("deactivate", () => instance.deactivate());
           } catch (_) {
             recordModuleIssue(moduleId, "过期激活停用失败");
           }
@@ -395,6 +471,7 @@
 
     async function initializeNow() {
       let payload;
+      let mountedNavigation = "";
       try {
         payload = await state.platform.api("/api/system/modules");
       } catch (_) {
@@ -418,19 +495,20 @@
         let instance = null;
         let root = null;
         try {
-          loadStyle(module);
+          await loadStyle(module);
           const namespace = await importModule(module.frontend_entry);
           instance = namespace?.default || namespace;
           if (!validateInstance(instance)) throw new Error("模块生命周期接口不完整");
           root = createRoot(module);
           const context = createContext(module, root);
-          await instance.mount(context);
+          const mounted = await invokeLifecycle("mount", () => instance.mount(context));
+          if (mounted.navigation) mountedNavigation = mounted.navigation;
           state.instances.set(module.id, { instance, root, context });
         } catch (_) {
           failures.set(module.id, "模块资源未能加载");
           if (instance) {
             try {
-              await instance.unmount();
+              await invokeLifecycle("unmount", () => instance.unmount());
             } catch (_) {
               recordModuleIssue(module.id, "失败模块卸载失败");
             }
@@ -444,8 +522,10 @@
       bindNavigation();
       bindHashChange();
       state.initialized = true;
-      const route = String(locationRef?.hash || "").replace(/^#/, "");
-      return activateNow(route, ++lifecycleVersion);
+      const route = mountedNavigation || String(locationRef?.hash || "").replace(/^#/, "");
+      if (await activateNow(route, ++lifecycleVersion)) return true;
+      if (mountedNavigation) await state.platform.legacyNavigate(route);
+      return false;
     }
 
     async function initialize(platform) {
@@ -467,7 +547,7 @@
       for (const [moduleId, record] of state.instances) {
         try {
           const instance = record.instance;
-          await instance.unmount();
+          await invokeLifecycle("unmount", () => instance.unmount());
         } catch (_) {
           recordModuleIssue(moduleId, "卸载失败");
         }
