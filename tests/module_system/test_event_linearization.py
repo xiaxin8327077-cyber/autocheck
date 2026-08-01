@@ -245,3 +245,47 @@ def test_external_module_close_and_handler_module_close_do_not_deadlock():
     assert external_close_returned.is_set()
     assert not publishing.is_alive()
     assert not closing.is_alive()
+
+
+def test_external_module_close_waits_after_handler_self_close_returns():
+    handler_entered = Event()
+    self_close_returned = Event()
+    release_handler = Event()
+    handler_returned = Event()
+    external_close_returned = Event()
+    bus = EventBus()
+    events = bus.for_module("beta")
+
+    def handler(payload):
+        handler_entered.set()
+        events.close()
+        self_close_returned.set()
+        assert release_handler.wait(1)
+        handler_returned.set()
+
+    events.subscribe("alpha:changed", handler)
+    publishing = Thread(
+        target=lambda: bus.publish("alpha:changed", {}),
+        daemon=True,
+    )
+    closing = Thread(
+        target=lambda: (events.close(), external_close_returned.set()),
+        daemon=True,
+    )
+
+    publishing.start()
+    assert handler_entered.wait(1)
+    assert self_close_returned.wait(1)
+    closing.start()
+    try:
+        sleep(0.01)
+        assert not external_close_returned.is_set()
+    finally:
+        release_handler.set()
+        publishing.join(timeout=1)
+        closing.join(timeout=1)
+
+    assert handler_returned.is_set()
+    assert external_close_returned.is_set()
+    assert not publishing.is_alive()
+    assert not closing.is_alive()

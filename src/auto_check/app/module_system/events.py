@@ -269,3 +269,6 @@ class ModuleEvents:
             own_publishes = self._publishing_threads.get(closer, 0)
             while self._inflight_publishes > own_publishes:
                 self._condition.wait()
+            own_handlers = self._handling_threads.get(closer, 0)
+            while sum(self._handling_threads.values()) > own_handlers:
+                self._condition.wait()
