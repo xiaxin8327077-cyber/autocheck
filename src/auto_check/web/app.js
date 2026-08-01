@@ -2426,12 +2426,21 @@ async function editReportNavigationSchedule(processCode) {
     return;
   }
   try {
-    await api(`/api/report-navigation/schedules/${encodeURIComponent(processCode)}`, {
+    const result = await api(`/api/report-navigation/schedules/${encodeURIComponent(processCode)}`, {
       method: "POST",
       body: JSON.stringify({ report_month: reportMonth, report_date: nextDate }),
     });
-    await loadReportNavigation();
+    const savedDate = String(result?.report_date || nextDate).slice(0, 10);
+    const payload = reportNavigationPayload || {};
+    process.report_date = savedDate;
+    const payloadProcess = (payload.processes || [])
+      .find((item) => item.process_code === processCode);
+    if (payloadProcess) payloadProcess.report_date = savedDate;
+    renderReportNavigationProcesses(payload);
+    renderReportNavigationSchedule(payload);
+    writeReportNavigationCache(reportNavPeriodSelect?.value || "month", payload);
     showToast("截止日期已更新", "success");
+    void loadReportNavigation();
   } catch (error) {
     showToast(`截止日期更新失败：${error.message}`, "error");
   }

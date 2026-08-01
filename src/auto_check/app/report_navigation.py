@@ -1179,25 +1179,12 @@ class ReportNavigationService:
             updated_by=str(current_user.get("username") or ""),
             now=current,
         )
-        collection_result = None
-        if report_month == current.strftime("%Y-%m"):
-            collection_result = self.collect_once(
-                trigger_type="schedule-update",
-                now=current,
-            )
-        payload = {
+        return {
             "ok": True,
             "process_code": process_code,
             "report_month": report_month,
             "report_date": report_date.isoformat(),
         }
-        if collection_result is not None:
-            payload.update(
-                statistics_status=collection_result.status,
-                statistics_error=collection_result.error_message,
-                failed_steps=collection_result.failed_steps,
-            )
-        return payload
 
     def update_schedule_owner(
         self,

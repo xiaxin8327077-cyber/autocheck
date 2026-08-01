@@ -1584,6 +1584,35 @@ def test_schedule_update_accepts_current_or_future_month_and_rejects_cross_month
         raise AssertionError("cross-month schedule date should be rejected")
 
 
+def test_schedule_update_saves_without_synchronously_collecting_statistics(monkeypatch):
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+    current = datetime(2026, 7, 16, 9, 30)
+    collect_calls = []
+
+    def collect_once(**kwargs):
+        collect_calls.append(kwargs)
+        return report_module.CollectionResult("completed", "2026-07", 1, 2, 0)
+
+    monkeypatch.setattr(service, "collect_once", collect_once)
+
+    result = service.update_schedule("p1", "2026-07", "2026-07-20", admin, now=current)
+
+    assert collect_calls == []
+    assert result == {
+        "ok": True,
+        "process_code": "p1",
+        "report_month": "2026-07",
+        "report_date": "2026-07-20",
+    }
+    assert store.load_schedules("2026-07")["p1"].report_date == date(2026, 7, 20)
+
+
 def test_schedule_owner_is_saved_and_returned_in_dashboard():
     report_module = _report_navigation()
     storage_module = _storage()

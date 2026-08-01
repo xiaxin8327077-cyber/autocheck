@@ -1972,6 +1972,22 @@ def test_report_navigation_frontend_preserves_snapshot_period_refresh_and_card_m
     assert "本周" in app_js and "本月" in app_js and "本季度" in app_js and "本年" in app_js
 
 
+def test_report_navigation_schedule_save_updates_locally_before_background_refresh():
+    app_js = _read(APP_JS)
+    body = app_js.split(
+        "async function editReportNavigationSchedule(processCode)", 1
+    )[1].split("function renderReportNavigationProcesses", 1)[0]
+
+    assert "const result = await api(" in body
+    assert "process.report_date = savedDate;" in body
+    assert "renderReportNavigationProcesses(payload);" in body
+    assert "renderReportNavigationSchedule(payload);" in body
+    assert "writeReportNavigationCache(" in body
+    assert 'showToast("截止日期已更新", "success");' in body
+    assert "void loadReportNavigation();" in body
+    assert "await loadReportNavigation();" not in body
+
+
 def test_report_navigation_browser_refresh_restores_scoped_session_cache(tmp_path):
     app_js = _read(APP_JS)
     block = re.search(
