@@ -62,7 +62,7 @@ src/auto_check/modules/<module_id>/
 
 ## 3. 后端、API、权限和服务
 
-模块工厂返回的对象必须实现平台生命周期：`register_routes()` 注册相对路由，`register_schema()` 声明模块结构，`start()` 启动模块服务，`stop()` 停止后台工作并释放资源，`health()` 返回脱敏状态。路由必须通过模块上下文注册，后端执行登录、CSRF、权限、请求体大小、资源所有权和路径穿越校验；隐藏导航或按钮不能代替鉴权。
+模块工厂返回的对象必须实现平台生命周期：`register_routes()` 注册相对路由，`register_schema()` 声明模块结构，`start()` 启动模块服务，`stop()` 停止后台工作并释放资源，`health()` 返回脱敏状态。路由必须通过模块上下文注册；宿主统一执行登录、CSRF、声明权限、请求体大小和静态资源路径穿越校验，模块路由处理器仍必须依据 `current_user` 校验业务资源所有权、可见范围和下载任务归属。隐藏导航或按钮不能代替鉴权。
 
 路由处理器从 `ModuleRequest.current_user` 取得已鉴权的当前用户。`ModuleContext` 不携带当前用户；它只提供 `application_database`、`config_path`、`temp_root`、`now`、`services`、`events`、`logger` 和 `background_executor`。SQL 参数化，标识符来自白名单；API 和日志不返回密码、令牌、连接串、SQL、驱动堆栈或本地绝对路径。模块间不得导入对方 `service.py`、`storage.py` 或私有对象，只能使用版本化公开服务或可序列化的命名空间事件。事件订阅者失败只记录自身错误，不阻断其他订阅者。
 
