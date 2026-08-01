@@ -118,7 +118,11 @@ def test_declaration_preflight_rejects_an_entry_outside_its_discovered_package(m
 def test_declaration_preflight_reports_each_global_declaration_conflict(monkeypatch, kind):
     monkeypatch.syspath_prepend(str(FIXTURE_PARENT))
     alpha, beta = [
-        next(module for module in discover_modules("module_packages") if module.manifest.id == module_id)
+        next(
+            module
+            for module in discover_modules("module_packages")
+            if module.manifest.id == module_id
+        )
         for module_id in ("alpha", "beta")
     ]
     if kind == "api_prefix":
@@ -141,3 +145,21 @@ def test_declaration_preflight_reports_each_global_declaration_conflict(monkeypa
     assert alpha.manifest.id in conflicts
     assert beta.manifest.id in conflicts
     assert kind in conflicts[alpha.manifest.id]
+
+
+def test_declaration_preflight_rejects_nested_api_prefixes(monkeypatch):
+    monkeypatch.syspath_prepend(str(FIXTURE_PARENT))
+    alpha, beta = [
+        next(module for module in discover_modules("module_packages") if module.manifest.id == module_id)
+        for module_id in ("alpha", "beta")
+    ]
+    alpha = replace(alpha, manifest=replace(alpha.manifest, api_prefix="/api/modules/shared"))
+    beta = replace(
+        beta,
+        manifest=replace(beta.manifest, api_prefix="/api/modules/shared/nested"),
+    )
+
+    conflicts = declaration_conflicts([alpha, beta])
+
+    assert "conflicting api_prefix" in conflicts["alpha"]
+    assert "conflicting api_prefix" in conflicts["beta"]

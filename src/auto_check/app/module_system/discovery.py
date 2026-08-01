@@ -100,10 +100,12 @@ def declaration_conflicts(modules: Iterable[DiscoveredModule]) -> dict[str, str]
         "permission": defaultdict(list),
         "service": defaultdict(list),
     }
+    api_prefixes: list[tuple[str, str]] = []
     prefixes: list[tuple[str, str]] = []
     for module in discovered:
         manifest = module.manifest
         claims["api_prefix"][manifest.api_prefix].append(manifest.id)
+        api_prefixes.append((manifest.id, manifest.api_prefix))
         for item in manifest.navigation:
             claims["navigation.id"][item.id].append(manifest.id)
             claims["navigation.route"][item.route].append(manifest.id)
@@ -118,6 +120,17 @@ def declaration_conflicts(modules: Iterable[DiscoveredModule]) -> dict[str, str]
             if len(owners) > 1:
                 for owner in owners:
                     errors[owner].append(f"duplicate {kind}: {value}")
+    for index, (left_id, left_prefix) in enumerate(api_prefixes):
+        for right_id, right_prefix in api_prefixes[index + 1 :]:
+            if left_prefix.startswith(f"{right_prefix}/") or right_prefix.startswith(
+                f"{left_prefix}/"
+            ):
+                errors[left_id].append(
+                    f"conflicting api_prefix: {left_prefix}, {right_prefix}"
+                )
+                errors[right_id].append(
+                    f"conflicting api_prefix: {left_prefix}, {right_prefix}"
+                )
     for index, (left_id, left_prefix) in enumerate(prefixes):
         for right_id, right_prefix in prefixes[index + 1 :]:
             if left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix):

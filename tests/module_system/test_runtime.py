@@ -440,18 +440,26 @@ def test_start_failure_stops_partially_started_module_before_resource_cleanup(
     isolated_runtime_factory,
 ):
     calls = []
+    resource_steps = []
 
     def fail_after_creating_resources(context):
         context.services.register("alpha.worker", 1, object())
+        resource_steps.append("service")
         context.events.subscribe("system:ready", lambda payload: None)
+        resource_steps.append("subscription")
         raise RuntimeError("password=not-for-admin")
 
-    module = _LifecycleModule(_manifest("alpha"), calls, start_action=fail_after_creating_resources)
+    module = _LifecycleModule(
+        _manifest("alpha", services=[{"name": "alpha.worker", "version": 1}]),
+        calls,
+        start_action=fail_after_creating_resources,
+    )
     runtime = isolated_runtime_factory([module])
 
     runtime.start()
 
     assert calls == ["alpha:start", "alpha:stop"]
+    assert resource_steps == ["service", "subscription"]
     assert runtime.status("alpha").value == "startup_failed"
     assert runtime._contexts == {}
     with pytest.raises(KeyError):
