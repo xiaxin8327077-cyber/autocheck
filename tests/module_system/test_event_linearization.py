@@ -119,3 +119,129 @@ def test_close_waits_for_an_inflight_inbound_subscription_handler():
 
     assert effects == [{"id": "1"}]
     assert close_returned.is_set()
+
+
+def test_reentrant_module_close_waits_for_a_different_inflight_subscription():
+    target_entered = Event()
+    closing_handler_entered = Event()
+    release_target = Event()
+    close_returned = Event()
+    effects = []
+    bus = EventBus()
+    events = bus.for_module("beta")
+
+    def target_handler(payload):
+        target_entered.set()
+        assert release_target.wait(1)
+        effects.append(payload)
+
+    def closing_handler(payload):
+        closing_handler_entered.set()
+        events.close()
+        close_returned.set()
+
+    events.subscribe("alpha:target", target_handler)
+    events.subscribe("alpha:close", closing_handler)
+    target_publish = Thread(
+        target=lambda: bus.publish("alpha:target", {"id": "target"})
+    )
+    closing_publish = Thread(target=lambda: bus.publish("alpha:close", {}))
+
+    target_publish.start()
+    assert target_entered.wait(1)
+    closing_publish.start()
+    try:
+        assert closing_handler_entered.wait(1)
+        sleep(0.01)
+        assert not close_returned.is_set()
+    finally:
+        release_target.set()
+        target_publish.join(timeout=1)
+        closing_publish.join(timeout=1)
+
+    assert effects == [{"id": "target"}]
+    assert close_returned.is_set()
+    assert not target_publish.is_alive()
+    assert not closing_publish.is_alive()
+
+
+def test_external_close_and_handler_self_close_do_not_deadlock():
+    handler_entered = Event()
+    attempt_self_close = Event()
+    handler_returned = Event()
+    external_close_returned = Event()
+    bus = EventBus()
+    subscription = None
+
+    def handler(payload):
+        handler_entered.set()
+        assert attempt_self_close.wait(1)
+        subscription.close()
+        handler_returned.set()
+
+    subscription = bus.subscribe("alpha:changed", handler, owner="beta")
+    publishing = Thread(
+        target=lambda: bus.publish("alpha:changed", {}),
+        daemon=True,
+    )
+    closing = Thread(
+        target=lambda: (subscription.close(), external_close_returned.set()),
+        daemon=True,
+    )
+
+    publishing.start()
+    assert handler_entered.wait(1)
+    closing.start()
+    deadline = monotonic() + 1
+    while not subscription._closed and monotonic() < deadline:
+        sleep(0.001)
+    assert subscription._closed
+    attempt_self_close.set()
+    publishing.join(timeout=1)
+    closing.join(timeout=1)
+
+    assert handler_returned.is_set()
+    assert external_close_returned.is_set()
+    assert not publishing.is_alive()
+    assert not closing.is_alive()
+
+
+def test_external_module_close_and_handler_module_close_do_not_deadlock():
+    handler_entered = Event()
+    attempt_inner_close = Event()
+    handler_returned = Event()
+    external_close_returned = Event()
+    bus = EventBus()
+    events = bus.for_module("beta")
+
+    def handler(payload):
+        handler_entered.set()
+        assert attempt_inner_close.wait(1)
+        events.close()
+        handler_returned.set()
+
+    events.subscribe("alpha:changed", handler)
+    publishing = Thread(
+        target=lambda: bus.publish("alpha:changed", {}),
+        daemon=True,
+    )
+    closing = Thread(
+        target=lambda: (events.close(), external_close_returned.set()),
+        daemon=True,
+    )
+
+    publishing.start()
+    assert handler_entered.wait(1)
+    closing.start()
+    deadline = monotonic() + 1
+    while not events._closed and monotonic() < deadline:
+        sleep(0.001)
+    assert events._closed
+    attempt_inner_close.set()
+    publishing.join(timeout=1)
+    closing.join(timeout=1)
+
+    assert handler_returned.is_set()
+    assert external_close_returned.is_set()
+    assert not publishing.is_alive()
+    assert not closing.is_alive()

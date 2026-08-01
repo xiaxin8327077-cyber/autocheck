@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Condition, RLock, get_ident
 from typing import Callable
 
@@ -44,6 +44,7 @@ class _Subscriber:
     handler: Callable[[object], None]
     active: bool = True
     inflight: int = 0
+    delivery_threads: dict[int, int] = field(default_factory=dict)
 
 
 class Subscription:
@@ -58,10 +59,8 @@ class Subscription:
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
-                return
             self._closed = True
-            self._close()
+        self._close()
 
 
 class EventBus:
@@ -71,7 +70,6 @@ class EventBus:
         self._subscribers: dict[str, list[_Subscriber]] = {}
         self._lock = RLock()
         self._condition = Condition(self._lock)
-        self._delivery_threads: dict[int, int] = {}
 
     def subscribe(
         self, event_name: str, handler: Callable[[object], None], owner: str
@@ -88,16 +86,16 @@ class EventBus:
         def close() -> None:
             closer = get_ident()
             with self._condition:
-                if not subscriber.active:
+                if subscriber.active:
+                    subscriber.active = False
+                    if subscriber in subscribers:
+                        subscribers.remove(subscriber)
+                    if not subscribers:
+                        self._subscribers.pop(event_name, None)
+                if subscriber.delivery_threads.get(closer, 0):
                     return
-                subscriber.active = False
-                if subscriber in subscribers:
-                    subscribers.remove(subscriber)
-                if not subscribers:
-                    self._subscribers.pop(event_name, None)
-                if self._delivery_threads.get(closer, 0) == 0:
-                    while subscriber.inflight:
-                        self._condition.wait()
+                while subscriber.inflight:
+                    self._condition.wait()
 
         return Subscription(close)
 
@@ -118,16 +116,16 @@ class EventBus:
                 if not subscriber.active:
                     continue
                 subscriber.inflight += 1
-                self._delivery_threads[delivery_thread] = (
-                    self._delivery_threads.get(delivery_thread, 0) + 1
+                subscriber.delivery_threads[delivery_thread] = (
+                    subscriber.delivery_threads.get(delivery_thread, 0) + 1
                 )
             try:
                 subscriber.handler(payload)
-            except Exception as exc:
+            except Exception:
                 errors.append(
                     EventDeliveryError(
                         owner=subscriber.owner,
-                        message=f"{type(exc).__name__}: {exc}",
+                        message="event handler failed",
                     )
                 )
             else:
@@ -135,11 +133,11 @@ class EventBus:
             finally:
                 with self._condition:
                     subscriber.inflight -= 1
-                    remaining = self._delivery_threads[delivery_thread] - 1
+                    remaining = subscriber.delivery_threads[delivery_thread] - 1
                     if remaining:
-                        self._delivery_threads[delivery_thread] = remaining
+                        subscriber.delivery_threads[delivery_thread] = remaining
                     else:
-                        self._delivery_threads.pop(delivery_thread, None)
+                        subscriber.delivery_threads.pop(delivery_thread, None)
                     self._condition.notify_all()
         return EventDeliveryReport(delivered=delivered, failed=len(errors), errors=tuple(errors))
 
@@ -174,6 +172,7 @@ class ModuleEvents:
         "_condition",
         "_inflight_publishes",
         "_publishing_threads",
+        "_handling_threads",
         "_subscriptions_closed",
     )
 
@@ -191,6 +190,7 @@ class ModuleEvents:
         self._condition = Condition(self._lock)
         self._inflight_publishes = 0
         self._publishing_threads: dict[int, int] = {}
+        self._handling_threads: dict[int, int] = {}
         self._subscriptions_closed = False
 
     def publish(self, event_name: str, payload: object) -> EventDeliveryReport:
@@ -215,10 +215,30 @@ class ModuleEvents:
                 self._condition.notify_all()
 
     def subscribe(self, event_name: str, handler: Callable[[object], None]) -> Subscription:
+        if not callable(handler):
+            raise ValueError("event handler must be callable")
+
+        def tracked_handler(payload: object) -> None:
+            handling_thread = get_ident()
+            with self._lock:
+                self._handling_threads[handling_thread] = (
+                    self._handling_threads.get(handling_thread, 0) + 1
+                )
+            try:
+                handler(payload)
+            finally:
+                with self._condition:
+                    remaining = self._handling_threads[handling_thread] - 1
+                    if remaining:
+                        self._handling_threads[handling_thread] = remaining
+                    else:
+                        self._handling_threads.pop(handling_thread, None)
+                    self._condition.notify_all()
+
         with self._lock:
             if self._closed:
                 raise RuntimeError("module event view is closed")
-            subscription = self._subscribe(event_name, handler)
+            subscription = self._subscribe(event_name, tracked_handler)
             self._subscriptions.append(subscription)
         return subscription
 
@@ -231,6 +251,10 @@ class ModuleEvents:
                 self._subscriptions.clear()
             else:
                 subscriptions = None
+                if self._handling_threads.get(closer, 0) or self._publishing_threads.get(
+                    closer, 0
+                ):
+                    return
         if subscriptions is not None:
             try:
                 for subscription in subscriptions:

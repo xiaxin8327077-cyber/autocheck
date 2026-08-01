@@ -178,6 +178,23 @@ def test_event_bus_isolates_failing_subscriber():
     assert report.errors[0].owner == "beta"
 
 
+def test_event_bus_failure_report_does_not_expose_handler_error_details():
+    bus = EventBus()
+
+    def fail(payload):
+        raise RuntimeError(r"C:\private\customer.csv token=super-secret")
+
+    bus.subscribe("alpha:published", fail, owner="beta")
+
+    report = bus.publish("alpha:published", {"id": "1"})
+
+    assert report.failed == 1
+    assert report.errors[0].owner == "beta"
+    assert report.errors[0].message == "event handler failed"
+    assert "private" not in str(report).lower()
+    assert "secret" not in str(report).lower()
+
+
 def test_event_bus_rejects_invalid_name_and_non_serializable_payload():
     bus = EventBus()
 
