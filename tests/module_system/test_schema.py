@@ -551,3 +551,33 @@ def test_alpha_fixture_declares_its_migration_target_and_owned_table(monkeypatch
 
     assert module.manifest.schema_version == 2
     assert registered == {"alpha_items": {"id", "note"}}
+
+
+def test_registry_rejects_core_and_foreign_table_names_and_exposes_read_only_names():
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id"})
+
+    assert registry.declared_table_names == frozenset({"alpha_items"})
+    with pytest.raises(ValueError, match="核心"):
+        registry.add("users", {"id"})
+    with pytest.raises(ValueError, match="前缀"):
+        registry.add("beta_items", {"id"})
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ALTER TABLE users ADD COLUMN note text",
+        "DROP TABLE beta_items",
+        "ALTER TABLE alpha_items ADD FOREIGN KEY (id) REFERENCES users(id)",
+        "ALTER TABLE auto_check.alpha_items ADD COLUMN note text",
+        "ALTER TABLE alpha_items ADD COLUMN note text; DROP TABLE alpha_items",
+        "CREATE PROCEDURE alpha_proc() SELECT 1",
+    ],
+)
+def test_registry_rejects_unsafe_or_out_of_namespace_migration_statements(statement):
+    registry = ModuleSchemaRegistry("alpha")
+    registry.add("alpha_items", {"id"})
+
+    with pytest.raises(ModuleMigrationError):
+        registry.validate_statement(statement)

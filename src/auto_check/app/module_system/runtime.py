@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Condition, Lock, RLock, get_ident
@@ -357,7 +358,7 @@ class ModuleRuntime:
             raise ValueError("module instance manifest does not match discovered manifest")
         router = ModuleRouter(manifest, default_permission_evaluator)
         instance.register_routes(router)
-        schema_registry = ModuleSchemaRegistry()
+        schema_registry = ModuleSchemaRegistry(manifest.id)
         instance.register_schema(schema_registry)
         ModuleMigrationRunner(self._context.application_database, schema_registry).run(
             manifest, loaded.discovered.package_name
@@ -367,7 +368,7 @@ class ModuleRuntime:
         module_context = ModuleContext(
             application_database=self._context.application_database,
             config_path=self._context.config_path,
-            temp_root=self._context.temp_root,
+            temp_root=_module_temp_root(self._context.temp_root, manifest.id),
             now=self._context.now,
             services=self._services.for_module(manifest.id),
             events=events,
@@ -428,6 +429,7 @@ class ModuleRuntime:
         self._services.unregister_owner(module_id)
         if isinstance(context.background_executor, _ModuleTaskExecutor):
             context.background_executor.wait_for_completion()
+
 
     def _fail_loaded(self, loaded: LoadedModule, status: ModuleStatus, error: Exception) -> None:
         self._log_lifecycle_error(loaded.discovered.manifest.id, error)
@@ -520,3 +522,19 @@ class ModuleRuntime:
         logging.getLogger(__name__).warning(
             "module lifecycle operation failed", extra={"module_id": module_id, "error_type": type(error).__name__}
         )
+
+
+def _module_temp_root(platform_temp_root: Path, module_id: str) -> Path:
+    root = Path(platform_temp_root)
+    root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink():
+        raise ModuleRuntimeError("module temporary root is unsafe")
+    resolved_root = root.resolve(strict=True)
+    child = root / module_id
+    child.mkdir(exist_ok=True)
+    if child.is_symlink():
+        raise ModuleRuntimeError("module temporary root is unsafe")
+    resolved_child = child.resolve(strict=True)
+    if resolved_child.parent != resolved_root:
+        raise ModuleRuntimeError("module temporary root escapes platform root")
+    return resolved_child

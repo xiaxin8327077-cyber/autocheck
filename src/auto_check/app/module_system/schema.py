@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from sqlalchemy import text
+
+from auto_check.app.app_database import EXPECTED_APP_SCHEMA
 from sqlalchemy.exc import SQLAlchemyError
 
 from .contracts import ModuleManifest
@@ -105,6 +107,8 @@ class ModuleMigrationRunner:
                     try:
                         with self._database.transaction() as connection:
                             for statement in migration.statements:
+                                if self._schema_registry is not None:
+                                    self._schema_registry.validate_statement(statement)
                                 connection.execute(text(statement))
                         if (
                             self._schema_registry is not None
@@ -211,17 +215,64 @@ class ModuleMigrationRunner:
 class ModuleSchemaRegistry:
     """Collect and validate the tables owned by a single module."""
 
-    def __init__(self) -> None:
+    def __init__(self, module_id: str | None = None, *, table_prefix: str | None = None) -> None:
+        if module_id is not None and not re.fullmatch(r"[a-z][a-z0-9_]*", module_id):
+            raise ValueError("模块 ID 不合法")
+        prefix = table_prefix if table_prefix is not None else (f"{module_id}_" if module_id else None)
+        if prefix is not None and not re.fullmatch(r"[a-z][a-z0-9_]*_", prefix):
+            raise ValueError("模块表前缀不合法")
+        self._module_id = module_id
+        self._table_prefix = prefix
         self._tables: dict[str, frozenset[str]] = {}
+
+    @property
+    def declared_table_names(self) -> frozenset[str]:
+        return frozenset(self._tables)
 
     def add(self, table_name: str, columns: Iterable[str]) -> None:
         normalized_name = table_name.strip()
         normalized_columns = frozenset(column.strip() for column in columns if column.strip())
         if not normalized_name or not normalized_columns:
             raise ValueError("模块表名和字段不能为空")
+        if normalized_name in EXPECTED_APP_SCHEMA:
+            raise ValueError("模块不能声明核心应用表")
+        if self._table_prefix is not None and not normalized_name.startswith(self._table_prefix):
+            raise ValueError("模块表必须使用模块命名空间前缀")
         if normalized_name in self._tables:
             raise ValueError(f"模块表重复注册：{normalized_name}")
         self._tables[normalized_name] = normalized_columns
+
+    def validate_statement(self, statement: str) -> None:
+        """Allow only a small, analyzable SQL subset over declared module tables."""
+        tokens = _sql_tokens(statement)
+        if not tokens or ";" in tokens:
+            raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+        upper = [token.upper() for token in tokens]
+        if any(token in {"PROCEDURE", "FUNCTION", "VIEW", "TRIGGER", "PREPARE", "EXECUTE", "CALL"} for token in upper):
+            raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+        references: list[str] = []
+        if upper[:2] in (["CREATE", "TABLE"], ["ALTER", "TABLE"], ["DROP", "TABLE"]):
+            references.append(_table_after(tokens, 2))
+        elif upper[:2] == ["CREATE", "INDEX"]:
+            references.append(_table_after(tokens, _require_token(upper, "ON") + 1))
+        elif upper[:2] == ["DROP", "INDEX"]:
+            references.append(_table_after(tokens, _require_token(upper, "ON") + 1))
+        elif upper[:2] == ["INSERT", "INTO"]:
+            references.append(_table_after(tokens, 2))
+        elif upper[:1] == ["UPDATE"]:
+            references.append(_table_after(tokens, 1))
+        elif upper[:2] == ["DELETE", "FROM"]:
+            references.append(_table_after(tokens, 2))
+        else:
+            raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+        for index, token in enumerate(upper):
+            if token == "REFERENCES":
+                references.append(_table_after(tokens, index + 1))
+        for table_name in references:
+            if table_name not in self._tables or (
+                self._table_prefix is not None and not table_name.startswith(self._table_prefix)
+            ):
+                raise ModuleMigrationError("模块迁移 SQL 引用了未声明或越界的数据表")
 
     def validate(self, connection: Any) -> None:
         rows = connection.execute(
@@ -243,6 +294,67 @@ class ModuleSchemaRegistry:
         )
         if missing:
             raise ModuleSchemaError(f"模块数据库缺少字段：{', '.join(missing)}")
+
+
+def _sql_tokens(statement: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    index = 0
+    while index < len(statement):
+        char = statement[index]
+        if char.isspace():
+            index += 1
+        elif statement.startswith("--", index):
+            newline = statement.find("\n", index)
+            index = len(statement) if newline < 0 else newline + 1
+        elif char in "`\"":
+            quote = char
+            end = statement.find(quote, index + 1)
+            if end < 0:
+                raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+            identifier = statement[index + 1 : end]
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", identifier):
+                raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+            tokens.append(identifier)
+            index = end + 1
+        elif char == "'":
+            end = statement.find("'", index + 1)
+            if end < 0:
+                raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+            tokens.append("STRING")
+            index = end + 1
+        elif char.isalpha() or char == "_":
+            end = index + 1
+            while end < len(statement) and (statement[end].isalnum() or statement[end] == "_"):
+                end += 1
+            tokens.append(statement[index:end])
+            index = end
+        elif char.isdigit():
+            end = index + 1
+            while end < len(statement) and statement[end].isdigit():
+                end += 1
+            tokens.append(statement[index:end])
+            index = end
+        elif char in "(),.=*+-/<>;":
+            tokens.append(char)
+            index += 1
+        else:
+            raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+    return tuple(tokens)
+
+
+def _require_token(tokens: list[str], token: str) -> int:
+    try:
+        return tokens.index(token)
+    except ValueError:
+        raise ModuleMigrationError("模块迁移 SQL 不可安全分析") from None
+
+
+def _table_after(tokens: tuple[str, ...], index: int) -> str:
+    if index >= len(tokens) or tokens[index] in {".", "(", ")", ","}:
+        raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+    if index + 1 < len(tokens) and tokens[index + 1] == ".":
+        raise ModuleMigrationError("模块迁移 SQL 不可安全分析")
+    return tokens[index]
 
 
 def _sanitize_error(error: Exception) -> str:
