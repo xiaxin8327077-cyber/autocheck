@@ -3373,8 +3373,8 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert "homeStatsState = {" in app_js
     assert "function findHomeStatsBaselineRun" in app_js
     assert "return { run: samePeriodRuns[currentIndex - 1], label: \"较上次\" };" in app_js
-    assert "const previousPeriodRun = [...runs]" in app_js
-    assert "String(run.run_date || \"\") < currentDate" in app_js
+    assert "const previousDate = [...runs]" in app_js
+    assert "String(date) < currentDate" in app_js
     assert "return previousPeriodRun ? { run: previousPeriodRun, label: \"较上期\" } : { run: null, label: \"较上期\" };" in app_js
     assert "const deltaText = delta >= 0 ? `+${delta}` : String(delta);" in app_js
     assert "el.hidden = true;" in app_js
@@ -3540,6 +3540,68 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     assert "按每期首次执行记录取数并按整数展示" in readme
     assert "顶部统计项可查看项目明细并跳转到自动对数结果列表自动筛选" in readme
     assert "长项目名称在边界内省略并支持鼠标悬浮查看全称" in readme
+
+
+def test_readme_documents_bounded_reconcile_matching_and_reference_codes():
+    readme = _read(README_MD)
+    app_js = _read(APP_JS)
+
+    assert "50～100 行候选池仍可快速匹配 2～5 条组合" in readme
+    assert "偶发 20～30 条共同命中" in readme
+    assert "同一项目组合计算最长 60 秒" in readme
+    assert "JS0508-2.51" in readme
+    assert "空串和纯空格" in readme
+    assert "系统优化及BUG修复。" in app_js
+
+
+def _extract_home_baseline_functions(app_js: str) -> str:
+    body = []
+    for name in (
+        "compareHomeRunTimeAsc",
+        "homeRunsForPeriodDates",
+        "firstHomeRunsForPeriodDates",
+        "compareHomeRunsAsc",
+        "isSameHomeRun",
+        "findHomeStatsBaselineRun",
+    ):
+        block = re.search(rf"function {name}\(.*?\n\}}\n", app_js, re.S)
+        assert block is not None, name
+        body.append(block.group(0))
+    return "\n".join(body)
+
+
+def test_home_stats_baseline_uses_first_run_of_previous_period(tmp_path):
+    app_js = _read(APP_JS)
+    script = textwrap.dedent(
+        """
+        const assert = require("node:assert/strict");
+        __HOME_BASELINE_FUNCS__
+        const runs = [
+          { id: "r1", run_date: "2026-05-31", run_at: "09:00:00" },
+          { id: "r2", run_date: "2026-05-31", run_at: "18:00:00" },
+          { id: "r3", run_date: "2026-06-30", run_at: "09:00:00" },
+          { id: "r4", run_date: "2026-06-30", run_at: "18:00:00" },
+        ];
+        const firstRunBaseline = findHomeStatsBaselineRun(
+          runs,
+          { id: "r3", run_date: "2026-06-30", run_at: "09:00:00" }
+        );
+        assert.equal(firstRunBaseline.label, "较上期");
+        assert.equal(firstRunBaseline.run.id, "r1");
+        const laterRunBaseline = findHomeStatsBaselineRun(
+          runs,
+          { id: "r4", run_date: "2026-06-30", run_at: "18:00:00" }
+        );
+        assert.equal(laterRunBaseline.label, "较上次");
+        assert.equal(laterRunBaseline.run.id, "r3");
+        const noBaseline = findHomeStatsBaselineRun(runs, { id: "r5", run_date: "2026-04-30", run_at: "09:00:00" });
+        assert.equal(noBaseline.label, "较上期");
+        assert.equal(noBaseline.run, null);
+        """
+    ).replace("__HOME_BASELINE_FUNCS__", _extract_home_baseline_functions(app_js))
+    script_path = tmp_path / "home_stats_baseline.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
 
 
 def test_home_report_period_stat_card_fits_scale_ratio_changes():

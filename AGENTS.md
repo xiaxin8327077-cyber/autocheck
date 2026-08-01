@@ -41,6 +41,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath
 - 优先沿用现有代码风格和项目结构，避免无关重构。
 - 不要回退用户或工作区中已有的无关改动。
 - 搜索文件或文本时优先使用 `rg`。
+- 新增或修改业务模块前，必须完整阅读并遵守 `docs/ai-modular-development-rules.zh-CN.md`；普通模块不得把业务代码写入公共入口、平台内核或其他业务模块，平台协议缺口必须单独形成方案并评审。
 - 测试、验证或任务可清晰拆分时，可以自动开启子代理并行处理；主会话负责协调、检查结果和必要的后续修正。
 - 子代理或后台线程多轮等待仍无回复、影响当前任务推进时，可以切回主会话直接处理或补做必要验证，并在结果说明中注明原因。
 - 每次修改后都需要说明修改内容，说明应包含涉及的代码内容、配置/文档内容和行为变化。
@@ -64,6 +65,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath
 
 ## 相关文档
 
+- `docs/ai-modular-development-rules.zh-CN.md`：后续 AI 和开发人员实施独立模块时必须遵守的目录、接口、前端、迁移、权限、测试和协作规则。
 - `docs/reconcile-execution-flow.zh-CN.md`：自动对数执行流程、仓储查询、差异类型与导出逻辑的权威说明，改动对应逻辑时必须同步。
 - `docs/reconcile-rules.zh-CN.md` / `docs/对账逻辑说明.md`：自动对数规则与逻辑历史说明。
 - `docs/reconcile-logic-history.zh-CN.md`：自动对数逻辑演进历史。

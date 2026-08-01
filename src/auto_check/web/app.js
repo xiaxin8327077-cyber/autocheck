@@ -7649,15 +7649,13 @@ function findHomeStatsBaselineRun(runs = [], currentRun = {}) {
   if (currentIndex > 0) {
     return { run: samePeriodRuns[currentIndex - 1], label: "较上次" };
   }
-  const previousPeriodRun = [...runs]
-    .filter((run) => run.run_date && String(run.run_date || "") < currentDate)
-    .sort((a, b) => {
-      const dateCompare = String(b.run_date || "").localeCompare(String(a.run_date || ""));
-      if (dateCompare) return dateCompare;
-      const timeCompare = String(b.run_at || "").localeCompare(String(a.run_at || ""));
-      if (timeCompare) return timeCompare;
-      return String(b.id || "").localeCompare(String(a.id || ""));
-    })[0] || null;
+  const previousDate = [...runs]
+    .map((run) => run.run_date)
+    .filter((date) => date && String(date) < currentDate)
+    .sort((a, b) => String(b).localeCompare(String(a)))[0] || null;
+  const previousPeriodRun = previousDate
+    ? firstHomeRunsForPeriodDates(runs, [previousDate])[0] || null
+    : null;
   return previousPeriodRun ? { run: previousPeriodRun, label: "较上期" } : { run: null, label: "较上期" };
 }
 

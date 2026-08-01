@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>自定义报表设计 - 设计预览</title>
+<style>
+  :root {
+    font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #181c1e;
+    --surface: #f7fafc;
+    --surface-container: #ebeef0;
+    --surface-container-low: #f1f4f6;
+    --surface-container-lowest: #ffffff;
+    --surface-container-high: #e5e9eb;
+    --surface-variant: #e0e3e5;
+    --outline: #74777c;
+    --outline-variant: #c4c7cc;
+    --on-surface: #181c1e;
+    --on-surface-variant: #43474b;
+    --theme-accent: #3466D9;
+    --theme-accent-gradient-end: #6AA4FF;
+    --theme-accent-gradient: linear-gradient(90deg, #3466D9 0%, #6AA4FF 100%);
+    --theme-on-accent: #FFFFFF;
+    --theme-accent-readable: #3466D9;
+    --theme-focus-ring: rgba(52, 102, 217, 0.28);
+    --theme-page-background: #EEF4F8;
+    --ui-radius: 4px;
+    --action-danger: #BA1A1A;
+    --action-warning: #B45309;
+    --action-success: #137333;
+    --success-bg: #e6f4ea;
+    --success-text: #137333;
+    --success-border: #ceead6;
+    background: var(--theme-page-background);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; min-height: 100vh; }
+
+  .prototype-shell {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: var(--surface-container-lowest);
+    border-radius: calc(var(--ui-radius) * 3);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    overflow: hidden;
+  }
+
+  /* ===== Header ===== */
+  .prototype-header {
+    padding: 16px 24px;
+    background: var(--surface-container-lowest);
+    border-bottom: 1px solid var(--outline-variant);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .prototype-header h1 {
+    font-size: 18px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .prototype-header h1::before {
+    content: "";
+    width: 4px;
+    height: 20px;
+    border-radius: 2px;
+    background: var(--theme-accent-gradient);
+  }
+  .prototype-header .subtitle {
+    font-size: 12px;
+    color: var(--on-surface-variant);
+    margin-left: 12px;
+  }
+
+  /* ===== Toolbar ===== */
+  .prototype-toolbar {
+    padding: 12px 24px;
+    background: var(--surface-container-low);
+    border-bottom: 1px solid var(--outline-variant);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .toolbar-label {
+    font-size: 12px;
+    color: var(--on-surface-variant);
+    white-space: nowrap;
+  }
+  .toolbar-select, .toolbar-input {
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--ui-radius);
+    font-size: 13px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .toolbar-select:focus, .toolbar-input:focus {
+    border-color: var(--theme-accent);
+    box-shadow: 0 0 0 2px var(--theme-focus-ring);
+  }
+  .toolbar-spacer { flex: 1; }
+
+  /* ===== Buttons ===== */
+  .btn {
+    height: 32px;
+    padding: 0 16px;
+    border-radius: var(--ui-radius);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn-primary {
+    background: var(--theme-accent-gradient);
+    color: var(--theme-on-accent);
+    border-color: transparent;
+  }
+  .btn-primary:hover { opacity: 0.92; }
+  .btn-secondary {
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    border-color: var(--outline-variant);
+  }
+  .btn-secondary:hover { border-color: var(--theme-accent); color: var(--theme-accent); }
+  .btn-success {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border-color: var(--success-border);
+  }
+  .btn-success:hover { background: #d4edda; }
+
+  /* ===== Main Layout ===== */
+  .prototype-body {
+    display: flex;
+    height: 520px;
+    min-height: 0;
+  }
+
+  /* ===== Left Panel ===== */
+  .panel-left {
+    width: 240px;
+    border-right: 1px solid var(--outline-variant);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-container-lowest);
+  }
+  .panel-section-title {
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface-variant);
+    background: var(--surface-container-low);
+    border-bottom: 1px solid var(--outline-variant);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-section-title .badge {
+    background: var(--theme-accent);
+    color: #fff;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-weight: 400;
+  }
+  .source-select-wrap {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--outline-variant);
+  }
+  .source-select-wrap select {
+    width: 100%;
+    height: 30px;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--ui-radius);
+    padding: 0 8px;
+    font-size: 13px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    outline: none;
+  }
+  .table-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+  }
+  .table-item {
+    padding: 8px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    transition: background 0.12s;
+    border-left: 3px solid transparent;
+  }
+  .table-item:hover { background: var(--surface-container-low); }
+  .table-item.selected {
+    background: color-mix(in srgb, var(--theme-accent) 8%, transparent);
+    border-left-color: var(--theme-accent);
+    color: var(--theme-accent-readable);
+  }
+  .table-item .table-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    opacity: 0.5;
+  }
+  .table-item .table-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .table-item .table-add {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    border: 1px solid var(--outline-variant);
+    background: var(--surface-container-lowest);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--on-surface-variant);
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .table-item:hover .table-add { opacity: 1; }
+  .table-item .table-add:hover { border-color: var(--theme-accent); color: var(--theme-accent); }
+  .table-item.on-canvas .table-add { opacity: 1; background: var(--theme-accent); color: #fff; border-color: var(--theme-accent); }
+
+  /* ===== Center Panel ===== */
+  .panel-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--theme-page-background);
+  }
+  .canvas-area {
+    flex: 1;
+    padding: 16px;
+    overflow: auto;
+    position: relative;
+  }
+  .canvas-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--outline);
+    gap: 8px;
+  }
+  .canvas-empty .empty-icon { font-size: 40px; opacity: 0.4; }
+  .canvas-empty p { margin: 0; font-size: 13px; }
+
+  /* ===== Canvas Cards ===== */
+  .canvas-tables {
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .canvas-table-card {
+    background: var(--surface-container-lowest);
+    border: 1px solid var(--outline-variant);
+    border-radius: calc(var(--ui-radius) * 2);
+    min-width: 200px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    position: relative;
+  }
+  .canvas-table-card .card-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--outline-variant);
+    font-weight: 600;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface-container-low);
+    border-radius: calc(var(--ui-radius) * 2) calc(var(--ui-radius) * 2) 0 0;
+  }
+  .canvas-table-card .card-header .alias-badge {
+    font-size: 10px;
+    font-weight: 500;
+    background: var(--theme-accent);
+    color: #fff;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+  .canvas-table-card .card-header .remove-btn {
+    margin-left: auto;
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--outline);
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+  }
+  .canvas-table-card .card-header .remove-btn:hover { background: #fee2e2; color: var(--action-danger); }
+  .canvas-table-card .card-body {
+    padding: 8px 0;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .canvas-table-card .col-item {
+    padding: 4px 14px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .canvas-table-card .col-item:hover { background: var(--surface-container-low); }
+  .canvas-table-card .col-item input[type="checkbox"] { accent-color: var(--theme-accent); }
+  .canvas-table-card .col-item .col-name { flex: 1; }
+  .canvas-table-card .col-item .col-type { color: var(--outline); font-size: 11px; }
+
+  /* ===== Join Lines ===== */
+  .canvas-join {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 4px;
+  }
+  .canvas-join .join-line {
+    width: 24px;
+    height: 2px;
+    background: var(--theme-accent);
+    position: relative;
+  }
+  .canvas-join .join-line::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: -3px;
+    width: 0;
+    height: 0;
+    border-left: 5px solid var(--theme-accent);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+  }
+  .canvas-join .join-badge {
+    font-size: 10px;
+    background: var(--surface-container-lowest);
+    border: 1px solid var(--theme-accent);
+    color: var(--theme-accent);
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  /* ===== Right Panel ===== */
+  .panel-right {
+    width: 280px;
+    border-left: 1px solid var(--outline-variant);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface-container-lowest);
+  }
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--outline-variant);
+  }
+  .panel-tab {
+    flex: 1;
+    padding: 10px 8px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .panel-tab.active {
+    color: var(--theme-accent);
+    border-bottom-color: var(--theme-accent);
+  }
+  .panel-tab:hover:not(.active) { color: var(--on-surface); }
+  .panel-tab-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 14px;
+  }
+  .config-section {
+    margin-bottom: 18px;
+  }
+  .config-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface-variant);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .config-section-title button {
+    font-size: 11px;
+    background: none;
+    border: 1px solid var(--outline-variant);
+    border-radius: 3px;
+    padding: 1px 8px;
+    cursor: pointer;
+    color: var(--theme-accent);
+  }
+  .join-row {
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--ui-radius);
+    padding: 10px;
+    margin-bottom: 8px;
+    background: var(--surface-container-low);
+  }
+  .join-row-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .join-row-header select {
+    font-size: 11px;
+    height: 24px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 3px;
+    padding: 0 4px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+  }
+  .join-row-header .remove-join {
+    background: none;
+    border: none;
+    color: var(--outline);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  .join-row-header .remove-join:hover { background: #fee2e2; color: var(--action-danger); }
+  .join-fields {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .join-fields .join-side {
+    flex: 1;
+  }
+  .join-fields .join-side label {
+    display: block;
+    font-size: 10px;
+    color: var(--outline);
+    margin-bottom: 3px;
+  }
+  .join-fields .join-side select {
+    width: 100%;
+    height: 26px;
+    font-size: 12px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 3px;
+    padding: 0 6px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+  }
+  .join-fields .join-eq {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--theme-accent);
+    padding-top: 14px;
+  }
+
+  /* ===== Selected Columns ===== */
+  .selected-col-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--ui-radius);
+    margin-bottom: 6px;
+    background: var(--surface-container-low);
+    font-size: 12px;
+  }
+  .selected-col-item .drag-handle {
+    color: var(--outline);
+    cursor: grab;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .selected-col-item .col-alias {
+    font-size: 10px;
+    background: var(--theme-accent);
+    color: #fff;
+    padding: 1px 4px;
+    border-radius: 2px;
+  }
+  .selected-col-item .col-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .selected-col-item .col-label-input {
+    flex: 1;
+    border: 1px solid var(--outline-variant);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 12px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    outline: none;
+  }
+  .selected-col-item .col-label-input:focus {
+    border-color: var(--theme-accent);
+  }
+  .selected-col-item .remove-col {
+    background: none;
+    border: none;
+    color: var(--outline);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  .selected-col-item .remove-col:hover { background: #fee2e2; color: var(--action-danger); }
+
+  /* ===== Filter Row ===== */
+  .filter-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .filter-row select, .filter-row input {
+    height: 28px;
+    font-size: 12px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 3px;
+    padding: 0 6px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    outline: none;
+  }
+  .filter-row select { flex: 1; }
+  .filter-row input { width: 100px; }
+  .filter-row .remove-filter {
+    background: none;
+    border: none;
+    color: var(--outline);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+  }
+  .filter-row .remove-filter:hover { color: var(--action-danger); }
+
+  /* ===== Preview Table ===== */
+  .preview-section {
+    border-top: 1px solid var(--outline-variant);
+    background: var(--surface-container-lowest);
+  }
+  .preview-header {
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--outline-variant);
+  }
+  .preview-header h3 {
+    font-size: 14px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .preview-header h3::before {
+    content: "";
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: var(--theme-accent);
+  }
+  .preview-meta {
+    font-size: 12px;
+    color: var(--on-surface-variant);
+  }
+  .preview-table-wrap {
+    overflow: auto;
+    max-height: 320px;
+  }
+  .preview-table {
+    width: 100%;
+    min-width: 900px;
+    border-collapse: collapse;
+    table-layout: auto;
+  }
+  .preview-table th, .preview-table td {
+    padding: 9px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 50%, transparent);
+    text-align: left;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .preview-table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--on-surface-variant);
+    background: var(--surface-container-low);
+    border-bottom: 1px solid var(--outline-variant);
+  }
+  .preview-table tbody tr:hover { background: var(--surface-container-low); }
+  .preview-table td { color: var(--on-surface); }
+  .preview-table .row-num {
+    color: var(--outline);
+    font-size: 11px;
+    width: 40px;
+    text-align: center;
+  }
+  .preview-table .null-val { color: var(--outline); font-style: italic; }
+
+  /* ===== Pagination ===== */
+  .pagination {
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid var(--outline-variant);
+    background: var(--surface-container-low);
+    font-size: 12px;
+    color: var(--on-surface-variant);
+  }
+  .pagination button {
+    height: 26px;
+    padding: 0 12px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 3px;
+    background: var(--surface-container-lowest);
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--on-surface);
+    transition: all 0.12s;
+  }
+  .pagination button:hover:not(:disabled) { border-color: var(--theme-accent); color: var(--theme-accent); }
+  .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .pagination .page-info { flex: 1; }
+
+  /* ===== Status Tags ===== */
+  .status-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+  .status-tag.saved { background: var(--success-bg); color: var(--success-text); }
+  .status-tag.draft { background: #fff3e0; color: #e65100; }
+
+  /* ===== Modal ===== */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: var(--surface-container-lowest);
+    border-radius: calc(var(--ui-radius) * 3);
+    width: 400px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+    padding: 24px;
+  }
+  .modal h3 {
+    margin: 0 0 16px;
+    font-size: 16px;
+  }
+  .modal label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    color: var(--on-surface);
+  }
+  .modal input[type="text"] {
+    width: 100%;
+    height: 36px;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--ui-radius);
+    padding: 0 12px;
+    font-size: 14px;
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    outline: none;
+    margin-bottom: 20px;
+  }
+  .modal input[type="text"]:focus {
+    border-color: var(--theme-accent);
+    box-shadow: 0 0 0 2px var(--theme-focus-ring);
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 1100px) {
+    .prototype-body { flex-direction: column; height: auto; }
+    .panel-left, .panel-right { width: 100%; border: none; border-bottom: 1px solid var(--outline-variant); max-height: 260px; }
+    .panel-center { min-height: 320px; }
+  }
+
+  /* ===== Scrollbar ===== */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--outline-variant); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--outline); }
+</style>
+</head>
+<body>
+
+<div class="prototype-shell">
+  <!-- Header -->
+  <div class="prototype-header">
+    <h1>自定义报表<span class="subtitle">自由组合多表数据，按需预览与导出</span></h1>
+    <span class="status-tag saved">● 已保存</span>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="prototype-toolbar">
+    <div class="toolbar-group">
+      <span class="toolbar-label">加载模板：</span>
+      <select class="toolbar-select" style="width: 200px;">
+        <option value="">— 新建报表 —</option>
+        <option value="1" selected>每日资产明细表</option>
+        <option value="2">合同余额核对表</option>
+        <option value="3">TA存续金额日报</option>
+      </select>
+    </div>
+    <div class="toolbar-spacer"></div>
+    <div class="toolbar-group">
+      <button class="btn btn-secondary">🗑 删除模板</button>
+      <button class="btn btn-secondary">💾 保存模板</button>
+      <button class="btn btn-secondary">👁 预览数据</button>
+      <button class="btn btn-success">⬇ 导出 Excel</button>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="prototype-body">
+    <!-- Left: Data Source & Tables -->
+    <div class="panel-left">
+      <div class="panel-section-title">
+        <span>📦 数据源</span>
+      </div>
+      <div class="source-select-wrap">
+        <select>
+          <option>DWS 数据源 (PostgreSQL)</option>
+          <option>报表数据源 (MySQL)</option>
+          <option>人行校验数据源 (PostgreSQL)</option>
+        </select>
+      </div>
+      <div class="panel-section-title">
+        <span>📋 表列表</span>
+        <span class="badge">86 张</span>
+      </div>
+      <div class="table-list">
+        <div class="table-item">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">fa_valuationreport_dws</span>
+          <button class="table-add" title="添加到画布">+</button>
+        </div>
+        <div class="table-item selected on-canvas">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">am_pactasset_dws</span>
+          <button class="table-add" title="已在画布">✓</button>
+        </div>
+        <div class="table-item selected on-canvas">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">am_projinvest_dws</span>
+          <button class="table-add" title="已在画布">✓</button>
+        </div>
+        <div class="table-item">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">fa_accountbalance_dws</span>
+          <button class="table-add" title="添加到画布">+</button>
+        </div>
+        <div class="table-item">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">ta_pact_detail_dws</span>
+          <button class="table-add" title="添加到画布">+</button>
+        </div>
+        <div class="table-item">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">zf_detail_2024</span>
+          <button class="table-add" title="添加到画布">+</button>
+        </div>
+        <div class="table-item">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">ta_pact_survamt_day_zgxg_dm</span>
+          <button class="table-add" title="添加到画布">+</button>
+        </div>
+        <div class="table-item">
+          <svg class="table-icon" viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="12" height="12" rx="1" opacity="0.3"/><rect x="4" y="4" width="3" height="2" rx="0.5"/><rect x="9" y="4" width="3" height="2" rx="0.5"/><rect x="4" y="7" width="3" height="2" rx="0.5"/><rect x="9" y="7" width="3" height="2" rx="0.5"/><rect x="4" y="10" width="3" height="2" rx="0.5"/><rect x="9" y="10" width="3" height="2" rx="0.5"/></svg>
+          <span class="table-name">dm.am_projinvest_zgxg_dm</span>
+          <button class="table-add" title="添加到画布">+</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center: Canvas -->
+    <div class="panel-center">
+      <div class="canvas-area">
+        <div class="canvas-tables">
+          <!-- Table 1 -->
+          <div class="canvas-table-card">
+            <div class="card-header">
+              <span class="alias-badge">t0</span>
+              <span>am_pactasset_dws</span>
+              <button class="remove-btn" title="从画布移除">✕</button>
+            </div>
+            <div class="card-body">
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">c_projcode</span>
+                <span class="col-type">项目编号</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">c_udlyasset</span>
+                <span class="col-type">标的名称</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">c_stockcode</span>
+                <span class="col-type">股票代码</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">c_pactid</span>
+                <span class="col-type">合同编号</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox">
+                <span class="col-name">c_spv_type</span>
+                <span class="col-type">SPV类型</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox">
+                <span class="col-name">c_assettype</span>
+                <span class="col-type">资产类型</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">d_cldate</span>
+                <span class="col-type">日期</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Join -->
+          <div class="canvas-join">
+            <div class="join-badge">LEFT JOIN</div>
+            <div class="join-line"></div>
+            <div style="font-size:10px;color:var(--on-surface-variant);">t0.c_projcode<br/>=<br/>t1.c_projcode</div>
+            <div class="join-line"></div>
+          </div>
+
+          <!-- Table 2 -->
+          <div class="canvas-table-card">
+            <div class="card-header">
+              <span class="alias-badge">t1</span>
+              <span>am_projinvest_dws</span>
+              <button class="remove-btn" title="从画布移除">✕</button>
+            </div>
+            <div class="card-body">
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">c_projcode</span>
+                <span class="col-type">项目编号</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">f_acbalance</span>
+                <span class="col-type">投融资余额</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox">
+                <span class="col-name">c_pactid</span>
+                <span class="col-type">合同编号</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox" checked>
+                <span class="col-name">d_bdate</span>
+                <span class="col-type">合同起始日</span>
+              </div>
+              <div class="col-item">
+                <input type="checkbox">
+                <span class="col-name">d_cldate</span>
+                <span class="col-type">日期</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Config -->
+    <div class="panel-right">
+      <div class="panel-tabs">
+        <div class="panel-tab active">表关联</div>
+        <div class="panel-tab">展示列</div>
+        <div class="panel-tab">筛选条件</div>
+      </div>
+      <div class="panel-tab-content">
+        <!-- Tab: Joins -->
+        <div class="config-section">
+          <div class="config-section-title">
+            <span>关联关系</span>
+            <button>+ 添加关联</button>
+          </div>
+          <div class="join-row">
+            <div class="join-row-header">
+              <select>
+                <option>LEFT JOIN</option>
+                <option>INNER JOIN</option>
+              </select>
+              <button class="remove-join" title="删除关联">✕</button>
+            </div>
+            <div class="join-fields">
+              <div class="join-side">
+                <label>左表字段 (t0)</label>
+                <select>
+                  <option>c_projcode</option>
+                  <option>c_pactid</option>
+                  <option>c_udlyasset</option>
+                  <option>c_stockcode</option>
+                  <option>d_cldate</option>
+                </select>
+              </div>
+              <div class="join-eq">=</div>
+              <div class="join-side">
+                <label>右表字段 (t1)</label>
+                <select>
+                  <option>c_projcode</option>
+                  <option>c_pactid</option>
+                  <option>f_acbalance</option>
+                  <option>d_bdate</option>
+                  <option>d_cldate</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="join-row">
+            <div class="join-row-header">
+              <select>
+                <option>INNER JOIN</option>
+                <option>LEFT JOIN</option>
+              </select>
+              <button class="remove-join" title="删除关联">✕</button>
+            </div>
+            <div class="join-fields">
+              <div class="join-side">
+                <label>左表字段 (t0)</label>
+                <select>
+                  <option>c_pactid</option>
+                  <option>c_projcode</option>
+                  <option>c_udlyasset</option>
+                </select>
+              </div>
+              <div class="join-eq">=</div>
+              <div class="join-side">
+                <label>右表字段 (t1)</label>
+                <select>
+                  <option>c_pactid</option>
+                  <option>c_projcode</option>
+                  <option>f_acbalance</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview Section -->
+  <div class="preview-section">
+    <div class="preview-header">
+      <h3>数据预览</h3>
+      <span class="preview-meta">共 1,283 行数据 · 显示前 500 行 · 2026-07-31 14:30 预览</span>
+    </div>
+    <div class="preview-table-wrap">
+      <table class="preview-table">
+        <thead>
+          <tr>
+            <th class="row-num">#</th>
+            <th>项目编号</th>
+            <th>标的名称</th>
+            <th>股票代码</th>
+            <th>合同编号</th>
+            <th>日期</th>
+            <th>投融资余额</th>
+            <th>合同起始日</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="row-num">1</td>
+            <td>P001</td>
+            <td>XX信托计划</td>
+            <td>600519</td>
+            <td>HT202401001</td>
+            <td>2026-07-30</td>
+            <td>1,250,000,000.00</td>
+            <td>2024-01-15</td>
+          </tr>
+          <tr>
+            <td class="row-num">2</td>
+            <td>P001</td>
+            <td>XX信托计划</td>
+            <td>000001</td>
+            <td>HT202401001</td>
+            <td>2026-07-30</td>
+            <td>1,250,000,000.00</td>
+            <td>2024-01-15</td>
+          </tr>
+          <tr>
+            <td class="row-num">3</td>
+            <td>P002</td>
+            <td>YY资管计划</td>
+            <td>601398</td>
+            <td>HT202402015</td>
+            <td>2026-07-30</td>
+            <td>890,500,000.00</td>
+            <td>2024-03-22</td>
+          </tr>
+          <tr>
+            <td class="row-num">4</td>
+            <td>P003</td>
+            <td>ZZ投资基金</td>
+            <td><span class="null-val">NULL</span></td>
+            <td>HT202403008</td>
+            <td>2026-07-30</td>
+            <td>560,000,000.00</td>
+            <td>2024-05-10</td>
+          </tr>
+          <tr>
+            <td class="row-num">5</td>
+            <td>P003</td>
+            <td>ZZ投资基金</td>
+            <td>600036</td>
+            <td>HT202403008</td>
+            <td>2026-07-30</td>
+            <td>560,000,000.00</td>
+            <td>2024-05-10</td>
+          </tr>
+          <tr>
+            <td class="row-num">6</td>
+            <td>P004</td>
+            <td>WW信托</td>
+            <td>601318</td>
+            <td>HT202404102</td>
+            <td>2026-07-30</td>
+            <td><span class="null-val">NULL</span></td>
+            <td>2024-08-01</td>
+          </tr>
+          <tr>
+            <td class="row-num">7</td>
+            <td>P005</td>
+            <td>VV资产管理</td>
+            <td>000858</td>
+            <td>HT202405033</td>
+            <td>2026-07-30</td>
+            <td>320,000,000.00</td>
+            <td>2024-09-18</td>
+          </tr>
+          <tr>
+            <td class="row-num">8</td>
+            <td>P005</td>
+            <td>VV资产管理</td>
+            <td>600519</td>
+            <td>HT202405033</td>
+            <td>2026-07-30</td>
+            <td>320,000,000.00</td>
+            <td>2024-09-18</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <button disabled>‹ 上一页</button>
+      <button class="btn-secondary" style="border-color:var(--theme-accent);color:var(--theme-accent);">1</button>
+      <button>2</button>
+      <button>3</button>
+      <span style="color:var(--outline);">...</span>
+      <button>50</button>
+      <button>下一页 ›</button>
+      <span class="page-info">显示第 1–50 行，共 1,283 行</span>
+    </div>
+  </div>
+</div>
+
+<!-- Save Template Modal (hidden, shown as design reference) -->
+<div style="height:24px;"></div>
+<div style="text-align:center;font-size:12px;color:var(--outline);margin-bottom:12px;">▼ 以下为「保存模板」弹窗设计参考 ▼</div>
+<div class="prototype-shell" style="max-width:480px;box-shadow:0 8px 32px rgba(0,0,0,0.10);">
+  <div style="padding:24px;">
+    <h3 style="margin:0 0 6px;font-size:16px;">保存为模板</h3>
+    <p style="margin:0 0 18px;font-size:12px;color:var(--on-surface-variant);">将当前报表配置保存为模板，方便下次快速加载使用</p>
+    <label style="display:block;font-size:13px;font-weight:500;margin-bottom:6px;">模板名称 <span style="color:var(--action-danger);">*</span></label>
+    <input type="text" placeholder="例如：每日资产明细表" value="每日资产明细表" style="width:100%;height:36px;border:1px solid var(--outline-variant);border-radius:var(--ui-radius);padding:0 12px;font-size:14px;outline:none;margin-bottom:20px;">
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn btn-secondary" style="margin:0;">取消</button>
+      <button class="btn btn-primary" style="margin:0;">确认保存</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
