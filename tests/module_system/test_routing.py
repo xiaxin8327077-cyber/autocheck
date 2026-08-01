@@ -122,6 +122,24 @@ def test_router_rejects_requests_larger_than_the_route_limit(valid_manifest):
     assert response == ModuleHttpResponse.json(413, {"error": "request body too large"})
 
 
+def test_router_preflight_exposes_route_body_limit_without_calling_handler(valid_manifest):
+    called = False
+
+    def handler(request):
+        nonlocal called
+        called = True
+        return ModuleHttpResponse.json(200, {})
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add("POST", "/tiny", handler, permission="custom_reports.publish", max_body_bytes=1)
+
+    preflight = router.preflight("POST", "/api/modules/custom-reports/tiny")
+
+    assert preflight.status == 200
+    assert preflight.max_body_bytes == 1
+    assert called is False
+
+
 def test_router_maps_value_error_to_sanitized_bad_request(valid_manifest):
     router = ModuleRouter(valid_manifest, default_permission_evaluator)
 

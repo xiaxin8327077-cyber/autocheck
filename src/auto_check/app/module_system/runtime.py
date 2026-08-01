@@ -22,7 +22,7 @@ from .discovery import DiscoveredModule, discover_modules, load_module_factory, 
 from .events import EventBus
 from .permissions import default_permission_evaluator
 from .resources import ModuleAsset, ModuleAssetNotFound, read_module_asset
-from .routing import ModuleRouter
+from .routing import ModuleRoutePreflight, ModuleRouter
 from .schema import ModuleMigrationError, ModuleMigrationRunner, ModuleSchemaRegistry
 from .services import ServiceRegistry
 from .storage import ModuleStateStore
@@ -212,6 +212,24 @@ class ModuleRuntime:
             if response is not None:
                 return response
         return ModuleHttpResponse.json(404, {"error": "module route not found"})
+
+    def preflight(self, *, method: str, path: str) -> ModuleRoutePreflight:
+        """Resolve a module route before its request body is read or decoded."""
+        with self._lifecycle_lock:
+            routers = tuple(
+                loaded.router
+                for loaded in self._loaded
+                if (
+                    loaded.status == ModuleStatus.ENABLED
+                    and loaded.router is not None
+                    and loaded.discovered.manifest.id not in self._transitioning_modules
+                )
+            )
+        for router in routers:
+            preflight = router.preflight(method, path)
+            if preflight is not None and preflight.status != 404:
+                return preflight
+        return ModuleRoutePreflight(status=404)
 
     def read_asset(self, module_id: str, relative_path: str) -> ModuleAsset:
         with self._lifecycle_lock:

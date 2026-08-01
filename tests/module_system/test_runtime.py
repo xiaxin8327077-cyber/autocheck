@@ -82,7 +82,12 @@ def runtime_factory(monkeypatch):
     return create
 
 
-def _manifest(module_id: str, *, required: bool = False) -> ModuleManifest:
+def _manifest(
+    module_id: str,
+    *,
+    required: bool = False,
+    api_prefix: str | None = None,
+) -> ModuleManifest:
     return ModuleManifest.from_mapping(
         {
             "id": module_id,
@@ -91,7 +96,7 @@ def _manifest(module_id: str, *, required: bool = False) -> ModuleManifest:
             "platform_api": 1,
             "required": required,
             "backend_entry": f"fixture.{module_id}.module:create_module",
-            "api_prefix": f"/api/modules/{module_id}",
+            "api_prefix": api_prefix or f"/api/modules/{module_id}",
             "frontend_entry": f"/module-assets/{module_id}/index.js",
             "frontend_style": f"/module-assets/{module_id}/styles.css",
             "navigation": [],
@@ -164,6 +169,34 @@ def test_runtime_starts_modules_in_dependency_order(runtime_factory):
 
     assert calls == ["alpha:start", "beta:start"]
     assert [item["id"] for item in runtime.public_modules({"role": "admin"})] == ["alpha", "beta"]
+
+
+def test_runtime_preflight_continues_to_later_router_with_same_api_prefix(
+    isolated_runtime_factory,
+):
+    class RouteModule(_LifecycleModule):
+        def register_routes(self, router):
+            if self.manifest.id == "second":
+                router.add(
+                    "POST",
+                    "/target",
+                    lambda request: ModuleHttpResponse.json(200, {}),
+                    permission="second.view",
+                    max_body_bytes=1,
+                )
+
+    runtime = isolated_runtime_factory(
+        [
+            RouteModule(_manifest("first", api_prefix="/api/modules/shared"), []),
+            RouteModule(_manifest("second", api_prefix="/api/modules/shared"), []),
+        ]
+    )
+    runtime.start()
+
+    preflight = runtime.preflight(method="POST", path="/api/modules/shared/target")
+
+    assert preflight.status == 200
+    assert preflight.max_body_bytes == 1
 
 
 def test_optional_module_failure_does_not_block_healthy_modules(runtime_factory):

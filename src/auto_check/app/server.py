@@ -96,6 +96,8 @@ from auto_check.app.pbc_import import (
 )
 from auto_check.app.repositories import AutoCheckRepository, DEFAULT_RECONCILE_TABLES
 from auto_check.app.report_navigation import ReportNavigationScheduler, ReportNavigationService
+from auto_check.app.module_system import ModuleRuntime
+from auto_check.app.module_system.contracts import ModuleBootstrapContext, ModuleHttpResponse
 from auto_check.app.reconcile_schema import (
     ReconcileSchemaSettings,
     ReconcileTableSchema,
@@ -124,6 +126,8 @@ FlowChainExecutor = Callable[..., FlowChainRunResult]
 PasswordDecryptor = Callable[[str], str]
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_EARLY_DRAIN_BYTES = 64 * 1024
+EARLY_DRAIN_TIMEOUT_SECONDS = 0.25
 
 
 def _serialize_interface_preferences(value: UserInterfacePreferences) -> dict[str, object]:
@@ -341,12 +345,21 @@ class ApiRouter:
         db_validation_field_mapping_loader: DbValidationFieldMappingLoader | None = None,
         flow_chain_executor: FlowChainExecutor | None = None,
         report_navigation_service: ReportNavigationService | None = None,
+        module_runtime: ModuleRuntime | None = None,
         start_field_mapping_auto_refresh: bool = False,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         max_archive_member_bytes: int = MAX_ARCHIVE_MEMBER_BYTES,
     ):
         self.config_path = Path(config_path) if config_path is not None else default_config_path()
         self.application_database = application_database
+        self.module_runtime = module_runtime or ModuleRuntime.empty(
+            ModuleBootstrapContext(
+                application_database=self.application_database,
+                config_path=self.config_path,
+                temp_root=self.config_path.parent / "module-data",
+                now=datetime.now,
+            )
+        )
         if history_store is not None:
             self.history_store = history_store
         elif history_path is not None:
@@ -3064,8 +3077,13 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
     auth_manager: AuthManager
 
     def do_GET(self) -> None:
+        if self._reject_invalid_request_framing(body_allowed=False):
+            return
         if self.path.startswith("/api/"):
             self._handle_api("GET")
+            return
+        if self.path.startswith("/module-assets/"):
+            self._handle_module_asset()
             return
         self._serve_static()
 
@@ -3073,25 +3091,33 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/"):
             self._handle_api("POST")
             return
-        self._send_json(404, {"error": "not found"})
+        if self._reject_invalid_request_framing():
+            return
+        self._send_early_json("POST", 404, {"error": "not found"})
 
     def do_DELETE(self) -> None:
         if self.path.startswith("/api/"):
             self._handle_api("DELETE")
             return
-        self._send_json(404, {"error": "not found"})
+        if self._reject_invalid_request_framing():
+            return
+        self._send_early_json("DELETE", 404, {"error": "not found"})
 
     def do_PUT(self) -> None:
         if self.path.startswith("/api/"):
             self._handle_api("PUT")
             return
-        self._send_json(404, {"error": "not found"})
+        if self._reject_invalid_request_framing():
+            return
+        self._send_early_json("PUT", 404, {"error": "not found"})
 
     def log_message(self, format: str, *args: Any) -> None:
         return
 
     def _handle_api(self, method: str) -> None:
         path = self.path.split("?", 1)[0]
+        if method in {"POST", "PUT", "DELETE"} and self._reject_invalid_request_framing():
+            return
         if path.startswith("/api/auth/"):
             self._handle_auth(method, path)
             return
@@ -3107,10 +3133,16 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
         session = self._authenticated_session()
         if session is None:
-            self._send_json(401, {"error": "login required"})
+            self._send_early_json(method, 401, {"error": "login required"})
             return
         if method in {"POST", "PUT", "DELETE"} and self.headers.get("X-CSRF-Token", "") != session.csrf_token:
-            self._send_json(403, {"error": "invalid csrf token"})
+            self._send_early_json(method, 403, {"error": "invalid csrf token"})
+            return
+        if path == "/api/system/modules" or path.startswith("/api/system/modules/"):
+            self._handle_module_system(method, path, session)
+            return
+        if path.startswith("/api/modules/"):
+            self._handle_module_api(method, path, session)
             return
         if path.startswith("/api/users"):
             self._handle_users(method, path, session)
@@ -3148,6 +3180,218 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.router._query_string = self.path.split("?", 1)[1] if "?" in self.path else ""
         status, payload = self.router.handle(method, path, body, current_user=_session_user(session))
         self._send_json(status, payload)
+
+    def _handle_module_system(self, method: str, path: str, session: AuthSession) -> None:
+        current_user = _session_user(session)
+        if method == "GET" and path == "/api/system/modules":
+            payload: dict[str, Any] = {"modules": self.router.module_runtime.public_modules(current_user)}
+            if current_user and current_user.get("role") == "admin":
+                payload["module_statuses"] = self.router.module_runtime.admin_statuses(current_user)
+            self._send_json(200, payload)
+            return
+        match = re.fullmatch(r"/api/system/modules/([^/]+)/state", path)
+        if method != "PUT" or match is None:
+            self._send_early_json(method, 404, {"error": "not found"})
+            return
+        if session.role != "admin":
+            self._send_early_json(method, 403, {"error": "admin role required"})
+            return
+        body = self._read_module_json_body(method)
+        if body is None:
+            return
+        try:
+            self.router.module_runtime.set_enabled(match.group(1), body.get("enabled"), current_user)
+        except PermissionError:
+            self._send_json(403, {"error": "admin role required"})
+            return
+        except KeyError:
+            self._send_json(404, {"error": "module not found"})
+            return
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except Exception:
+            self._send_json(500, {"error": "internal server error"})
+            return
+        self._send_json(200, {"ok": True})
+
+    def _handle_module_api(self, method: str, path: str, session: AuthSession) -> None:
+        preflight = self.router.module_runtime.preflight(method=method, path=path)
+        if preflight.status != 200:
+            error = "method not allowed" if preflight.status == 405 else "module route not found"
+            self._send_early_json(method, preflight.status, {"error": error}, headers=list(preflight.headers))
+            return
+        body = None
+        body_size = 0
+        if method in {"POST", "PUT", "DELETE"}:
+            length = self._request_content_length()
+            if length is None:
+                self._send_json(400, {"error": "invalid content length"})
+                return
+            maximum = min(MAX_UPLOAD_BYTES, preflight.max_body_bytes or 0)
+            if length > maximum:
+                self._send_early_json(method, 413, {"error": "request body too large"})
+                return
+            body = self._read_module_json_body(method)
+            body_size = self._module_request_body_size
+        if method in {"POST", "PUT", "DELETE"} and body is None:
+            return
+        query = dict(parse_qsl(urlparse(self.path).query, keep_blank_values=True))
+        try:
+            response = self.router.module_runtime.dispatch(
+                method=method,
+                path=path,
+                query=query,
+                body=body,
+                current_user=_session_user(session),
+                body_size=body_size,
+            )
+        except Exception:
+            self._send_json(500, {"error": "internal server error"})
+            return
+        self._send_module_response(response)
+
+    def _handle_module_asset(self) -> None:
+        parts = urlparse(self.path).path.split("/", 3)
+        if len(parts) != 4 or not parts[2] or not parts[3]:
+            self._send_json(404, {"error": "not found"})
+            return
+        try:
+            asset = self.router.module_runtime.read_asset(parts[2], parts[3])
+        except LookupError:
+            self._send_json(404, {"error": "not found"})
+            return
+        etag = f'"{asset.etag}"'
+        if self._if_none_match_matches(etag):
+            self._send_bytes(304, b"", asset.content_type, headers=[("ETag", etag)])
+            return
+        self._send_bytes(200, asset.content, asset.content_type, headers=[("ETag", etag)])
+
+    def _read_module_json_body(self, method: str) -> dict[str, Any] | None:
+        length = self._request_content_length()
+        if length is None:
+            self._send_json(400, {"error": "invalid content length"})
+            return None
+        if length > MAX_UPLOAD_BYTES:
+            self._send_early_json(method, 413, {"error": "request body too large"})
+            return None
+        raw_body = self.rfile.read(length) if length else b""
+        self._module_request_body_size = len(raw_body)
+        try:
+            body = json.loads(raw_body.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json(400, {"error": "invalid json"})
+            return None
+        if not isinstance(body, dict):
+            self._send_json(400, {"error": "invalid json"})
+            return None
+        return body
+
+    def _send_module_response(self, response: ModuleHttpResponse) -> None:
+        headers = list(response.headers)
+        if isinstance(response.body, bytes):
+            self._send_bytes(response.status, response.body, response.content_type, headers=headers)
+            return
+        self._send_json(response.status, dict(response.body), headers=headers)
+
+    def _send_early_json(
+        self,
+        method: str,
+        status: int,
+        payload: dict[str, Any],
+        *,
+        headers: list[tuple[str, str]] | None = None,
+    ) -> None:
+        if method in {"POST", "PUT", "DELETE"}:
+            self._discard_request_body(MAX_EARLY_DRAIN_BYTES)
+        self._send_json(status, payload, headers=headers)
+
+    def _request_content_length(self) -> int | None:
+        values = self.headers.get_all("Content-Length", [])
+        if not values:
+            return 0
+        if len(values) != 1:
+            return None
+        raw_length = values[0].strip()
+        if not re.fullmatch(r"[0-9]+", raw_length):
+            return None
+        return int(raw_length)
+
+    def _reject_invalid_request_framing(self, *, body_allowed: bool = True) -> bool:
+        transfer_encodings = [
+            value.strip().lower()
+            for header in self.headers.get_all("Transfer-Encoding", [])
+            for value in header.split(",")
+        ]
+        if any(value and value != "identity" for value in transfer_encodings):
+            self.close_connection = True
+            self._send_json(501, {"error": "transfer encoding is not supported"})
+            return True
+        if self._request_content_length() is None:
+            self.close_connection = True
+            self._send_json(400, {"error": "invalid request framing"})
+            return True
+        if not body_allowed and self._request_content_length() > 0:
+            self.close_connection = True
+            self._send_json(400, {"error": "request body not allowed"})
+            return True
+        return False
+
+    def _discard_request_body(self, maximum: int) -> None:
+        length = self._request_content_length()
+        if length is None:
+            self.close_connection = True
+            return
+        remaining = min(length, maximum)
+        complete = length == 0
+        previous_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(EARLY_DRAIN_TIMEOUT_SECONDS)
+            while remaining:
+                try:
+                    chunk = self.rfile.read(min(remaining, 64 * 1024))
+                except (OSError, TimeoutError):
+                    break
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            complete = remaining == 0 and length <= maximum
+        finally:
+            self.connection.settimeout(previous_timeout)
+        if not complete:
+            self.close_connection = True
+
+    def _if_none_match_matches(self, etag: str) -> bool:
+        for candidate in self.headers.get("If-None-Match", "").split(","):
+            normalized = candidate.strip()
+            if normalized == "*":
+                return True
+            if normalized[:2].lower() == "w/":
+                normalized = normalized[2:].lstrip()
+            if normalized == etag:
+                return True
+        return False
+
+    def _send_bytes(
+        self,
+        status: int,
+        data: bytes,
+        content_type: str,
+        *,
+        headers: list[tuple[str, str]] | None = None,
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        if getattr(self, "close_connection", False):
+            self.send_header("Connection", "close")
+        for name, value in headers or []:
+            self.send_header(name, value)
+        self.end_headers()
+        if data:
+            self._write_response_body(data)
 
     def _handle_auth(self, method: str, path: str) -> None:
         if method == "GET" and path == "/api/auth/key":
@@ -3202,7 +3446,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
                 self.auth_manager.logout(session.session_id)
             self._send_json(200, {"ok": True}, headers=[("Set-Cookie", "auto_check_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")])
             return
-        self._send_json(404, {"error": "not found"})
+        self._send_early_json(method, 404, {"error": "not found"})
 
     def _encrypted_password_from_body(self, body: dict[str, Any]) -> str:
         if body.get("password"):
@@ -3224,7 +3468,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_users(self, method: str, path: str, session: AuthSession) -> None:
         if session.role != "admin":
-            self._send_json(403, {"error": "admin role required"})
+            self._send_early_json(method, 403, {"error": "admin role required"})
             return
         length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
@@ -3281,7 +3525,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         content_type = self.headers.get("Content-Type", "")
         boundary = _parse_multipart_boundary(content_type)
         if not boundary:
-            self._send_json(400, {"error": "expected multipart/form-data"})
+            self._send_early_json("POST", 400, {"error": "expected multipart/form-data"})
             return
         length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(length)
@@ -3409,6 +3653,8 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        if getattr(self, "close_connection", False):
+            self.send_header("Connection", "close")
         for name, value in headers or []:
             self.send_header(name, value)
         self.end_headers()
@@ -3984,9 +4230,21 @@ def run_server(
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
     application_database = ApplicationDatabase.from_config_path(resolved_config_path)
     report_navigation_scheduler: ReportNavigationScheduler | None = None
+    module_runtime: ModuleRuntime | None = None
+    server: ThreadingHTTPServer | None = None
+    execution_error: BaseException | None = None
     try:
         application_database.test_connection()
         application_database.validate_schema()
+        module_runtime = ModuleRuntime.build(
+            ModuleBootstrapContext(
+                application_database=application_database,
+                config_path=resolved_config_path,
+                temp_root=resolved_config_path.parent / "module-data",
+                now=datetime.now,
+            )
+        )
+        module_runtime.start()
         try:
             server = ThreadingHTTPServer((host, port), Handler)
         except OSError as exc:
@@ -4000,6 +4258,7 @@ def run_server(
         router = ApiRouter(
             config_path=resolved_config_path,
             application_database=application_database,
+            module_runtime=module_runtime,
             start_field_mapping_auto_refresh=True,
         )
         auth_manager = AuthManager(router.config_path, database=application_database)
@@ -4018,10 +4277,33 @@ def run_server(
         except KeyboardInterrupt:
             pass
         return server
+    except BaseException as error:
+        execution_error = error
+        raise
     finally:
-        if report_navigation_scheduler is not None:
-            report_navigation_scheduler.stop()
-        application_database.close()
+        cleanup_errors: list[BaseException] = []
+
+        def cleanup(callback: Callable[[], None]) -> None:
+            try:
+                callback()
+            except BaseException as error:
+                cleanup_errors.append(error)
+
+        try:
+            if report_navigation_scheduler is not None:
+                cleanup(report_navigation_scheduler.stop)
+        finally:
+            try:
+                if module_runtime is not None:
+                    cleanup(module_runtime.stop)
+            finally:
+                try:
+                    if server is not None:
+                        cleanup(server.server_close)
+                finally:
+                    cleanup(application_database.close)
+        if cleanup_errors and execution_error is None:
+            raise cleanup_errors[0]
 
 
 def _browser_host(host: str) -> str:

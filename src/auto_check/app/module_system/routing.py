@@ -19,6 +19,15 @@ class ModuleRouteConflict(ValueError):
 
 
 @dataclass(frozen=True)
+class ModuleRoutePreflight:
+    """Route metadata determined without evaluating permissions or calling a handler."""
+
+    status: int
+    max_body_bytes: int | None = None
+    headers: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class _ModuleRoute:
     method: str
     path: str
@@ -117,6 +126,25 @@ class ModuleRouter:
                     "error_id": uuid.uuid4().hex,
                 },
             )
+
+    def preflight(self, method: str, path: str) -> ModuleRoutePreflight | None:
+        """Resolve a route's request-size contract without invoking module code."""
+        relative_path = self._relative_path(path)
+        if relative_path is None:
+            return None
+        path_matches = [
+            route for route in self._routes if route.pattern.fullmatch(relative_path) is not None
+        ]
+        if not path_matches:
+            return ModuleRoutePreflight(status=404)
+        normalized_method = method.upper()
+        method_matches = [route for route in path_matches if route.method == normalized_method]
+        if not method_matches:
+            return ModuleRoutePreflight(
+                status=405,
+                headers=(("Allow", ", ".join(route.method for route in path_matches)),),
+            )
+        return ModuleRoutePreflight(status=200, max_body_bytes=method_matches[0].max_body_bytes)
 
     def _relative_path(self, path: str) -> str | None:
         prefix = self._manifest.api_prefix
