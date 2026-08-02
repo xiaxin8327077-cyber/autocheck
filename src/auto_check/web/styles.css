@@ -15302,6 +15302,10 @@ input.custom-input-native:disabled {
   transform-origin: top;
 }
 
+#page-report-navigation .report-nav-schedule-detail.reordering {
+  animation: none;
+}
+
 @keyframes report-nav-schedule-detail-expand {
   from {
     opacity: 0.35;

@@ -1531,9 +1531,39 @@ function reportNavigationCompletionTimeText(process = {}) {
     : "";
 }
 
+// Report navigation process ordering start
+function reportNavigationProcessDateSortKey(value) {
+  const candidate = String(value || "").slice(0, 10);
+  const match = candidate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "\uffff";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year
+    && parsed.getMonth() === month - 1
+    && parsed.getDate() === day
+    ? candidate
+    : "\uffff";
+}
+
+function sortReportNavigationProcessesByDate(processes = []) {
+  return [...processes]
+    .map((process, index) => {
+      return {
+        process,
+        index,
+        dateKey: reportNavigationProcessDateSortKey(process?.report_date),
+      };
+    })
+    .sort((left, right) => left.dateKey.localeCompare(right.dateKey) || left.index - right.index)
+    .map((item) => item.process);
+}
+// Report navigation process ordering end
+
 function reportNavigationDisplayProcesses(payload = {}) {
   const month = Number(String(payload.report_month || "").slice(5, 7));
-  return (payload.processes || [])
+  const processes = (payload.processes || [])
     .filter((process) => {
       if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
       return true;
@@ -1548,6 +1578,8 @@ function reportNavigationDisplayProcesses(payload = {}) {
         }))
         : process.steps,
     }));
+
+  return sortReportNavigationProcessesByDate(processes);
 }
 
 function reportNavigationSpineProgress(processes = []) {
@@ -1650,6 +1682,38 @@ function reportNavigationScheduleRangeText(dates = []) {
   const first = dates[0];
   const last = dates[dates.length - 1];
   return `（${first.getMonth() + 1}月${first.getDate()}日–${last.getMonth() + 1}月${last.getDate()}日）`;
+}
+
+function captureReportNavigationSortPositions(container) {
+  const positions = new Map();
+  container?.querySelectorAll("[data-report-nav-sort-key]").forEach((element) => {
+    const key = String(element.dataset.reportNavSortKey || "");
+    if (key) positions.set(key, element.getBoundingClientRect());
+  });
+  return positions;
+}
+
+function animateReportNavigationSort(container, previousPositions) {
+  if (!container || !previousPositions?.size) return;
+  if (!visualEffectsEnabled()) return;
+  const reduceMotion = typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion) return;
+  container.querySelectorAll("[data-report-nav-sort-key]").forEach((element) => {
+    const previous = previousPositions.get(String(element.dataset.reportNavSortKey || ""));
+    if (!previous || typeof element.animate !== "function") return;
+    const current = element.getBoundingClientRect();
+    const deltaX = previous.left - current.left;
+    const deltaY = previous.top - current.top;
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return;
+    element.animate(
+      [
+        { translate: `${deltaX}px ${deltaY}px` },
+        { translate: "0 0" },
+      ],
+      { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
+  });
 }
 
 function animateReportNavigationScheduleCardHeight(startHeight) {
@@ -1821,6 +1885,7 @@ function flushDeferredReportNavigationScheduleRender() {
 
 function renderReportNavigationSchedule(payload = {}) {
   if (!reportNavScheduleTable) return;
+  const previousPositions = captureReportNavigationSortPositions(reportNavScheduleTable);
   window.clearTimeout(reportNavigationScheduleStepsShowTimer);
   window.clearTimeout(reportNavigationScheduleStepsHideTimer);
   if (activeReportNavigationScheduleStepsPreview) {
@@ -1954,7 +2019,8 @@ function renderReportNavigationSchedule(payload = {}) {
       : (state.overdueDays > 0
       ? (state.code === "overdue-completed" ? `逾期${state.overdueDays}天完成` : `逾期 ${state.overdueDays} 天`)
       : "");
-    const detail = selected ? `<div class="report-nav-schedule-detail ${state.code}" data-report-nav-schedule-detail="${processCode}">
+    const detailReordering = previousPositions.has(`schedule-detail:${processCode}`);
+    const detail = selected ? `<div class="report-nav-schedule-detail ${state.code}${detailReordering ? " reordering" : ""}" data-report-nav-schedule-detail="${processCode}" data-report-nav-sort-key="schedule-detail:${processCode}">
       <div class="report-nav-schedule-detail-spacer" aria-hidden="true"></div>
       <div class="report-nav-schedule-detail-status"><span>状态</span><strong>${escapeHtml(state.label)}</strong>${timingText ? `<small>${escapeHtml(timingText)}</small>` : ""}</div>
       <div class="report-nav-schedule-detail-progress"><span>完成进度</span><i><b style="width:${percent}%"></b></i><strong>${percent}%（${Number(process.completed_steps || 0)}/${Number(process.total_steps || 0)}）</strong></div>
@@ -1968,7 +2034,7 @@ function renderReportNavigationSchedule(payload = {}) {
         </div>
       </div>
     </div>` : "";
-    return `<div class="report-nav-schedule-row ${state.code}${selected ? " selected" : ""}" data-report-nav-schedule-process="${processCode}" role="button" tabindex="0" aria-expanded="${selected ? "true" : "false"}">
+    return `<div class="report-nav-schedule-row ${state.code}${selected ? " selected" : ""}" data-report-nav-schedule-process="${processCode}" data-report-nav-sort-key="schedule:${processCode}" role="button" tabindex="0" aria-expanded="${selected ? "true" : "false"}">
       <div class="report-nav-schedule-summary"><strong>${escapeHtml(process.process_name || "")}</strong><span>${percent}%</span></div>
       <div class="report-nav-schedule-track" style="--report-nav-schedule-endpoint:${endpointPosition}%;--report-nav-schedule-fill:${fillPosition}%;--report-nav-schedule-overdue-stop:${overdueStopPosition}%">
         <i class="report-nav-schedule-baseline"></i><i class="report-nav-schedule-fill"></i>
@@ -1979,6 +2045,7 @@ function renderReportNavigationSchedule(payload = {}) {
     </div>${detail}`;
   }).join("");
   reportNavScheduleTable.innerHTML = header + rows;
+  animateReportNavigationSort(reportNavScheduleTable, previousPositions);
   reportNavScheduleCard?.classList.toggle("has-selection", Boolean(selectedReportNavigationScheduleProcessCode));
   syncReportNavigationTodoCardHeight();
 }
@@ -2449,6 +2516,7 @@ async function editReportNavigationSchedule(processCode) {
 
 function renderReportNavigationProcesses(payload) {
   if (!reportNavBranches) return;
+  const previousPositions = captureReportNavigationSortPositions(reportNavBranches);
   const processes = reportNavigationDisplayProcesses(payload);
   reportNavigationVisibleProcesses = processes;
   const allProcessesCompleted = processes.length > 0
@@ -2479,7 +2547,7 @@ function renderReportNavigationProcesses(payload) {
       : "";
     return `<div class="report-nav-branch ${side} ${shift}${done ? " done" : " running"}">
       <div class="report-nav-branch-line"></div><div class="report-nav-branch-node"></div>
-      <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
+      <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-sort-key="flow:${escapeHtml(process.process_code || "")}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
         <div class="report-nav-process-title"><span class="report-nav-process-state-icon" aria-hidden="true">${done ? REPORT_NAV_CHECK_ICON : ""}</span><strong>${escapeHtml(fishboneProcessName)}</strong><b>${completedSteps}/${totalSteps}</b></div>
         <div class="report-nav-process-meta report-nav-process-deadline"><span>截止日期</span><time${dateInteraction}>${escapeHtml(reportNavigationDateText(process.report_date))}</time></div>
         <div class="report-nav-process-meta completion"><span>${done ? "完成于" : "状态"}</span><time>${completionText}</time></div>
@@ -2488,6 +2556,7 @@ function renderReportNavigationProcesses(payload) {
   }).join("");
   const selectedProcess = processes.find((process) => process.process_code === selectedReportNavigationProcessCode);
   renderReportNavigationProcessDetails(selectedProcess || null);
+  animateReportNavigationSort(reportNavBranches, previousPositions);
 }
 
 function renderReportNavigation(payload, { preserveSchedule = false } = {}) {

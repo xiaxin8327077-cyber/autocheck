@@ -2014,6 +2014,101 @@ def test_report_navigation_schedule_save_updates_locally_before_background_refre
     assert "await loadReportNavigation();" not in body
 
 
+def test_report_navigation_processes_sort_by_report_date_ascending_and_stably(tmp_path):
+    app_js = _read(APP_JS)
+    start_marker = "// Report navigation process ordering start"
+    end_marker = "// Report navigation process ordering end"
+
+    assert start_marker in app_js
+    assert end_marker in app_js
+    ordering_code = app_js.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    script = textwrap.dedent(
+        f"""
+        const assert = require("node:assert/strict");
+        {ordering_code}
+
+        const processes = [
+          {{ process_code: "late", report_date: "2026-07-20" }},
+          {{ process_code: "same-a", report_date: "2026-07-05" }},
+          {{ process_code: "missing" }},
+          {{ process_code: "early", report_date: "2026-07-01T08:00:00" }},
+          {{ process_code: "same-b", report_date: "2026-07-05" }},
+          {{ process_code: "invalid-day", report_date: "2026-02-30" }},
+          {{ process_code: "invalid-month", report_date: "2026-13-01" }},
+          {{ process_code: "invalid", report_date: "not-a-date" }},
+        ];
+        const originalOrder = processes.map((item) => item.process_code);
+        const sorted = sortReportNavigationProcessesByDate(processes);
+
+        assert.deepEqual(
+          sorted.map((item) => item.process_code),
+          [
+            "early", "same-a", "same-b", "late",
+            "missing", "invalid-day", "invalid-month", "invalid",
+          ],
+        );
+        assert.deepEqual(processes.map((item) => item.process_code), originalOrder);
+        """
+    )
+    script_path = tmp_path / "report_navigation_process_ordering_test.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+    display_body = app_js.split(
+        "function reportNavigationDisplayProcesses(payload = {})", 1
+    )[1].split("function reportNavigationSpineProgress", 1)[0]
+    assert "sortReportNavigationProcessesByDate" in display_body
+
+
+def test_report_navigation_reorder_uses_immediate_lightweight_flip_animation():
+    app_js = _read(APP_JS)
+    readme = _read(README_MD)
+    css = _read(STYLES_CSS)
+
+    assert "function captureReportNavigationSortPositions(container)" in app_js
+    assert "function animateReportNavigationSort(container, previousPositions)" in app_js
+    animation_body = app_js.split(
+        "function animateReportNavigationSort(container, previousPositions)", 1
+    )[1].split("function animateReportNavigationScheduleCardHeight", 1)[0]
+    assert "getBoundingClientRect()" in animation_body
+    assert "if (!visualEffectsEnabled()) return;" in animation_body
+    assert 'window.matchMedia("(prefers-reduced-motion: reduce)").matches' in animation_body
+    assert "element.animate(" in animation_body
+    assert "translate:" in animation_body
+    assert "duration: 220" in animation_body
+    assert 'easing: "cubic-bezier(0.22, 1, 0.36, 1)"' in animation_body
+
+    flow_body = app_js.split(
+        "function renderReportNavigationProcesses(payload)", 1
+    )[1].split("function renderReportNavigation(payload", 1)[0]
+    assert "const previousPositions = captureReportNavigationSortPositions(reportNavBranches);" in flow_body
+    assert '<div class="report-nav-branch ${side} ${shift}${done ? " done" : " running"}">' in flow_body
+    assert 'class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-sort-key="flow:${escapeHtml(process.process_code || "")}"' in flow_body
+    assert "animateReportNavigationSort(reportNavBranches, previousPositions);" in flow_body
+    assert flow_body.index("captureReportNavigationSortPositions") < flow_body.index("reportNavBranches.innerHTML")
+    assert flow_body.index("reportNavBranches.innerHTML") < flow_body.index("animateReportNavigationSort")
+
+    schedule_body = app_js.split(
+        "function renderReportNavigationSchedule(payload = {})", 1
+    )[1].split("function selectReportNavigationScheduleProcess", 1)[0]
+    assert "const previousPositions = captureReportNavigationSortPositions(reportNavScheduleTable);" in schedule_body
+    assert 'data-report-nav-sort-key="schedule:${processCode}"' in schedule_body
+    assert 'data-report-nav-sort-key="schedule-detail:${processCode}"' in schedule_body
+    assert 'const detailReordering = previousPositions.has(`schedule-detail:${processCode}`);' in schedule_body
+    assert 'class="report-nav-schedule-detail ${state.code}${detailReordering ? " reordering" : ""}"' in schedule_body
+    assert "animateReportNavigationSort(reportNavScheduleTable, previousPositions);" in schedule_body
+    assert schedule_body.index("captureReportNavigationSortPositions") < schedule_body.index("reportNavScheduleTable.innerHTML")
+    assert schedule_body.index("reportNavScheduleTable.innerHTML") < schedule_body.index("animateReportNavigationSort")
+    detail_reordering_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-detail\.reordering\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert detail_reordering_rule is not None
+    assert "animation: none;" in detail_reordering_rule.group("body")
+    assert "鱼骨图从左到右、报送日程从上到下按报送日期升序排列" in readme
+    assert "保存截止日期后立即以轻量位移动画完成重排" in readme
+
+
 def test_report_navigation_browser_refresh_restores_scoped_session_cache(tmp_path):
     app_js = _read(APP_JS)
     block = re.search(
