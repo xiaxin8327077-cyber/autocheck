@@ -106,21 +106,24 @@ class CardProviderRegistry:
         if not callable(provider):
             raise ValueError("card statistics provider must be callable")
         with self._lock:
-            persisted = self._store.load_card_provider_state(validated_card_code)
-            if persisted is not None and persisted.owner != owner:
+            current = self._registrations.get(validated_card_code)
+            if current is not None:
+                raise CardProviderConflictError(
+                    "card statistics provider is already claimed"
+                    if current.owner != owner
+                    else "card statistics provider is already active"
+                )
+            token = uuid.uuid4().hex
+            claimed = self._store.claim_card_provider(
+                validated_card_code,
+                owner,
+                token,
+                validated_version,
+            )
+            if not claimed:
                 raise CardProviderConflictError(
                     "card statistics provider is already claimed"
                 )
-            if validated_card_code in self._registrations:
-                raise CardProviderConflictError(
-                    "card statistics provider is already active"
-                )
-            token = uuid.uuid4().hex
-            self._store.claim_card_provider(
-                validated_card_code,
-                owner,
-                validated_version,
-            )
             registration = _Registration(
                 validated_card_code,
                 owner,
@@ -149,8 +152,7 @@ class CardProviderRegistry:
             current = self._registrations.get(registration.card_code)
             if current is None or current.token != registration.token:
                 return False
-            callback()
-            return True
+            return callback() is not False
 
     def _unregister(self, card_code: str, owner: str, token: str) -> None:
         with self._lock:
@@ -158,7 +160,7 @@ class CardProviderRegistry:
             if current is None or current.token != token:
                 return
             del self._registrations[card_code]
-            self._store.deactivate_card_provider(card_code, owner)
+            self._store.deactivate_card_provider(card_code, owner, token)
 
 
 class _ReportNavigationFacade:

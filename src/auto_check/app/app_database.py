@@ -289,6 +289,7 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
         "report_nav_card_provider_states": _columns(
             "card_code",
             "owner",
+            "registration_token",
             "semantics_version",
             "provider_active",
             "stale",
@@ -348,6 +349,7 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "status",
             "completed_processes",
             "failed_steps",
+            "failed_providers",
             "error_message",
         ),
         "report_nav_scheduler_state": _columns(

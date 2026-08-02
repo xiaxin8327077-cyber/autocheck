@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS `report_nav_card_snapshots` (
 CREATE TABLE IF NOT EXISTS `report_nav_card_provider_states` (
   `card_code` VARCHAR(64) NOT NULL COMMENT '统计卡编码',
   `owner` VARCHAR(64) NOT NULL COMMENT '提供方模块编码',
+  `registration_token` VARCHAR(64) NOT NULL COMMENT '当前提供方注册令牌',
   `semantics_version` INT NOT NULL COMMENT '统计口径版本',
   `provider_active` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '提供方是否处于活动状态',
   `stale` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '最近成功快照是否已过期',
@@ -195,6 +196,7 @@ CREATE TABLE IF NOT EXISTS `report_nav_stat_runs` (
   `status` VARCHAR(32) NOT NULL COMMENT '执行状态',
   `completed_processes` INT NOT NULL DEFAULT 0 COMMENT '已完成流程节点数',
   `failed_steps` INT NOT NULL DEFAULT 0 COMMENT '判断异常步骤数',
+  `failed_providers` INT NOT NULL DEFAULT 0 COMMENT '模块统计提供方异常数',
   `error_message` TEXT NULL COMMENT '全局错误信息',
   PRIMARY KEY (`id`),
   KEY `idx_report_nav_stat_runs_month_started` (`report_month`, `started_at`)

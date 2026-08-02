@@ -85,14 +85,29 @@ def test_application_schema_keeps_version_one_and_adds_report_navigation_tables(
         "last_success_period_key",
         "last_error",
         "updated_at",
+        "registration_token",
     }
+    assert "failed_providers" in EXPECTED_APP_SCHEMA["report_nav_stat_runs"]
 
 
 def test_card_provider_state_has_an_idempotent_migration():
     migration_sql = PROVIDER_STATES_SQL.read_text(encoding="utf-8")
 
     assert "CREATE TABLE IF NOT EXISTS `report_nav_card_provider_states`" in migration_sql
+    assert "`registration_token` VARCHAR(64)" in migration_sql
+    assert "ADD COLUMN `failed_providers`" in migration_sql
+    assert "information_schema.COLUMNS" in migration_sql
+    assert "SET `provider_active`=0, `stale`=1" in migration_sql
+    assert "WHERE `registration_token`=''" in migration_sql
     assert "DROP TABLE" not in migration_sql.upper()
+
+
+def test_current_report_navigation_logic_document_does_not_describe_dark_mode():
+    logic_document = (ROOT / "docs" / "report-navigation-logic-input.zh-CN.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "暗色模式" not in logic_document
 
 
 def test_schedule_owner_column_is_declared_and_has_an_idempotent_migration():

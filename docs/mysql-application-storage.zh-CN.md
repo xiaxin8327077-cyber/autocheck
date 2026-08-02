@@ -35,7 +35,7 @@
 13. 执行 `sql/app_storage/mysql/010_pbc_template_step_seven_display_only.sql`，将资管产品模板、逐笔报送第七步调整为仅展示，并由第六步归档记录提供节点完成时间。
 14. 执行 `sql/app_storage/mysql/011_report_navigation_completion_time_sources.sql`，将归档类报送完成时间统一改为仅取 `create_date`，并配置人行大集中完成时间数据源。
 15. 生产升级必须先完成 MySQL 全库备份，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 `app_modules`、`app_module_schema_versions` 和 `app_module_migration_history` 三张模块平台表。
-16. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增报送导航统计提供方持久状态表。
+16. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`。
 17. 配置 `config.json` 的 `app_database` 节点。
 18. 启动应用并确认连接、43 张表、全局结构版本和关键表数据。
 

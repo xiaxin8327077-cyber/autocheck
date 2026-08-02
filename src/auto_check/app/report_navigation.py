@@ -787,6 +787,7 @@ class ReportNavigationService:
                 status=release_status,
                 completed_processes=completed_processes,
                 failed_steps=failed_steps,
+                failed_providers=failed_providers,
             )
             return CollectionResult(
                 release_status,
@@ -808,6 +809,7 @@ class ReportNavigationService:
                     status="failed",
                     completed_processes=0,
                     failed_steps=0,
+                    failed_providers=0,
                     error_message=release_error,
                 )
             return CollectionResult("failed", report_month, run_id, 0, 0, release_error)
@@ -906,7 +908,12 @@ class ReportNavigationService:
         refreshed_state = self.manual_refresh_state(current_user=current_user, now=now)
         error_message = result.error_message
         if result.status == "partial" and not error_message:
-            if result.failed_steps:
+            if result.failed_steps and result.failed_providers:
+                error_message = (
+                    f"刷新完成，但有 {result.failed_steps} 个步骤统计异常、"
+                    f"{result.failed_providers} 个模块统计异常，请查看具体问题"
+                )
+            elif result.failed_steps:
                 error_message = f"刷新完成，但有 {result.failed_steps} 个步骤统计异常，请查看具体问题"
             else:
                 error_message = f"刷新完成，但有 {result.failed_providers} 个模块统计异常，请查看具体问题"
@@ -1503,6 +1510,7 @@ class ReportNavigationService:
                     lambda: self.store.save_card_provider_success(
                         registration.card_code,
                         registration.owner,
+                        registration.token,
                         registration.semantics_version,
                         snapshots,
                         attempted_at=current,
@@ -1519,6 +1527,7 @@ class ReportNavigationService:
                     lambda: self.store.mark_card_provider_failure(
                         registration.card_code,
                         registration.owner,
+                        registration.token,
                         registration.semantics_version,
                         attempted_at=current,
                         error_message="provider statistics failed",
@@ -1610,6 +1619,7 @@ def _run_payload(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "status": str(row.get("status") or ""),
         "completed_processes": int(row.get("completed_processes") or 0),
         "failed_steps": int(row.get("failed_steps") or 0),
+        "failed_providers": int(row.get("failed_providers") or 0),
         "error_message": str(row.get("error_message") or ""),
     }
 

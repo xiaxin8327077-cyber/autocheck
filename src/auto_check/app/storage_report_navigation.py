@@ -204,6 +204,7 @@ REPORT_NAV_STAT_RUNS = Table(
     Column("status", String(32), nullable=False),
     Column("completed_processes", Integer, nullable=False),
     Column("failed_steps", Integer, nullable=False),
+    Column("failed_providers", Integer, nullable=False),
     Column("error_message", Text),
 )
 REPORT_NAV_SCHEDULER_STATE = Table(
@@ -226,6 +227,7 @@ REPORT_NAV_CARD_PROVIDER_STATES = Table(
     METADATA,
     Column("card_code", String(64), primary_key=True),
     Column("owner", String(64), nullable=False),
+    Column("registration_token", String(64), nullable=False),
     Column("semantics_version", Integer, nullable=False),
     Column("provider_active", Boolean, nullable=False),
     Column("stale", Boolean, nullable=False),
@@ -370,6 +372,7 @@ class ManualCardHistoryValue:
 class CardProviderState:
     card_code: str
     owner: str
+    registration_token: str
     semantics_version: int
     provider_active: bool
     stale: bool
@@ -926,126 +929,187 @@ class ReportNavigationStore:
         self,
         card_code: str,
         owner: str,
+        registration_token: str,
         semantics_version: int,
         *,
         now: datetime | None = None,
-    ) -> None:
-        current = self.load_card_provider_state(card_code)
-        if current is not None and current.owner != owner:
-            raise ValueError("card provider claim belongs to another owner")
+    ) -> bool:
         timestamp = now or beijing_now()
-        values = {
-            "card_code": card_code,
-            "owner": owner,
-            "semantics_version": semantics_version,
-            "provider_active": True,
-            "stale": current.stale if current is not None else True,
-            "last_attempt_at": current.last_attempt_at if current is not None else None,
-            "last_success_at": current.last_success_at if current is not None else None,
-            "last_success_period_key": (
-                current.last_success_period_key if current is not None else None
-            ),
-            "last_error": current.last_error if current is not None else None,
-            "updated_at": timestamp,
-        }
-        statement = mysql_insert(REPORT_NAV_CARD_PROVIDER_STATES).values(**values)
-        statement = statement.on_duplicate_key_update(
-            owner=statement.inserted.owner,
-            semantics_version=statement.inserted.semantics_version,
-            provider_active=statement.inserted.provider_active,
-            stale=statement.inserted.stale,
-            last_attempt_at=statement.inserted.last_attempt_at,
-            last_success_at=statement.inserted.last_success_at,
-            last_success_period_key=statement.inserted.last_success_period_key,
-            last_error=statement.inserted.last_error,
-            updated_at=statement.inserted.updated_at,
+        statement = text(
+            """
+            INSERT INTO report_nav_card_provider_states (
+                card_code, owner, registration_token, semantics_version,
+                provider_active, stale, last_attempt_at, last_success_at,
+                last_success_period_key, last_error, updated_at
+            ) VALUES (
+                :card_code, :owner, :registration_token, :semantics_version,
+                1, 1, NULL, NULL, NULL, NULL, :updated_at
+            )
+            ON DUPLICATE KEY UPDATE
+                last_attempt_at=IF(
+                    owner=VALUES(owner),
+                    IF(semantics_version=VALUES(semantics_version), last_attempt_at, NULL),
+                    last_attempt_at
+                ),
+                last_success_at=IF(
+                    owner=VALUES(owner),
+                    IF(semantics_version=VALUES(semantics_version), last_success_at, NULL),
+                    last_success_at
+                ),
+                last_success_period_key=IF(
+                    owner=VALUES(owner),
+                    IF(
+                        semantics_version=VALUES(semantics_version),
+                        last_success_period_key, NULL
+                    ),
+                    last_success_period_key
+                ),
+                last_error=IF(
+                    owner=VALUES(owner),
+                    IF(semantics_version=VALUES(semantics_version), last_error, NULL),
+                    last_error
+                ),
+                stale=IF(
+                    owner=VALUES(owner),
+                    IF(semantics_version=VALUES(semantics_version), stale, 1),
+                    stale
+                ),
+                semantics_version=IF(
+                    owner=VALUES(owner), VALUES(semantics_version), semantics_version
+                ),
+                provider_active=IF(
+                    owner=VALUES(owner), 1, provider_active
+                ),
+                registration_token=IF(
+                    owner=VALUES(owner), VALUES(registration_token), registration_token
+                ),
+                updated_at=IF(owner=VALUES(owner), VALUES(updated_at), updated_at)
+            """
         )
         with self.database.transaction() as connection:
-            connection.execute(statement)
+            connection.execute(
+                statement,
+                {
+                    "card_code": card_code,
+                    "owner": owner,
+                    "registration_token": registration_token,
+                    "semantics_version": semantics_version,
+                    "updated_at": timestamp,
+                },
+            )
+            row = connection.execute(
+                select(REPORT_NAV_CARD_PROVIDER_STATES).where(
+                    REPORT_NAV_CARD_PROVIDER_STATES.c.card_code == card_code
+                )
+            ).mappings().first()
+            return bool(
+                row
+                and str(row.get("owner") or "") == owner
+                and str(row.get("registration_token") or "") == registration_token
+            )
 
     def deactivate_card_provider(
-        self, card_code: str, owner: str, *, now: datetime | None = None
-    ) -> None:
-        current = self.load_card_provider_state(card_code)
-        if current is None or current.owner != owner:
-            return
+        self,
+        card_code: str,
+        owner: str,
+        registration_token: str,
+        *,
+        now: datetime | None = None,
+    ) -> bool:
         timestamp = now or beijing_now()
-        self._save_provider_state(
-            current,
-            provider_active=False,
-            stale=True,
-            updated_at=timestamp,
+        statement = text(
+            """
+            UPDATE report_nav_card_provider_states
+            SET provider_active=0, stale=1, updated_at=:updated_at
+            WHERE card_code=:card_code AND owner=:owner
+              AND registration_token=:registration_token
+            """
         )
+        with self.database.transaction() as connection:
+            result = connection.execute(
+                statement,
+                {
+                    "card_code": card_code,
+                    "owner": owner,
+                    "registration_token": registration_token,
+                    "updated_at": timestamp,
+                },
+            )
+            return result.rowcount == 1
 
     def mark_card_provider_failure(
         self,
         card_code: str,
         owner: str,
+        registration_token: str,
         semantics_version: int,
         *,
         attempted_at: datetime,
         error_message: str,
-    ) -> None:
-        current = self.load_card_provider_state(card_code)
-        if current is None or current.owner != owner:
-            return
-        self._save_provider_state(
-            current,
-            semantics_version=semantics_version,
-            provider_active=True,
-            stale=True,
-            last_attempt_at=attempted_at,
-            last_error=error_message,
-            updated_at=attempted_at,
+    ) -> bool:
+        statement = text(
+            """
+            UPDATE report_nav_card_provider_states
+            SET semantics_version=:semantics_version, provider_active=1, stale=1,
+                last_attempt_at=:attempted_at, last_error=:last_error,
+                updated_at=:attempted_at
+            WHERE card_code=:card_code AND owner=:owner
+              AND registration_token=:registration_token
+            """
         )
+        with self.database.transaction() as connection:
+            result = connection.execute(
+                statement,
+                {
+                    "card_code": card_code,
+                    "owner": owner,
+                    "registration_token": registration_token,
+                    "semantics_version": semantics_version,
+                    "attempted_at": attempted_at,
+                    "last_error": error_message,
+                },
+            )
+            return result.rowcount == 1
 
     def save_card_provider_success(
         self,
         card_code: str,
         owner: str,
+        registration_token: str,
         semantics_version: int,
         snapshots: Sequence[CardSnapshot],
         *,
         attempted_at: datetime,
         period_key: str,
-    ) -> None:
-        current = self.load_card_provider_state(card_code)
-        if current is None or current.owner != owner:
-            return
-        state_values = {
-            "card_code": card_code,
-            "owner": owner,
-            "semantics_version": semantics_version,
-            "provider_active": True,
-            "stale": False,
-            "last_attempt_at": attempted_at,
-            "last_success_at": attempted_at,
-            "last_success_period_key": period_key,
-            "last_error": None,
-            "updated_at": attempted_at,
-        }
-        state_statement = _provider_state_upsert(state_values)
+    ) -> bool:
+        state_statement = text(
+            """
+            UPDATE report_nav_card_provider_states
+            SET semantics_version=:semantics_version, provider_active=1, stale=0,
+                last_attempt_at=:attempted_at, last_success_at=:attempted_at,
+                last_success_period_key=:period_key, last_error=NULL,
+                updated_at=:attempted_at
+            WHERE card_code=:card_code AND owner=:owner
+              AND registration_token=:registration_token
+            """
+        )
         with self.database.transaction() as connection:
+            result = connection.execute(
+                state_statement,
+                {
+                    "card_code": card_code,
+                    "owner": owner,
+                    "registration_token": registration_token,
+                    "semantics_version": semantics_version,
+                    "attempted_at": attempted_at,
+                    "period_key": period_key,
+                },
+            )
+            if result.rowcount != 1:
+                return False
             for snapshot in snapshots:
                 connection.execute(_card_snapshot_upsert(snapshot))
-            connection.execute(state_statement)
-
-    def _save_provider_state(self, state: CardProviderState, **changes: Any) -> None:
-        values = {
-            "card_code": state.card_code,
-            "owner": state.owner,
-            "semantics_version": state.semantics_version,
-            "provider_active": state.provider_active,
-            "stale": state.stale,
-            "last_attempt_at": state.last_attempt_at,
-            "last_success_at": state.last_success_at,
-            "last_success_period_key": state.last_success_period_key or None,
-            "last_error": state.last_error or None,
-            "updated_at": state.updated_at,
-            **changes,
-        }
-        with self.database.transaction() as connection:
-            connection.execute(_provider_state_upsert(values))
+            return True
 
     def save_manual_card_values(
         self,
@@ -1188,6 +1252,7 @@ class ReportNavigationStore:
             status="running",
             completed_processes=0,
             failed_steps=0,
+            failed_providers=0,
             error_message=None,
         )
         with self.database.transaction() as connection:
@@ -1202,6 +1267,7 @@ class ReportNavigationStore:
         status: str,
         completed_processes: int,
         failed_steps: int,
+        failed_providers: int = 0,
         error_message: str = "",
     ) -> None:
         with self.database.connect() as connection:
@@ -1215,6 +1281,7 @@ class ReportNavigationStore:
             status=status,
             completed_processes=completed_processes,
             failed_steps=failed_steps,
+            failed_providers=failed_providers,
             error_message=error_message or None,
         )
         statement = mysql_insert(REPORT_NAV_STAT_RUNS).values(**values)
@@ -1223,6 +1290,7 @@ class ReportNavigationStore:
             status=statement.inserted.status,
             completed_processes=statement.inserted.completed_processes,
             failed_steps=statement.inserted.failed_steps,
+            failed_providers=statement.inserted.failed_providers,
             error_message=statement.inserted.error_message,
         )
         with self.database.transaction() as connection:
@@ -1342,25 +1410,11 @@ def _card_snapshot_upsert(snapshot: CardSnapshot):
     )
 
 
-def _provider_state_upsert(values: Mapping[str, Any]):
-    statement = mysql_insert(REPORT_NAV_CARD_PROVIDER_STATES).values(**values)
-    return statement.on_duplicate_key_update(
-        owner=statement.inserted.owner,
-        semantics_version=statement.inserted.semantics_version,
-        provider_active=statement.inserted.provider_active,
-        stale=statement.inserted.stale,
-        last_attempt_at=statement.inserted.last_attempt_at,
-        last_success_at=statement.inserted.last_success_at,
-        last_success_period_key=statement.inserted.last_success_period_key,
-        last_error=statement.inserted.last_error,
-        updated_at=statement.inserted.updated_at,
-    )
-
-
 def _provider_state_from_row(row: Mapping[str, Any]) -> CardProviderState:
     return CardProviderState(
         card_code=str(row["card_code"]),
         owner=str(row["owner"]),
+        registration_token=str(row.get("registration_token") or ""),
         semantics_version=int(row["semantics_version"]),
         provider_active=bool(row.get("provider_active")),
         stale=bool(row.get("stale")),

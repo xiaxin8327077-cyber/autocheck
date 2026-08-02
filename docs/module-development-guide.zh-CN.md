@@ -87,13 +87,13 @@ src/auto_check/modules/<module_id>/
 
 提供方是接收一个 `CardStatisticsRequest` 并返回 `CardStatisticsResult` 的可调用对象。宿主会按 `week`、`month`、`quarter`、`year` 四个自然周期依次调用；请求中的当前周期、上一周期、`as_of` 均为 `Asia/Shanghai` 时区感知时间。返回的 `total`、`completed`、`incomplete`、`previous_completed` 必须是非负整数，且 `total == completed + incomplete`；`generated_at` 必须是时区感知时间，返回口径版本必须与注册值一致。完成率和环比变化由平台计算，模块不得写报送导航平台表。
 
-统计卡认领会持久绑定模块 ID：同一卡片只能由一个模块认领；模块正常停止后认领仍保留但标记为 inactive/stale，同一模块重启可重新激活，其他模块不能接管。提供方异常或返回非法结果只产生固定脱敏错误；已有成功快照继续以 stale 展示，首次失败显示 unavailable，不伪造零值。回调执行期间不持有注册锁，允许调用其他平台只读能力；回调返回后平台会复核注册 token，已经关闭或替换的旧提供方结果不会落库。被提供方认领的治理卡（即使当前 inactive）不再接受管理员手工维护。
+统计卡认领会持久绑定模块 ID：同一卡片只能由一个模块认领，数据库使用单条条件写原子决定 owner，多个进程并发注册时不会发生后写覆盖；模块正常停止后认领仍保留但标记为 inactive/stale，同一模块重启可重新激活，其他模块不能接管。每次成功注册都会持久化新的不可复用 token，停用、成功和失败写入均同时校验 card、owner、token；旧进程的 handle 或迟到回调不能改变新实例状态和快照。`semantics_version` 升级会立即隔离旧口径快照，在新版本首次成功前保持 stale/unavailable，不能把旧版本数值标记成新版本。提供方异常或返回非法结果只产生固定脱敏错误；已有同口径成功快照继续以 stale 展示，首次失败显示 unavailable，不伪造零值。回调执行期间不持有注册锁，允许调用其他平台只读能力；回调返回后平台会复核注册 token。被提供方认领的治理卡（即使当前 inactive）不再接受管理员手工维护。
 
 模块 API 的有请求体方法必须声明 `max_body_bytes`。宿主执行总读取时限和请求大小限制，短读、慢速分段超时或非法 JSON 均不会进入处理器。模块响应只允许 JSON 映射或字节，最大 50 MiB；JSON 在校验时固化为发送快照，后续修改原对象不会改变响应。响应头仅允许 `Allow`、`Content-Disposition`、`ETag`、`Last-Modified`、`Location` 和 `Retry-After`，连接、长度、安全响应头及 `Cache-Control: private, no-store` 由宿主统一生成。模块导入、工厂构造、路由/表结构注册和迁移共享一个启动前有界等待，全部成功前不会向宿主发布模块实例、路由或上下文。后台任务和 `start()`、`stop()`、`health()` 都必须自行支持快速退出；宿主还会执行并发限制、有界等待和故障隔离，但同进程 Python 不能强制终止任意模块代码，超时模块的迟到结果不会发布，未结束前不得重复启用。
 
 ## 4. 数据库迁移与运维
 
-应用库先由运维在备份后人工执行 `sql/app_storage/mysql/012_module_system.sql`，再执行 `013_report_navigation_provider_states.sql`，平台应用表共 43 张，`app_schema_version` 仍为 `1`。前者建立模块注册、模块 schema 版本和迁移历史，后者建立报送导航统计提供方持久状态；生产环境禁止由应用自动执行。模块业务表**不加入**全局 `EXPECTED_APP_SCHEMA`，而由模块自己的 `migrations/` 和清单 `schema_version` 管理。
+应用库先由运维在备份后人工执行 `sql/app_storage/mysql/012_module_system.sql`，再执行 `013_report_navigation_provider_states.sql`，平台应用表共 43 张，`app_schema_version` 仍为 `1`。前者建立模块注册、模块 schema 版本和迁移历史，后者建立带注册 token 的报送导航统计提供方持久状态并为统计运行记录补充 `failed_providers`；生产环境禁止由应用自动执行。模块业务表**不加入**全局 `EXPECTED_APP_SCHEMA`，而由模块自己的 `migrations/` 和清单 `schema_version` 管理。
 
 每个模块从 `001` 起顺序编号迁移。发布后的迁移文件不可修改；后续调整必须新增迁移。模块宿主会校验 checksum，并以同模块串行执行和迁移锁防止并发；checksum 不匹配或迁移失败时禁用当前可选模块并记录脱敏错误。迁移只允许受控的 `CREATE/ALTER/DROP TABLE` 和 `CREATE/DROP INDEX` DDL，所有目标表、引用表和多表语句中的每个表都必须属于清单 `table_prefix`；禁止 DML、查询、跨 schema、动态 SQL、存储过程、视图、触发器及改名绕过。为避免依赖 MySQL `sql_mode` 产生不同解析结果，迁移字符串字面量禁止反斜杠转义；字符串内的引号只能写成连续两个同类引号。禁止用运行时 `CREATE TABLE IF NOT EXISTS` 绕开登记迁移。
 

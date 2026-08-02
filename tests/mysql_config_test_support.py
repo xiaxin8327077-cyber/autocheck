@@ -222,6 +222,95 @@ class MySqlContractConnection:
 
     def _execute_text(self, sql: str, parameters: dict[str, Any]) -> MemoryResult:
         normalized = " ".join(sql.split()).lower()
+        if normalized.startswith("insert into report_nav_card_provider_states"):
+            rows = self.tables["report_nav_card_provider_states"]
+            current = next(
+                (
+                    row
+                    for row in rows
+                    if str(row.get("card_code") or "")
+                    == str(parameters["card_code"])
+                ),
+                None,
+            )
+            if current is None:
+                rows.append(
+                    {
+                        "card_code": parameters["card_code"],
+                        "owner": parameters["owner"],
+                        "registration_token": parameters["registration_token"],
+                        "semantics_version": parameters["semantics_version"],
+                        "provider_active": True,
+                        "stale": True,
+                        "last_attempt_at": None,
+                        "last_success_at": None,
+                        "last_success_period_key": None,
+                        "last_error": None,
+                        "updated_at": parameters["updated_at"],
+                    }
+                )
+                return MemoryResult(rowcount=1)
+            if str(current.get("owner") or "") != str(parameters["owner"]):
+                return MemoryResult(rowcount=0)
+            same_semantics = int(current.get("semantics_version") or 0) == int(
+                parameters["semantics_version"]
+            )
+            if not same_semantics:
+                current.update(
+                    stale=True,
+                    last_attempt_at=None,
+                    last_success_at=None,
+                    last_success_period_key=None,
+                    last_error=None,
+                )
+            current.update(
+                registration_token=parameters["registration_token"],
+                semantics_version=parameters["semantics_version"],
+                provider_active=True,
+                updated_at=parameters["updated_at"],
+            )
+            return MemoryResult(rowcount=1)
+        if normalized.startswith("update report_nav_card_provider_states"):
+            current = next(
+                (
+                    row
+                    for row in self.tables["report_nav_card_provider_states"]
+                    if str(row.get("card_code") or "") == str(parameters["card_code"])
+                    and str(row.get("owner") or "") == str(parameters["owner"])
+                    and str(row.get("registration_token") or "")
+                    == str(parameters["registration_token"])
+                ),
+                None,
+            )
+            if current is None:
+                return MemoryResult(rowcount=0)
+            if "set provider_active=0" in normalized:
+                current.update(
+                    provider_active=False,
+                    stale=True,
+                    updated_at=parameters["updated_at"],
+                )
+            elif "stale=0" in normalized:
+                current.update(
+                    semantics_version=parameters["semantics_version"],
+                    provider_active=True,
+                    stale=False,
+                    last_attempt_at=parameters["attempted_at"],
+                    last_success_at=parameters["attempted_at"],
+                    last_success_period_key=parameters["period_key"],
+                    last_error=None,
+                    updated_at=parameters["attempted_at"],
+                )
+            else:
+                current.update(
+                    semantics_version=parameters["semantics_version"],
+                    provider_active=True,
+                    stale=True,
+                    last_attempt_at=parameters["attempted_at"],
+                    last_error=parameters["last_error"],
+                    updated_at=parameters["attempted_at"],
+                )
+            return MemoryResult(rowcount=1)
         if normalized.startswith("update report_nav_scheduler_state"):
             row = next((item for item in self.tables["report_nav_scheduler_state"] if item.get("id") == 1), None)
             if row is None:

@@ -20,7 +20,7 @@
 12. 执行 `sql/app_storage/mysql/010_pbc_template_step_seven_display_only.sql`，将该第七步调整为仅展示，并将第六步作为最终完成节点。
 13. 执行 `sql/app_storage/mysql/011_report_navigation_completion_time_sources.sql`，将归档类完成时间统一改为仅取 `create_date`，并配置人行大集中完成时间数据源。
 14. 生产升级必须先备份 MySQL 应用库，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 3 张模块平台表。
-15. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增报送导航统计提供方持久状态表；完整应用结构共 43 张表，`app_schema_version` 仍为 `1`。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`。
+15. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`；完整应用结构共 43 张表，`app_schema_version` 仍为 `1`。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`。
 15. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
 16. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
 17. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
