@@ -184,7 +184,7 @@
 
     function setModuleNavigationActive(route) {
       const activeGroup = activeGroupId(route);
-      setExpandedGroup(activeGroup);
+      setExpandedGroup("");
       const top = documentRef?.getElementById("moduleTopNavigation");
       top?.querySelectorAll?.("[data-module-route]").forEach((item) => {
         const active = item.dataset.moduleRoute === route;
@@ -384,10 +384,10 @@
       return root;
     }
 
-    function createNavigationItem(entry) {
+    function createNavigationItem(entry, { subitem = false } = {}) {
       const button = documentRef.createElement("button");
       button.type = "button";
-      button.className = "top-nav-item module-top-nav-item";
+      button.className = `top-nav-item module-top-nav-item${subitem ? " top-nav-subitem" : ""}`;
       button.dataset.moduleRoute = entry.route;
       button.dataset.moduleNavigation = entry.id;
       button.textContent = entry.label;
@@ -399,7 +399,7 @@
       const toggle = documentRef.createElement("button");
       const menu = documentRef.createElement("div");
       const menuId = `module-top-navigation-group-${group.id}`;
-      wrapper.className = "module-top-nav-group";
+      wrapper.className = "top-nav-group module-top-nav-group";
       toggle.type = "button";
       toggle.className = "top-nav-item module-top-nav-group-toggle";
       toggle.dataset.moduleGroupToggle = group.id;
@@ -408,12 +408,29 @@
       toggle.setAttribute("aria-controls", menuId);
       toggle.setAttribute("aria-label", group.label);
       menu.id = menuId;
-      menu.className = "module-top-nav-submenu";
+      menu.className = "top-nav-submenu module-top-nav-submenu";
       menu.dataset.moduleGroupMenu = group.id;
       menu.setAttribute("aria-label", group.label);
       menu.hidden = true;
-      group.children.forEach((entry) => menu.appendChild(createNavigationItem(entry)));
+      group.children.forEach((entry) => menu.appendChild(createNavigationItem(entry, { subitem: true })));
       groupControls.set(group.id, { toggle, menu });
+      let closeTimer = null;
+      const open = () => {
+        if (closeTimer !== null) {
+          clearTimeout(closeTimer);
+          closeTimer = null;
+        }
+        setExpandedGroup(group.id);
+      };
+      const scheduleClose = () => {
+        if (closeTimer !== null) clearTimeout(closeTimer);
+        closeTimer = setTimeout(() => {
+          closeTimer = null;
+          if (state.expandedGroupId === group.id) setExpandedGroup("");
+        }, 120);
+      };
+      wrapper.addEventListener("mouseenter", open);
+      wrapper.addEventListener("mouseleave", scheduleClose);
       wrapper.appendChild(toggle);
       wrapper.appendChild(menu);
       return wrapper;
@@ -447,12 +464,14 @@
           setExpandedGroup(
             state.expandedGroupId === groupToggle.dataset.moduleGroupToggle ? "" : groupToggle.dataset.moduleGroupToggle,
           );
+          if (event.detail > 0) groupToggle.blur?.();
           return;
         }
         const target = event.target?.closest?.("[data-module-route]");
         if (!target || (mount.contains && !mount.contains(target))) return;
         event.preventDefault();
         activate(target.dataset.moduleRoute);
+        if (event.detail > 0) target.blur?.();
       };
       const keydown = (event) => {
         const target = event.target?.closest?.("[data-module-group-toggle]");

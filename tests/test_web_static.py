@@ -50,6 +50,7 @@ def test_module_host_assets_keep_module_styles_scoped():
 
 
 def test_module_host_grouped_top_navigation_keeps_accessibility_and_theme_boundaries():
+    html = _read(INDEX_HTML)
     css = _read(MODULE_HOST_CSS)
     script = _read(MODULE_HOST_JS)
 
@@ -63,10 +64,18 @@ def test_module_host_grouped_top_navigation_keeps_accessibility_and_theme_bounda
     ]:
         assert fragment in script
     assert "border-radius: var(--ui-radius)" in css
-    assert "z-index: 10" in css
+    assert "z-index: 50" in css
     assert "box-shadow: none" in css
-    assert "min-width: 0" in css
-    assert "white-space: normal" in css
+    assert "width: max-content" in css
+    assert "min-width: 100%" in css
+    assert "white-space: nowrap" in css
+    assert "font-family: inherit" in css
+    assert "font: inherit" not in css
+    assert "width: min(280px" not in css
+    assert html.index('data-nav-group="smart-reconcile"', html.index('<nav class="top-nav-tabs">')) < html.index('id="moduleTopNavigation"')
+    assert html.index('id="moduleTopNavigation"') < html.index('data-page="tools"', html.index('<nav class="top-nav-tabs">'))
+    assert 'wrapper.addEventListener("mouseenter"' in script
+    assert 'wrapper.addEventListener("mouseleave"' in script
     assert "box-shadow: 0 0" not in css
 
 
