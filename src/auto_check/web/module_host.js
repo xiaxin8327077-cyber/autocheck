@@ -17,6 +17,7 @@
       activeRoute: "",
       navigationTree: [],
       expandedGroupId: "",
+      releaseNotes: Object.freeze([]),
       initialized: false,
     };
     const failures = new Map();
@@ -41,6 +42,22 @@
 
     function moduleRoutes(module) {
       return Array.isArray(module.navigation) ? module.navigation : [];
+    }
+
+    function readonlyReleaseNotes(value) {
+      if (!Array.isArray(value)) return Object.freeze([]);
+      return Object.freeze(value.map((note) => Object.freeze({
+        module_id: String(note?.module_id || ""),
+        module_name: String(note?.module_name || ""),
+        version: String(note?.version || ""),
+        items: Object.freeze(
+          Array.isArray(note?.items) ? note.items.map((item) => String(item)) : [],
+        ),
+      })));
+    }
+
+    function releaseNotes() {
+      return readonlyReleaseNotes(state.releaseNotes);
     }
 
     function compareByOrderAndId(left, right) {
@@ -649,12 +666,14 @@
     async function initializeNow() {
       let payload;
       let mountedNavigation = null;
+      state.releaseNotes = Object.freeze([]);
       try {
         payload = await state.platform.api("/api/system/modules");
       } catch (_) {
         recordModuleIssue("system", "模块清单加载失败");
         return false;
       }
+      state.releaseNotes = readonlyReleaseNotes(payload?.release_notes);
       const modules = Array.isArray(payload?.modules) ? payload.modules : [];
       modules.forEach((module) => {
         if (!module?.id || state.modules.has(module.id)) return;
@@ -716,6 +735,7 @@
 
     async function initialize(platform) {
       if (!validatePlatform(platform)) {
+        state.releaseNotes = Object.freeze([]);
         recordModuleIssue("system", "平台接口不完整");
         return false;
       }
@@ -745,6 +765,7 @@
       state.instances.clear();
       state.navigationTree = [];
       state.expandedGroupId = "";
+      state.releaseNotes = Object.freeze([]);
       failures.clear();
       groupControls.clear();
       styleElements.forEach((link) => removeElement(link));
@@ -775,7 +796,7 @@
       return initialize(platform);
     }
 
-    return Object.freeze({ initialize, activate, deactivate, reload, unmount });
+    return Object.freeze({ initialize, activate, deactivate, reload, unmount, releaseNotes });
   }
 
   if (typeof window !== "undefined") window.AutoCheckModuleHost = createModuleHost();

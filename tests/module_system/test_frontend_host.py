@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import textwrap
+import re
 from pathlib import Path
 
 
@@ -72,6 +73,105 @@ def test_legacy_app_exposes_only_explicit_platform_bridge():
     assert "notify: showToast" in script
     assert "confirm: showConfirm" in script
     assert "legacyNavigate: switchPage" in script
+
+
+def test_module_host_release_notes_are_readonly_and_cleared_on_reload_failure(tmp_path: Path):
+    script = textwrap.dedent(
+        """
+        "use strict";
+        const assert = require("node:assert/strict");
+        const { createModuleHost } = require(process.argv[2]);
+        class FakeElement {
+          constructor() { this.children = []; this.dataset = {}; this.hidden = true; this.listeners = new Map(); }
+          appendChild(child) { this.children.push(child); return child; }
+          replaceChildren(...children) { this.children = children; }
+          addEventListener(type, listener) { this.listeners.set(type, listener); }
+          removeEventListener(type) { this.listeners.delete(type); }
+          setAttribute(name, value) { this[name] = String(value); }
+          querySelector() { return null; }
+          querySelectorAll() { return []; }
+        }
+        const elements = {
+          moduleSideNavigation: new FakeElement(),
+          moduleTopNavigation: new FakeElement(),
+          modulePageHost: new FakeElement(),
+        };
+        const documentRef = {
+          documentElement: { dataset: {} },
+          createElement: () => new FakeElement(),
+          getElementById: (id) => elements[id] || null,
+          querySelectorAll: () => [],
+        };
+        let fail = false;
+        const platform = {
+          api: async () => {
+            if (fail) throw new Error("unavailable");
+            return { modules: [], release_notes: [{
+              module_id: "alpha", module_name: "Alpha", version: "1.0.0", items: ["note"],
+            }] };
+          },
+          user: () => ({}), notify: () => {}, confirm: async () => true,
+          legacyNavigate: async () => {},
+        };
+        (async () => {
+          const host = createModuleHost({ documentRef, locationRef: { hash: "" }, windowRef: null });
+          assert.deepEqual(host.releaseNotes(), []);
+          await host.initialize(platform);
+          const first = host.releaseNotes();
+          const second = host.releaseNotes();
+          assert.notEqual(first, second);
+          assert.ok(Object.isFrozen(first));
+          assert.ok(Object.isFrozen(first[0]));
+          assert.ok(Object.isFrozen(first[0].items));
+          assert.deepEqual(first, [{ module_id: "alpha", module_name: "Alpha", version: "1.0.0", items: ["note"] }]);
+          assert.throws(() => first[0].items.push("mutated"), TypeError);
+          fail = true;
+          assert.equal(await host.reload(), false);
+          assert.deepEqual(host.releaseNotes(), []);
+          await host.unmount();
+          assert.deepEqual(host.releaseNotes(), []);
+        })().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });
+        """
+    )
+    scenario_path = tmp_path / "module_release_notes_scenario.cjs"
+    scenario_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(scenario_path), str(HOST_JS)], check=True, cwd=ROOT)
+
+
+def test_legacy_changelog_safely_renders_generic_module_release_notes(tmp_path: Path):
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.find("function renderModuleReleaseNotes")
+    assert start >= 0
+    end = source.find('document.getElementById("aboutChangelog")', start)
+    assert end > start
+    escape = re.search(r"function escapeHtml\(v\) \{.*?\n\}", source, re.S)
+    assert escape is not None
+    helper = source[start:end]
+    assert "AutoCheckModuleHost" not in helper
+    assert "report_special" not in helper
+    script = textwrap.dedent(
+        rf"""
+        const assert = require("node:assert/strict");
+        {escape.group(0)}
+        {helper}
+        assert.equal(renderModuleReleaseNotes([]), "");
+        const html = renderModuleReleaseNotes([
+          {{ module_id: "one", module_name: "<img src=x onerror=1>", version: "1.0.0", items: ["<script>alert(1)</script>"] }},
+          {{ module_id: "two", module_name: "Two", version: "2.0.0", items: ["Second", "Third"] }},
+        ]);
+        assert.match(html, /模块更新/);
+        assert.match(html, /&lt;img src=x onerror=1&gt;/);
+        assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.doesNotMatch(html, /<script>|<img/);
+        assert.match(html, /Second/);
+        assert.match(html, /Third/);
+        """
+    )
+    scenario_path = tmp_path / "render_module_release_notes.cjs"
+    scenario_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(scenario_path)], check=True, cwd=ROOT)
+
+    assert "window.AutoCheckModuleHost.releaseNotes()" in source
 
 
 def test_module_host_lifecycle_and_failure_isolation(tmp_path: Path):

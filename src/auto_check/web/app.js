@@ -11593,9 +11593,30 @@ document.getElementById("aboutHelp")?.addEventListener("click", (e) => {
   `);
 });
 
+function renderModuleReleaseNotes(releaseNotes) {
+  if (!Array.isArray(releaseNotes) || releaseNotes.length === 0) return "";
+  const entries = releaseNotes
+    .filter((note) => note && Array.isArray(note.items) && note.items.length > 0)
+    .map((note) => `
+      <div class="changelog-item module-release-note">
+        <div>
+          <span class="changelog-version">${escapeHtml(note.module_name)}</span>
+          <span class="changelog-date">v${escapeHtml(note.version)}</span>
+        </div>
+        <ul>${note.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </div>
+    `);
+  if (entries.length === 0) return "";
+  return `<div class="module-release-notes"><h4>模块更新</h4>${entries.join("")}</div>`;
+}
+
 document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   e.preventDefault();
+  const moduleReleaseNotes = typeof window.AutoCheckModuleHost?.releaseNotes === "function"
+    ? renderModuleReleaseNotes(window.AutoCheckModuleHost.releaseNotes())
+    : "";
   showInfo("更新日志", `
+    ${moduleReleaseNotes}
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v2.1</span>
@@ -11607,6 +11628,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>新增报送步骤浮窗人工确认和撤销确认。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
         <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
+        <li>新增模块发布说明聚合能力。</li>
         <li>新增界面圆角个性化设置。</li>
         <li>系统优化及BUG修复。</li>
       </ul>

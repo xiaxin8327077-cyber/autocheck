@@ -500,6 +500,28 @@ class ModuleRuntime:
             )
         return result
 
+    def public_release_notes(self) -> list[dict[str, object]]:
+        with self._lifecycle_lock:
+            manifests = tuple(
+                loaded.discovered.manifest
+                for loaded in self._loaded
+                if (
+                    loaded.status == ModuleStatus.ENABLED
+                    and loaded.discovered.manifest.id not in self._transitioning_modules
+                    and loaded.discovered.manifest.release_notes is not None
+                )
+            )
+        return [
+            {
+                "module_id": manifest.id,
+                "module_name": manifest.name,
+                "version": manifest.release_notes.version,
+                "items": list(manifest.release_notes.items),
+            }
+            for manifest in sorted(manifests, key=lambda item: item.id)
+            if manifest.release_notes is not None
+        ]
+
     def admin_statuses(self, current_user: Mapping[str, Any] | None) -> list[dict[str, object]]:
         self._require_admin(current_user)
         with self._lifecycle_lock:

@@ -101,6 +101,7 @@ def _manifest(
     services: list[dict[str, object]] | None = None,
     service_dependencies: list[dict[str, object]] | None = None,
     backend_entry: str | None = None,
+    release_notes: dict[str, object] | None = None,
 ) -> ModuleManifest:
     return ModuleManifest.from_mapping(
         {
@@ -124,6 +125,7 @@ def _manifest(
                 if service_dependencies is not None
                 else {}
             ),
+            **({"release_notes": release_notes} if release_notes is not None else {}),
         }
     )
 
@@ -664,6 +666,62 @@ def test_regular_user_only_receives_view_navigation(runtime_factory):
             "permission": "alpha.view",
         }
     ]
+
+
+def test_public_release_notes_are_independent_filtered_sorted_snapshots(
+    isolated_runtime_factory,
+):
+    calls = []
+    alpha = _LifecycleModule(
+        _manifest(
+            "alpha",
+            release_notes={"version": "1.0.0", "items": ["Alpha note"]},
+        ),
+        calls,
+    )
+    zeta = _LifecycleModule(
+        _manifest(
+            "zeta",
+            release_notes={"version": "1.0.0", "items": ["Zeta note"]},
+        ),
+        calls,
+    )
+    broken = _LifecycleModule(
+        _manifest(
+            "broken",
+            release_notes={"version": "1.0.0", "items": ["Broken note"]},
+        ),
+        calls,
+        start_action=lambda _context: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    runtime = isolated_runtime_factory([zeta, broken, alpha])
+    runtime.start()
+
+    assert runtime.public_modules({"role": "user"}) == []
+    notes = runtime.public_release_notes()
+    assert notes == [
+        {
+            "module_id": "alpha",
+            "module_name": "Alpha",
+            "version": "1.0.0",
+            "items": ["Alpha note"],
+        },
+        {
+            "module_id": "zeta",
+            "module_name": "Zeta",
+            "version": "1.0.0",
+            "items": ["Zeta note"],
+        },
+    ]
+    notes[0]["items"].append("mutated")
+    assert runtime.public_release_notes()[0]["items"] == ["Alpha note"]
+
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    runtime._begin_transition(("zeta",))
+    try:
+        assert runtime.public_release_notes() == []
+    finally:
+        runtime._finish_transition()
 
 
 def test_public_modules_emits_navigation_group_fields_only_when_declared(

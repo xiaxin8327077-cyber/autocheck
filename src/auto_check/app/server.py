@@ -3193,7 +3193,10 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
     def _handle_module_system(self, method: str, path: str, session: AuthSession) -> None:
         current_user = _session_user(session)
         if method == "GET" and path == "/api/system/modules":
-            payload: dict[str, Any] = {"modules": self.router.module_runtime.public_modules(current_user)}
+            payload: dict[str, Any] = {
+                "modules": self.router.module_runtime.public_modules(current_user),
+                "release_notes": self.router.module_runtime.public_release_notes(),
+            }
             if current_user and current_user.get("role") == "admin":
                 payload["module_statuses"] = self.router.module_runtime.admin_statuses(current_user)
             self._send_json(200, payload)

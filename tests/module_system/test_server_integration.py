@@ -196,6 +196,14 @@ def test_authenticated_user_receives_visible_module_list(authenticated_module_se
     assert status == 200
     payload = json.loads(data)
     assert payload["modules"][0]["id"] == "alpha"
+    assert payload["release_notes"] == [
+        {
+            "module_id": "alpha",
+            "module_name": "Alpha",
+            "version": "1.0.0",
+            "items": ["Alpha module note"],
+        }
+    ]
     assert payload["module_statuses"][0]["id"] == "alpha"
 
 

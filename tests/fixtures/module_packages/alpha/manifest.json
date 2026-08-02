@@ -19,5 +19,9 @@
   ],
   "permissions": ["alpha.view"],
   "dependencies": [],
+  "release_notes": {
+    "version": "1.0.0",
+    "items": ["Alpha module note"]
+  },
   "schema_version": 2
 }

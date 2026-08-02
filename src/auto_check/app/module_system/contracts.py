@@ -30,6 +30,8 @@ _MODULE_RESPONSE_HEADERS = frozenset(
     {"allow", "content-disposition", "etag", "last-modified", "location", "retry-after"}
 )
 MAX_MODULE_RESPONSE_BYTES = 50 * 1024 * 1024
+_MAX_RELEASE_NOTE_ITEMS = 20
+_MAX_RELEASE_NOTE_ITEM_LENGTH = 200
 
 
 class ModuleManifestError(ValueError):
@@ -101,6 +103,12 @@ class ServiceRequirement:
 
 
 @dataclass(frozen=True)
+class ModuleReleaseNotes:
+    version: str
+    items: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ModuleManifest:
     id: str
     name: str
@@ -118,6 +126,7 @@ class ModuleManifest:
     table_prefix: str
     services: tuple[ServiceDeclaration, ...]
     service_dependencies: tuple[ServiceRequirement, ...] = ()
+    release_notes: ModuleReleaseNotes | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> ModuleManifest:
@@ -228,7 +237,38 @@ class ModuleManifest:
             table_prefix=_table_prefix(payload, module_id),
             services=services,
             service_dependencies=service_dependencies,
+            release_notes=_release_notes(payload, version),
         )
+
+
+def _release_notes(
+    payload: Mapping[str, object], module_version: str
+) -> ModuleReleaseNotes | None:
+    if "release_notes" not in payload:
+        return None
+    value = payload.get("release_notes")
+    if not isinstance(value, Mapping) or set(value) != {"version", "items"}:
+        raise ModuleManifestError("release_notes manifest invalid")
+    version = value.get("version")
+    items = value.get("items")
+    if (
+        not isinstance(version, str)
+        or re.fullmatch(r"\d+\.\d+\.\d+", version) is None
+        or version != module_version
+        or not isinstance(items, list)
+        or not 1 <= len(items) <= _MAX_RELEASE_NOTE_ITEMS
+        or any(
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item.strip()) > _MAX_RELEASE_NOTE_ITEM_LENGTH
+            for item in items
+        )
+    ):
+        raise ModuleManifestError("release_notes manifest invalid")
+    normalized_items = tuple(item.strip() for item in items)
+    if len(set(normalized_items)) != len(normalized_items):
+        raise ModuleManifestError("release_notes manifest invalid")
+    return ModuleReleaseNotes(version=version, items=normalized_items)
 
 
 def _service_requirements(

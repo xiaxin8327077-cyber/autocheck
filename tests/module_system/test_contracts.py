@@ -46,6 +46,48 @@ def test_manifest_parses_valid_payload():
     assert manifest.navigation[0].group_id is None
     assert manifest.navigation[0].group_label is None
     assert manifest.navigation[0].group_order is None
+    assert manifest.release_notes is None
+
+
+def test_manifest_parses_versioned_release_notes_as_an_immutable_value():
+    manifest = ModuleManifest.from_mapping(
+        {
+            **VALID_MANIFEST,
+            "release_notes": {
+                "version": "1.0.0",
+                "items": ["  新增通用模块发布说明  ", "系统优化及BUG修复。"],
+            },
+        }
+    )
+
+    assert manifest.release_notes is not None
+    assert manifest.release_notes.version == "1.0.0"
+    assert manifest.release_notes.items == ("新增通用模块发布说明", "系统优化及BUG修复。")
+
+
+@pytest.mark.parametrize(
+    "release_notes",
+    [
+        None,
+        [],
+        {"version": "1.0.0"},
+        {"version": "1.0.0", "items": ["有效"], "unknown": True},
+        {"version": "1.0", "items": ["有效"]},
+        {"version": "1.0.1", "items": ["有效"]},
+        {"version": "1.0.0", "items": "有效"},
+        {"version": "1.0.0", "items": []},
+        {"version": "1.0.0", "items": [""]},
+        {"version": "1.0.0", "items": [True]},
+        {"version": "1.0.0", "items": [{}]},
+        {"version": "1.0.0", "items": [["嵌套"]]},
+        {"version": "1.0.0", "items": ["重复", " 重复 "]},
+        {"version": "1.0.0", "items": [str(index) for index in range(21)]},
+        {"version": "1.0.0", "items": ["长" * 201]},
+    ],
+)
+def test_manifest_rejects_invalid_release_notes_with_a_fixed_error(release_notes):
+    with pytest.raises(ModuleManifestError, match=r"^release_notes manifest invalid$"):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "release_notes": release_notes})
 
 
 def test_manifest_parses_a_complete_navigation_group_declaration():
