@@ -49,6 +49,24 @@ def test_module_host_assets_keep_module_styles_scoped():
     assert "await window.AutoCheckModuleHost?.deactivate();" in _read(APP_JS)
 
 
+def test_module_host_grouped_top_navigation_keeps_accessibility_and_theme_boundaries():
+    css = _read(MODULE_HOST_CSS)
+    script = _read(MODULE_HOST_JS)
+
+    for fragment in [
+        "module-top-nav-group-toggle",
+        "aria-expanded",
+        "aria-controls",
+        "aria-current",
+        "group_order",
+        "group_id",
+    ]:
+        assert fragment in script
+    assert "border-radius: var(--ui-radius)" in css
+    assert "z-index: 10" in css
+    assert "box-shadow: 0 0" not in css
+
+
 def test_semantic_action_tokens_and_disabled_priority_are_centralized():
     css = _read(STYLES_CSS)
 

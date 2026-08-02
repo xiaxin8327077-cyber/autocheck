@@ -15,12 +15,15 @@
       instances: new Map(),
       activeModuleId: "",
       activeRoute: "",
+      navigationTree: [],
+      expandedGroupId: "",
       initialized: false,
     };
     const failures = new Map();
     const styleElements = new Map();
     const eventListeners = new Map();
     const navigationListeners = new Map();
+    const groupControls = new Map();
     let initializePromise = null;
     let lifecycleQueue = Promise.resolve();
     let lifecycleVersion = 0;
@@ -38,6 +41,46 @@
 
     function moduleRoutes(module) {
       return Array.isArray(module.navigation) ? module.navigation : [];
+    }
+
+    function compareByOrderAndId(left, right) {
+      const leftOrder = Number(left.order || 0);
+      const rightOrder = Number(right.order || 0);
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      return String(left.id || "").localeCompare(String(right.id || ""));
+    }
+
+    function normalizedTopNavigation() {
+      const groups = new Map();
+      const flatEntries = [];
+      state.modules.forEach((module) => {
+        moduleRoutes(module).forEach((entry) => {
+          if (!entry?.route || state.routes.get(entry.route) !== module.id) return;
+          const item = { ...entry, module };
+          const isGrouped = ["group_id", "group_label", "group_order"].every(
+            (field) => item[field] !== undefined && item[field] !== null,
+          );
+          if (!isGrouped) {
+            flatEntries.push(item);
+            return;
+          }
+          const groupId = String(item.group_id);
+          const group = groups.get(groupId) || {
+            kind: "group",
+            id: groupId,
+            label: String(item.group_label),
+            order: item.group_order,
+            children: [],
+          };
+          group.children.push(item);
+          groups.set(groupId, group);
+        });
+      });
+      const grouped = [...groups.values()]
+        .filter((group) => group.children.length > 0)
+        .map((group) => ({ ...group, children: group.children.sort(compareByOrderAndId) }))
+        .sort(compareByOrderAndId);
+      return [...grouped, ...flatEntries.sort(compareByOrderAndId)];
     }
 
     function removeElement(element) {
@@ -103,15 +146,37 @@
       });
     }
 
+    function activeGroupId(route) {
+      return state.navigationTree.find(
+        (item) => item.kind === "group" && item.children.some((child) => child.route === route),
+      )?.id || "";
+    }
+
+    function applyGroupExpansion() {
+      groupControls.forEach(({ toggle, menu }, groupId) => {
+        const expanded = groupId === state.expandedGroupId;
+        toggle.setAttribute?.("aria-expanded", String(expanded));
+        menu.hidden = !expanded;
+      });
+    }
+
+    function setExpandedGroup(groupId) {
+      state.expandedGroupId = String(groupId || "");
+      applyGroupExpansion();
+    }
+
     function setModuleNavigationActive(route) {
-      ["moduleSideNavigation", "moduleTopNavigation"].forEach((id) => {
-        const mount = documentRef?.getElementById(id);
-        mount?.querySelectorAll?.("[data-module-route]").forEach((item) => {
-          const active = item.dataset.moduleRoute === route;
-          item.classList?.toggle("active", active);
-          if (active) item.setAttribute?.("aria-current", "page");
-          else item.removeAttribute?.("aria-current");
-        });
+      const activeGroup = activeGroupId(route);
+      setExpandedGroup(activeGroup);
+      const top = documentRef?.getElementById("moduleTopNavigation");
+      top?.querySelectorAll?.("[data-module-route]").forEach((item) => {
+        const active = item.dataset.moduleRoute === route;
+        item.classList?.toggle("active", active);
+        if (active) item.setAttribute?.("aria-current", "page");
+        else item.removeAttribute?.("aria-current");
+      });
+      groupControls.forEach(({ toggle }, groupId) => {
+        toggle.classList?.toggle("active", groupId === activeGroup);
       });
     }
 
@@ -302,53 +367,97 @@
       return root;
     }
 
-    function createNavigationItem(entry, className) {
+    function createNavigationItem(entry) {
       const button = documentRef.createElement("button");
       button.type = "button";
-      button.className = className;
+      button.className = "top-nav-item module-top-nav-item";
       button.dataset.moduleRoute = entry.route;
       button.dataset.moduleNavigation = entry.id;
       button.textContent = entry.label;
       return button;
     }
 
-    function renderNavigation() {
-      const side = documentRef?.getElementById("moduleSideNavigation");
-      const top = documentRef?.getElementById("moduleTopNavigation");
-      if (!side || !top) return;
-      side.replaceChildren?.();
-      top.replaceChildren?.();
-      [...state.routes.entries()]
-        .map(([route, moduleId]) => ({ route, module: state.modules.get(moduleId) }))
-        .flatMap(({ route, module }) => moduleRoutes(module)
-          .filter((entry) => entry.route === route)
-          .map((entry) => ({ ...entry, module })))
-        .sort((left, right) => Number(left.order || 0) - Number(right.order || 0))
-        .forEach((entry) => {
-          side.appendChild(createNavigationItem(entry, "nav-item module-nav-item"));
-          top.appendChild(createNavigationItem(entry, "top-nav-item module-top-nav-item"));
-        });
+    function createGroupNavigation(group) {
+      const wrapper = documentRef.createElement("div");
+      const toggle = documentRef.createElement("button");
+      const menu = documentRef.createElement("div");
+      const menuId = `module-top-navigation-group-${group.id}`;
+      wrapper.className = "module-top-nav-group";
+      toggle.type = "button";
+      toggle.className = "top-nav-item module-top-nav-group-toggle";
+      toggle.dataset.moduleGroupToggle = group.id;
+      toggle.textContent = group.label;
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.setAttribute("aria-controls", menuId);
+      toggle.setAttribute("aria-label", group.label);
+      menu.id = menuId;
+      menu.className = "module-top-nav-submenu";
+      menu.dataset.moduleGroupMenu = group.id;
+      menu.setAttribute("aria-label", group.label);
+      menu.hidden = true;
+      group.children.forEach((entry) => menu.appendChild(createNavigationItem(entry)));
+      groupControls.set(group.id, { toggle, menu });
+      wrapper.appendChild(toggle);
+      wrapper.appendChild(menu);
+      return wrapper;
     }
 
-    function bindNavigation() {
-      ["moduleSideNavigation", "moduleTopNavigation"].forEach((id) => {
-        const mount = documentRef?.getElementById(id);
-        if (!mount || navigationListeners.has(mount)) return;
-        mount.dataset.moduleHostBound = "true";
-        const listener = (event) => {
-          const target = event.target?.closest?.("[data-module-route]");
-          if (!target || (mount.contains && !mount.contains(target))) return;
-          event.preventDefault();
-          activate(target.dataset.moduleRoute);
-        };
-        mount.addEventListener("click", listener);
-        navigationListeners.set(mount, listener);
+    function renderNavigation() {
+      const top = documentRef?.getElementById("moduleTopNavigation");
+      const side = documentRef?.getElementById("moduleSideNavigation");
+      if (!top) return;
+      state.navigationTree = normalizedTopNavigation();
+      groupControls.clear();
+      side?.replaceChildren?.();
+      top.replaceChildren?.();
+      state.navigationTree.forEach((item) => {
+        if (item.kind === "group") {
+          top.appendChild(createGroupNavigation(item));
+          return;
+        }
+        top.appendChild(createNavigationItem(item));
       });
     }
 
+    function bindNavigation() {
+      const mount = documentRef?.getElementById("moduleTopNavigation");
+      if (!mount || navigationListeners.has(mount)) return;
+      mount.dataset.moduleHostBound = "true";
+      const click = (event) => {
+        const groupToggle = event.target?.closest?.("[data-module-group-toggle]");
+        if (groupToggle && (!mount.contains || mount.contains(groupToggle))) {
+          event.preventDefault();
+          setExpandedGroup(
+            state.expandedGroupId === groupToggle.dataset.moduleGroupToggle ? "" : groupToggle.dataset.moduleGroupToggle,
+          );
+          return;
+        }
+        const target = event.target?.closest?.("[data-module-route]");
+        if (!target || (mount.contains && !mount.contains(target))) return;
+        event.preventDefault();
+        activate(target.dataset.moduleRoute);
+      };
+      const keydown = (event) => {
+        const target = event.target?.closest?.("[data-module-group-toggle]");
+        if (!target || (mount.contains && !mount.contains(target))) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setExpandedGroup(state.expandedGroupId === target.dataset.moduleGroupToggle ? "" : target.dataset.moduleGroupToggle);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          setExpandedGroup("");
+          target.focus?.();
+        }
+      };
+      mount.addEventListener("click", click);
+      mount.addEventListener("keydown", keydown);
+      navigationListeners.set(mount, { click, keydown });
+    }
+
     function removeNavigationListeners() {
-      navigationListeners.forEach((listener, mount) => {
-        mount.removeEventListener?.("click", listener);
+      navigationListeners.forEach(({ click, keydown }, mount) => {
+        mount.removeEventListener?.("click", click);
+        mount.removeEventListener?.("keydown", keydown);
         delete mount.dataset.moduleHostBound;
       });
       navigationListeners.clear();
@@ -632,7 +741,10 @@
       state.modules.clear();
       state.routes.clear();
       state.instances.clear();
+      state.navigationTree = [];
+      state.expandedGroupId = "";
       failures.clear();
+      groupControls.clear();
       styleElements.forEach((link) => removeElement(link));
       styleElements.clear();
       eventListeners.clear();

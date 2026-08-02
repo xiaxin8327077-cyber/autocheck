@@ -54,8 +54,8 @@ def test_module_host_css_is_scoped():
 def test_module_navigation_buttons_use_scoped_reset_and_accessible_active_state():
     css = HOST_CSS.read_text(encoding="utf-8")
 
-    assert "#moduleSideNavigation .module-nav-item" in css
     assert "#moduleTopNavigation .module-top-nav-item" in css
+    assert "#moduleTopNavigation .module-top-nav-group-toggle" in css
     assert "appearance: none" in css
     assert "border: 0" in css
     assert "background: transparent" in css
@@ -148,7 +148,7 @@ def test_module_host_lifecycle_and_failure_isolation(tmp_path: Path):
 
         (async () => {
           assert.equal(await host.initialize(platform), true);
-          assert.equal(elements.moduleSideNavigation.children.length, 2);
+          assert.equal(elements.moduleSideNavigation.children.length, 0);
           assert.equal(elements.moduleTopNavigation.children.length, 2);
           assert.deepEqual(calls.map(([name]) => name), ["mount", "activate"]);
           await host.deactivate();
@@ -202,8 +202,13 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
           contains(target) { return this.children.includes(target) || this.children.some((child) => child.contains?.(target)); }
           addEventListener(type, listener) { this.listeners.set(type, listener); }
           removeEventListener(type) { this.listeners.delete(type); }
-          dispatch(type, target = this) { return this.listeners.get(type)?.({ target, preventDefault() {} }); }
-          closest(selector) { return selector === "[data-module-route]" && this.dataset.moduleRoute ? this : null; }
+          dispatch(type, target = this, options = {}) { return this.listeners.get(type)?.({ target, preventDefault() {}, ...options }); }
+          focus() { this.focused = true; }
+          closest(selector) {
+            if (selector === "[data-module-route]" && this.dataset.moduleRoute) return this;
+            if (selector === "[data-module-group-toggle]" && this.dataset.moduleGroupToggle) return this;
+            return null;
+          }
           setAttribute(name, value) { this.attributes.set(name, String(value)); }
           getAttribute(name) { return this.attributes.get(name) || null; }
           removeAttribute(name) { this.attributes.delete(name); }
@@ -283,9 +288,9 @@ def test_module_host_owns_module_legacy_visibility_and_hash_history(tmp_path: Pa
         assert.equal(env.documentRef.documentElement.dataset.page, "module-alpha");
         assert.equal(env.elements.modulePageHost.hidden, false);
         assert.equal(env.legacyPage.hidden, true);
-        assert.equal(env.elements.moduleSideNavigation.children.length, 2);
+        assert.equal(env.elements.moduleSideNavigation.children.length, 0);
         assert.equal(env.elements.moduleTopNavigation.children.length, 2);
-        assert.equal(env.elements.moduleSideNavigation.children[0].getAttribute("aria-current"), "page");
+        assert.equal(env.elements.moduleTopNavigation.children[0].getAttribute("aria-current"), "page");
         env.locationRef.hash = "#beta";
         env.windowRef.dispatch("hashchange");
         await new Promise((resolve) => setImmediate(resolve));
@@ -794,5 +799,85 @@ def test_module_host_bounds_stuck_lifecycle_callbacks(tmp_path: Path):
           new Promise((_, reject) => setTimeout(() => reject(new Error("unmount timeout did not release host")), 100)),
         ]);
         assert.equal(unmountEnv.elements.modulePageHost.children.length, 0);
+        """,
+    )
+
+
+def test_module_host_renders_top_grouped_navigation_and_keeps_sidebar_empty(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#review-new");
+        const host = createModuleHost({
+          ...env,
+          importModule: async () => ({ default: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} } }),
+        });
+        const grouped = (id, label, route, order, groupId, groupLabel, groupOrder) => ({
+          id, label, route, order, group_id: groupId, group_label: groupLabel, group_order: groupOrder,
+        });
+        const platform = {
+          api: async () => ({ modules: [
+            { id: "review", frontend_entry: "/review.js", frontend_style: "/review.css", navigation: [
+              grouped("review-new", "New review", "review-new", 2, "review", "Reviews", 2),
+              grouped("review-history", "Review history", "review-history", 1, "review", "Reviews", 2),
+            ] },
+            { id: "data", frontend_entry: "/data.js", frontend_style: "/data.css", navigation: [
+              grouped("data-import", "Import data", "data-import", 1, "data", "Data", 1),
+            ] },
+            { id: "legacy", frontend_entry: "/legacy.js", frontend_style: "/legacy.css", navigation: [
+              { id: "legacy-b", label: "Legacy B", route: "legacy-b", order: 2 },
+              { id: "legacy-a", label: "Legacy A", route: "legacy-a", order: 1 },
+            ] },
+            { id: "empty", frontend_entry: "/empty.js", frontend_style: "/empty.css", navigation: [] },
+          ] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await host.initialize(platform), true);
+        const top = env.elements.moduleTopNavigation;
+        const side = env.elements.moduleSideNavigation;
+        assert.equal(side.children.length, 0);
+        assert.equal(top.children.length, 4);
+        const dataGroup = top.children[0];
+        const reviewGroup = top.children[1];
+        assert.equal(dataGroup.children[0].textContent, "Data");
+        assert.equal(reviewGroup.children[0].textContent, "Reviews");
+        assert.equal(top.children[2].textContent, "Legacy A");
+        const reviewToggle = reviewGroup.children[0];
+        const reviewMenu = reviewGroup.children[1];
+        assert.equal(reviewMenu.children[0].textContent, "Review history");
+        assert.equal(reviewMenu.children[1].textContent, "New review");
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "true");
+        assert.equal(reviewToggle.getAttribute("aria-controls"), reviewMenu.id);
+        assert.equal(reviewMenu.getAttribute("aria-label"), "Reviews");
+        assert.ok(reviewToggle.classList.contains("active"));
+        assert.equal(reviewMenu.children[1].getAttribute("aria-current"), "page");
+
+        top.dispatch("keydown", reviewToggle, { key: "Escape" });
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "false");
+        assert.equal(reviewMenu.hidden, true);
+        assert.equal(reviewToggle.focused, true);
+        top.dispatch("keydown", reviewToggle, { key: " " });
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "true");
+        top.dispatch("click", reviewMenu.children[0]);
+        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
+        assert.equal(env.locationRef.hash, "#review-history");
+        assert.ok(reviewToggle.classList.contains("active"));
+        assert.equal(reviewMenu.children[0].getAttribute("aria-current"), "page");
+        top.dispatch("click", dataGroup.children[0]);
+        assert.equal(dataGroup.children[0].getAttribute("aria-expanded"), "true");
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "false");
+        assert.equal(await host.activate("legacy-a"), true);
+        assert.equal(dataGroup.children[0].getAttribute("aria-expanded"), "false");
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "false");
+        assert.equal(top.children[2].getAttribute("aria-current"), "page");
+        assert.equal(await host.reload(), true);
+        assert.equal(top.children.length, 4);
+        assert.equal(top.listeners.size, 2);
+        assert.equal(side.children.length, 0);
+        await host.unmount();
+        assert.equal(top.children.length, 0);
+        assert.equal(top.listeners.size, 0);
+        assert.equal(side.children.length, 0);
         """,
     )

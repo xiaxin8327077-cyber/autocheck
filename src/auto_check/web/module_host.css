@@ -13,13 +13,12 @@
   min-width: 0;
 }
 
-#moduleSideNavigation,
 #moduleTopNavigation {
   display: contents;
 }
 
-#moduleSideNavigation .module-nav-item,
-#moduleTopNavigation .module-top-nav-item {
+#moduleTopNavigation .module-top-nav-item,
+#moduleTopNavigation .module-top-nav-group-toggle {
   appearance: none;
   border: 0;
   background: transparent;
@@ -28,20 +27,70 @@
   cursor: pointer;
 }
 
-#moduleSideNavigation .module-nav-item[aria-current="page"] {
-  color: var(--on-primary);
-  background: var(--primary-container);
-}
-
-#moduleTopNavigation .module-top-nav-item[aria-current="page"] {
+#moduleTopNavigation .module-top-nav-item[aria-current="page"],
+#moduleTopNavigation .module-top-nav-group-toggle.active {
   color: var(--theme-on-accent);
   background: var(--theme-accent);
 }
 
-#moduleSideNavigation .module-nav-item:focus-visible,
-#moduleTopNavigation .module-top-nav-item:focus-visible {
+#moduleTopNavigation .module-top-nav-item:focus-visible,
+#moduleTopNavigation .module-top-nav-group-toggle:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
+}
+
+#moduleTopNavigation .module-top-nav-group {
+  position: relative;
+  display: inline-flex;
+}
+
+#moduleTopNavigation .module-top-nav-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 14px;
+  color: var(--on-surface-variant);
+}
+
+#moduleTopNavigation .module-top-nav-group-toggle::after {
+  content: "▾";
+  margin-left: 6px;
+  font-size: 10px;
+}
+
+#moduleTopNavigation .module-top-nav-submenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 10;
+  display: grid;
+  gap: 3px;
+  min-width: max-content;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 7px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--outline-variant, #D9E2F2);
+  border-radius: var(--ui-radius);
+  background: var(--surface, #FFFFFF);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+#moduleTopNavigation .module-top-nav-submenu[hidden] {
+  display: none;
+}
+
+#moduleTopNavigation .module-top-nav-submenu .module-top-nav-item {
+  justify-content: flex-start;
+  width: 100%;
+  white-space: nowrap;
+}
+
+#moduleTopNavigation .module-top-nav-group-toggle:hover,
+#moduleTopNavigation .module-top-nav-item:hover {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+  transform: translateY(-1px);
 }
 
 .module-host-diagnostics {
