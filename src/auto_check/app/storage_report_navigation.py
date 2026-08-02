@@ -26,6 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from auto_check.app.app_database import ApplicationDatabase
+from auto_check.app.time_utils import beijing_now
 
 
 METADATA = MetaData()
@@ -220,6 +221,20 @@ REPORT_NAV_SCHEDULER_STATE = Table(
     Column("last_error", Text),
     Column("updated_at", DateTime, nullable=False),
 )
+REPORT_NAV_CARD_PROVIDER_STATES = Table(
+    "report_nav_card_provider_states",
+    METADATA,
+    Column("card_code", String(64), primary_key=True),
+    Column("owner", String(64), nullable=False),
+    Column("semantics_version", Integer, nullable=False),
+    Column("provider_active", Boolean, nullable=False),
+    Column("stale", Boolean, nullable=False),
+    Column("last_attempt_at", DateTime),
+    Column("last_success_at", DateTime),
+    Column("last_success_period_key", String(16)),
+    Column("last_error", Text),
+    Column("updated_at", DateTime, nullable=False),
+)
 
 
 @dataclass(frozen=True)
@@ -253,6 +268,14 @@ class ProcessConfig:
     display_order: int
     allow_manual_step_completion: bool
     steps: tuple[StepConfig, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReportProcessRecord:
+    process_code: str
+    process_name: str
+    display_order: int
+    active: bool
 
 
 @dataclass(frozen=True)
@@ -343,9 +366,39 @@ class ManualCardHistoryValue:
     updated_at: datetime
 
 
+@dataclass(frozen=True)
+class CardProviderState:
+    card_code: str
+    owner: str
+    semantics_version: int
+    provider_active: bool
+    stale: bool
+    last_attempt_at: datetime | None
+    last_success_at: datetime | None
+    last_success_period_key: str
+    last_error: str
+    updated_at: datetime
+
+
 class ReportNavigationStore:
     def __init__(self, database: ApplicationDatabase):
         self.database = database
+
+    def load_report_processes(self) -> tuple[ReportProcessRecord, ...]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_PROCESSES)
+        return tuple(
+            ReportProcessRecord(
+                process_code=str(row["process_code"]),
+                process_name=str(row["process_name"]),
+                display_order=int(row["display_order"]),
+                active=bool(row.get("enabled")),
+            )
+            for row in sorted(
+                rows,
+                key=lambda row: (int(row.get("display_order") or 0), str(row.get("process_code") or "")),
+            )
+        )
 
     def load_configuration(self, report_month: str) -> list[ProcessConfig]:
         month_no = _parse_report_month(report_month)[1]
@@ -826,29 +879,8 @@ class ReportNavigationStore:
         }
 
     def save_card_snapshot(self, snapshot: CardSnapshot) -> None:
-        values = {
-            "stat_period": snapshot.stat_period,
-            "card_code": snapshot.card_code,
-            "total_count": snapshot.total_count,
-            "completed_count": snapshot.completed_count,
-            "incomplete_count": snapshot.incomplete_count,
-            "comparison_delta": snapshot.comparison_delta,
-            "completion_rate": snapshot.completion_rate,
-            "evaluated_at": snapshot.evaluated_at,
-            "run_id": snapshot.run_id,
-        }
-        statement = mysql_insert(REPORT_NAV_CARD_SNAPSHOTS).values(**values)
-        statement = statement.on_duplicate_key_update(
-            total_count=statement.inserted.total_count,
-            completed_count=statement.inserted.completed_count,
-            incomplete_count=statement.inserted.incomplete_count,
-            comparison_delta=statement.inserted.comparison_delta,
-            completion_rate=statement.inserted.completion_rate,
-            evaluated_at=statement.inserted.evaluated_at,
-            run_id=statement.inserted.run_id,
-        )
         with self.database.transaction() as connection:
-            connection.execute(statement)
+            connection.execute(_card_snapshot_upsert(snapshot))
 
     def load_card_snapshots(self, period: str) -> dict[str, CardSnapshot]:
         with self.database.connect() as connection:
@@ -872,6 +904,148 @@ class ReportNavigationStore:
             for row in rows
             if str(row.get("stat_period")) == period
         }
+
+    def load_card_provider_state(self, card_code: str) -> CardProviderState | None:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_CARD_PROVIDER_STATES)
+        row = next(
+            (item for item in rows if str(item.get("card_code") or "") == card_code),
+            None,
+        )
+        return _provider_state_from_row(row) if row is not None else None
+
+    def load_card_provider_states(self) -> dict[str, CardProviderState]:
+        with self.database.connect() as connection:
+            rows = _rows(connection, REPORT_NAV_CARD_PROVIDER_STATES)
+        return {
+            str(row["card_code"]): _provider_state_from_row(row)
+            for row in rows
+        }
+
+    def claim_card_provider(
+        self,
+        card_code: str,
+        owner: str,
+        semantics_version: int,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        current = self.load_card_provider_state(card_code)
+        if current is not None and current.owner != owner:
+            raise ValueError("card provider claim belongs to another owner")
+        timestamp = now or beijing_now()
+        values = {
+            "card_code": card_code,
+            "owner": owner,
+            "semantics_version": semantics_version,
+            "provider_active": True,
+            "stale": current.stale if current is not None else True,
+            "last_attempt_at": current.last_attempt_at if current is not None else None,
+            "last_success_at": current.last_success_at if current is not None else None,
+            "last_success_period_key": (
+                current.last_success_period_key if current is not None else None
+            ),
+            "last_error": current.last_error if current is not None else None,
+            "updated_at": timestamp,
+        }
+        statement = mysql_insert(REPORT_NAV_CARD_PROVIDER_STATES).values(**values)
+        statement = statement.on_duplicate_key_update(
+            owner=statement.inserted.owner,
+            semantics_version=statement.inserted.semantics_version,
+            provider_active=statement.inserted.provider_active,
+            stale=statement.inserted.stale,
+            last_attempt_at=statement.inserted.last_attempt_at,
+            last_success_at=statement.inserted.last_success_at,
+            last_success_period_key=statement.inserted.last_success_period_key,
+            last_error=statement.inserted.last_error,
+            updated_at=statement.inserted.updated_at,
+        )
+        with self.database.transaction() as connection:
+            connection.execute(statement)
+
+    def deactivate_card_provider(
+        self, card_code: str, owner: str, *, now: datetime | None = None
+    ) -> None:
+        current = self.load_card_provider_state(card_code)
+        if current is None or current.owner != owner:
+            return
+        timestamp = now or beijing_now()
+        self._save_provider_state(
+            current,
+            provider_active=False,
+            stale=True,
+            updated_at=timestamp,
+        )
+
+    def mark_card_provider_failure(
+        self,
+        card_code: str,
+        owner: str,
+        semantics_version: int,
+        *,
+        attempted_at: datetime,
+        error_message: str,
+    ) -> None:
+        current = self.load_card_provider_state(card_code)
+        if current is None or current.owner != owner:
+            return
+        self._save_provider_state(
+            current,
+            semantics_version=semantics_version,
+            provider_active=True,
+            stale=True,
+            last_attempt_at=attempted_at,
+            last_error=error_message,
+            updated_at=attempted_at,
+        )
+
+    def save_card_provider_success(
+        self,
+        card_code: str,
+        owner: str,
+        semantics_version: int,
+        snapshots: Sequence[CardSnapshot],
+        *,
+        attempted_at: datetime,
+        period_key: str,
+    ) -> None:
+        current = self.load_card_provider_state(card_code)
+        if current is None or current.owner != owner:
+            return
+        state_values = {
+            "card_code": card_code,
+            "owner": owner,
+            "semantics_version": semantics_version,
+            "provider_active": True,
+            "stale": False,
+            "last_attempt_at": attempted_at,
+            "last_success_at": attempted_at,
+            "last_success_period_key": period_key,
+            "last_error": None,
+            "updated_at": attempted_at,
+        }
+        state_statement = _provider_state_upsert(state_values)
+        with self.database.transaction() as connection:
+            for snapshot in snapshots:
+                connection.execute(_card_snapshot_upsert(snapshot))
+            connection.execute(state_statement)
+
+    def _save_provider_state(self, state: CardProviderState, **changes: Any) -> None:
+        values = {
+            "card_code": state.card_code,
+            "owner": state.owner,
+            "semantics_version": state.semantics_version,
+            "provider_active": state.provider_active,
+            "stale": state.stale,
+            "last_attempt_at": state.last_attempt_at,
+            "last_success_at": state.last_success_at,
+            "last_success_period_key": state.last_success_period_key or None,
+            "last_error": state.last_error or None,
+            "updated_at": state.updated_at,
+            **changes,
+        }
+        with self.database.transaction() as connection:
+            connection.execute(_provider_state_upsert(values))
 
     def save_manual_card_values(
         self,
@@ -1142,6 +1316,60 @@ class ReportNavigationStore:
 
 def _rows(connection: Any, table: Table) -> list[dict[str, Any]]:
     return [dict(row) for row in connection.execute(select(table)).mappings().all()]
+
+
+def _card_snapshot_upsert(snapshot: CardSnapshot):
+    values = {
+        "stat_period": snapshot.stat_period,
+        "card_code": snapshot.card_code,
+        "total_count": snapshot.total_count,
+        "completed_count": snapshot.completed_count,
+        "incomplete_count": snapshot.incomplete_count,
+        "comparison_delta": snapshot.comparison_delta,
+        "completion_rate": snapshot.completion_rate,
+        "evaluated_at": snapshot.evaluated_at,
+        "run_id": snapshot.run_id,
+    }
+    statement = mysql_insert(REPORT_NAV_CARD_SNAPSHOTS).values(**values)
+    return statement.on_duplicate_key_update(
+        total_count=statement.inserted.total_count,
+        completed_count=statement.inserted.completed_count,
+        incomplete_count=statement.inserted.incomplete_count,
+        comparison_delta=statement.inserted.comparison_delta,
+        completion_rate=statement.inserted.completion_rate,
+        evaluated_at=statement.inserted.evaluated_at,
+        run_id=statement.inserted.run_id,
+    )
+
+
+def _provider_state_upsert(values: Mapping[str, Any]):
+    statement = mysql_insert(REPORT_NAV_CARD_PROVIDER_STATES).values(**values)
+    return statement.on_duplicate_key_update(
+        owner=statement.inserted.owner,
+        semantics_version=statement.inserted.semantics_version,
+        provider_active=statement.inserted.provider_active,
+        stale=statement.inserted.stale,
+        last_attempt_at=statement.inserted.last_attempt_at,
+        last_success_at=statement.inserted.last_success_at,
+        last_success_period_key=statement.inserted.last_success_period_key,
+        last_error=statement.inserted.last_error,
+        updated_at=statement.inserted.updated_at,
+    )
+
+
+def _provider_state_from_row(row: Mapping[str, Any]) -> CardProviderState:
+    return CardProviderState(
+        card_code=str(row["card_code"]),
+        owner=str(row["owner"]),
+        semantics_version=int(row["semantics_version"]),
+        provider_active=bool(row.get("provider_active")),
+        stale=bool(row.get("stale")),
+        last_attempt_at=_optional_datetime(row.get("last_attempt_at")),
+        last_success_at=_optional_datetime(row.get("last_success_at")),
+        last_success_period_key=str(row.get("last_success_period_key") or ""),
+        last_error=str(row.get("last_error") or ""),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
 
 
 def _parse_report_month(value: str) -> tuple[int, int]:

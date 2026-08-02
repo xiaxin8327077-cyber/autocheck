@@ -147,9 +147,9 @@ def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> 
     for acceptance in acceptance_sections.values():
         assert "原 20 张迁移目标表的数据行数" in acceptance
         assert "与迁移报告一致" in acceptance
-        assert "当前完整 42 张应用存储表结构" in acceptance
-        assert "011_report_navigation_completion_time_sources.sql" in acceptance
+        assert "当前完整 43 张应用存储表结构" in acceptance
         assert "012_module_system.sql" in acceptance
+        assert "013_report_navigation_provider_states.sql" in acceptance
         assert "备份" in acceptance
         assert "人工执行" in acceptance
         assert "39 张目标表和迁移行数齐全" not in acceptance
@@ -171,8 +171,9 @@ def test_mysql_rollout_docs_require_module_schema_upgrade_sequence() -> None:
             "010_pbc_template_step_seven_display_only.sql",
             "011_report_navigation_completion_time_sources.sql",
             "012_module_system.sql",
+            "013_report_navigation_provider_states.sql",
         ]
-        assert "42 张" in text
+        assert "43 张" in text
         if path == README:
             preparation = text.split("上线前需要按以下顺序处理：", 1)[1].split("示例：", 1)[0]
         elif path == MYSQL_STORAGE_DOC:
@@ -202,14 +203,15 @@ def test_deployment_upgrade_docs_define_safe_manual_004_through_008_boundary() -
         assert "不设置外键" in text
         assert "孤儿偏好" in text
         assert "012_module_system.sql" in text
-        assert "42 张" in text
+        assert "013_report_navigation_provider_states.sql" in text
+        assert "43 张" in text
         assert "app_schema_version" in text
         assert "备份" in text
         assert "人工执行" in text
 
 
-def test_operator_followable_upgrade_sequences_include_012_after_011() -> None:
-    scripts_001_to_012 = [
+def test_operator_followable_upgrade_sequences_include_013_after_012() -> None:
+    scripts_001_to_013 = [
         "001_init_schema.sql",
         "002_report_navigation.sql",
         "003_report_navigation_seed.sql",
@@ -222,8 +224,9 @@ def test_operator_followable_upgrade_sequences_include_012_after_011() -> None:
         "010_pbc_template_step_seven_display_only.sql",
         "011_report_navigation_completion_time_sources.sql",
         "012_module_system.sql",
+        "013_report_navigation_provider_states.sql",
     ]
-    scripts_004_to_012 = scripts_001_to_012[3:]
+    scripts_004_to_013 = scripts_001_to_013[3:]
 
     for path in [DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
@@ -231,9 +234,9 @@ def test_operator_followable_upgrade_sequences_include_012_after_011() -> None:
         follow_up = next(
             line for line in text.splitlines() if line.startswith("`user_interface_preferences`")
         )
-        _assert_sql_order(preparation, scripts_001_to_012)
-        _assert_sql_order(follow_up, scripts_004_to_012)
-        assert follow_up.index("012_module_system.sql") < follow_up.index("再替换应用")
+        _assert_sql_order(preparation, scripts_001_to_013)
+        _assert_sql_order(follow_up, scripts_004_to_013)
+        assert follow_up.index("013_report_navigation_provider_states.sql") < follow_up.index("再替换应用")
         assert "先备份" in follow_up
         assert "人工执行" in follow_up
 
@@ -242,16 +245,16 @@ def test_operator_followable_upgrade_sequences_include_012_after_011() -> None:
         line for line in storage.splitlines() if line.startswith("从已完成 `001`")
     )
     offline_export = storage.split("### 离线导出", 1)[1].split("## 五、验收口径", 1)[0]
-    _assert_sql_order(storage_follow_up, scripts_004_to_012)
-    assert storage_follow_up.index("012_module_system.sql") < storage_follow_up.index("再部署新程序")
-    _assert_sql_order(offline_export, scripts_004_to_012)
+    _assert_sql_order(storage_follow_up, scripts_004_to_013)
+    assert storage_follow_up.index("013_report_navigation_provider_states.sql") < storage_follow_up.index("再部署新程序")
+    _assert_sql_order(offline_export, scripts_004_to_013)
     assert "备份" in offline_export
     assert "人工执行" in offline_export
 
     readme_incremental = next(
         line for line in _read(README).splitlines() if line.startswith("- 应用存储增量升级：")
     )
-    _assert_sql_order(readme_incremental, scripts_001_to_012[6:])
+    _assert_sql_order(readme_incremental, scripts_001_to_013[6:])
     assert "备份" in readme_incremental
     assert "人工执行" in readme_incremental
 

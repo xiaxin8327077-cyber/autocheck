@@ -499,6 +499,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
 
     report_navigation_service = object()
     user_directory_spec = object()
+    report_navigation_spec = object()
 
     class FakeRouter:
         def __init__(
@@ -538,6 +539,10 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         events.append(("user_directory", auth_manager))
         return user_directory_spec
 
+    def create_report_navigation_service(service):
+        events.append(("report_navigation_platform", service))
+        return report_navigation_spec
+
     def build_module_runtime(context, *, platform_services):
         events.append(
             (
@@ -556,6 +561,11 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         server_module,
         "create_user_directory_service",
         create_user_directory_service,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_report_navigation_service",
+        create_report_navigation_service,
     )
     monkeypatch.setattr(server_module.ModuleRuntime, "build", staticmethod(build_module_runtime))
     monkeypatch.setattr(
@@ -588,16 +598,17 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "test_connection",
         "validate_schema",
         ("auth", config_path, application_database),
+        ("report_navigation", application_database, config_path),
         ("user_directory", handler_types[0].auth_manager),
+        ("report_navigation_platform", report_navigation_service),
         (
             "module_build",
             application_database,
             config_path,
-            (user_directory_spec,),
+            (user_directory_spec, report_navigation_spec),
         ),
         "module_start",
         "http_server",
-        ("report_navigation", application_database, config_path),
         ("router", application_database, report_navigation_service),
         ("scheduler", report_navigation_service),
         "scheduler_start",

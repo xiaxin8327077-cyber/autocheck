@@ -12,6 +12,7 @@ WORK_CALENDAR_MIGRATION_SQL = ROOT / "sql" / "app_storage" / "mysql" / "008_repo
 MANUAL_STEP_PERMISSIONS_SQL = ROOT / "sql" / "app_storage" / "mysql" / "009_report_navigation_manual_step_permissions.sql"
 PBC_TEMPLATE_STEP_SEVEN_DISPLAY_ONLY_SQL = ROOT / "sql" / "app_storage" / "mysql" / "010_pbc_template_step_seven_display_only.sql"
 COMPLETION_TIME_SOURCES_SQL = ROOT / "sql" / "app_storage" / "mysql" / "011_report_navigation_completion_time_sources.sql"
+PROVIDER_STATES_SQL = ROOT / "sql" / "app_storage" / "mysql" / "013_report_navigation_provider_states.sql"
 
 REPORT_NAV_TABLES = {
     "report_nav_processes",
@@ -31,6 +32,7 @@ REPORT_NAV_TABLES = {
     "report_nav_work_calendar",
     "report_nav_stat_runs",
     "report_nav_scheduler_state",
+    "report_nav_card_provider_states",
 }
 
 
@@ -50,7 +52,7 @@ def test_report_navigation_schema_only_creates_new_relational_tables():
 def test_application_schema_keeps_version_one_and_adds_report_navigation_tables():
     assert CURRENT_APP_SCHEMA_VERSION == 1
     assert REPORT_NAV_TABLES <= set(EXPECTED_APP_SCHEMA)
-    assert len(EXPECTED_APP_SCHEMA) == 42
+    assert len(EXPECTED_APP_SCHEMA) == 43
     assert EXPECTED_APP_SCHEMA["report_nav_steps"] >= {
         "step_code",
         "process_code",
@@ -72,6 +74,25 @@ def test_application_schema_keeps_version_one_and_adds_report_navigation_tables(
         "operator_username",
         "updated_at",
     }
+    assert EXPECTED_APP_SCHEMA["report_nav_card_provider_states"] >= {
+        "card_code",
+        "owner",
+        "semantics_version",
+        "provider_active",
+        "stale",
+        "last_attempt_at",
+        "last_success_at",
+        "last_success_period_key",
+        "last_error",
+        "updated_at",
+    }
+
+
+def test_card_provider_state_has_an_idempotent_migration():
+    migration_sql = PROVIDER_STATES_SQL.read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS `report_nav_card_provider_states`" in migration_sql
+    assert "DROP TABLE" not in migration_sql.upper()
 
 
 def test_schedule_owner_column_is_declared_and_has_an_idempotent_migration():

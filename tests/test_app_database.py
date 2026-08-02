@@ -254,7 +254,7 @@ def test_url_create_preserves_special_password_without_interpolation_or_leak(tmp
 
 
 def test_expected_schema_is_immutable_and_contains_expected_tables():
-    assert len(EXPECTED_APP_SCHEMA) == 42
+    assert len(EXPECTED_APP_SCHEMA) == 43
     assert "app_schema_version" in EXPECTED_APP_SCHEMA
     assert "storage_migration_runs" in EXPECTED_APP_SCHEMA
     assert EXPECTED_APP_SCHEMA["user_interface_preferences"] == frozenset(

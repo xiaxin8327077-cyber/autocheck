@@ -286,6 +286,18 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "evaluated_at",
             "run_id",
         ),
+        "report_nav_card_provider_states": _columns(
+            "card_code",
+            "owner",
+            "semantics_version",
+            "provider_active",
+            "stale",
+            "last_attempt_at",
+            "last_success_at",
+            "last_success_period_key",
+            "last_error",
+            "updated_at",
+        ),
         "report_nav_card_manual_values": _columns(
             "stat_period",
             "card_code",

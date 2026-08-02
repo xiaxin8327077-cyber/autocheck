@@ -65,6 +65,10 @@ from auto_check.app.flow_tool import (
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
 from auto_check.app.platform_services import create_user_directory_service
+from auto_check.app.report_navigation_platform import (
+    ProviderManagedCardError,
+    create_report_navigation_service,
+)
 from auto_check.app.storage_user_interface_preferences import (
     LINE_CHART_STYLES,
     MAX_INTERFACE_RADIUS_PX,
@@ -956,6 +960,8 @@ class ApiRouter:
                 job.cancel()
                 return 200, {"ok": True, "job": job.to_payload()}
             return 404, {"error": "not found"}
+        except ProviderManagedCardError as exc:
+            return 409, {"error": str(exc)}
         except ConflictError as exc:
             return 409, {"error": str(exc), **exc.payload}
         except ValueError as exc:
@@ -4276,6 +4282,10 @@ def run_server(
             resolved_config_path,
             database=application_database,
         )
+        report_navigation_service = ReportNavigationService(
+            application_database,
+            config_path=resolved_config_path,
+        )
         module_runtime = ModuleRuntime.build(
             ModuleBootstrapContext(
                 application_database=application_database,
@@ -4283,7 +4293,10 @@ def run_server(
                 temp_root=resolved_config_path.parent / "module-data",
                 now=datetime.now,
             ),
-            platform_services=(create_user_directory_service(auth_manager),),
+            platform_services=(
+                create_user_directory_service(auth_manager),
+                create_report_navigation_service(report_navigation_service),
+            ),
         )
         module_runtime.start()
         try:
@@ -4296,10 +4309,6 @@ def run_server(
                 return None
             raise
 
-        report_navigation_service = ReportNavigationService(
-            application_database,
-            config_path=resolved_config_path,
-        )
         router = ApiRouter(
             config_path=resolved_config_path,
             application_database=application_database,
