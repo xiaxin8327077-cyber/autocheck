@@ -43,6 +43,86 @@ def test_manifest_parses_valid_payload():
     assert manifest.navigation[0].permission == "custom_reports.view"
     assert manifest.schema_version == 0
     assert manifest.table_prefix == "custom_reports_"
+    assert manifest.navigation[0].group_id is None
+    assert manifest.navigation[0].group_label is None
+    assert manifest.navigation[0].group_order is None
+
+
+def test_manifest_parses_a_complete_navigation_group_declaration():
+    navigation = [
+        {
+            **VALID_MANIFEST["navigation"][0],
+            "group_id": "data-entry",
+            "group_label": "数据录入",
+            "group_order": 10,
+        }
+    ]
+
+    manifest = ModuleManifest.from_mapping({**VALID_MANIFEST, "navigation": navigation})
+
+    assert manifest.navigation[0].group_id == "data-entry"
+    assert manifest.navigation[0].group_label == "数据录入"
+    assert manifest.navigation[0].group_order == 10
+
+
+def test_manifest_does_not_apply_navigation_route_uniqueness_to_group_ids():
+    navigation = [
+        {
+            **VALID_MANIFEST["navigation"][0],
+            "group_id": "custom-reports",
+            "group_label": "数据录入",
+            "group_order": 10,
+        }
+    ]
+
+    manifest = ModuleManifest.from_mapping({**VALID_MANIFEST, "navigation": navigation})
+
+    assert manifest.navigation[0].group_id == manifest.navigation[0].route
+
+
+@pytest.mark.parametrize(
+    "navigation",
+    [
+        [{**VALID_MANIFEST["navigation"][0], "group_id": "data-entry"}],
+        [
+            {
+                **VALID_MANIFEST["navigation"][0],
+                "group_id": "data-entry",
+                "group_label": "数据录入",
+            }
+        ],
+    ],
+)
+def test_manifest_rejects_partial_navigation_group_declarations(navigation):
+    with pytest.raises(ModuleManifestError, match="navigation group"):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "navigation": navigation})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("group_id", "Data-entry"),
+        ("group_id", "1-data-entry"),
+        ("group_id", "data_entry"),
+        ("group_label", " \t "),
+        ("group_label", "x" * 65),
+        ("group_order", True),
+        ("group_order", -1),
+    ],
+)
+def test_manifest_rejects_invalid_navigation_group_fields(field, value):
+    navigation = [
+        {
+            **VALID_MANIFEST["navigation"][0],
+            "group_id": "data-entry",
+            "group_label": "数据录入",
+            "group_order": 10,
+            field: value,
+        }
+    ]
+
+    with pytest.raises(ModuleManifestError, match="group"):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "navigation": navigation})
 
 
 def test_manifest_accepts_documented_singular_table_prefix():

@@ -318,6 +318,7 @@ def declaration_conflicts(modules: Iterable[DiscoveredModule]) -> dict[str, str]
     }
     api_prefixes: list[tuple[str, str]] = []
     prefixes: list[tuple[str, str]] = []
+    navigation_groups: dict[str, tuple[str, int]] = {}
     for module in discovered:
         manifest = module.manifest
         claims["api_prefix"][manifest.api_prefix].append(manifest.id)
@@ -325,6 +326,15 @@ def declaration_conflicts(modules: Iterable[DiscoveredModule]) -> dict[str, str]
         for item in manifest.navigation:
             claims["navigation.id"][item.id].append(manifest.id)
             claims["navigation.route"][item.route].append(manifest.id)
+            if item.group_id is not None:
+                group_declaration = (item.group_label, item.group_order)
+                existing_group_declaration = navigation_groups.setdefault(
+                    item.group_id, group_declaration
+                )
+                if existing_group_declaration != group_declaration:
+                    errors[manifest.id].append(
+                        f"conflicting navigation group declaration: {item.group_id}"
+                    )
         for permission in manifest.permissions:
             claims["permission"][permission].append(manifest.id)
         for service in manifest.services:

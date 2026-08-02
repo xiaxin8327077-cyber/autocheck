@@ -659,6 +659,100 @@ def test_regular_user_only_receives_view_navigation(runtime_factory):
     ]
 
 
+def test_public_modules_emits_navigation_group_fields_only_when_declared(
+    isolated_runtime_factory,
+):
+    calls = []
+    manifest = replace(
+        _manifest("grouped"),
+        navigation=(
+            NavigationDeclaration(
+                id="legacy",
+                label="Legacy",
+                route="legacy",
+                order=10,
+                permission="grouped.view",
+            ),
+            NavigationDeclaration(
+                id="grouped",
+                label="Grouped",
+                route="grouped",
+                order=20,
+                permission="grouped.view",
+                group_id="data-entry",
+                group_label="数据录入",
+                group_order=10,
+            ),
+        ),
+    )
+    runtime = isolated_runtime_factory([_LifecycleModule(manifest, calls)])
+    runtime.start()
+
+    navigation = runtime.public_modules({"role": "user"})[0]["navigation"]
+
+    assert navigation == [
+        {
+            "id": "legacy",
+            "label": "Legacy",
+            "route": "legacy",
+            "order": 10,
+            "permission": "grouped.view",
+        },
+        {
+            "id": "grouped",
+            "label": "Grouped",
+            "route": "grouped",
+            "order": 20,
+            "permission": "grouped.view",
+            "group_id": "data-entry",
+            "group_label": "数据录入",
+            "group_order": 10,
+        },
+    ]
+
+
+def test_runtime_keeps_first_navigation_group_owner_and_isolates_later_conflict(
+    discovered_runtime_factory,
+):
+    package_name = "dynamic_module_packages_1"
+    first = _manifest_payload(package_name, "first")
+    second = _manifest_payload(package_name, "second")
+    first["navigation"] = [
+        {
+            "id": "first",
+            "label": "First",
+            "route": "first",
+            "order": 10,
+            "permission": "first.view",
+            "group_id": "data-entry",
+            "group_label": "数据录入",
+            "group_order": 10,
+        }
+    ]
+    second["navigation"] = [
+        {
+            "id": "second",
+            "label": "Second",
+            "route": "second",
+            "order": 10,
+            "permission": "second.view",
+            "group_id": "data-entry",
+            "group_label": "数据治理",
+            "group_order": 10,
+        }
+    ]
+    runtime, calls = discovered_runtime_factory({"first": first, "second": second})
+
+    runtime.start()
+
+    assert calls == ["first:start"]
+    assert [item["id"] for item in runtime.public_modules({"role": "admin"})] == ["first"]
+    assert runtime.status("second").value == "incompatible"
+    assert runtime.admin_statuses({"role": "admin"})[1]["error"] == (
+        "conflicting navigation group declaration: data-entry"
+    )
+
+
 def test_regular_user_does_not_receive_frontend_module_when_all_navigation_is_unauthorized(
     isolated_runtime_factory,
 ):
@@ -672,6 +766,9 @@ def test_regular_user_does_not_receive_frontend_module_when_all_navigation_is_un
                 route="restricted",
                 order=10,
                 permission="restricted.manage",
+                group_id="data-entry",
+                group_label="数据录入",
+                group_order=10,
             ),
         ),
         permissions=("restricted.manage",),

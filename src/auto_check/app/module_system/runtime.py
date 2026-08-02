@@ -463,17 +463,26 @@ class ModuleRuntime:
             )
         result: list[dict[str, object]] = []
         for manifest in manifests:
-            navigation = [
-                {
+            navigation = []
+            for item in manifest.navigation:
+                if not default_permission_evaluator(current_user, item.permission):
+                    continue
+                navigation_item: dict[str, object] = {
                     "id": item.id,
                     "label": item.label,
                     "route": item.route,
                     "order": item.order,
                     "permission": item.permission,
                 }
-                for item in manifest.navigation
-                if default_permission_evaluator(current_user, item.permission)
-            ]
+                if item.group_id is not None:
+                    navigation_item.update(
+                        {
+                            "group_id": item.group_id,
+                            "group_label": item.group_label,
+                            "group_order": item.group_order,
+                        }
+                    )
+                navigation.append(navigation_item)
             if not navigation:
                 continue
             result.append(

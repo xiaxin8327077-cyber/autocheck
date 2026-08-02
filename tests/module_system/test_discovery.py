@@ -190,3 +190,29 @@ def test_declaration_preflight_rejects_nested_api_prefixes(monkeypatch):
 
     assert "conflicting api_prefix" in conflicts["alpha"]
     assert "conflicting api_prefix" in conflicts["beta"]
+
+
+def test_declaration_preflight_isolates_only_later_conflicting_navigation_group(monkeypatch):
+    monkeypatch.syspath_prepend(str(FIXTURE_PARENT))
+    alpha, beta = [
+        next(module for module in discover_modules("module_packages") if module.manifest.id == module_id)
+        for module_id in ("alpha", "beta")
+    ]
+    alpha_navigation = replace(
+        alpha.manifest.navigation[0],
+        group_id="data-entry",
+        group_label="数据录入",
+        group_order=10,
+    )
+    beta_navigation = replace(
+        beta.manifest.navigation[0],
+        group_id="data-entry",
+        group_label="数据治理",
+        group_order=10,
+    )
+    alpha = replace(alpha, manifest=replace(alpha.manifest, navigation=(alpha_navigation,)))
+    beta = replace(beta, manifest=replace(beta.manifest, navigation=(beta_navigation,)))
+
+    conflicts = declaration_conflicts([alpha, beta])
+
+    assert conflicts == {"beta": "conflicting navigation group declaration: data-entry"}

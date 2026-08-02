@@ -19,6 +19,8 @@ _BACKEND_ENTRY_PATTERN = re.compile(
 )
 _SERVICE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
 _NAVIGATION_ROUTE_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
+_NAVIGATION_GROUP_ID_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
+_MAX_NAVIGATION_GROUP_LABEL_LENGTH = 64
 _RESERVED_NAVIGATION_ROUTES = frozenset(
     {"report-navigation", "home", "auto-check", "history", "tools", "settings", "users"}
 )
@@ -80,6 +82,9 @@ class NavigationDeclaration:
     route: str
     order: int
     permission: str
+    group_id: str | None = None
+    group_label: str | None = None
+    group_order: int | None = None
 
 
 @dataclass(frozen=True)
@@ -144,13 +149,7 @@ class ModuleManifest:
         if not isinstance(navigation_payload, list):
             raise ModuleManifestError("navigation must be a list")
         navigation = tuple(
-            NavigationDeclaration(
-                id=_required_text(item, "id"),
-                label=_required_text(item, "label"),
-                route=_required_text(item, "route"),
-                order=_required_int(item, "order", minimum=0),
-                permission=_required_text(item, "permission"),
-            )
+            _navigation_declaration(item)
             for item in navigation_payload
             if isinstance(item, Mapping)
         )
@@ -215,6 +214,45 @@ class ModuleManifest:
             table_prefix=_table_prefix(payload, module_id),
             services=services,
         )
+
+
+def _navigation_declaration(payload: Mapping[str, object]) -> NavigationDeclaration:
+    group_id, group_label, group_order = _navigation_group_declaration(payload)
+    return NavigationDeclaration(
+        id=_required_text(payload, "id"),
+        label=_required_text(payload, "label"),
+        route=_required_text(payload, "route"),
+        order=_required_int(payload, "order", minimum=0),
+        permission=_required_text(payload, "permission"),
+        group_id=group_id,
+        group_label=group_label,
+        group_order=group_order,
+    )
+
+
+def _navigation_group_declaration(
+    payload: Mapping[str, object],
+) -> tuple[str | None, str | None, int | None]:
+    fields = ("group_id", "group_label", "group_order")
+    supplied = tuple(field in payload for field in fields)
+    if not any(supplied):
+        return None, None, None
+    if not all(supplied):
+        raise ModuleManifestError("navigation group fields must be declared together")
+
+    group_id = _required_text(payload, "group_id")
+    if _NAVIGATION_GROUP_ID_PATTERN.fullmatch(group_id) is None:
+        raise ModuleManifestError("navigation group_id is invalid")
+    group_label = _required_text(payload, "group_label")
+    if len(group_label) > _MAX_NAVIGATION_GROUP_LABEL_LENGTH:
+        raise ModuleManifestError("navigation group_label is too long")
+    try:
+        group_order = _required_int(payload, "group_order", minimum=0)
+    except ModuleManifestError as error:
+        raise ModuleManifestError(
+            "navigation group_order must be a non-negative integer"
+        ) from error
+    return group_id, group_label, group_order
 
 
 def _module_asset_url(
