@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from auto_check.app.module_system.contracts import ModuleManifest
@@ -46,6 +47,39 @@ def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     assert "row_version" in sql
     assert "DROP TABLE" not in sql.upper()
     assert "DELETE FROM" not in sql.upper()
+
+
+def test_initial_migration_has_chinese_comments_for_every_table_and_column():
+    sql = (PACKAGE / "migrations/001_initial.sql").read_text(encoding="utf-8")
+    create_pattern = re.compile(
+        r"CREATE TABLE (?P<table>report_special_processing_[a-z_]+) \("
+        r"(?P<body>.*?)\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
+        r"COMMENT='(?P<comment>[^']+)';?",
+        re.DOTALL,
+    )
+    matches = list(create_pattern.finditer(sql))
+
+    assert len(matches) == 3
+    for match in matches:
+        table_name = match.group("table")
+        assert re.search(r"[\u4e00-\u9fff]", match.group("comment")), (
+            f"{table_name} lacks a Chinese table comment"
+        )
+        column_lines = re.findall(
+            r"(?m)^\s{4}(?!PRIMARY\b|UNIQUE\b|KEY\b)"
+            r"(?P<column>[a-z][a-z0-9_]*)\s+.*$",
+            match.group("body"),
+        )
+        assert column_lines, f"{table_name} has no columns"
+        for column_name in column_lines:
+            column_line = re.search(
+                rf"(?m)^\s{{4}}{re.escape(column_name)}\s+.*$",
+                match.group("body"),
+            ).group(0)
+            assert re.search(
+                r"\bCOMMENT\s+'[^']*[\u4e00-\u9fff][^']*'",
+                column_line,
+            ), f"{table_name}.{column_name} lacks a Chinese comment"
 
 
 def test_module_registers_only_its_three_schema_tables():
