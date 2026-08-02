@@ -1,0 +1,37 @@
+{
+  "id": "report_special_processing",
+  "name": "报表特殊处理录入",
+  "version": "1.0.0",
+  "platform_api": 1,
+  "required": false,
+  "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
+  "api_prefix": "/api/modules/report-special-processing",
+  "frontend_entry": "/module-assets/report_special_processing/index.js",
+  "frontend_style": "/module-assets/report_special_processing/styles.css",
+  "navigation": [
+    {
+      "id": "report-special-processing",
+      "label": "报表特殊处理录入",
+      "route": "report-special-processing",
+      "order": 20,
+      "permission": "report_special_processing.view",
+      "group_id": "data-entry",
+      "group_label": "数据录入",
+      "group_order": 30
+    }
+  ],
+  "permissions": [
+    "report_special_processing.view",
+    "report_special_processing.admin"
+  ],
+  "dependencies": [],
+  "service_dependencies": [
+    {"name": "platform.user_directory", "minimum_version": 1},
+    {"name": "platform.report_navigation", "minimum_version": 1}
+  ],
+  "schema_version": 1,
+  "release_notes": {
+    "version": "1.0.0",
+    "items": ["新增报表特殊处理录入与真实统计"]
+  }
+}
