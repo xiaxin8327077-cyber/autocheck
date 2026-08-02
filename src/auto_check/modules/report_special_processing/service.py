@@ -57,11 +57,26 @@ class SpecialProcessingService:
             "workflow": {"enabled": False, "status": "not_enabled"},
         }
 
-    def list_records(self, query: Mapping[str, str]) -> dict[str, Any]:
-        return self.storage.list(validate_page_query(query))
+    def list_records(
+        self,
+        query: Mapping[str, str],
+        current_user: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        result = self.storage.list(validate_page_query(query))
+        return {
+            **result,
+            "items": [
+                self._with_capabilities(item, current_user)
+                for item in result.get("items", [])
+            ],
+        }
 
-    def get(self, record_id: int) -> dict[str, Any]:
-        return self._record(record_id)
+    def get(
+        self,
+        record_id: int,
+        current_user: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._with_capabilities(self._record(record_id), current_user)
 
     def audit(self, record_id: int, query: Mapping[str, str]) -> dict[str, Any]:
         self._record(record_id)
@@ -239,6 +254,17 @@ class SpecialProcessingService:
         if value is None:
             raise RecordNotFoundError()
         return value
+
+    @staticmethod
+    def _with_capabilities(
+        record: Mapping[str, Any],
+        current_user: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        return {
+            **record,
+            "can_edit": can_edit(current_user, record),
+            "can_admin": str((current_user or {}).get("role") or "") == "admin",
+        }
 
     def _user(self, user_id: Any) -> Any:
         if user_id in {None, ""}:

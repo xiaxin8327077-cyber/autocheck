@@ -82,9 +82,9 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
     admin = "report_special_processing.admin"
     routes = (
         ("GET", "/catalog", lambda service, request, rid: service.catalog(), view, 0, 200),
-        ("GET", "/records", lambda service, request, rid: service.list_records(request.query), view, 0, 200),
+        ("GET", "/records", lambda service, request, rid: service.list_records(request.query, request.current_user), view, 0, 200),
         ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 201),
-        ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request)), view, 0, 200),
+        ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request), request.current_user), view, 0, 200),
         ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
         ("POST", "/records/{id}/status", lambda service, request, rid: service.change_status(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
         ("POST", "/records/{id}/void", lambda service, request, rid: service.void(_id(request), _body(request), request.current_user, request_id=rid), admin, MAX_REQUEST_BYTES, 200),

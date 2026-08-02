@@ -9379,3 +9379,14 @@ def test_flow_cancel_uses_job_id_and_disables_button_while_stopping():
     assert "if (flowCancelBtn?.disabled) return;" in body
     assert "flowCancelBtn.disabled = true" in body
     assert "停止中" in body
+
+
+def test_provider_managed_report_card_retires_manual_entry_and_never_fakes_zero():
+    app_js = _read(APP_JS)
+
+    assert "function reportNavigationCardMaintainable(cardCode)" in app_js
+    assert "maintenance.editable !== false" in app_js
+    assert "const unavailable = card.source === \"provider\" && card.available === false;" in app_js
+    assert "统计暂不可用" in app_js
+    assert "result.provider_issues || []" in app_js
+    assert "renderReportNavigationProviderIssues" in app_js

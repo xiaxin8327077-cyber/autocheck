@@ -599,6 +599,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "validate_schema",
         ("auth", config_path, application_database),
         ("report_navigation", application_database, config_path),
+        "http_server",
         ("user_directory", handler_types[0].auth_manager),
         ("report_navigation_platform", report_navigation_service),
         (
@@ -608,7 +609,6 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
             (user_directory_spec, report_navigation_spec),
         ),
         "module_start",
-        "http_server",
         ("router", application_database, report_navigation_service),
         ("scheduler", report_navigation_service),
         "scheduler_start",

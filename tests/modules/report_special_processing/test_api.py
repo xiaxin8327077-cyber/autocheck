@@ -11,9 +11,9 @@ def _manifest():
 
 class Service:
     def catalog(self): return {"report_processes": [], "users": [], "statuses": [], "limits": {}, "workflow": {}}
-    def list_records(self, query): return {"items": [], "page": 1, "page_size": 20, "total": 0, "total_pages": 0}
+    def list_records(self, query, user): return {"items": [], "page": 1, "page_size": 20, "total": 0, "total_pages": 0}
     def create(self, body, user, request_id): return {"id": 1, "row_version": 1}
-    def get(self, record_id): return {"id": record_id}
+    def get(self, record_id, user): return {"id": record_id}
     def update(self, record_id, body, user, request_id): return {"id": record_id, "row_version": 2}
     def change_status(self, record_id, body, user, request_id): return {"id": record_id}
     def void(self, record_id, body, user, request_id): return {"id": record_id}

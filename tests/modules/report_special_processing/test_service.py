@@ -89,3 +89,18 @@ def test_resource_permission_status_machine_admin_void_reopen_and_optimistic_loc
     reopened = service.reopen(record["id"], {"row_version": completed["row_version"], "reason": "补充口径"}, {"id": "9", "role": "admin"}, request_id="req")
     voided = service.void(record["id"], {"row_version": reopened["row_version"], "reason": "口径失效"}, {"id": "9", "role": "admin"}, request_id="req")
     assert (completed["status"], reopened["status"], voided["status"]) == ("completed", "pending", "voided")
+
+
+def test_detail_capabilities_match_frontend_resource_actions():
+    service = _service()
+    record = service.create(
+        _payload(),
+        {"id": "1", "username": "creator", "role": "user"},
+        request_id="req",
+    )
+
+    assert service.get(record["id"], {"id": "1", "role": "user"})["can_edit"] is True
+    assert service.get(record["id"], {"id": "3", "role": "user"})["can_edit"] is False
+    admin = service.get(record["id"], {"id": "9", "role": "admin"})
+    assert admin["can_edit"] is True
+    assert admin["can_admin"] is True

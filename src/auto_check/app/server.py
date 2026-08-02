@@ -4289,6 +4289,16 @@ def run_server(
             application_database,
             config_path=resolved_config_path,
         )
+        try:
+            server = ThreadingHTTPServer((host, port), Handler)
+        except OSError as exc:
+            if _is_port_in_use_error(exc):
+                print(f"Auto Check appears to be already running at {url}")
+                if open_browser:
+                    webbrowser.open(url)
+                return None
+            raise
+
         module_runtime = ModuleRuntime.build(
             ModuleBootstrapContext(
                 application_database=application_database,
@@ -4302,15 +4312,6 @@ def run_server(
             ),
         )
         module_runtime.start()
-        try:
-            server = ThreadingHTTPServer((host, port), Handler)
-        except OSError as exc:
-            if _is_port_in_use_error(exc):
-                print(f"Auto Check appears to be already running at {url}")
-                if open_browser:
-                    webbrowser.open(url)
-                return None
-            raise
 
         router = ApiRouter(
             config_path=resolved_config_path,

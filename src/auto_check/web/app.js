@@ -1490,6 +1490,12 @@ function reportNavigationCountText(value) {
   return Number(value || 0).toLocaleString("zh-CN");
 }
 
+function reportNavigationCardMaintainable(cardCode) {
+  if (authState.user?.role !== "admin" || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)) return false;
+  const maintenance = reportNavigationPayload?.card_maintenance?.[cardCode];
+  return Boolean(maintenance) && maintenance.editable !== false;
+}
+
 function reportNavigationTimingSummary(processes = []) {
   return processes.reduce((summary, process) => {
     const reportDate = String(process.report_date || "").slice(0, 10);
@@ -2220,20 +2226,26 @@ function renderReportNavigationStatCard(card, processes = [], period = "month") 
   if (!card) return "";
   const style = REPORT_NAV_CARD_STYLES[card.card_code] || REPORT_NAV_CARD_STYLES.report_forms;
   const rate = reportNavigationRate(card);
-  const maintainable = authState.user?.role === "admin" && REPORT_NAV_MAINTAINABLE_CARDS.has(card.card_code);
+  const unavailable = card.source === "provider" && card.available === false;
+  const maintainable = reportNavigationCardMaintainable(card.card_code);
   const interaction = maintainable
     ? ` data-maintenance-card="${escapeHtml(card.card_code || "")}" role="button" tabindex="0"`
     : "";
+  const countMarkup = unavailable ? "--" : reportNavigationCountText(card.total_count);
+  const rateMarkup = unavailable ? "--" : `${rate.toFixed(rate % 1 ? 1 : 0)}%`;
+  const tagsMarkup = unavailable
+    ? '<div class="report-nav-stat-tags"><span class="warn"><b>--</b> 统计暂不可用</span></div>'
+    : `<div class="report-nav-stat-tags"><span class="up"><b>${reportNavigationCountText(card.completed_count)}</b> 已完成</span><span class="warn"><b>${reportNavigationCountText(card.incomplete_count)}</b> 未完成</span>${card.stale ? '<span class="warn"><b>!</b> 数据已过期</span>' : ""}</div>`;
   return `
-    <article class="report-nav-stat-card ${style.color}${card.card_code === "report_forms" ? " overview" : ""}${maintainable ? " maintainable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
+    <article class="report-nav-stat-card ${style.color}${card.card_code === "report_forms" ? " overview" : ""}${maintainable ? " maintainable" : ""}${unavailable ? " unavailable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
       <div class="report-nav-stat-icon" aria-hidden="true">${style.icon}</div>
       <div class="report-nav-stat-body">
         <div class="report-nav-stat-heading">
           <span>${escapeHtml(style.label || card.name || "")}</span>
-          <strong>${reportNavigationCountText(card.total_count)}<small>${style.unit}</small></strong>
+          <strong>${countMarkup}<small>${unavailable ? "" : style.unit}</small></strong>
         </div>
-        <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${rate}%"></b></i><em>${rate.toFixed(rate % 1 ? 1 : 0)}%</em></div>
-        <div class="report-nav-stat-tags"><span class="up"><b>${reportNavigationCountText(card.completed_count)}</b> 已完成</span><span class="warn"><b>${reportNavigationCountText(card.incomplete_count)}</b> 未完成</span></div>
+        <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${unavailable ? 0 : rate}%"></b></i><em>${rateMarkup}</em></div>
+        ${tagsMarkup}
         ${renderReportNavigationStatFooter(card, processes, period)}
       </div>
     </article>`;
@@ -2260,8 +2272,7 @@ function closeReportNavigationCardMaintenance() {
 
 function openReportNavigationCardMaintenance(cardCode) {
   if (
-    authState.user?.role !== "admin"
-    || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)
+    !reportNavigationCardMaintainable(cardCode)
     || !reportNavCardMaintenanceModal
     || !reportNavCardMaintenanceGrid
   ) return;
@@ -2291,7 +2302,7 @@ reportNavCardMaintenanceModal?.addEventListener("click", (event) => {
 
 reportNavCardMaintenanceSave?.addEventListener("click", async () => {
   const cardCode = reportNavCardMaintenanceModal?.dataset.cardCode || "";
-  if (!REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode) || reportNavCardMaintenanceSave.disabled) return;
+  if (!reportNavigationCardMaintainable(cardCode) || reportNavCardMaintenanceSave.disabled) return;
   const values = {};
   for (const [period] of REPORT_NAV_MAINTENANCE_PERIODS) {
     const completedInput = reportNavCardMaintenanceGrid.querySelector(`[data-maintenance-period="${period}"][data-maintenance-count="completed_count"]`);
@@ -2375,6 +2386,18 @@ function renderReportNavigationRefreshIssues(issues = []) {
   }).join("");
   return `<div class="report-nav-refresh-issues">
     <p>本次刷新有 ${issues.length} 个步骤统计异常，请根据以下信息检查数据源、表和字段配置。</p>
+    <ul class="report-nav-refresh-issue-list">${rows}</ul>
+  </div>`;
+}
+
+function renderReportNavigationProviderIssues(issues = []) {
+  const rows = issues.map((issue) => {
+    const card = REPORT_NAV_CARD_STYLES[issue.card_code];
+    const label = card?.label || "模块统计";
+    return `<li><strong>${escapeHtml(label)}</strong><span>模块统计暂时不可用，已保留最近一次成功数据。</span></li>`;
+  }).join("");
+  return `<div class="report-nav-refresh-issues">
+    <p>本次刷新有 ${issues.length} 个模块统计异常。</p>
     <ul class="report-nav-refresh-issue-list">${rows}</ul>
   </div>`;
 }
@@ -2679,10 +2702,14 @@ reportNavRefreshButton?.addEventListener("click", async () => {
     await loadReportNavigation();
     if (result.status === "partial") {
       const issues = result.issues || [];
-      if (issues.length) {
-        showInfo("报送导航统计异常", renderReportNavigationRefreshIssues(issues), { closeOnBackdrop: false });
+      const providerIssues = result.provider_issues || [];
+      if (issues.length || providerIssues.length) {
+        showInfo("报送导航统计异常",
+          `${issues.length ? renderReportNavigationRefreshIssues(issues) : ""}${providerIssues.length ? renderReportNavigationProviderIssues(providerIssues) : ""}`,
+          { closeOnBackdrop: false },
+        );
       } else {
-        showToast(result.error_message || "刷新完成，但部分步骤统计异常", "error");
+        showToast(result.error_message || "刷新完成，但部分统计暂不可用", "error");
       }
     } else {
       showToast("报送导航统计已刷新", "success");
