@@ -9,6 +9,8 @@ import pytest
 from auto_check.app.module_system.contracts import ModuleContext, ModuleTaskExecutor
 from auto_check.app.module_system.events import EventBus
 from auto_check.app.module_system.services import (
+    BoundService,
+    PlatformServiceSpec,
     ServiceAccessError,
     ServiceRegistry,
     ServiceUnavailableError,
@@ -111,6 +113,134 @@ def test_closed_module_service_view_rejects_late_registration_and_resolution():
         view.register("alpha.worker", 1, object())
     with pytest.raises(RuntimeError, match="closed"):
         view.resolve("beta.lookup", 1)
+
+
+def test_platform_service_resolution_requires_exact_manifest_authorization():
+    registry = ServiceRegistry()
+    directory = object()
+    registry.register_platform(
+        PlatformServiceSpec(
+            name="platform.user_directory",
+            version=1,
+            binder=lambda _owner: BoundService(directory, lambda: None),
+        )
+    )
+    view = registry.for_module(
+        "alpha",
+        declared_services={},
+        dependencies=(),
+        service_dependencies={"platform.user_directory": 1},
+    )
+
+    assert view.resolve("platform.user_directory", 1) is directory
+    with pytest.raises(ServiceAccessError):
+        view.resolve("platform.other", 1)
+
+
+def test_platform_service_resolution_reports_unavailable_and_incompatible_versions():
+    registry = ServiceRegistry()
+    missing_view = registry.for_module(
+        "alpha",
+        service_dependencies={"platform.user_directory": 1},
+    )
+
+    with pytest.raises(ServiceUnavailableError):
+        missing_view.resolve("platform.user_directory", 1)
+
+    registry.register_platform(
+        PlatformServiceSpec(
+            name="platform.user_directory",
+            version=1,
+            binder=lambda _owner: BoundService(object(), lambda: None),
+        )
+    )
+    versioned_view = registry.for_module(
+        "beta",
+        service_dependencies={"platform.user_directory": 2},
+    )
+
+    with pytest.raises(ServiceVersionError):
+        versioned_view.resolve("platform.user_directory", 1)
+
+
+def test_platform_service_binds_once_under_concurrent_resolution_and_closes_once():
+    registry = ServiceRegistry()
+    calls = []
+    facade = object()
+
+    def bind(owner):
+        calls.append(("bind", owner))
+        return BoundService(facade, lambda: calls.append(("close", owner)))
+
+    registry.register_platform(
+        PlatformServiceSpec("platform.user_directory", 1, bind)
+    )
+    view = registry.for_module(
+        "alpha",
+        service_dependencies={"platform.user_directory": 1},
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        resolved = list(
+            executor.map(
+                lambda _index: view.resolve("platform.user_directory", 1),
+                range(40),
+            )
+        )
+
+    assert all(value is facade for value in resolved)
+    assert calls == [("bind", "alpha")]
+    view.close()
+    view.close()
+    assert calls == [("bind", "alpha"), ("close", "alpha")]
+
+
+def test_platform_service_binder_and_close_failures_are_sanitized_and_isolated(caplog):
+    registry = ServiceRegistry()
+    registry.register_platform(
+        PlatformServiceSpec(
+            "platform.user_directory",
+            1,
+            lambda _owner: (_ for _ in ()).throw(
+                RuntimeError(r"C:\private\users.sql token=secret")
+            ),
+        )
+    )
+    failed_view = registry.for_module(
+        "alpha",
+        service_dependencies={"platform.user_directory": 1},
+    )
+
+    with pytest.raises(ServiceUnavailableError) as error:
+        failed_view.resolve("platform.user_directory", 1)
+
+    assert error.value.args == ("platform service binding failed",)
+    assert error.value.__cause__ is None
+
+    close_registry = ServiceRegistry()
+    close_registry.register_platform(
+        PlatformServiceSpec(
+            "platform.user_directory",
+            1,
+            lambda _owner: BoundService(
+                object(),
+                lambda: (_ for _ in ()).throw(
+                    RuntimeError(r"C:\private\users.sql token=secret")
+                ),
+            ),
+        )
+    )
+    close_view = close_registry.for_module(
+        "beta",
+        service_dependencies={"platform.user_directory": 1},
+    )
+    close_view.resolve("platform.user_directory", 1)
+
+    close_view.close()
+
+    assert "platform service close failed" in caplog.text
+    assert "private" not in caplog.text.lower()
+    assert "secret" not in caplog.text.lower()
 
 
 def test_service_registry_operations_are_safe_under_concurrent_registration_and_resolution():

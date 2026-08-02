@@ -223,6 +223,7 @@ def test_module_response_rejects_non_latin1_and_module_cache_headers():
 
 def test_manifest_defaults_services_and_validates_declared_service_namespace_and_version():
     assert ModuleManifest.from_mapping(VALID_MANIFEST).services == ()
+    assert ModuleManifest.from_mapping(VALID_MANIFEST).service_dependencies == ()
 
     manifest = ModuleManifest.from_mapping(
         {
@@ -234,6 +235,74 @@ def test_manifest_defaults_services_and_validates_declared_service_namespace_and
     assert [(service.name, service.version) for service in manifest.services] == [
         ("custom_reports.lookup", 2)
     ]
+
+
+def test_manifest_parses_exact_platform_service_requirements():
+    manifest = ModuleManifest.from_mapping(
+        {
+            **VALID_MANIFEST,
+            "service_dependencies": [
+                {"name": "platform.user_directory", "minimum_version": 1}
+            ],
+        }
+    )
+
+    assert [
+        (requirement.name, requirement.minimum_version)
+        for requirement in manifest.service_dependencies
+    ] == [("platform.user_directory", 1)]
+
+
+@pytest.mark.parametrize(
+    "service_dependencies",
+    [
+        "platform.user_directory",
+        ["platform.user_directory"],
+        [{"name": "custom_reports.lookup", "minimum_version": 1}],
+        [{"name": "platform.UserDirectory", "minimum_version": 1}],
+        [{"name": "platform.user.directory", "minimum_version": 1}],
+        [{"name": "platform.user_directory", "minimum_version": 0}],
+        [{"name": "platform.user_directory", "minimum_version": True}],
+        [{"name": "platform.user_directory", "minimum_version": "1"}],
+        [
+            {
+                "name": "platform.user_directory",
+                "minimum_version": 1,
+                "optional": True,
+            }
+        ],
+        [
+            {"name": "platform.user_directory", "minimum_version": 1},
+            {"name": "platform.user_directory", "minimum_version": 2},
+        ],
+    ],
+)
+def test_manifest_rejects_invalid_platform_service_requirements(service_dependencies):
+    with pytest.raises(ModuleManifestError, match="service_dependencies"):
+        ModuleManifest.from_mapping(
+            {**VALID_MANIFEST, "service_dependencies": service_dependencies}
+        )
+
+
+def test_manifest_keeps_module_dependencies_provided_services_and_platform_consumption_separate():
+    with pytest.raises(ModuleManifestError, match="dependencies"):
+        ModuleManifest.from_mapping({**VALID_MANIFEST, "dependencies": ["platform"]})
+    with pytest.raises(ModuleManifestError, match="service"):
+        ModuleManifest.from_mapping(
+            {
+                **VALID_MANIFEST,
+                "services": [{"name": "platform.user_directory", "version": 1}],
+            }
+        )
+    with pytest.raises(ModuleManifestError, match="service_dependencies"):
+        ModuleManifest.from_mapping(
+            {
+                **VALID_MANIFEST,
+                "service_dependencies": [
+                    {"name": "custom_reports.lookup", "minimum_version": 1}
+                ],
+            }
+        )
 
 
 @pytest.mark.parametrize(

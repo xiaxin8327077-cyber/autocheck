@@ -64,6 +64,7 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
+from auto_check.app.platform_services import create_user_directory_service
 from auto_check.app.storage_user_interface_preferences import (
     LINE_CHART_STYLES,
     MAX_INTERFACE_RADIUS_PX,
@@ -4271,13 +4272,18 @@ def run_server(
     try:
         application_database.test_connection()
         application_database.validate_schema()
+        auth_manager = AuthManager(
+            resolved_config_path,
+            database=application_database,
+        )
         module_runtime = ModuleRuntime.build(
             ModuleBootstrapContext(
                 application_database=application_database,
                 config_path=resolved_config_path,
                 temp_root=resolved_config_path.parent / "module-data",
                 now=datetime.now,
-            )
+            ),
+            platform_services=(create_user_directory_service(auth_manager),),
         )
         module_runtime.start()
         try:
@@ -4290,13 +4296,17 @@ def run_server(
                 return None
             raise
 
+        report_navigation_service = ReportNavigationService(
+            application_database,
+            config_path=resolved_config_path,
+        )
         router = ApiRouter(
             config_path=resolved_config_path,
             application_database=application_database,
+            report_navigation_service=report_navigation_service,
             module_runtime=module_runtime,
             start_field_mapping_auto_refresh=True,
         )
-        auth_manager = AuthManager(router.config_path, database=application_database)
         report_navigation_scheduler = ReportNavigationScheduler(router.report_navigation)
 
         Handler.router = router

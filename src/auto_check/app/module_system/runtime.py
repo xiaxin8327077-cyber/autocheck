@@ -32,7 +32,7 @@ from .permissions import default_permission_evaluator
 from .resources import ModuleAsset, ModuleAssetNotFound, read_module_asset
 from .routing import ModuleRoutePreflight, ModuleRouter
 from .schema import ModuleMigrationError, ModuleMigrationRunner, ModuleSchemaRegistry
-from .services import ServiceRegistry
+from .services import PlatformServiceSpec, ServiceRegistry
 from .storage import ModuleStateStore
 
 
@@ -249,6 +249,7 @@ class ModuleRuntime:
         *,
         discovery_issues: tuple[ModuleDiscoveryIssue, ...] = (),
         preflight_incompatibilities: Mapping[str, str] | None = None,
+        platform_services: tuple[PlatformServiceSpec, ...] = (),
         lifecycle_timeout_seconds: float = 1.0,
         health_timeout_seconds: float = 0.5,
         task_shutdown_timeout_seconds: float = 1.0,
@@ -273,6 +274,8 @@ class ModuleRuntime:
         self._propagate_declaration_conflicts()
         self._state_store = ModuleStateStore(context.application_database)
         self._services = ServiceRegistry()
+        for platform_service in platform_services:
+            self._services.register_platform(platform_service)
         self._events = EventBus()
         self._shared_executor = _DaemonTaskPool(maximum_workers=4, maximum_tasks=8)
         self._shared_executor_shutdown = False
@@ -625,6 +628,10 @@ class ModuleRuntime:
                 manifest.id,
                 declared_services={service.name: service.version for service in manifest.services},
                 dependencies=manifest.dependencies,
+                service_dependencies={
+                    requirement.name: requirement.minimum_version
+                    for requirement in manifest.service_dependencies
+                },
             ),
             events=events,
             logger=logging.LoggerAdapter(logging.getLogger(__name__), {"module_id": manifest.id}),

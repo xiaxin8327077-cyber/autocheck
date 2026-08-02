@@ -27,6 +27,7 @@ from auto_check.app.module_system.runtime import (
     ModuleTaskLimitError,
     _module_temp_root,
 )
+from auto_check.app.module_system.services import BoundService, PlatformServiceSpec
 
 
 FIXTURE_PARENT = Path(__file__).resolve().parents[1] / "fixtures"
@@ -98,6 +99,7 @@ def _manifest(
     dependencies: tuple[str, ...] = (),
     table_prefix: str | None = None,
     services: list[dict[str, object]] | None = None,
+    service_dependencies: list[dict[str, object]] | None = None,
     backend_entry: str | None = None,
 ) -> ModuleManifest:
     return ModuleManifest.from_mapping(
@@ -117,6 +119,11 @@ def _manifest(
             "schema_version": 0,
             **({"table_prefix": table_prefix} if table_prefix is not None else {}),
             **({"services": services} if services is not None else {}),
+            **(
+                {"service_dependencies": service_dependencies}
+                if service_dependencies is not None
+                else {}
+            ),
         }
     )
 
@@ -1060,6 +1067,75 @@ def test_start_failure_stops_partially_started_module_before_resource_cleanup(
     assert runtime._contexts == {}
     with pytest.raises(KeyError):
         runtime._services.resolve("alpha.worker", 1)
+
+
+def test_runtime_injects_declared_platform_service_and_revokes_it_on_stop(
+    isolated_runtime_factory,
+):
+    calls = []
+    resolved = []
+    closed = []
+
+    def use_directory(context):
+        resolved.append(context.services.resolve("platform.user_directory", 1))
+
+    module = _LifecycleModule(
+        _manifest(
+            "alpha",
+            service_dependencies=[
+                {"name": "platform.user_directory", "minimum_version": 1}
+            ],
+        ),
+        calls,
+        start_action=use_directory,
+    )
+    facade = object()
+    runtime = isolated_runtime_factory(
+        [module],
+        platform_services=(
+            PlatformServiceSpec(
+                "platform.user_directory",
+                1,
+                lambda owner: BoundService(
+                    facade, lambda: closed.append(owner)
+                ),
+            ),
+        ),
+    )
+
+    runtime.start()
+    runtime.stop()
+
+    assert resolved == [facade]
+    assert closed == ["alpha"]
+
+
+def test_platform_service_binding_failure_isolates_only_the_optional_consumer(
+    isolated_runtime_factory,
+):
+    calls = []
+
+    def resolve_unavailable(context):
+        context.services.resolve("platform.user_directory", 1)
+
+    alpha = _LifecycleModule(
+        _manifest(
+            "alpha",
+            service_dependencies=[
+                {"name": "platform.user_directory", "minimum_version": 1}
+            ],
+        ),
+        calls,
+        start_action=resolve_unavailable,
+    )
+    beta = _LifecycleModule(_manifest("beta"), calls)
+    runtime = isolated_runtime_factory([alpha, beta])
+
+    runtime.start()
+
+    assert runtime.status("alpha").value == "startup_failed"
+    assert runtime.status("beta").value == "enabled"
+    runtime.stop()
 
 
 @pytest.mark.parametrize(

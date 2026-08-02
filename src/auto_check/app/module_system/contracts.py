@@ -18,6 +18,7 @@ _BACKEND_ENTRY_PATTERN = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+:[A-Za-z_][A-Za-z0-9_]*"
 )
 _SERVICE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
+_PLATFORM_SERVICE_NAME_PATTERN = re.compile(r"platform\.[a-z][a-z0-9_]*")
 _NAVIGATION_ROUTE_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
 _NAVIGATION_GROUP_ID_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
 _MAX_NAVIGATION_GROUP_LABEL_LENGTH = 64
@@ -94,6 +95,12 @@ class ServiceDeclaration:
 
 
 @dataclass(frozen=True)
+class ServiceRequirement:
+    name: str
+    minimum_version: int
+
+
+@dataclass(frozen=True)
 class ModuleManifest:
     id: str
     name: str
@@ -110,6 +117,7 @@ class ModuleManifest:
     schema_version: int
     table_prefix: str
     services: tuple[ServiceDeclaration, ...]
+    service_dependencies: tuple[ServiceRequirement, ...] = ()
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> ModuleManifest:
@@ -142,6 +150,10 @@ class ModuleManifest:
         dependencies = _required_text_tuple(payload, "dependencies")
         if module_id in dependencies:
             raise ModuleManifestError("dependencies cannot contain the module itself")
+        if "platform" in dependencies:
+            raise ModuleManifestError(
+                "dependencies cannot contain the reserved platform namespace"
+            )
         if any(not re.fullmatch(r"[a-z][a-z0-9_]*", item) for item in dependencies):
             raise ModuleManifestError("dependencies contain an invalid module id")
 
@@ -197,6 +209,8 @@ class ModuleManifest:
         if len({service.name for service in services}) != len(services):
             raise ModuleManifestError("service declarations contain duplicate names")
 
+        service_dependencies = _service_requirements(payload)
+
         return cls(
             id=module_id,
             name=_required_text(payload, "name"),
@@ -213,7 +227,38 @@ class ModuleManifest:
             schema_version=_required_int(payload, "schema_version", minimum=0),
             table_prefix=_table_prefix(payload, module_id),
             services=services,
+            service_dependencies=service_dependencies,
         )
+
+
+def _service_requirements(
+    payload: Mapping[str, object],
+) -> tuple[ServiceRequirement, ...]:
+    requirements_payload = payload.get("service_dependencies", [])
+    if not isinstance(requirements_payload, list):
+        raise ModuleManifestError("service_dependencies must be a list")
+    requirements: list[ServiceRequirement] = []
+    for item in requirements_payload:
+        if not isinstance(item, Mapping) or set(item) != {
+            "name",
+            "minimum_version",
+        }:
+            raise ModuleManifestError(
+                "service_dependencies items must contain only name and minimum_version"
+            )
+        try:
+            name = _required_text(item, "name")
+            minimum_version = _required_int(item, "minimum_version", minimum=1)
+        except ModuleManifestError as error:
+            raise ModuleManifestError(f"service_dependencies {error}") from error
+        if _PLATFORM_SERVICE_NAME_PATTERN.fullmatch(name) is None:
+            raise ModuleManifestError(
+                "service_dependencies names must use an exact platform service name"
+            )
+        requirements.append(ServiceRequirement(name, minimum_version))
+    if len({requirement.name for requirement in requirements}) != len(requirements):
+        raise ModuleManifestError("service_dependencies contain duplicate names")
+    return tuple(requirements)
 
 
 def _navigation_declaration(payload: Mapping[str, object]) -> NavigationDeclaration:

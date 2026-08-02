@@ -30,6 +30,12 @@
   ],
   "permissions": ["example_module.view"],
   "dependencies": [],
+  "service_dependencies": [
+    {
+      "name": "platform.user_directory",
+      "minimum_version": 1
+    }
+  ],
   "services": [
     {
       "name": "example_module.lookup",
@@ -71,7 +77,11 @@ src/auto_check/modules/<module_id>/
 
 模块工厂返回的对象必须实现平台生命周期：`register_routes()` 注册相对路由，`register_schema()` 声明模块结构，`start()` 启动模块服务，`stop()` 停止后台工作并释放资源，`health()` 返回脱敏状态。路由必须通过模块上下文注册；宿主统一执行登录、CSRF、声明权限、请求体大小和静态资源路径穿越校验，模块路由处理器仍必须依据 `current_user` 校验业务资源所有权、可见范围和下载任务归属。隐藏导航或按钮不能代替鉴权。
 
-路由处理器从 `ModuleRequest.current_user` 取得已鉴权的当前用户。`ModuleContext` 不携带当前用户；它只提供 `application_database`、`config_path`、当前模块独占的 `temp_root`、`now`、`services`、`events`、`logger` 和 `background_executor`。SQL 参数化，标识符来自白名单；API 和日志不返回密码、令牌、连接串、SQL、驱动堆栈或本地绝对路径。模块间不得导入对方 `service.py`、`storage.py` 或私有对象，只能使用版本化公开服务或可序列化的命名空间事件。模块只能注册清单 `services` 中声明的服务，只能解析自身服务或清单 `dependencies` 中依赖模块的公开服务，版本必须精确匹配；依赖未启用时不得启动当前模块，提供方仍有已启用依赖方时不得停用。事件订阅者失败只返回固定脱敏原因，不暴露异常消息且不阻断其他订阅者；模块关闭会排空正在执行的订阅回调，关闭后不能再发布、订阅或注册服务。
+路由处理器从 `ModuleRequest.current_user` 取得已鉴权的当前用户。`ModuleContext` 不携带当前用户；它只提供 `application_database`、`config_path`、当前模块独占的 `temp_root`、`now`、`services`、`events`、`logger` 和 `background_executor`。SQL 参数化，标识符来自白名单；API 和日志不返回密码、令牌、连接串、SQL、驱动堆栈或本地绝对路径。模块间不得导入对方 `service.py`、`storage.py` 或私有对象，只能使用版本化公开服务或可序列化的命名空间事件。
+
+三类清单字段职责严格分离：`dependencies` 只声明模块生命周期依赖，`services` 只声明当前模块提供的 `<module_id>.<service>` 服务，`service_dependencies` 只声明模块消费的精确 `platform.<service>` 名称和最小版本，不能用 `dependencies: ["platform"]` 或模块自有 `services` 借用整个平台命名空间。旧清单缺少 `service_dependencies` 时按空列表处理。模块只能注册 `services` 中声明且版本精确匹配的服务；只能解析自身服务、`dependencies` 中依赖模块的公开服务，以及 `service_dependencies` 中逐项授权的平台服务。未声明、未注册或版本不足会分别返回固定的访问、不可用或版本错误；同一模块的同一平台服务只绑定一次，模块停止后 facade 被撤销，继续调用会返回固定生命周期错误。依赖模块未启用时不得启动当前模块，提供方仍有已启用依赖方时不得停用。事件订阅者失败只返回固定脱敏原因，不暴露异常消息且不阻断其他订阅者；模块关闭会排空正在执行的订阅回调，关闭后不能再发布、订阅或注册服务。
+
+平台当前提供 `platform.user_directory` v1。它只读返回已启用用户的 `id`、`username`、`display_name` 和恒为 `true` 的 `active`，保持平台用户管理器的稳定排序；按 ID 查询不存在或停用用户返回 `None`。该 facade 不提供创建、更新、删除、密码、角色、时间或登录信息。
 
 模块 API 的有请求体方法必须声明 `max_body_bytes`。宿主执行总读取时限和请求大小限制，短读、慢速分段超时或非法 JSON 均不会进入处理器。模块响应只允许 JSON 映射或字节，最大 50 MiB；JSON 在校验时固化为发送快照，后续修改原对象不会改变响应。响应头仅允许 `Allow`、`Content-Disposition`、`ETag`、`Last-Modified`、`Location` 和 `Retry-After`，连接、长度、安全响应头及 `Cache-Control: private, no-store` 由宿主统一生成。模块导入、工厂构造、路由/表结构注册和迁移共享一个启动前有界等待，全部成功前不会向宿主发布模块实例、路由或上下文。后台任务和 `start()`、`stop()`、`health()` 都必须自行支持快速退出；宿主还会执行并发限制、有界等待和故障隔离，但同进程 Python 不能强制终止任意模块代码，超时模块的迟到结果不会发布，未结束前不得重复启用。
 
