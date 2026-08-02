@@ -28,9 +28,11 @@
 }
 
 #moduleTopNavigation .module-top-nav-item[aria-current="page"],
+#moduleTopNavigation .module-top-nav-item.active,
 #moduleTopNavigation .module-top-nav-group-toggle.active {
   color: var(--theme-on-accent);
   background: var(--theme-accent);
+  box-shadow: none;
 }
 
 #moduleTopNavigation .module-top-nav-item:focus-visible,
@@ -62,11 +64,12 @@
 #moduleTopNavigation .module-top-nav-submenu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   z-index: 10;
   display: grid;
   gap: 3px;
-  min-width: max-content;
+  width: min(280px, calc(100vw - 64px));
+  min-width: 0;
   max-width: min(280px, calc(100vw - 24px));
   padding: 7px;
   overflow-wrap: anywhere;
@@ -83,7 +86,9 @@
 #moduleTopNavigation .module-top-nav-submenu .module-top-nav-item {
   justify-content: flex-start;
   width: 100%;
-  white-space: nowrap;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 #moduleTopNavigation .module-top-nav-group-toggle:hover,

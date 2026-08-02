@@ -207,6 +207,13 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
           closest(selector) {
             if (selector === "[data-module-route]" && this.dataset.moduleRoute) return this;
             if (selector === "[data-module-group-toggle]" && this.dataset.moduleGroupToggle) return this;
+            if (selector === "[data-module-group-menu]") {
+              let current = this;
+              while (current) {
+                if (current.dataset.moduleGroupMenu) return current;
+                current = current.parentNode;
+              }
+            }
             return null;
           }
           setAttribute(name, value) { this.attributes.set(name, String(value)); }
@@ -858,6 +865,11 @@ def test_module_host_renders_top_grouped_navigation_and_keeps_sidebar_empty(tmp_
         assert.equal(reviewToggle.focused, true);
         top.dispatch("keydown", reviewToggle, { key: " " });
         assert.equal(reviewToggle.getAttribute("aria-expanded"), "true");
+        top.dispatch("keydown", reviewMenu.children[0], { key: "Escape" });
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "false");
+        assert.equal(reviewMenu.hidden, true);
+        assert.equal(reviewToggle.focused, true);
+        top.dispatch("keydown", reviewToggle, { key: " " });
         top.dispatch("click", reviewMenu.children[0]);
         await new Promise((resolve) => setImmediate(resolve));
         await flush();

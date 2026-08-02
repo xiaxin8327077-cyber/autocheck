@@ -439,14 +439,16 @@
       };
       const keydown = (event) => {
         const target = event.target?.closest?.("[data-module-group-toggle]");
-        if (!target || (mount.contains && !mount.contains(target))) return;
-        if (event.key === "Enter" || event.key === " ") {
+        const menu = event.target?.closest?.("[data-module-group-menu]");
+        const groupId = target?.dataset.moduleGroupToggle || menu?.dataset.moduleGroupMenu;
+        if (!groupId || (mount.contains && !mount.contains(event.target))) return;
+        if (target && (event.key === "Enter" || event.key === " ")) {
           event.preventDefault();
-          setExpandedGroup(state.expandedGroupId === target.dataset.moduleGroupToggle ? "" : target.dataset.moduleGroupToggle);
+          setExpandedGroup(state.expandedGroupId === groupId ? "" : groupId);
         } else if (event.key === "Escape") {
           event.preventDefault();
           setExpandedGroup("");
-          target.focus?.();
+          groupControls.get(groupId)?.toggle.focus?.();
         }
       };
       mount.addEventListener("click", click);

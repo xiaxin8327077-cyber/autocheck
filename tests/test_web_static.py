@@ -64,6 +64,9 @@ def test_module_host_grouped_top_navigation_keeps_accessibility_and_theme_bounda
         assert fragment in script
     assert "border-radius: var(--ui-radius)" in css
     assert "z-index: 10" in css
+    assert "box-shadow: none" in css
+    assert "min-width: 0" in css
+    assert "white-space: normal" in css
     assert "box-shadow: 0 0" not in css
 
 
