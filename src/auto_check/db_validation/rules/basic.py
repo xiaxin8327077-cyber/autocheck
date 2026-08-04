@@ -2824,10 +2824,10 @@ def _zg13_cross_period_rules(
     rows: list[dict[str, Any]],
     previous_rows: list[dict[str, Any]],
 ) -> Iterable[ValidationResultRow]:
-    previous_by_key = {(_zg13_product_code(row), _row_text(row, "qycode"), _zg13_inner_code(row)): row for row in previous_rows}
+    previous_by_key = {(_zg13_product_code(row), _zg13_inner_code(row)): row for row in previous_rows}
     for field, label in _ZG13_CROSS_PERIOD_FIELDS:
         for row in rows:
-            previous = previous_by_key.get((_zg13_product_code(row), _row_text(row, "qycode"), _zg13_inner_code(row)))
+            previous = previous_by_key.get((_zg13_product_code(row), _zg13_inner_code(row)))
             if not previous:
                 continue
             current_value = _legacy_compare_text(row.get(field), field)
@@ -3030,7 +3030,7 @@ def _zg13_amount_cny(row: dict[str, Any]) -> Any:
 
 
 def _zg13_inner_code(row: dict[str, Any]) -> str:
-    return _first_text(row, "innercode", "pin_mpactid")
+    return _first_text(row, "pin_mpactid")
 
 
 def _zg13(
@@ -3199,7 +3199,7 @@ def _zg13_financial_code_mismatch(row: dict[str, Any], code_field: str, name_fie
 
 def _legacy_zg13_detail(row: dict[str, Any]) -> str:
     product_code = _first_text(row, "productcode", "projcode")
-    inner_code = _first_text(row, "innercode", "pin_mpactid")
+    inner_code = _first_text(row, "pin_mpactid")
     return (
         "产品代码_标的企业代码_其他股权投资内部编码:"
         f"{_legacy_df_text(product_code)}_{_legacy_df_text(row.get('qycode'))}_{_legacy_df_text(inner_code)}"
