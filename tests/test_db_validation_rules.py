@@ -296,6 +296,27 @@ def test_zg04_amount_cross_period_uses_legacy_thresholds_and_filters():
     assert sum(1 for row in rows if row.mark.endswith("Zg04_Rule3")) == 1
 
 
+def test_zg04_amount_cross_period_treats_missing_previous_as_zero():
+    rows = run_basic_rules(
+        "ZG04",
+        date(2026, 5, 31),
+        [
+            {
+                "projcode": "P5",
+                "areacode": "110000",
+                "clientkind": "5",
+                "moneytype": "CNY",
+                "currraiseamt": "1257300000",
+                "curcashamt": "0",
+                "projamt": "0",
+            }
+        ],
+        [],
+    )
+
+    assert [row.mark.split("-")[-1] for row in rows] == ["Zg04_Rule3"]
+
+
 def test_zg04_yield_rules_use_summary_rows_and_zero_amount_product_list():
     rows = run_basic_rules(
         "ZG04",

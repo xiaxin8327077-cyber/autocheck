@@ -704,14 +704,19 @@ def _zg04(
                 error="产品份额比对不符合校验公式，需核实",
             )
 
-        if prev and key[1] and key[1] != "000000" and key[3] != "BWB":
-            previous_amount = _legacy_float(_row_value(prev, "projamt", "期末产品金额")) / 10000.0
+        if key[1] and key[1] != "000000" and key[3] != "BWB":
+            previous_amount = _legacy_float(_row_value(prev, "projamt", "期末产品金额")) / 10000.0 if prev else 0.0
             raise_amount = _legacy_float(_row_value(row, "currraiseamt", "当期申购金额")) / 10000.0
             cash_amount = _legacy_float(_row_value(row, "curcashamt", "当期兑付/赎回金额")) / 10000.0
             actual_amount = _legacy_float(_row_value(row, "projamt", "期末产品金额")) / 10000.0
             expected_amount = previous_amount + raise_amount - cash_amount
             amount_diff = expected_amount - actual_amount
-            amount_ratio = amount_diff / expected_amount if expected_amount else 0.0
+            if expected_amount:
+                amount_ratio = amount_diff / expected_amount
+            elif actual_amount:
+                amount_ratio = float("-inf")
+            else:
+                amount_ratio = 0.0
             if abs(amount_diff) >= 1000 and abs(amount_ratio) > 0.05:
                 yield make_row(
                     report_date=report_date,
