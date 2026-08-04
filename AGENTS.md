@@ -91,4 +91,5 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath
 - 不要提交 `build/` 等生成目录，除非用户明确要求。
 - 用户要求提交或推送时，先完成测试和必要打包，再提交并推送当前分支。
 - 用户要求推送时，默认将当前分支同时推送到 GitHub（`origin`）和 Gitee（`gitee`）；若 GitHub 连接失败，则至少确保 Gitee 推送成功。
+- **AI 助手在没有用户明确许可的情况下，不得主动推送代码；只有用户明确说"推送"或类似授权时，才执行推送操作。**
 - 当 GitHub 连接失败时，从 Gitee 拉取代码（地址：`https://gitee.com/xiaxin8327077-cyber/autocheck.git`）。
