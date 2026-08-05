@@ -11,6 +11,7 @@
 - 并发：所有修改携带 `row_version`，冲突返回 409；业务写入和审计处于同一数据库事务。
 - 目录：处理人和报送流程分别来自 owner-bound `platform.user_directory` v1 与 `platform.report_navigation` v1，不在模块硬编码人员或七类报送。
 - 统计：按平台传入的 Asia/Shanghai 左闭右开周期，以 `special_handling_at` 汇总；草稿和作废排除。
+- 统计刷新：注册为 `include_in_collect=False` + `refresh_on_dashboard=True`。定时/手工 `collect_once` 均不采集本卡；进入报送导航读取 dashboard 时按台账实时刷新；台账写入成功后仍 best-effort 调用 owner 作用域 `refresh_card_provider`；刷新失败不影响业务写入与页面读取。
 
 ## 运维
 

@@ -1,14 +1,11 @@
 import { dataOf, defaultPeriod } from "../state.js";
-import { element, option } from "../components/dom.js";
+import { element } from "../components/dom.js";
 import { createFilters } from "../components/filters.js";
 import { createRecordTable } from "../components/record_table.js";
 import { createRecordDrawer } from "../components/record_drawer.js";
 
-function nowLocal() {
-  const date = new Date();
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 19);
-}
+const ALL_PROCESS_CODE = "";
+const ALL_PROCESS_TAB = Object.freeze({ code: ALL_PROCESS_CODE, name: "全部" });
 
 export function createLedgerPage({ root, api, state, user, notify, confirm, navigate }) {
   const documentRef = root.ownerDocument;
@@ -20,7 +17,6 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
         && state.catalog.report_processes.some((item) => item.active !== false)
         && Array.isArray(state.catalog.users)
         && state.catalog.users.length > 0;
-      if (!state.activeProcessCode) state.activeProcessCode = state.catalog.report_processes?.find((item) => item.active !== false)?.code || "";
     } catch (error) {
       if (error?.name === "AbortError") return;
       state.catalogAvailable = false;
@@ -81,7 +77,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
       const response = await api.getRecord(record.id);
       state.drawer = { mode: "detail", record: dataOf(response, response) };
       render();
-      root.querySelector?.(".rsp-record-drawer button")?.focus?.();
+      root.querySelector?.(".rsp-record-modal button")?.focus?.();
     } catch (error) {
       if (error?.name !== "AbortError") notify("记录详情加载失败", "error");
     }
@@ -91,15 +87,19 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     state.restoreFocus = { kind: "create" };
     state.drawer = { mode: "create", record: null };
     render();
-    root.querySelector?.(".rsp-record-drawer select")?.focus?.();
+    root.querySelector?.(".rsp-record-modal select")?.focus?.();
   }
 
   function createTabs() {
     const counts = new Map((state.summary.by_report_process || []).map((item) => [item.code, item.effective_count]));
+    const allCount = [...counts.values()].reduce((sum, value) => sum + Number(value || 0), 0);
     const tabs = element(documentRef, "div", { className: "rsp-report-tabs", role: "tablist", "aria-label": "关联报送" });
-    const report_processes = state.catalog?.report_processes || [];
-    report_processes.map((processItem) => {
+    const report_processes = (state.catalog?.report_processes || []).filter((item) => item.active !== false);
+    const tabItems = [ALL_PROCESS_TAB, ...report_processes];
+
+    tabItems.forEach((processItem) => {
       const active = processItem.code === state.activeProcessCode;
+      const count = processItem.code === ALL_PROCESS_CODE ? allCount : (counts.get(processItem.code) || 0);
       const tab = element(documentRef, "button", {
         type: "button",
         role: "tab",
@@ -114,15 +114,14 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
         },
       }, [
         element(documentRef, "span", { text: processItem.name }),
-        element(documentRef, "small", { text: String(counts.get(processItem.code) || 0) }),
+        element(documentRef, "small", { text: String(count) }),
       ]);
       tab.addEventListener("keydown", (event) => {
         if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
         event.preventDefault();
-        const available = report_processes.filter((item) => item.active !== false);
-        const index = available.findIndex((item) => item.code === processItem.code);
+        const index = tabItems.findIndex((item) => item.code === processItem.code);
         const offset = event.key === "ArrowRight" ? 1 : -1;
-        const next = available[(index + offset + available.length) % available.length];
+        const next = tabItems[(index + offset + tabItems.length) % tabItems.length];
         state.activeProcessCode = next.code;
         state.page = 1;
         loadLedger();
@@ -133,17 +132,51 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
   }
 
   function pagination() {
-    const size = element(documentRef, "select", { "aria-label": "每页条数" }, [
-      option(documentRef, "20", "20条/页"), option(documentRef, "50", "50条/页"), option(documentRef, "100", "100条/页"),
-    ]);
-    size.value = String(state.pageSize);
-    size.addEventListener("change", () => { state.pageSize = Number(size.value); state.page = 1; loadLedger(); });
+    const jump = element(documentRef, "input", {
+      type: "number",
+      min: "1",
+      "aria-label": "跳转页码",
+    });
+    const goToPage = (nextPage) => {
+      const page = Number(nextPage);
+      if (!Number.isFinite(page) || page < 1 || page > state.totalPages || page === state.page) return;
+      state.page = page;
+      loadLedger();
+    };
+    jump.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      goToPage(jump.value);
+      jump.value = "";
+    });
+    const infoText = state.total
+      ? `共 ${state.total} 条，第 ${state.page} / ${state.totalPages} 页`
+      : "暂无数据";
     return element(documentRef, "footer", { className: "rsp-pagination" }, [
-      element(documentRef, "span", { text: `共 ${state.total} 条，第 ${state.page} / ${state.totalPages} 页` }),
-      element(documentRef, "div", {}, [
-        element(documentRef, "button", { type: "button", text: "上一页", disabled: state.page <= 1, onClick: () => { state.page -= 1; loadLedger(); } }),
-        element(documentRef, "button", { type: "button", text: "下一页", disabled: state.page >= state.totalPages, onClick: () => { state.page += 1; loadLedger(); } }),
-        size,
+      element(documentRef, "span", { className: "rsp-pagination-info", text: infoText }),
+      element(documentRef, "div", { className: "rsp-pagination-controls" }, [
+        element(documentRef, "button", {
+          type: "button",
+          className: "rsp-page-btn",
+          text: "◀",
+          "aria-label": "上一页",
+          disabled: state.page <= 1,
+          onClick: () => goToPage(state.page - 1),
+        }),
+        element(documentRef, "span", { className: "rsp-page-current", text: String(state.page) }),
+        element(documentRef, "button", {
+          type: "button",
+          className: "rsp-page-btn",
+          text: "▶",
+          "aria-label": "下一页",
+          disabled: state.page >= state.totalPages,
+          onClick: () => goToPage(state.page + 1),
+        }),
+        element(documentRef, "span", { className: "rsp-pagination-jump" }, [
+          documentRef.createTextNode("跳至 "),
+          jump,
+          documentRef.createTextNode(" 页"),
+        ]),
       ]),
     ]);
   }
@@ -183,8 +216,8 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
       pagination(),
     ]);
     const layout = element(documentRef, "div", { className: "rsp-workbench" }, [master]);
-    if (state.drawer) {
-      layout.append(createRecordDrawer(documentRef, {
+    const modal = state.drawer
+      ? createRecordDrawer(documentRef, {
         catalog: state.catalog,
         catalogAvailable: state.catalogAvailable,
         record: state.drawer.record,
@@ -192,7 +225,6 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
         user,
         reportPeriod: state.reportPeriod,
         activeProcessCode: state.activeProcessCode,
-        now: nowLocal(),
         actions: api,
         notify,
         confirm,
@@ -204,9 +236,9 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
         onConflict: async () => {
           if (state.drawer?.record?.id) await refreshRecord(state.drawer.record.id);
         },
-      }));
-    }
-    root.replaceChildren(intro, availability, createTabs(), layout);
+      })
+      : null;
+    root.replaceChildren(...[intro, availability, createTabs(), layout, modal].filter(Boolean));
   }
 
   return Object.freeze({

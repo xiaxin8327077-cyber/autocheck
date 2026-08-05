@@ -116,7 +116,9 @@ class SpecialProcessingService:
         audit = self._audit(
             "create", actor, now, None, status.value, {"created": True}, "创建特殊处理记录", request_id
         )
-        return self.storage.create(record, value.reports, audit)
+        created = self.storage.create(record, value.reports, audit)
+        self._refresh_special_governance_stats()
+        return created
 
     def update(
         self,
@@ -157,7 +159,9 @@ class SpecialProcessingService:
             "更新特殊处理记录",
             request_id,
         )
-        return self.storage.update(record_id, value.row_version, changes, value.reports, audit)
+        updated = self.storage.update(record_id, value.row_version, changes, value.reports, audit)
+        self._refresh_special_governance_stats()
+        return updated
 
     def change_status(
         self,
@@ -191,7 +195,9 @@ class SpecialProcessingService:
             {"status": {"changed": True}, **({"reason": {"present": True}} if reason else {})},
             "变更处理状态", request_id,
         )
-        return self.storage.update_status(record_id, version, changes, audit)
+        changed = self.storage.update_status(record_id, version, changes, audit)
+        self._refresh_special_governance_stats()
+        return changed
 
     def void(
         self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
@@ -209,7 +215,9 @@ class SpecialProcessingService:
             "updated_by_username_snapshot": actor.username, "updated_at": now,
         }
         audit = self._audit("void", actor, now, current["status"], "voided", {"reason": {"present": True}}, "作废特殊处理记录", request_id)
-        return self.storage.update_status(record_id, version, changes, audit)
+        voided = self.storage.update_status(record_id, version, changes, audit)
+        self._refresh_special_governance_stats()
+        return voided
 
     def reopen(
         self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
@@ -228,7 +236,9 @@ class SpecialProcessingService:
             "updated_at": now,
         }
         audit = self._audit("reopen", actor, now, current["status"], "pending", {"reason": {"present": True}}, "重开特殊处理记录", request_id)
-        return self.storage.update_status(record_id, version, changes, audit)
+        reopened = self.storage.update_status(record_id, version, changes, audit)
+        self._refresh_special_governance_stats()
+        return reopened
 
     def summary(self, query: Mapping[str, str]) -> dict[str, Any]:
         raw_period = query.get("report_period")
@@ -288,6 +298,16 @@ class SpecialProcessingService:
         if process is None:
             raise ValidationError(fields={"report_process_code": "关联报送无效"})
         return process
+
+    def _refresh_special_governance_stats(self) -> None:
+        """Best-effort single-card refresh; never fail the business write."""
+        refresh = getattr(self._reports, "refresh_card_provider", None)
+        if not callable(refresh):
+            return
+        try:
+            refresh(card_code="special_governance")
+        except Exception:
+            return
 
     @staticmethod
     def _record_values(value: Any, process: Any, handler: Any) -> dict[str, Any]:

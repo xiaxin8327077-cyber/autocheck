@@ -83,6 +83,10 @@ if ($Clean) {
 
 $pyinstallerArgs += $entry
 
+# PyInstaller resolves --collect-submodules/--collect-data while parsing arguments,
+# before --paths applies, so expose src via PYTHONPATH or auto_check.modules is skipped.
+$env:PYTHONPATH = $srcPath
+
 Write-Host "Packaging Windows executable..."
 & $python @pyinstallerArgs
 if ($LASTEXITCODE -ne 0) {

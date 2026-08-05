@@ -33,9 +33,21 @@ class Handle:
 
 
 class ReportFacade:
-    def __init__(self): self.handle = Handle(); self.registration = None
-    def list_report_processes(self): return (ReportProcess("dynamic", "动态报送", 1, True),)
-    def register_card_provider(self, **kwargs): self.registration = kwargs; return self.handle
+    def __init__(self):
+        self.handle = Handle()
+        self.registration = None
+        self.refresh_calls = []
+
+    def list_report_processes(self):
+        return (ReportProcess("dynamic", "动态报送", 1, True),)
+
+    def register_card_provider(self, **kwargs):
+        self.registration = kwargs
+        return self.handle
+
+    def refresh_card_provider(self, *, card_code):
+        self.refresh_calls.append(card_code)
+        return {"ok": True, "refreshed": True}
 
 
 class UserFacade:
@@ -61,5 +73,7 @@ def test_module_binds_owner_scoped_directories_and_closes_report_provider(monkey
     registration = context.services.report.registration
     assert registration["card_code"] == "special_governance"
     assert registration["semantics_version"] == 1
+    assert registration["include_in_collect"] is False
+    assert registration["refresh_on_dashboard"] is True
     module.stop()
     assert context.services.report.handle.closed

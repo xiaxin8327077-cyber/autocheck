@@ -47,6 +47,10 @@ def test_module_host_css_is_scoped():
     css = HOST_CSS.read_text(encoding="utf-8")
 
     assert ".auto-check-module" in css
+    assert ".auto-check-module-host:not([hidden])" in css
+    assert ".auto-check-module:not([hidden])" in css
+    assert "height: 100%" in css
+    assert "flex: 1 1 auto" in css
     assert "\nbutton {" not in css
     assert "\ninput {" not in css
     assert "\ntable {" not in css
@@ -284,7 +288,7 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
             this.classList = {
               values: new Set(),
               add: (name) => this.classList.values.add(name),
-              remove: (name) => this.classList.values.delete(name),
+              remove: (...names) => names.forEach((name) => this.classList.values.delete(name)),
               toggle: (name, enabled) => enabled ? this.classList.values.add(name) : this.classList.values.delete(name),
               contains: (name) => this.classList.values.has(name),
             };
@@ -327,6 +331,14 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
               || (selector === "[data-module-host-diagnostic]" && element.dataset.moduleHostDiagnostic)
               || (selector === ".nav-item[data-page], .top-nav-item[data-page]" && element.dataset.page)
               || (selector === "[data-module-route]" && element.dataset.moduleRoute)
+              || (selector === '[data-nav-group="smart-reconcile"]' && (
+                element.dataset.navGroup === "smart-reconcile"
+                || element.getAttribute("data-nav-group") === "smart-reconcile"
+              ))
+              || (selector === "[data-nav-group-toggle]" && (
+                Boolean(element.dataset.navGroupToggle)
+                || Boolean(element.getAttribute("data-nav-group-toggle"))
+              ))
             );
             const result = [];
             const visit = (element) => { element.children.forEach((child) => { if (matches(child)) result.push(child); visit(child); }); };
@@ -910,6 +922,50 @@ def test_module_host_bounds_stuck_lifecycle_callbacks(tmp_path: Path):
     )
 
 
+def test_module_host_clears_legacy_smart_reconcile_active_when_activating_module(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#special");
+        const smartGroup = new FakeElement("div");
+        smartGroup.classList.add("top-nav-group");
+        smartGroup.classList.add("active");
+        smartGroup.classList.add("open");
+        smartGroup.dataset.navGroup = "smart-reconcile";
+        smartGroup.setAttribute("data-nav-group", "smart-reconcile");
+        const smartToggle = new FakeElement("button");
+        smartToggle.classList.add("top-nav-item");
+        smartToggle.classList.add("top-nav-group-toggle");
+        smartToggle.classList.add("active");
+        smartToggle.dataset.navGroupToggle = "smart-reconcile";
+        smartToggle.setAttribute("data-nav-group-toggle", "smart-reconcile");
+        smartToggle.setAttribute("aria-expanded", "true");
+        smartGroup.appendChild(smartToggle);
+        env.documentRef.documentElement.appendChild(smartGroup);
+
+        const host = createModuleHost({
+          ...env,
+          importModule: async () => ({ default: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} } }),
+        });
+        const platform = {
+          api: async () => ({ modules: [
+            { id: "special", frontend_entry: "/special.js", frontend_style: "/special.css", navigation: [
+              { id: "special-entry", label: "Special entry", route: "special", order: 1, group_id: "data-entry", group_label: "Data entry", group_order: 1 },
+            ] },
+          ] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await host.initialize(platform), true);
+        assert.equal(smartGroup.classList.contains("active"), false);
+        assert.equal(smartGroup.classList.contains("open"), false);
+        assert.equal(smartToggle.classList.contains("active"), false);
+        assert.equal(smartToggle.getAttribute("aria-expanded"), "false");
+        const moduleGroup = env.elements.moduleTopNavigation.children[0];
+        assert.ok(moduleGroup.children[0].classList.contains("active"));
+        """,
+    )
+
+
 def test_module_host_renders_top_grouped_navigation_and_keeps_sidebar_empty(tmp_path: Path):
     _run_module_host_scenario(
         tmp_path,
@@ -982,6 +1038,12 @@ def test_module_host_renders_top_grouped_navigation_and_keeps_sidebar_empty(tmp_
         assert.equal(reviewMenu.hidden, true);
         top.dispatch("keydown", reviewToggle, { key: " " });
         assert.equal(reviewToggle.getAttribute("aria-expanded"), "true");
+        // 鼠标点击已展开的父菜单不应收起、也不跳转任何页面（与"悬浮展开、父菜单不跳转"契约一致）。
+        const hashBeforeClick = env.locationRef.hash;
+        top.dispatch("click", reviewToggle);
+        assert.equal(reviewToggle.getAttribute("aria-expanded"), "true");
+        assert.equal(reviewMenu.hidden, false);
+        assert.equal(env.locationRef.hash, hashBeforeClick);
         top.dispatch("keydown", reviewMenu.children[0], { key: "Escape" });
         assert.equal(reviewToggle.getAttribute("aria-expanded"), "false");
         assert.equal(reviewMenu.hidden, true);

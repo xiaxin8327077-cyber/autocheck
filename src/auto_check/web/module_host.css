@@ -3,6 +3,14 @@
   min-width: 0;
 }
 
+.auto-check-module-host:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 .auto-check-module-host[hidden],
 .auto-check-module[hidden] {
   display: none !important;
@@ -11,6 +19,14 @@
 .auto-check-module {
   width: 100%;
   min-width: 0;
+}
+
+.auto-check-module:not([hidden]) {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 #moduleTopNavigation {

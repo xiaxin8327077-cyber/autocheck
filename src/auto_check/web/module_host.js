@@ -161,6 +161,13 @@
         item.classList?.remove("active");
         item.removeAttribute?.("aria-current");
       });
+      documentRef?.querySelectorAll?.('[data-nav-group="smart-reconcile"]').forEach((group) => {
+        group.classList?.remove("active");
+        group.classList?.remove("open");
+        const toggle = group.querySelector?.("[data-nav-group-toggle]");
+        toggle?.classList?.remove("active");
+        toggle?.setAttribute?.("aria-expanded", "false");
+      });
     }
 
     function activeGroupId(route) {
@@ -461,9 +468,8 @@
         const groupToggle = event.target?.closest?.("[data-module-group-toggle]");
         if (groupToggle && (!mount.contains || mount.contains(groupToggle))) {
           event.preventDefault();
-          setExpandedGroup(
-            state.expandedGroupId === groupToggle.dataset.moduleGroupToggle ? "" : groupToggle.dataset.moduleGroupToggle,
-          );
+          // 与"悬浮展开、父菜单不跳转"契约一致：点击父菜单只展开、不收起、不跳转。
+          setExpandedGroup(groupToggle.dataset.moduleGroupToggle);
           if (event.detail > 0) groupToggle.blur?.();
           return;
         }

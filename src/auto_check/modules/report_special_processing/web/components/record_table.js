@@ -8,6 +8,15 @@ const STATUS_LABELS = {
   voided: "已作废",
 };
 
+export function formatDisplayDateTime(value) {
+  if (!value) return "";
+  return String(value)
+    .replace("T", " ")
+    .replace(/\.\d+(?=(?:Z|[+-]\d{2}:?\d{2})?$)/, "")
+    .replace(/(?:Z|[+-]\d{2}:?\d{2})$/, "")
+    .trim();
+}
+
 function cell(documentRef, text, className = "") {
   return element(documentRef, "td", { className, text: text || "—", title: text || "" });
 }
@@ -18,6 +27,7 @@ export function createRecordTable(documentRef, records, { selectedId, onOpen }) 
   ]);
   const body = element(documentRef, "tbody");
   records.forEach((record) => {
+    const handledAt = formatDisplayDateTime(record.special_handling_at);
     const trigger = element(documentRef, "button", {
       type: "button",
       className: "rsp-text-action",
@@ -37,7 +47,7 @@ export function createRecordTable(documentRef, records, { selectedId, onOpen }) 
       cell(documentRef, record.report_process_name_snapshot || record.report_process_name),
       cell(documentRef, (record.reports || []).join("、"), "rsp-report-names"),
       cell(documentRef, record.summary),
-      cell(documentRef, record.special_handling_at),
+      cell(documentRef, handledAt),
       cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),
       element(documentRef, "td", {}, [element(documentRef, "span", { className: `rsp-status rsp-status-${record.status}`, text: STATUS_LABELS[record.status] || record.status })]),
       element(documentRef, "td", {}, [trigger]),
@@ -50,7 +60,16 @@ export function createRecordTable(documentRef, records, { selectedId, onOpen }) 
   });
 
   const table = element(documentRef, "table", { className: "rsp-ledger-table", "aria-label": "报表特殊处理台账" }, [head, body]);
-  const wrap = element(documentRef, "div", { className: "rsp-table-wrap" }, [table]);
-  if (!records.length) wrap.append(element(documentRef, "div", { className: "rsp-empty", text: "没有符合条件的特殊处理记录" }));
-  return wrap;
+  if (!records.length) {
+    body.append(
+      element(documentRef, "tr", { className: "rsp-empty-row" }, [
+        element(documentRef, "td", {
+          className: "rsp-empty",
+          colspan: "7",
+          text: "没有符合条件的特殊处理记录",
+        }),
+      ]),
+    );
+  }
+  return element(documentRef, "div", { className: "rsp-table-wrap" }, [table]);
 }

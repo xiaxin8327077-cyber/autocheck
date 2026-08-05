@@ -69,6 +69,8 @@ class _Registration:
     token: str
     provider: CardStatisticsProvider
     semantics_version: int
+    include_in_collect: bool = True
+    refresh_on_dashboard: bool = False
 
 
 class _ProviderHandle:
@@ -100,11 +102,17 @@ class CardProviderRegistry:
         card_code: str,
         provider: CardStatisticsProvider,
         semantics_version: int,
+        include_in_collect: bool = True,
+        refresh_on_dashboard: bool = False,
     ) -> _ProviderHandle:
         validated_card_code = validate_card_code(card_code)
         validated_version = validate_semantics_version(semantics_version)
         if not callable(provider):
             raise ValueError("card statistics provider must be callable")
+        if not isinstance(include_in_collect, bool):
+            raise ValueError("include_in_collect must be a bool")
+        if not isinstance(refresh_on_dashboard, bool):
+            raise ValueError("refresh_on_dashboard must be a bool")
         with self._lock:
             current = self._registrations.get(validated_card_code)
             if current is not None:
@@ -130,6 +138,8 @@ class CardProviderRegistry:
                 token,
                 provider,
                 validated_version,
+                include_in_collect,
+                refresh_on_dashboard,
             )
             self._registrations[validated_card_code] = registration
         return _ProviderHandle(
@@ -139,6 +149,14 @@ class CardProviderRegistry:
     def active_registrations(self) -> tuple[_Registration, ...]:
         with self._lock:
             return tuple(self._registrations.values())
+
+    def get_owned_registration(self, *, owner: str, card_code: str) -> _Registration | None:
+        validated_card_code = validate_card_code(card_code)
+        with self._lock:
+            current = self._registrations.get(validated_card_code)
+            if current is None or current.owner != owner:
+                return None
+            return current
 
     def is_current(self, card_code: str, token: str) -> bool:
         with self._lock:
@@ -182,6 +200,8 @@ class _ReportNavigationFacade:
         card_code: str,
         provider: CardStatisticsProvider,
         semantics_version: int,
+        include_in_collect: bool = True,
+        refresh_on_dashboard: bool = False,
     ) -> _ProviderHandle:
         with self._lock:
             self._require_open()
@@ -190,9 +210,17 @@ class _ReportNavigationFacade:
                 card_code=card_code,
                 provider=provider,
                 semantics_version=semantics_version,
+                include_in_collect=include_in_collect,
+                refresh_on_dashboard=refresh_on_dashboard,
             )
             self._handles.append(handle)
             return handle
+
+    def refresh_card_provider(self, *, card_code: str) -> dict[str, Any]:
+        with self._lock:
+            self._require_open()
+            owner = self._owner
+        return self._service.refresh_card_provider(owner=owner, card_code=card_code)
 
     def _require_open(self) -> None:
         if self._closed:

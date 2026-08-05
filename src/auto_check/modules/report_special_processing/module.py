@@ -71,6 +71,8 @@ class ReportSpecialProcessingModule:
             card_code="special_governance",
             provider=provider,
             semantics_version=SEMANTICS_VERSION,
+            include_in_collect=False,
+            refresh_on_dashboard=True,
         )
 
     def stop(self) -> None:

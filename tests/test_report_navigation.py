@@ -2271,3 +2271,159 @@ def test_manual_refresh_partial_message_reports_step_and_provider_failures(monke
     assert payload["error_message"] == (
         "刷新完成，但有 2 个步骤统计异常、1 个模块统计异常，请查看具体问题"
     )
+
+
+def test_refresh_card_provider_updates_owned_card_only_without_collect_once(monkeypatch):
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    spec = platform_module.create_report_navigation_service(service)
+    alpha = spec.binder("alpha")
+    beta = spec.binder("beta")
+    called = {"special_governance": 0, "data_governance": 0}
+
+    def special_provider(request):
+        called["special_governance"] += 1
+        return _provider_result(platform_module, request, completed=4, incomplete=1, previous=2)
+
+    def data_provider(request):
+        called["data_governance"] += 1
+        return _provider_result(platform_module, request, completed=1, incomplete=1, previous=0)
+
+    alpha.value.register_card_provider(
+        card_code="special_governance", provider=special_provider, semantics_version=1
+    )
+    beta.value.register_card_provider(
+        card_code="data_governance", provider=data_provider, semantics_version=1
+    )
+
+    def collect_once(**_kwargs):
+        raise AssertionError("single-card refresh must not call collect_once")
+
+    monkeypatch.setattr(service, "collect_once", collect_once)
+    current = datetime(2026, 7, 16, 9, 30)
+    before_data = store.load_card_provider_state("data_governance")
+    result = alpha.value.refresh_card_provider(card_code="special_governance")
+    payload = service.dashboard(
+        period="month", current_user={"role": "admin"}, now=current
+    )
+    special = next(item for item in payload["cards"] if item["card_code"] == "special_governance")
+    after_data = store.load_card_provider_state("data_governance")
+
+    assert result == {"ok": True, "refreshed": True}
+    assert called == {"special_governance": 4, "data_governance": 0}
+    assert (special["total_count"], special["completed_count"], special["source"]) == (
+        5,
+        4,
+        "provider",
+    )
+    assert special["available"] is True
+    assert after_data == before_data
+    assert after_data.last_success_at is None
+    assert store.load_latest_run() is None
+    assert alpha.value.refresh_card_provider(card_code="data_governance") == {
+        "ok": False,
+        "refreshed": False,
+        "reason": "not_registered",
+    }
+    assert called["data_governance"] == 0
+    assert beta.value.refresh_card_provider(card_code="special_governance") == {
+        "ok": False,
+        "refreshed": False,
+        "reason": "not_registered",
+    }
+    assert called["special_governance"] == 4
+
+
+def test_collect_skips_opt_out_provider_and_dashboard_refreshes_opt_in_provider():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    bound = platform_module.create_report_navigation_service(service).binder(
+        "report_special_processing"
+    )
+    calls = {"count": 0, "completed": 1}
+
+    def provider(request):
+        calls["count"] += 1
+        return _provider_result(
+            platform_module,
+            request,
+            completed=calls["completed"],
+            incomplete=0,
+            previous=0,
+        )
+
+    bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=provider,
+        semantics_version=1,
+        include_in_collect=False,
+        refresh_on_dashboard=True,
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+
+    scheduled = service.collect_once(trigger_type="scheduled", now=current)
+    manual = service.collect_once(trigger_type="manual", now=current + timedelta(minutes=1))
+    assert scheduled.status in {"completed", "partial"}
+    assert manual.status in {"completed", "partial"}
+    assert calls["count"] == 0
+    assert store.load_card_provider_state("special_governance").last_success_at is None
+
+    first = service.dashboard(
+        period="month", current_user={"role": "admin"}, now=current + timedelta(minutes=2)
+    )
+    special = next(item for item in first["cards"] if item["card_code"] == "special_governance")
+    assert calls["count"] == 4
+    assert (special["total_count"], special["completed_count"], special["source"]) == (
+        1,
+        1,
+        "provider",
+    )
+
+    calls["completed"] = 3
+    second = service.dashboard(
+        period="month", current_user={"role": "admin"}, now=current + timedelta(minutes=3)
+    )
+    special = next(item for item in second["cards"] if item["card_code"] == "special_governance")
+    assert calls["count"] == 8
+    assert (special["total_count"], special["completed_count"]) == (3, 3)
+    assert (second.get("last_run") or {}).get("id") == (first.get("last_run") or {}).get("id")
+
+
+
+def test_refresh_card_provider_returns_provider_failed_without_raising():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+
+    def provider(_request):
+        raise RuntimeError("secret")
+
+    bound.value.register_card_provider(
+        card_code="special_governance", provider=provider, semantics_version=1
+    )
+    result = bound.value.refresh_card_provider(card_code="special_governance")
+    state = store.load_card_provider_state("special_governance")
+
+    assert result == {"ok": False, "refreshed": False, "reason": "provider_failed"}
+    assert state.provider_active is True
+    assert state.stale is True
+    assert "secret" not in str(state.last_error or "")

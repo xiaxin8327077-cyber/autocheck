@@ -642,6 +642,27 @@ class ReportNavigationService:
     def register_card_provider(self, **kwargs: Any):
         return self._card_providers.register(**kwargs)
 
+    def refresh_card_provider(
+        self,
+        *,
+        owner: str,
+        card_code: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Refresh one owned provider card without running full collect_once."""
+        current = now or beijing_now()
+        registration = self._card_providers.get_owned_registration(
+            owner=owner, card_code=card_code
+        )
+        if registration is None:
+            return {"ok": False, "refreshed": False, "reason": "not_registered"}
+        issue = self._collect_one_card_provider(
+            registration, current=current, run_id=None
+        )
+        if issue is None:
+            return {"ok": True, "refreshed": True}
+        return {"ok": False, "refreshed": False, "reason": "provider_failed"}
+
     def collect_once(
         self, *, trigger_type: str = "scheduled", now: datetime | None = None
     ) -> CollectionResult:
@@ -777,7 +798,9 @@ class ReportNavigationService:
                 current=current,
                 run_id=run_id,
             )
-            provider_issues = self._collect_card_providers(current=current, run_id=run_id)
+            provider_issues = self._collect_card_providers(
+                current=current, run_id=run_id
+            )
             failed_providers = len(provider_issues)
             release_status = "partial" if failed_steps or failed_providers else "completed"
             finished_at = current if now is not None else beijing_now()
@@ -946,6 +969,7 @@ class ReportNavigationService:
         if period not in PERIODS:
             raise ValueError("period must be week, month, quarter or year")
         current = now or beijing_now()
+        self._refresh_dashboard_providers(current=current)
         report_month = current.strftime("%Y-%m")
         processes = self.store.load_configuration(report_month)
         process_snapshots = self.store.load_process_snapshots(report_month)
@@ -1464,78 +1488,102 @@ class ReportNavigationService:
             )
 
     def _collect_card_providers(
-        self, *, current: datetime, run_id: int
+        self, *, current: datetime, run_id: int | None
     ) -> list[dict[str, str]]:
+        issues: list[dict[str, str]] = []
+        for registration in self._card_providers.active_registrations():
+            if not getattr(registration, "include_in_collect", True):
+                continue
+            issue = self._collect_one_card_provider(
+                registration, current=current, run_id=run_id
+            )
+            if issue is not None:
+                issues.append(issue)
+        return issues
+
+    def _refresh_dashboard_providers(self, *, current: datetime) -> None:
+        """Best-effort live refresh for providers opted into dashboard reads."""
+        for registration in self._card_providers.active_registrations():
+            if not getattr(registration, "refresh_on_dashboard", False):
+                continue
+            self._collect_one_card_provider(
+                registration, current=current, run_id=None
+            )
+
+    def _collect_one_card_provider(
+        self,
+        registration: Any,
+        *,
+        current: datetime,
+        run_id: int | None,
+    ) -> dict[str, str] | None:
         as_of = (
             current.replace(tzinfo=SHANGHAI_TZ)
             if current.tzinfo is None or current.utcoffset() is None
             else normalize_aware_datetime(current)
         )
-        issues: list[dict[str, str]] = []
-        for registration in self._card_providers.active_registrations():
-            try:
-                snapshots: list[CardSnapshot] = []
-                for period in PERIODS:
-                    start, end = period_bounds(period, current.date())
-                    previous_start, previous_end = previous_period_bounds(
-                        period, current.date()
-                    )
-                    request = CardStatisticsRequest(
-                        card_code=registration.card_code,
-                        period_kind=period,
-                        period_start=start.replace(tzinfo=SHANGHAI_TZ),
-                        period_end_exclusive=end.replace(tzinfo=SHANGHAI_TZ),
-                        previous_period_start=previous_start.replace(tzinfo=SHANGHAI_TZ),
-                        previous_period_end_exclusive=previous_end.replace(tzinfo=SHANGHAI_TZ),
-                        as_of=as_of,
-                    )
-                    result = validate_statistics_result(
-                        registration.provider(request),
-                        semantics_version=registration.semantics_version,
-                    )
-                    snapshots.append(
-                        _card_snapshot(
-                            period,
-                            registration.card_code,
-                            result.total,
-                            result.completed,
-                            result.incomplete,
-                            result.generated_at.replace(tzinfo=None),
-                            run_id,
-                            comparison_delta=result.completed - result.previous_completed,
-                        )
-                    )
-                self._card_providers.apply_if_current(
-                    registration,
-                    lambda: self.store.save_card_provider_success(
-                        registration.card_code,
-                        registration.owner,
-                        registration.token,
-                        registration.semantics_version,
-                        snapshots,
-                        attempted_at=current,
-                        period_key=period_storage_key("month", current.date()),
-                    ),
+        try:
+            snapshots: list[CardSnapshot] = []
+            for period in PERIODS:
+                start, end = period_bounds(period, current.date())
+                previous_start, previous_end = previous_period_bounds(
+                    period, current.date()
                 )
-            except Exception:
-                issue = {
-                    "card_code": registration.card_code,
-                    "error_message": "provider statistics failed",
-                }
-                recorded = self._card_providers.apply_if_current(
-                    registration,
-                    lambda: self.store.mark_card_provider_failure(
-                        registration.card_code,
-                        registration.owner,
-                        registration.token,
-                        registration.semantics_version,
-                        attempted_at=current,
-                        error_message="provider statistics failed",
-                    ),
+                request = CardStatisticsRequest(
+                    card_code=registration.card_code,
+                    period_kind=period,
+                    period_start=start.replace(tzinfo=SHANGHAI_TZ),
+                    period_end_exclusive=end.replace(tzinfo=SHANGHAI_TZ),
+                    previous_period_start=previous_start.replace(tzinfo=SHANGHAI_TZ),
+                    previous_period_end_exclusive=previous_end.replace(tzinfo=SHANGHAI_TZ),
+                    as_of=as_of,
                 )
-                if recorded:
-                    issues.append(issue)
-        return issues
+                result = validate_statistics_result(
+                    registration.provider(request),
+                    semantics_version=registration.semantics_version,
+                )
+                snapshots.append(
+                    _card_snapshot(
+                        period,
+                        registration.card_code,
+                        result.total,
+                        result.completed,
+                        result.incomplete,
+                        result.generated_at.replace(tzinfo=None),
+                        run_id,
+                        comparison_delta=result.completed - result.previous_completed,
+                    )
+                )
+            self._card_providers.apply_if_current(
+                registration,
+                lambda: self.store.save_card_provider_success(
+                    registration.card_code,
+                    registration.owner,
+                    registration.token,
+                    registration.semantics_version,
+                    snapshots,
+                    attempted_at=current,
+                    period_key=period_storage_key("month", current.date()),
+                ),
+            )
+            return None
+        except Exception:
+            issue = {
+                "card_code": registration.card_code,
+                "error_message": "provider statistics failed",
+            }
+            recorded = self._card_providers.apply_if_current(
+                registration,
+                lambda: self.store.mark_card_provider_failure(
+                    registration.card_code,
+                    registration.owner,
+                    registration.token,
+                    registration.semantics_version,
+                    attempted_at=current,
+                    error_message="provider statistics failed",
+                ),
+            )
+            return issue if recorded else None
 
 
 class ReportNavigationScheduler:
@@ -1631,7 +1679,7 @@ def _card_snapshot(
     completed: int,
     incomplete: int,
     evaluated_at: datetime,
-    run_id: int,
+    run_id: int | None,
     *,
     comparison_delta: int | None = None,
 ) -> CardSnapshot:

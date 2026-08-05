@@ -25,9 +25,19 @@ class Directory:
 
 
 class Reports:
+    def __init__(self):
+        self.refresh_calls = []
+        self.refresh_error = None
+
     def list_report_processes(self):
         from auto_check.app.report_navigation_platform import ReportProcess
         return (ReportProcess("pbc", "人行报送", 10, True),)
+
+    def refresh_card_provider(self, *, card_code):
+        self.refresh_calls.append(card_code)
+        if self.refresh_error is not None:
+            raise self.refresh_error
+        return {"ok": True, "refreshed": True}
 
 
 class MemoryStorage:
@@ -48,9 +58,11 @@ class MemoryStorage:
         current.update(changes); current["row_version"] += 1; self.audits.append(audit); return deepcopy(current)
 
 
-def _service():
+def _service(reports=None):
     from auto_check.modules.report_special_processing.service import SpecialProcessingService
-    return SpecialProcessingService(MemoryStorage(), Directory(), Reports(), now=lambda: NOW)
+    return SpecialProcessingService(
+        MemoryStorage(), Directory(), reports or Reports(), now=lambda: NOW
+    )
 
 
 def _payload(save_mode="record", **updates):
@@ -104,3 +116,59 @@ def test_detail_capabilities_match_frontend_resource_actions():
     admin = service.get(record["id"], {"id": "9", "role": "admin"})
     assert admin["can_edit"] is True
     assert admin["can_admin"] is True
+
+
+def test_writes_best_effort_refresh_owned_special_governance_card_only():
+    reports = Reports()
+    service = _service(reports)
+    actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+    admin = {"id": "9", "username": "admin", "display_name": "管理员", "role": "admin"}
+
+    created = service.create(_payload(), actor, request_id="req-create")
+    updated = service.update(
+        created["id"], {**_payload(), "row_version": created["row_version"]}, actor, request_id="req-update"
+    )
+    processing = service.change_status(
+        updated["id"],
+        {"target_status": "processing", "row_version": updated["row_version"]},
+        {"id": "2", "role": "user"},
+        request_id="req-status",
+    )
+    completed = service.change_status(
+        processing["id"],
+        {"target_status": "completed", "row_version": processing["row_version"]},
+        actor,
+        request_id="req-complete",
+    )
+    reopened = service.reopen(
+        completed["id"],
+        {"row_version": completed["row_version"], "reason": "补充口径"},
+        admin,
+        request_id="req-reopen",
+    )
+    voided = service.void(
+        reopened["id"],
+        {"row_version": reopened["row_version"], "reason": "口径失效"},
+        admin,
+        request_id="req-void",
+    )
+
+    assert voided["status"] == "voided"
+    assert reports.refresh_calls == ["special_governance"] * 6
+
+
+def test_refresh_failure_does_not_roll_back_successful_write():
+    reports = Reports()
+    reports.refresh_error = RuntimeError("refresh unavailable")
+    service = _service(reports)
+
+    record = service.create(
+        _payload(),
+        {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"},
+        request_id="req",
+    )
+
+    assert record["id"] == 1
+    assert record["status"] == "pending"
+    assert service.storage.get(1)["status"] == "pending"
+    assert reports.refresh_calls == ["special_governance"]

@@ -24,6 +24,9 @@ export function dataOf(response, fallback = null) {
 export function defaultPeriod() {
   const now = new Date();
   const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth(); // 0-based current month in local calendar via UTC fields of shifted date
+  const lastDayPrevMonth = new Date(Date.UTC(year, month, 0));
+  return lastDayPrevMonth.toISOString().slice(0, 10);
 }
 
