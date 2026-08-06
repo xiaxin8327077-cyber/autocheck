@@ -5,10 +5,10 @@
 ## 后端边界
 
 - API：`/api/modules/report-special-processing`，请求体最大 1 MiB。
-- 权限：普通登录用户可查看和创建；创建人或处理人可编辑未完成记录；管理员可编辑全部未完成记录、作废和重开。
-- 状态：`draft → pending → processing/completed`，`processing → pending/completed`；管理员可将 `pending/processing` 作废，将 `completed/voided` 重开为 `pending`。
-- 数据：主表与涉及报表、关联报送、审计日志表由独立迁移管理，无 DELETE 记录接口，停用模块不删除数据。
-- 关联报送：支持多选；主表保留首项编码，名称快照为顿号拼接；页签筛选与按报送统计走关联表。
+- 权限：普通登录用户可查看和创建；创建人或处理人可编辑未完成记录；管理员可编辑全部未完成记录、作废、重开和物理删除。
+- 状态：`draft → pending → processing/completed`，`processing → pending/completed`；管理员可将 `pending/processing` 作废，将 `completed/voided` 重开为 `pending`；管理员可对任意状态记录物理删除（二次确认，不可恢复）。
+- 数据：主表与涉及报表、关联报送、审计日志表由独立迁移管理；删除接口会同步清除该记录的明细与审计；停用模块不删除数据。
+- 关联报送：支持多选；主表保留首项编码，名称快照为分号拼接；页签筛选与按报送统计走关联表；台账按报送逐行展示。
 - 并发：所有修改携带 `row_version`，冲突返回 409；业务写入和审计处于同一数据库事务。
 - 目录：处理人和报送流程分别来自 owner-bound `platform.user_directory` v1 与 `platform.report_navigation` v1，不在模块硬编码人员或七类报送。
 - 统计：按平台传入的 Asia/Shanghai 左闭右开周期，以 `special_handling_at` 汇总；草稿和作废排除。

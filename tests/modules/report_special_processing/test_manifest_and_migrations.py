@@ -27,8 +27,8 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert "关联报送支持多选" in manifest.release_notes.items
-    assert "支持按筛选结果导出 Excel" in manifest.release_notes.items
+    assert "管理员可删除特殊处理记录" in manifest.release_notes.items
+    assert manifest.version == "1.2.1"
 
 
 def test_module_is_discovered_without_central_registration():

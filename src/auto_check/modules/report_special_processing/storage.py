@@ -26,7 +26,7 @@ from sqlalchemy import (
     update,
 )
 
-from .contracts import PageQuery, VersionConflictError
+from .contracts import PageQuery, RecordNotFoundError, VersionConflictError
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -251,6 +251,24 @@ class SpecialProcessingStorage:
             self._write_audit(connection, record_id, current["record_no"], audit)
         return current
 
+    def delete_record(self, record_id: int, row_version: int) -> None:
+        with self.database.transaction() as connection:
+            current = self._get_with_connection(connection, record_id)
+            if current is None:
+                raise RecordNotFoundError()
+            if int(current.get("row_version") or 0) != int(row_version):
+                raise VersionConflictError()
+            connection.execute(delete(REPORTS).where(REPORTS.c.record_id == record_id))
+            connection.execute(delete(PROCESSES).where(PROCESSES.c.record_id == record_id))
+            connection.execute(delete(AUDITS).where(AUDITS.c.record_id == record_id))
+            result = connection.execute(
+                delete(RECORDS).where(
+                    and_(RECORDS.c.id == record_id, RECORDS.c.row_version == row_version)
+                )
+            )
+            if result.rowcount != 1:
+                raise VersionConflictError()
+
     def list(self, query: PageQuery) -> dict[str, Any]:
         conditions = self._conditions(query.filters)
         statement = select(RECORDS)
@@ -362,11 +380,15 @@ class SpecialProcessingStorage:
             rows = _rows(connection.execute(statement))
         return {str(row["status"]): int(row["count"]) for row in rows}
 
-    def summary_for_report_period(self, period: date) -> tuple[dict[str, int], list[dict[str, Any]]]:
+    def summary_for_report_period(self, period: date) -> tuple[dict[str, int], list[dict[str, Any]], int]:
         counts_statement = (
             select(RECORDS.c.status, func.count().label("count"))
             .where(RECORDS.c.report_period == period)
             .group_by(RECORDS.c.status)
+        )
+        total_statement = (
+            select(func.count().label("record_total"))
+            .where(RECORDS.c.report_period == period)
         )
         process_statement = (
             select(
@@ -387,6 +409,7 @@ class SpecialProcessingStorage:
         )
         with self.database.connect() as connection:
             counts_rows = _rows(connection.execute(counts_statement))
+            total_row = _row(connection.execute(total_statement)) or {}
             process_rows = _rows(connection.execute(process_statement))
         return (
             {str(row["status"]): int(row["count"]) for row in counts_rows},
@@ -398,6 +421,7 @@ class SpecialProcessingStorage:
                 }
                 for row in process_rows
             ],
+            int(total_row.get("record_total") or 0),
         )
 
     def _get_with_connection(self, connection: Any, record_id: int) -> dict[str, Any] | None:
@@ -517,7 +541,7 @@ class SpecialProcessingStorage:
             record["report_processes"] = processes
             record["report_process_codes"] = [item["code"] for item in processes]
             if processes:
-                record["report_process_name_snapshot"] = "、".join(
+                record["report_process_name_snapshot"] = "；".join(
                     item["name"] for item in processes if item["name"]
                 ) or record.get("report_process_name_snapshot")
 

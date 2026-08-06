@@ -7637,6 +7637,16 @@ def test_system_prompt_supports_the_custom_date_component():
     assert 'const dialogEl = modal.querySelector(".modal-prompt");' in prompt_body
     assert "const focusTargetEl = isDate ? dialogEl : activeInputEl;" in prompt_body
     assert "setTimeout(() => focusTargetEl?.focus(), 0);" in prompt_body
+    assert "options.maxlength" in prompt_body
+    assert "inputEl.maxLength = Number(options.maxlength);" in prompt_body
+    assert 'inputEl.removeAttribute("maxLength");' in prompt_body
+    assert "const submit = () => {" in prompt_body
+    assert "options.required" in prompt_body
+    assert "options.onInvalid" in prompt_body
+    assert "prompt-required-hint" in prompt_body
+    assert 'activeInputEl.setAttribute("aria-invalid", "true")' in prompt_body
+    assert "okBtn.onclick = () => submit();" in prompt_body
+    assert "cleanup(activeInputEl.value);" not in prompt_body
     assert "setTimeout(() => activeInputEl.focus(), 0);" not in prompt_body
     assert "closeCustomDatePicker(dateInputEl);" in prompt_body
     assert 'class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1"' in html

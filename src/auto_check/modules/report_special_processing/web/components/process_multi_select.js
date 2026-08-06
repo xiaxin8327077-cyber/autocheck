@@ -4,7 +4,7 @@ function selectedLabel(options, selected) {
   const names = options
     .filter((item) => selected.has(String(item.code)))
     .map((item) => item.name || item.code);
-  return names.length ? names.join("、") : "请选择关联报送";
+  return names.length ? names.join("；") : "请选择关联报送";
 }
 
 export function createProcessMultiSelect(documentRef, {

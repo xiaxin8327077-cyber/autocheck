@@ -358,6 +358,7 @@
         user: state.platform.user,
         notify: state.platform.notify,
         confirm: state.platform.confirm,
+        prompt: state.platform.prompt,
         navigate: async (route) => {
           const routeName = String(route || "");
           const frame = lifecycleState.frame;

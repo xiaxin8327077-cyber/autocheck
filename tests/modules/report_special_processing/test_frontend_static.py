@@ -24,7 +24,7 @@ def test_frontend_uses_native_module_lifecycle_and_host_context_only():
 
     for lifecycle in ("mount", "activate", "deactivate", "unmount"):
         assert f"export function {lifecycle}" in source
-    for capability in ("context.root", "context.api", "context.user", "context.notify", "context.confirm", "context.navigate"):
+    for capability in ("context.root", "context.api", "context.user", "context.notify", "context.confirm", "context.prompt", "context.navigate"):
         assert capability in source
     assert "window." not in "\n".join(read(path) for path in ("index.js", "api.js", "state.js"))
     assert "AbortController" in read("api.js")
@@ -69,6 +69,9 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
     assert "report_processes.map" in source or "tabItems" in source
     assert 'name: "全部"' in source or 'text: "全部"' in source or '"全部"' in source
     assert "ALL_PROCESS" in source
+    assert "record_total" in read("pages/ledger.js")
+    assert "counts.values()].reduce" not in read("pages/ledger.js")
+    assert "state.summary.record_total == null" in read("pages/ledger.js")
     assert "users.map" in source
     assert 'role: "tablist"' in source
     assert 'role: "tab"' in source
@@ -99,6 +102,15 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
     assert "流程状态" not in drawer
     assert "handleRowAction" in read("pages/ledger.js")
     assert "askReason" in read("pages/ledger.js")
+    assert 'await prompt("作废原因"' in read("pages/ledger.js")
+    assert "maxlength: maxLength" in read("pages/ledger.js")
+    assert "const maxLength = 20" in read("pages/ledger.js")
+    assert "required: true" in read("pages/ledger.js")
+    assert 'requiredMessage: "请输入作废原因"' in read("pages/ledger.js")
+    assert "onInvalid:" not in read("pages/ledger.js")
+    assert "defaultView?.prompt" not in read("pages/ledger.js")
+    assert "prompt: context.prompt" in read("index.js")
+    assert 'typeof context.prompt !== "function"' in read("index.js")
     assert "处理人" in source
     assert "状态" in source
     assert "操作" in source
@@ -190,10 +202,15 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert 'footerButtons.push(actionButton(documentRef, "保存草稿"' in source
     assert "SUMMARY_MAX_LENGTH = 25" in source
     assert "validateForm" in source
-    assert "showSummaryHint" in source
+    assert "showFormHint" in source
+    assert "formatFieldMessage" in source
     assert "rsp-field-hint" in source
     assert "rsp-modal-actions-right" in source
     assert "处理摘要最多支持" in source
+    assert "关联报送" in source
+    assert "errorBox" not in source
+    assert "rsp-form-error" not in source
+    assert "showSummaryHint" not in source
     assert 'maxlength: String(SUMMARY_MAX_LENGTH)' in source
     assert 'aria-label": "处理摘要"' in source
     assert "rsp-field-hint" in read("styles.css")
@@ -223,7 +240,7 @@ def test_ledger_row_actions_include_status_operations():
     ledger_source = read("pages/ledger.js")
     css = read("styles.css")
 
-    for label in ("编辑", "查看", "完成", "作废"):
+    for label in ("编辑", "查看", "完成", "作废", "删除"):
         assert label in table_source
     for removed in ("开始处理", "转为待处理", "重开"):
         assert removed not in table_source
@@ -233,7 +250,14 @@ def test_ledger_row_actions_include_status_operations():
     assert 'onClick: () => onOpen(record, row)' not in table_source
     assert 'if (event.key === "Enter") onOpen(record, row)' not in table_source
     assert "handleRowAction" in ledger_source
-    assert "askReason" in ledger_source
+    assert 'await confirm("确认完成"' in ledger_source or 'confirm("确认完成"' in ledger_source
+    assert 'confirm("确认作废"' in ledger_source
+    assert 'confirm("确认删除"' in ledger_source
+    assert "删除后不可恢复" in ledger_source
+    assert "deleteRecord" in read("api.js")
+    assert 'action === "delete"' in ledger_source
+    assert 'confirm("确认将该记录标记为已完成吗？")' not in ledger_source
+    assert 'confirm("确认作废该记录吗？作废后仍保留完整留痕。")' not in ledger_source
     assert 'action === "complete"' in ledger_source
     assert 'action === "start"' not in ledger_source
     assert 'action === "pend"' not in ledger_source
@@ -243,12 +267,13 @@ def test_ledger_row_actions_include_status_operations():
     assert ".rsp-row-actions-inner" in css
     assert "rsp-text-action-danger" in css
     assert "rsp-text-action-success" in css
-    assert 'width: 11%' in css
+    assert 'width: 14%' in css
     assert "padding-left: 28px" in css
 
 
 def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     table_source = read("components/record_table.js")
+    ledger_source = read("pages/ledger.js")
     css = read("styles.css")
     scope = '.auto-check-module[data-module="report_special_processing"]'
 
@@ -261,14 +286,46 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert 'replace("T", " ")' in table_source
     assert "reportNamesCell" in table_source
     assert "rsp-report-name-line" in table_source
+    assert "rsp-report-names-block" in table_source
     assert "summaryCell" in table_source
     assert "rsp-summary-text" in table_source
-    assert "normalizeProcessNames" in table_source
-    assert 'replace(/\\//g, "、")' in table_source
-    assert 'names.join("、")' in read("components/process_multi_select.js")
-    assert "max-height: calc(13px * 1.4 * 3)" in css
+    assert "processNameList" in table_source
+    assert "displayWidth" in table_source
+    assert "compareByDisplayWidth" in table_source
+    assert "code <= 0x00ff" in table_source
+    assert ".sort(compareByDisplayWidth)" in table_source
+    assert "left.code === focus" not in table_source
+    assert "createRecordTable(documentRef, state.records, {\n        selectedId: state.drawer?.record?.id,\n        activeProcessCode:" not in ledger_source
+    assert "rsp-process-name-line" in table_source
+    assert "normalizeProcessNames" not in table_source
+    assert 'replace(/\\//g, "、")' not in table_source
+    assert 'names.join("；")' in read("components/process_multi_select.js")
+    assert "max-height: calc(13px * 1.55 * 3)" in css
+    assert "const maxLines = 7" in table_source
+    assert "names.length > 3" in table_source
+    assert "rsp-report-names-block" in table_source
+    assert ".rsp-report-names-block.is-compact" in css
     assert "${name}等" in table_source
+    assert "names.slice(0, 3)" not in table_source.split("function processNamesCell")[1].split("function summaryCell")[0]
+    assert "${name}等" not in table_source.split("function processNamesCell")[1].split("function summaryCell")[0]
+    assert "rsp-process-names-block" in table_source
+    assert "is-compact" in table_source
+    assert "names.length > 3" in table_source
+    assert "fitProcessNameNodes" not in table_source
+    assert "is-compact" in css
+    assert "font-size: 12px" in css
+    assert "scheduleProcessNameFit" not in table_source
+    assert "rsp-cell-fit" not in table_source
     assert '(record.reports || []).join("、")' not in table_source
+    assert '["处理摘要", "关联报送", "涉及报表", "特殊处理时间", "处理人", "状态", "操作"]' in table_source
+    assert "th:nth-child(1) { width: 22%; }" in css
+    assert "th:nth-child(2) { width: 13%; }" in css
+    assert "td.rsp-process-names" in css
+    assert "td.rsp-report-names" in css
+    assert "td.rsp-summary" in css
+    assert "rsp-process-name-line" in css
+    assert "text-align: center" in css
+    assert f"{scope} .rsp-ledger-table th" in css
 
     assert f"{scope} .rsp-filters" in css
     assert "display: flex" in css
@@ -280,20 +337,13 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "flex: 1 1 auto" in css
     assert "grid-template-rows: minmax(0, 1fr)" in css
     assert "grid-template-rows: auto auto minmax(0, 1fr) auto" in css
-    assert "rsp-cell-fit" in css
     assert "rsp-name-line" not in css
     assert "rsp-name-more" not in css
     assert "rsp-cell-clamp" not in css
     assert "-webkit-line-clamp" not in css
-    assert "fitProcessNameNodes" in table_source
-    assert "scheduleProcessNameFit" in table_source
-    assert "boxHeight" in table_source
-    assert "max-height: calc(13px * 1.4 * 3)" in css
     assert "scrollbar-width: thin" in css
     assert "processCatalog:" not in read("pages/ledger.js")
     assert "td.rsp-process-names" in css
-    assert "overflow-wrap: anywhere" in css
-    assert "boxHeight" in table_source
     assert 'cellNode.style.textAlign = "left"' not in table_source
     assert "text-align: left !important" not in css
     assert "pageSize: 10" in read("state.js")

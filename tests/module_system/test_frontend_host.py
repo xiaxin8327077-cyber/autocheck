@@ -29,6 +29,7 @@ def test_module_host_has_stable_lifecycle_contract():
         "instance.activate(route)",
         "instance.deactivate()",
         "instance.unmount()",
+        "prompt: state.platform.prompt",
     ]:
         assert fragment in script
 
@@ -76,6 +77,7 @@ def test_legacy_app_exposes_only_explicit_platform_bridge():
     assert "user: () => ({ ...authState.user })" in script
     assert "notify: showToast" in script
     assert "confirm: showConfirm" in script
+    assert "prompt: showPrompt" in script
     assert "legacyNavigate: switchPage" in script
 
 

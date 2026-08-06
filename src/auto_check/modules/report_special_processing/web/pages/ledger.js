@@ -7,7 +7,7 @@ import { createRecordDrawer } from "../components/record_drawer.js";
 const ALL_PROCESS_CODE = "";
 const ALL_PROCESS_TAB = Object.freeze({ code: ALL_PROCESS_CODE, name: "全部" });
 
-export function createLedgerPage({ root, api, state, user, notify, confirm, navigate }) {
+export function createLedgerPage({ root, api, state, user, notify, confirm, prompt, navigate }) {
   const documentRef = root.ownerDocument;
 
   async function loadCatalog() {
@@ -114,24 +114,29 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     }
   }
 
-  function askReason(message) {
-    const value = documentRef.defaultView?.prompt?.(message, "");
+  async function askReason(message) {
+    const maxLength = 20;
+    const value = await prompt("作废原因", message, {
+      placeholder: `请输入作废原因（最多${maxLength}字）`,
+      maxlength: maxLength,
+      required: true,
+      requiredMessage: "请输入作废原因",
+    });
     if (value == null) return null;
     const reason = String(value).trim();
-    if (!reason) {
-      notify("请输入操作原因", "warning");
-      return null;
-    }
+    if (!reason) return null;
+    if (reason.length > maxLength) return null;
     return reason;
   }
 
     async function handleRowAction(record, action) {
-    const run = async (operation, successMessage) => {
+    const run = async (operation, successMessage, { refreshDetail = true } = {}) => {
       try {
         await operation();
         notify(successMessage, "success");
         if (state.drawer?.record?.id && String(state.drawer.record.id) === String(record.id)) {
-          await refreshRecord(record.id);
+          if (refreshDetail) await refreshRecord(record.id);
+          else closeDrawer();
         }
         await loadLedger();
       } catch (error) {
@@ -144,7 +149,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     };
 
     if (action === "complete") {
-      if (!await confirm("确认将该记录标记为已完成吗？")) return;
+      if (!await confirm("确认完成", "确认将该记录标记为已完成吗？")) return;
       await run(
         () => withLatestVersion((latest) => api.changeStatus(latest.id, {
           target_status: "completed",
@@ -156,15 +161,26 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
       return;
     }
     if (action === "void") {
-      const reason = askReason("请输入作废原因");
+      const reason = await askReason("请输入作废原因（最多20字）");
       if (!reason) return;
-      if (!await confirm("确认作废该记录吗？作废后仍保留完整留痕。")) return;
+      if (!await confirm("确认作废", "确认作废该记录吗？作废后仍保留完整留痕。", { tone: "danger" })) return;
       await run(
         () => withLatestVersion((latest) => api.voidRecord(latest.id, {
           row_version: latest.row_version,
           reason,
         })),
         "记录已作废",
+      );
+      return;
+    }
+    if (action === "delete") {
+      if (!await confirm("确认删除", "确认删除该记录吗？删除后不可恢复。", { tone: "danger" })) return;
+      await run(
+        () => withLatestVersion((latest) => api.deleteRecord(latest.id, {
+          row_version: latest.row_version,
+        })),
+        "记录已删除",
+        { refreshDetail: false },
       );
     }
   }
@@ -178,7 +194,15 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
 
   function createTabs({ title, actions }) {
     const counts = new Map((state.summary.by_report_process || []).map((item) => [item.code, item.effective_count]));
-    const allCount = [...counts.values()].reduce((sum, value) => sum + Number(value || 0), 0);
+    const allCount = state.summary.record_total == null
+      ? (
+        Number(state.summary.draft || 0)
+        + Number(state.summary.pending || 0)
+        + Number(state.summary.processing || 0)
+        + Number(state.summary.completed || 0)
+        + Number(state.summary.voided || 0)
+      )
+      : Number(state.summary.record_total) || 0;
     const tabs = element(documentRef, "div", { className: "rsp-report-tabs", role: "tablist", "aria-label": "关联报送" });
     const report_processes = (state.catalog?.report_processes || []).filter((item) => item.active !== false);
     const tabItems = [ALL_PROCESS_TAB, ...report_processes];
@@ -319,8 +343,8 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
         notify,
         confirm,
         onClose: closeDrawer,
-        onSaved: async (saved) => {
-          if (saved?.id) await refreshRecord(saved.id);
+        onSaved: async () => {
+          closeDrawer();
           await loadLedger();
         },
         onConflict: async () => {

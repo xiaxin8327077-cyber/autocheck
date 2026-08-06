@@ -7,6 +7,7 @@ let instance = null;
 export function mount(context) {
   if (!context?.root || typeof context.api !== "function" || typeof context.user !== "function"
       || typeof context.notify !== "function" || typeof context.confirm !== "function"
+      || typeof context.prompt !== "function"
       || typeof context.navigate !== "function") {
     throw new Error("报表特殊处理模块缺少宿主能力");
   }
@@ -23,6 +24,7 @@ export function mount(context) {
       user: context.user(),
       notify: context.notify,
       confirm: context.confirm,
+      prompt: context.prompt,
       navigate: context.navigate,
     }),
   };

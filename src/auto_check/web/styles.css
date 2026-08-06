@@ -5447,11 +5447,21 @@ input:focus, select:focus {
   width: 400px;
 }
 
+.modal-confirm:not(.modal-prompt) {
+  max-height: none;
+}
+
+.modal-confirm:not(.modal-prompt) .modal-body {
+  flex: 0 0 auto;
+  padding: 20px 20px 8px;
+}
+
 .modal-confirm .modal-body {
   padding: 24px 20px;
 }
 
 .modal-confirm .modal-body p {
+  margin: 0;
   font-size: 14px;
   color: var(--on-surface);
   line-height: 1.6;
@@ -5479,6 +5489,14 @@ input:focus, select:focus {
 .prompt-input:focus {
   border-color: var(--secondary);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
+}
+
+.modal-prompt #promptMessage.prompt-required-hint {
+  color: var(--error, #dc2626);
+}
+
+.prompt-input[aria-invalid="true"] {
+  border-color: var(--error, #dc2626);
 }
 
 .prompt-date-control {

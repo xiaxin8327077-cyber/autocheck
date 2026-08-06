@@ -21,57 +21,60 @@ function cell(documentRef, text, className = "") {
   return element(documentRef, "td", { className, text: text || "—", title: text || "" });
 }
 
-function normalizeProcessNames(text) {
-  return String(text || "").replace(/\//g, "、");
-}
-
-function processNamesCell(documentRef, text) {
-  const value = normalizeProcessNames(text);
-  const display = value || "—";
-  return element(documentRef, "td", { className: "rsp-process-names", title: value }, [
-    element(documentRef, "span", { className: "rsp-cell-fit", text: display }),
-  ]);
-}
-
-function fitProcessNameNodes(root) {
-  const nodes = root.querySelectorAll?.(".rsp-process-names .rsp-cell-fit") || [];
-  const maxSize = 13;
-  const minSize = 7;
-  const lineHeight = 1.4;
-  const lines = 3;
-  const boxHeight = maxSize * lineHeight * lines;
-  nodes.forEach((node) => {
-    node.style.lineHeight = String(lineHeight);
-    node.style.maxHeight = `${boxHeight}px`;
-    node.style.fontSize = `${maxSize}px`;
-    if (node.scrollHeight <= boxHeight + 1) return;
-    let low = minSize;
-    let high = maxSize;
-    while (high - low > 0.25) {
-      const mid = (low + high) / 2;
-      node.style.fontSize = `${mid}px`;
-      if (node.scrollHeight <= boxHeight + 1) low = mid;
-      else high = mid;
-    }
-    let size = low;
-    node.style.fontSize = `${size}px`;
-    while (size > 5.5 && node.scrollHeight > boxHeight + 1) {
-      size -= 0.25;
-      node.style.fontSize = `${size}px`;
-    }
-  });
-}
-
-function scheduleProcessNameFit(wrap) {
-  const run = () => fitProcessNameNodes(wrap);
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
-  else setTimeout(run, 0);
-  if (typeof ResizeObserver === "function") {
-    if (wrap._rspFitObserver) wrap._rspFitObserver.disconnect();
-    const observer = new ResizeObserver(() => run());
-    wrap._rspFitObserver = observer;
-    observer.observe(wrap);
+function displayWidth(text) {
+  let width = 0;
+  for (const char of String(text || "")) {
+    const code = char.codePointAt(0) || 0;
+    // 半角/ASCII 按 1，全角汉字等按 2，贴近视觉宽度
+    width += code <= 0x00ff ? 1 : 2;
   }
+  return width;
+}
+
+function compareByDisplayWidth(left, right) {
+  const widthDiff = displayWidth(left) - displayWidth(right);
+  if (widthDiff !== 0) return widthDiff;
+  return String(left).localeCompare(String(right), "zh-CN");
+}
+
+function processNameList(record, activeProcessCode = "") {
+  const items = Array.isArray(record?.report_processes) ? record.report_processes : [];
+  const ordered = items
+    .map((item) => ({
+      code: String(item?.code || "").trim(),
+      name: String(item?.name || "").trim(),
+    }))
+    .filter((item) => item.name);
+  if (ordered.length) {
+    ordered.sort((left, right) => compareByDisplayWidth(left.name, right.name));
+    return ordered.map((item) => item.name);
+  }
+  const snapshot = String(record?.report_process_name_snapshot || record?.report_process_name || "").trim();
+  if (!snapshot) return [];
+  if (snapshot.includes("；")) {
+    return snapshot
+      .split("；")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .sort(compareByDisplayWidth);
+  }
+  return [snapshot];
+}
+
+function processNamesCell(documentRef, record) {
+  const names = processNameList(record);
+  const fullText = names.join("；");
+  if (!names.length) {
+    return element(documentRef, "td", { className: "rsp-process-names", text: "—", title: "" });
+  }
+  const visible = names.map((name) => element(documentRef, "div", {
+    className: "rsp-process-name-line",
+    text: name,
+  }));
+  const block = element(documentRef, "div", {
+    className: names.length > 3 ? "rsp-process-names-block is-compact" : "rsp-process-names-block",
+  }, visible);
+  return element(documentRef, "td", { className: "rsp-process-names", title: fullText }, [block]);
 }
 
 function summaryCell(documentRef, text) {
@@ -85,7 +88,8 @@ function reportNameList(reports) {
   return (reports || [])
     .map((item) => (typeof item === "string" ? item : item?.report_name || item?.name || ""))
     .map((name) => String(name || "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort(compareByDisplayWidth);
 }
 
 function reportNamesCell(documentRef, reports) {
@@ -94,11 +98,16 @@ function reportNamesCell(documentRef, reports) {
   if (!names.length) {
     return element(documentRef, "td", { className: "rsp-report-names", text: "—", title: "" });
   }
-  const visible = names.slice(0, 3).map((name, index) => {
-    const text = index === 2 && names.length > 3 ? `${name}等` : name;
+  const maxLines = 7;
+  const visibleNames = names.slice(0, maxLines);
+  const visible = visibleNames.map((name, index) => {
+    const text = index === maxLines - 1 && names.length > maxLines ? `${name}等` : name;
     return element(documentRef, "div", { className: "rsp-report-name-line", text });
   });
-  return element(documentRef, "td", { className: "rsp-report-names", title: fullText }, visible);
+  const block = element(documentRef, "div", {
+    className: names.length > 3 ? "rsp-report-names-block is-compact" : "rsp-report-names-block",
+  }, visible);
+  return element(documentRef, "td", { className: "rsp-report-names", title: fullText }, [block]);
 }
 
 function actionLink(documentRef, text, onClick, className = "rsp-text-action") {
@@ -128,6 +137,9 @@ function buildRowActions(documentRef, record, { onOpen, onAction }) {
   if (record.can_admin && ["draft", "pending", "processing"].includes(record.status)) {
     actions.push(actionLink(documentRef, "作废", () => onAction?.(record, "void"), "rsp-text-action rsp-text-action-danger"));
   }
+  if (record.can_admin) {
+    actions.push(actionLink(documentRef, "删除", () => onAction?.(record, "delete"), "rsp-text-action rsp-text-action-danger"));
+  }
   return element(documentRef, "td", { className: "rsp-row-actions" }, [
     element(documentRef, "div", { className: "rsp-row-actions-inner" }, actions),
   ]);
@@ -135,7 +147,7 @@ function buildRowActions(documentRef, record, { onOpen, onAction }) {
 
 export function createRecordTable(documentRef, records, { selectedId, onOpen, onAction }) {
   const head = element(documentRef, "thead", {}, [
-    element(documentRef, "tr", {}, ["关联报送", "涉及报表", "处理摘要", "特殊处理时间", "处理人", "状态", "操作"].map((label) => element(documentRef, "th", { text: label, scope: "col" }))),
+    element(documentRef, "tr", {}, ["处理摘要", "关联报送", "涉及报表", "特殊处理时间", "处理人", "状态", "操作"].map((label) => element(documentRef, "th", { text: label, scope: "col" }))),
   ]);
   const body = element(documentRef, "tbody");
   records.forEach((record) => {
@@ -145,9 +157,9 @@ export function createRecordTable(documentRef, records, { selectedId, onOpen, on
       dataset: { recordId: String(record.id) },
       "aria-label": `${record.record_no || "记录"}，${record.summary || "未填写摘要"}`,
     }, [
-      processNamesCell(documentRef, record.report_process_name_snapshot || record.report_process_name),
-      reportNamesCell(documentRef, record.reports),
       summaryCell(documentRef, record.summary),
+      processNamesCell(documentRef, record),
+      reportNamesCell(documentRef, record.reports),
       cell(documentRef, handledAt),
       cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),
       element(documentRef, "td", {}, [element(documentRef, "span", { className: `rsp-status rsp-status-${record.status}`, text: STATUS_LABELS[record.status] || record.status })]),
@@ -169,6 +181,5 @@ export function createRecordTable(documentRef, records, { selectedId, onOpen, on
     );
   }
   const wrap = element(documentRef, "div", { className: "rsp-table-wrap" }, [table]);
-  scheduleProcessNameFit(wrap);
   return wrap;
 }

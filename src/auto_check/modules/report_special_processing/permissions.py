@@ -41,3 +41,7 @@ def can_void(user: Mapping[str, Any] | None) -> bool:
 
 def can_reopen(user: Mapping[str, Any] | None) -> bool:
     return is_admin(user)
+
+
+def can_delete(user: Mapping[str, Any] | None) -> bool:
+    return is_admin(user)

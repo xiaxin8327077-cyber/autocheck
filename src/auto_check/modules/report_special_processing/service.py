@@ -14,7 +14,7 @@ from .contracts import (
     STATUS_LABELS,
     ValidationError,
 )
-from .permissions import can_edit, can_reopen, can_transition, can_void
+from .permissions import can_delete, can_edit, can_reopen, can_transition, can_void
 from .statistics import status_metrics
 from .export_workbook import MAX_EXPORT_ROWS, build_export_xlsx
 from .validator import (
@@ -283,7 +283,7 @@ class SpecialProcessingService:
         current = self._record(record_id)
         if current["status"] not in {"draft", "pending", "processing"}:
             raise InvalidTransitionError()
-        version, reason = validate_action(payload, require_reason=True)
+        version, reason = validate_action(payload, require_reason=True, reason_max_length=20)
         actor = self._user(current_user.get("id")); now = self._now()
         changes = {
             "status": "voided", "voided_at": now, "voided_by_user_id": actor.id,
@@ -310,6 +310,17 @@ class SpecialProcessingService:
         voided = self.storage.update_status(record_id, version, changes, audit)
         self._refresh_special_governance_stats()
         return voided
+
+    def delete(
+        self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
+    ) -> dict[str, Any]:
+        if not can_delete(current_user):
+            raise PermissionDeniedError()
+        current = self._record(record_id)
+        version, _reason = validate_action(payload, require_reason=False)
+        self.storage.delete_record(record_id, version)
+        self._refresh_special_governance_stats()
+        return {"id": record_id, "deleted": True, "record_no": current.get("record_no")}
 
     def reopen(
         self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
@@ -355,7 +366,7 @@ class SpecialProcessingService:
             period = date.fromisoformat(raw_period) if raw_period else self._now().date()
         except ValueError:
             raise ValidationError(fields={"report_period": "日期格式无效"}) from None
-        counts, by_process = self.storage.summary_for_report_period(period)
+        counts, by_process, record_total = self.storage.summary_for_report_period(period)
         metrics = status_metrics(counts)
         return {
             "period": period.isoformat(),
@@ -364,6 +375,7 @@ class SpecialProcessingService:
             "pending": int(counts.get("pending", 0)),
             "processing": int(counts.get("processing", 0)),
             "voided": int(counts.get("voided", 0)),
+            "record_total": int(record_total),
             "by_report_process": by_process,
             "generated_at": self._now(),
         }
@@ -429,7 +441,7 @@ class SpecialProcessingService:
     def _record_values(value: Any, processes: Sequence[Mapping[str, str]] | tuple[dict[str, str], ...], handler: Any) -> dict[str, Any]:
         script = value.processing_script
         primary = processes[0]
-        names = "、".join(item["name"] for item in processes)
+        names = "；".join(item["name"] for item in processes)
         return {
             "report_process_code": primary["code"],
             "report_process_name_snapshot": names[:500],
@@ -466,11 +478,10 @@ class SpecialProcessingService:
             return text.replace("T", " ").replace("+08:00", "").strip()
         if isinstance(value, (list, tuple)):
             names = [str(item).strip() for item in value if str(item).strip()]
-            text = "、".join(names) if names else "（空）"
+            separator = "；" if field == "report_process_name_snapshot" else "、"
+            text = separator.join(names) if names else "（空）"
         else:
             text = str(value).strip() or "（空）"
-        if field == "report_process_name_snapshot":
-            text = text.replace("/", "、")
         if len(text) > 40:
             return f"{text[:40]}…"
         return text

@@ -8770,12 +8770,23 @@ function showConfirm(title, message, options = {}) {
     const messageEl = document.getElementById("confirmMessage");
     const okBtn = document.getElementById("confirmOk");
     const cancelBtn = document.getElementById("confirmCancel");
+    let resolvedTitle = title;
+    let resolvedMessage = message;
+    let resolvedOptions = options;
+    if (typeof resolvedMessage === "object" && resolvedMessage !== null && !Array.isArray(resolvedMessage)) {
+      resolvedOptions = resolvedMessage;
+      resolvedMessage = resolvedTitle;
+      resolvedTitle = "确认操作";
+    } else if (resolvedMessage == null || resolvedMessage === "") {
+      resolvedMessage = resolvedTitle || "确定要执行此操作吗？";
+      resolvedTitle = "确认操作";
+    }
     const allowedTones = new Set(["primary", "danger", "warning", "success"]);
-    const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";
+    const requestedTone = allowedTones.has(resolvedOptions.tone) ? resolvedOptions.tone : "primary";
     const tone = requestedTone === "danger" ? "danger" : "primary";
 
-    titleEl.textContent = title;
-    messageEl.textContent = message;
+    titleEl.textContent = resolvedTitle;
+    messageEl.textContent = resolvedMessage;
     okBtn.dataset.actionTone = tone;
     okBtn.dataset.actionVariant = "solid";
     modal.hidden = false;
@@ -8820,24 +8831,43 @@ function showPrompt(title, message, options = {}) {
 
     titleEl.textContent = title;
     messageEl.textContent = message;
+    messageEl.classList.remove("prompt-required-hint");
     inputControlEl.hidden = isDate;
     dateControlEl.hidden = !isDate;
     if (isDate) {
       dateInputEl.value = options.defaultValue || "";
       dateInputEl.placeholder = options.placeholder || "";
+      dateInputEl.removeAttribute("aria-invalid");
     } else {
       inputEl.type = options.type || "text";
       inputEl.value = options.defaultValue || "";
       inputEl.placeholder = options.placeholder || "";
       inputEl.autocomplete = options.autocomplete || "off";
+      inputEl.removeAttribute("aria-invalid");
+      if (options.maxlength != null && Number(options.maxlength) > 0) {
+        inputEl.maxLength = Number(options.maxlength);
+      } else {
+        inputEl.removeAttribute("maxLength");
+      }
     }
     modal.hidden = false;
     setTimeout(() => focusTargetEl?.focus(), 0);
+
+    const clearRequiredHint = () => {
+      if (!messageEl.classList.contains("prompt-required-hint")) return;
+      messageEl.classList.remove("prompt-required-hint");
+      messageEl.textContent = message;
+      activeInputEl.removeAttribute("aria-invalid");
+    };
+    activeInputEl.oninput = clearRequiredHint;
 
     const cleanup = (value) => {
       okBtn.onclick = null;
       cancelBtn.onclick = null;
       activeInputEl.onkeydown = null;
+      activeInputEl.oninput = null;
+      activeInputEl.removeAttribute("aria-invalid");
+      messageEl.classList.remove("prompt-required-hint");
       closeCustomDatePicker(dateInputEl);
       modal.classList.add("closing");
       setTimeout(() => {
@@ -8845,6 +8875,7 @@ function showPrompt(title, message, options = {}) {
         modal.classList.remove("closing");
         inputEl.value = "";
         inputEl.type = "text";
+        inputEl.removeAttribute("maxLength");
         dateInputEl.value = "";
         inputControlEl.hidden = false;
         dateControlEl.hidden = true;
@@ -8852,12 +8883,26 @@ function showPrompt(title, message, options = {}) {
       resolve(value);
     };
 
-    okBtn.onclick = () => cleanup(activeInputEl.value);
+    const submit = () => {
+      const raw = activeInputEl.value;
+      if (!isDate && options.required && !String(raw || "").trim()) {
+        const msg = options.requiredMessage || "请输入内容";
+        if (typeof options.onInvalid === "function") options.onInvalid(msg);
+        activeInputEl.setAttribute("aria-invalid", "true");
+        messageEl.textContent = msg;
+        messageEl.classList.add("prompt-required-hint");
+        activeInputEl.focus();
+        return;
+      }
+      cleanup(raw);
+    };
+
+    okBtn.onclick = () => submit();
     cancelBtn.onclick = () => cleanup(null);
     activeInputEl.onkeydown = (event) => {
       if (event.key === "Enter" && !isDate) {
         event.preventDefault();
-        cleanup(activeInputEl.value);
+        submit();
       }
       if (event.key === "Escape") {
         event.preventDefault();
@@ -11942,6 +11987,7 @@ window.addEventListener("resize", syncReportNavigationTodoCardHeight);
     user: () => ({ ...authState.user }),
     notify: showToast,
     confirm: showConfirm,
+    prompt: showPrompt,
     legacyNavigate: switchPage,
   });
   if (!moduleHandled) {

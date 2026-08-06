@@ -75,6 +75,17 @@ class MemoryStorage:
         if current["row_version"] != row_version: raise VersionConflictError()
         current.update(changes); current["row_version"] += 1; self.audits.append(audit); return deepcopy(current)
 
+    def delete_record(self, record_id, row_version):
+        current = self.records.get(record_id)
+        from auto_check.modules.report_special_processing.contracts import RecordNotFoundError, VersionConflictError
+        if current is None:
+            raise RecordNotFoundError()
+        if current["row_version"] != row_version:
+            raise VersionConflictError()
+        del self.records[record_id]
+        self.audits = [item for item in self.audits if item.get("record_id") != record_id]
+        self.calls.append("delete")
+
 
 def _service(reports=None):
     from auto_check.modules.report_special_processing.service import SpecialProcessingService
@@ -295,3 +306,34 @@ def test_refresh_failure_does_not_roll_back_successful_write():
     assert record["status"] == "pending"
     assert service.storage.get(1)["status"] == "pending"
     assert reports.refresh_calls == ["special_governance"]
+
+
+def test_summary_exposes_distinct_record_total_for_all_tab():
+    import inspect
+    from auto_check.modules.report_special_processing.service import SpecialProcessingService
+
+    source = inspect.getsource(SpecialProcessingService.summary)
+    assert "record_total" in source
+    assert "summary_for_report_period" in source
+
+
+def test_admin_can_hard_delete_any_status_record():
+    from auto_check.modules.report_special_processing.contracts import PermissionDeniedError
+
+    service = _service()
+    admin = {"id": "9", "username": "admin", "display_name": "管理员", "role": "admin"}
+    user = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+    created = service.create(_payload(), user, request_id="req-create")
+
+    with pytest.raises(PermissionDeniedError):
+        service.delete(created["id"], {"row_version": created["row_version"]}, user, request_id="req-deny")
+
+    deleted = service.delete(
+        created["id"],
+        {"row_version": created["row_version"]},
+        admin,
+        request_id="req-delete",
+    )
+    assert deleted["deleted"] is True
+    assert service.storage.get(created["id"]) is None
+    assert "delete" in service.storage.calls

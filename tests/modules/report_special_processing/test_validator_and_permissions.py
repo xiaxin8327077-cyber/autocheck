@@ -78,8 +78,34 @@ def test_script_accepts_exact_512_kib_utf8_boundary():
     assert len(value.processing_script.encode("utf-8")) == 524288
 
 
+def test_void_reason_accepts_up_to_20_characters_and_rejects_longer():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+    from auto_check.modules.report_special_processing.validator import validate_action
+
+    version, reason = validate_action(
+        {"row_version": 1, "reason": "一二三四五六七八九十十一十二十三十四十五"},
+        require_reason=True,
+        reason_max_length=20,
+    )
+    assert version == 1
+    assert len(reason) == 20
+
+    with pytest.raises(ValidationError) as error:
+        validate_action(
+            {"row_version": 1, "reason": "一二三四五六七八九十十一十二十三十四十五十"},
+            require_reason=True,
+            reason_max_length=20,
+        )
+    assert "最多 20 个字符" in str(error.value.fields["reason"])
+
+
 def test_permissions_bind_editing_to_owner_handler_or_admin_and_open_status():
-    from auto_check.modules.report_special_processing.permissions import can_edit, can_reopen, can_void
+    from auto_check.modules.report_special_processing.permissions import (
+        can_delete,
+        can_edit,
+        can_reopen,
+        can_void,
+    )
 
     record = {"creator_user_id": "1", "handler_user_id": "2", "status": "pending"}
     assert can_edit({"id": "1", "role": "user"}, record)
@@ -89,6 +115,7 @@ def test_permissions_bind_editing_to_owner_handler_or_admin_and_open_status():
     assert not can_edit({"id": "1", "role": "user"}, {**record, "status": "completed"})
     assert can_void({"role": "admin"}) and not can_void({"role": "user"})
     assert can_reopen({"role": "admin"}) and not can_reopen({"role": "user"})
+    assert can_delete({"role": "admin"}) and not can_delete({"role": "user"})
 
 
 @pytest.mark.parametrize(

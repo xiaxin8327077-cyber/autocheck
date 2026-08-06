@@ -92,53 +92,73 @@ export function createRecordDrawer(documentRef, options) {
     return current.special_handling_at || nowHandlingAt();
   }
 
-  const errorBox = element(documentRef, "div", { className: "rsp-form-error", role: "alert", hidden: "" });
-  const summaryHint = element(documentRef, "div", {
+  const formHint = element(documentRef, "div", {
     className: "rsp-field-hint",
     role: "alert",
     hidden: "",
   });
-  function clearSummaryHint() {
-    summaryHint.hidden = true;
-    summaryHint.textContent = "";
-    fields.summary.removeAttribute("aria-invalid");
+  const FIELD_LABELS = {
+    report_process_codes: "关联报送",
+    report_process_code: "关联报送",
+    report_period: "所处报送期",
+    handler_user_id: "处理人",
+    reports: "涉及报表",
+    summary: "处理摘要",
+    processing_content: "处理说明",
+    processing_script: "处理脚本",
+    special_handling_at: "特殊处理时间",
+  };
+  function resolveControl(fieldName) {
+    if (fieldName === "report_process_codes" || fieldName === "report_process_code") return fields.process;
+    if (fieldName === "handler_user_id") return fields.handler;
+    if (fieldName === "report_period") return fields.period;
+    if (fieldName === "processing_content") return fields.content;
+    if (fieldName === "processing_script") return fields.script;
+    return fields[fieldName] || null;
   }
-  function showSummaryHint(message) {
-    errorBox.hidden = true;
-    errorBox.textContent = "";
-    summaryHint.hidden = false;
-    summaryHint.textContent = message;
-    fields.summary.setAttribute("aria-invalid", "true");
-    fields.summary.focus();
+  function formatFieldMessage(fieldName, message) {
+    const label = FIELD_LABELS[fieldName] || "";
+    const text = Array.isArray(message) ? message.filter(Boolean).join("；") : String(message || "").trim();
+    if (!label) return text || "字段无效";
+    if (!text) return `${label}无效`;
+    if (text.startsWith(label)) return text;
+    return `${label}${text}`;
+  }
+  function clearFormHint() {
+    formHint.hidden = true;
+    formHint.textContent = "";
+    Object.values(fields).forEach((control) => {
+      control?.removeAttribute?.("aria-invalid");
+      control?.removeAttribute?.("title");
+    });
+  }
+  function showFormHint(message, focusControl = null) {
+    formHint.hidden = false;
+    formHint.textContent = message;
+    if (focusControl?.setAttribute) focusControl.setAttribute("aria-invalid", "true");
+    focusControl?.focus?.();
   }
   function showError(error) {
     const fieldEntries = Object.entries(error.fields || {});
-    if (fieldEntries.length === 1 && fieldEntries[0][0] === "summary") {
-      showSummaryHint(`处理摘要最多支持${SUMMARY_MAX_LENGTH}个字符`);
-      return;
-    }
-    clearSummaryHint();
-    errorBox.hidden = false;
+    clearFormHint();
     const fieldMessages = fieldEntries
-      .map(([, message]) => (Array.isArray(message) ? message.join("；") : String(message)))
+      .map(([fieldName, message]) => formatFieldMessage(fieldName, message))
       .filter(Boolean);
-    errorBox.textContent = fieldMessages.length
+    const text = fieldMessages.length
       ? fieldMessages.join("；")
       : (error.message || "保存失败，请重试");
-    options.notify(errorBox.textContent, "error");
-    fieldEntries.forEach(([fieldName, message]) => {
-      const control = fields[fieldName]
-        || (fieldName === "report_process_codes" || fieldName === "report_process_code" ? fields.process : null);
-      if (control) {
-        control.setAttribute("aria-invalid", "true");
-        control.setAttribute("title", Array.isArray(message) ? message.join("；") : String(message));
-      }
+    const firstField = fieldEntries[0]?.[0] || "";
+    showFormHint(text, resolveControl(firstField));
+    // 字段校验只在底部提示，不弹右上角 toast
+    if (!fieldMessages.length) options.notify(text, "error");
+    fieldEntries.forEach(([fieldName]) => {
+      const control = resolveControl(fieldName);
+      control?.setAttribute?.("aria-invalid", "true");
     });
     if (error.refreshRequired) onConflict();
   }
   async function run(operation, successMessage) {
-    errorBox.hidden = true;
-    clearSummaryHint();
+    clearFormHint();
     try {
       const response = await operation();
       options.notify(successMessage, "success");
@@ -148,20 +168,16 @@ export function createRecordDrawer(documentRef, options) {
     }
   }
   function validateForm() {
-    clearSummaryHint();
-    Object.values(fields).forEach((control) => {
-      control?.removeAttribute?.("aria-invalid");
-      control?.removeAttribute?.("title");
-    });
+    clearFormHint();
     const summary = fields.summary.value.trim();
     if (summary.length > SUMMARY_MAX_LENGTH) {
-      showSummaryHint(`处理摘要最多支持${SUMMARY_MAX_LENGTH}个字符`);
+      showFormHint(`处理摘要最多支持${SUMMARY_MAX_LENGTH}个字符`, fields.summary);
       return false;
     }
     return true;
   }
   fields.summary.addEventListener("input", () => {
-    if (!summaryHint.hidden) clearSummaryHint();
+    if (!formHint.hidden) clearFormHint();
   });
   const saveDraft = () => {
     if (!validateForm()) return;
@@ -311,11 +327,11 @@ export function createRecordDrawer(documentRef, options) {
     footerButtons.push(actionButton(documentRef, creating ? "保存记录" : "保存修改", "rsp-button-primary", saveRecord, saveDisabled));
   }
   const footer = element(documentRef, "footer", { className: "rsp-modal-actions" }, [
-    summaryHint,
+    formHint,
     element(documentRef, "div", { className: "rsp-modal-actions-right" }, footerButtons),
   ]);
   const body = element(documentRef, "div", { className: "rsp-modal-body" }, [
-    errorBox, basic, content, script, audit,
+    basic, content, script, audit,
   ]);
   const shell = element(documentRef, "div", {
     className: "rsp-record-modal",

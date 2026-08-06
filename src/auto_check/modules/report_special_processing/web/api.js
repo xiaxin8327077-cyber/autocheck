@@ -117,6 +117,7 @@ export function createApi(context) {
     updateRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}`, bodyOptions("PUT", payload)),
     changeStatus: (id, payload) => request(`/records/${encodeURIComponent(id)}${STATUS_PATH}`, bodyOptions("POST", payload)),
     voidRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}${VOID_PATH}`, bodyOptions("POST", payload)),
+    deleteRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}`, bodyOptions("DELETE", payload)),
     reopenRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}${REOPEN_PATH}`, bodyOptions("POST", payload)),
     audit: (id, parameters) => request(`/records/${encodeURIComponent(id)}${AUDIT_PATH}${queryString(parameters)}`),
     cancelAll() {

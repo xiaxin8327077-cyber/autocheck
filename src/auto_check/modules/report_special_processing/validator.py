@@ -190,11 +190,17 @@ def validate_page_query(query: Mapping[str, str]) -> PageQuery:
     return PageQuery(page=page, page_size=page_size, sort=sort, filters=filters)
 
 
-def validate_action(payload: Mapping[str, Any], *, require_reason: bool = False) -> tuple[int, str]:
+def validate_action(
+    payload: Mapping[str, Any],
+    *,
+    require_reason: bool = False,
+    reason_max_length: int = 500,
+) -> tuple[int, str]:
     if not isinstance(payload, Mapping):
         raise ValidationError()
     version = payload.get("row_version")
     if type(version) is not int or version < 1:
         raise _error("row_version")
-    reason = _text(payload.get("reason"), "reason", 500, required=require_reason)
+    maximum = max(1, int(reason_max_length))
+    reason = _text(payload.get("reason"), "reason", maximum, required=require_reason)
     return version, reason
