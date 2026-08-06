@@ -10,6 +10,7 @@ from .contracts import PageQuery, RecordInput, RecordStatus, ValidationError
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 MAX_REPORTS = 50
+MAX_PROCESSES = 20
 MAX_SCRIPT_BYTES = 512 * 1024
 MAX_REQUEST_BYTES = 1024 * 1024
 SORTS = frozenset(
@@ -19,6 +20,7 @@ _RECORD_FIELDS = frozenset(
     {
         "save_mode",
         "report_process_code",
+        "report_process_codes",
         "report_period",
         "reports",
         "summary",
@@ -99,6 +101,30 @@ def _reports(value: Any, *, required: bool) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def _process_codes(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    raw = payload.get("report_process_codes", None)
+    if raw is None and "report_process_code" in payload:
+        single = payload.get("report_process_code")
+        raw = [single] if single not in {None, ""} else []
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or len(raw) > MAX_PROCESSES:
+        raise _error("report_process_codes")
+    codes: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise _error("report_process_codes")
+        code = item.strip()
+        if not code or len(code) > 64:
+            raise _error("report_process_codes")
+        codes.append(code)
+    if not codes:
+        raise _error("report_process_codes", "至少选择一项")
+    if len(set(codes)) != len(codes):
+        raise _error("report_process_codes", "关联报送不能重复")
+    return tuple(codes)
+
+
 def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
     if not isinstance(payload, Mapping) or any(key not in _RECORD_FIELDS for key in payload):
         raise ValidationError()
@@ -106,7 +132,7 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
     if save_mode not in {"draft", "record"}:
         raise _error("save_mode")
     formal = save_mode == "record"
-    process_code = _text(payload.get("report_process_code"), "report_process_code", 64, required=True)
+    process_codes = _process_codes(payload)
     script = payload.get("processing_script")
     if script is None or script == "":
         script = None
@@ -118,9 +144,9 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         raise _error("row_version")
     return RecordInput(
         save_mode=save_mode,
-        report_process_code=process_code,
+        report_process_codes=process_codes,
         reports=_reports(payload.get("reports"), required=formal),
-        summary=_text(payload.get("summary"), "summary", 200, required=formal),
+        summary=_text(payload.get("summary"), "summary", 25, required=formal),
         processing_content=_text(
             payload.get("processing_content"), "processing_content", 20_000, required=formal
         ),
@@ -137,7 +163,7 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
 def validate_page_query(query: Mapping[str, str]) -> PageQuery:
     try:
         page = int(query.get("page", "1"))
-        page_size = int(query.get("page_size", "20"))
+        page_size = int(query.get("page_size", "10"))
     except (TypeError, ValueError):
         raise ValidationError() from None
     sort = str(query.get("sort", "special_handling_at_desc"))

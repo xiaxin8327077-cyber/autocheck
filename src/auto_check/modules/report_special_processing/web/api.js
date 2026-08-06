@@ -23,8 +23,9 @@ function normalizeError(error) {
   if (error?.name === "AbortError") return error;
   const code = error?.payload?.error?.code || "internal_error";
   const status = Number(error?.status || 0);
+  const isVersionConflict = code === "record_version_conflict";
   const normalized = new Error(
-    status === 409 || code === "record_version_conflict"
+    isVersionConflict
       ? CONFLICT_MESSAGE
       : status >= 500 || code === "internal_error"
         ? "服务暂时不可用，请稍后重试"
@@ -33,8 +34,22 @@ function normalizeError(error) {
   normalized.status = status;
   normalized.code = code;
   normalized.fields = error?.payload?.error?.fields || {};
-  normalized.refreshRequired = status === 409 || code === "record_version_conflict";
+  normalized.refreshRequired = isVersionConflict;
   return normalized;
+}
+
+function filenameFromDisposition(header) {
+  const raw = String(header || "");
+  const utfMatch = raw.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utfMatch) {
+    try {
+      return decodeURIComponent(utfMatch[1].trim().replace(/"/g, ""));
+    } catch (_error) {
+      return utfMatch[1].trim().replace(/"/g, "");
+    }
+  }
+  const plain = raw.match(/filename\s*=\s*"?([^";]+)"?/i);
+  return plain ? plain[1].trim() : "";
 }
 
 export function createApi(context) {
@@ -52,9 +67,50 @@ export function createApi(context) {
     }
   }
 
+  async function download(path, parameters = {}) {
+    const controller = new AbortController();
+    controllers.add(controller);
+    try {
+      const response = await fetch(`${API_PREFIX}${path}${queryString(parameters)}`, {
+        method: "GET",
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      if (response.status === 401) {
+        const error = new Error("login required");
+        error.status = 401;
+        throw normalizeError(error);
+      }
+      if (!response.ok) {
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch (_error) {
+          payload = null;
+        }
+        const error = new Error(payload?.error?.message || `请求失败: ${response.status}`);
+        error.status = response.status;
+        error.payload = payload;
+        throw normalizeError(error);
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw normalizeError(new Error("生成的导出文件为空"));
+      return {
+        blob,
+        filename: filenameFromDisposition(response.headers.get("Content-Disposition")) || "报表特殊处理导出.xlsx",
+      };
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      throw normalizeError(error);
+    } finally {
+      controllers.delete(controller);
+    }
+  }
+
   return Object.freeze({
     catalog: () => request("/catalog"),
     listRecords: (parameters) => request(`/records${queryString(parameters)}`),
+    exportRecords: (parameters) => download("/records/export", parameters),
     summary: (reportPeriod) => request(`${SUMMARY_PATH}${queryString({ report_period: reportPeriod })}`),
     getRecord: (id) => request(`/records/${encodeURIComponent(id)}`),
     createRecord: (payload) => request("/records", bodyOptions("POST", payload)),

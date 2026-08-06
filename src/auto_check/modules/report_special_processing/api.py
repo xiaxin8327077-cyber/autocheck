@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from typing import Any, Callable, Mapping
+from urllib.parse import quote
 
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
 
@@ -64,12 +65,26 @@ def _body(request: ModuleRequest) -> Mapping[str, Any]:
     return request.body
 
 
+def _export_response(filename: str, payload: bytes, request_id: str) -> ModuleHttpResponse:
+    del request_id
+    return ModuleHttpResponse.bytes(
+        200,
+        payload,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=(
+            ("Content-Disposition", f"attachment; filename*=UTF-8''{quote(filename)}"),
+        ),
+    )
+
+
 def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
     def handle(callback: Callable[[Any, ModuleRequest, str], Any], *, status: int = 200):
         def handler(request: ModuleRequest) -> ModuleHttpResponse:
             request_id = _request_id()
             try:
                 data = callback(service_provider(), request, request_id)
+                if isinstance(data, ModuleHttpResponse):
+                    return data
                 return _success(data, request_id, status=status)
             except DomainError as error:
                 return _error(error, request_id)
@@ -83,6 +98,17 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
     routes = (
         ("GET", "/catalog", lambda service, request, rid: service.catalog(), view, 0, 200),
         ("GET", "/records", lambda service, request, rid: service.list_records(request.query, request.current_user), view, 0, 200),
+        (
+            "GET",
+            "/records/export",
+            lambda service, request, rid: _export_response(
+                *service.export_records(request.query),
+                rid,
+            ),
+            view,
+            0,
+            200,
+        ),
         ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 201),
         ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request), request.current_user), view, 0, 200),
         ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),

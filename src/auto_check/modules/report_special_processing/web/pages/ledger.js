@@ -56,6 +56,37 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     }
   }
 
+  async function exportLedger(filters = state.filters) {
+    if (!state.catalogAvailable) {
+      notify("目录不可用，暂时无法导出", "warning");
+      return;
+    }
+    try {
+      const parameters = {
+        report_process_code: state.activeProcessCode,
+        report_period: state.reportPeriod,
+        ...filters,
+        sort: "special_handling_at_desc",
+      };
+      const { blob, filename } = await api.exportRecords(parameters);
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = documentRef.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.style.display = "none";
+        documentRef.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      notify("导出完成", "success");
+    } catch (error) {
+      if (error?.name !== "AbortError") notify(error?.message || "导出失败，请重试", "error");
+    }
+  }
+
   async function refreshRecord(recordId) {
     const response = await api.getRecord(recordId);
     state.drawer = { mode: "detail", record: dataOf(response, response) };
@@ -83,6 +114,61 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     }
   }
 
+  function askReason(message) {
+    const value = documentRef.defaultView?.prompt?.(message, "");
+    if (value == null) return null;
+    const reason = String(value).trim();
+    if (!reason) {
+      notify("请输入操作原因", "warning");
+      return null;
+    }
+    return reason;
+  }
+
+    async function handleRowAction(record, action) {
+    const run = async (operation, successMessage) => {
+      try {
+        await operation();
+        notify(successMessage, "success");
+        if (state.drawer?.record?.id && String(state.drawer.record.id) === String(record.id)) {
+          await refreshRecord(record.id);
+        }
+        await loadLedger();
+      } catch (error) {
+        if (error?.name !== "AbortError") notify(error?.message || "操作失败，请重试", "error");
+      }
+    };
+    const withLatestVersion = async (operation) => {
+      const latest = dataOf(await api.getRecord(record.id), record);
+      return operation(latest);
+    };
+
+    if (action === "complete") {
+      if (!await confirm("确认将该记录标记为已完成吗？")) return;
+      await run(
+        () => withLatestVersion((latest) => api.changeStatus(latest.id, {
+          target_status: "completed",
+          row_version: latest.row_version,
+          reason: "处理完成",
+        })),
+        "记录已完成",
+      );
+      return;
+    }
+    if (action === "void") {
+      const reason = askReason("请输入作废原因");
+      if (!reason) return;
+      if (!await confirm("确认作废该记录吗？作废后仍保留完整留痕。")) return;
+      await run(
+        () => withLatestVersion((latest) => api.voidRecord(latest.id, {
+          row_version: latest.row_version,
+          reason,
+        })),
+        "记录已作废",
+      );
+    }
+  }
+
   function openCreate(trigger) {
     state.restoreFocus = { kind: "create" };
     state.drawer = { mode: "create", record: null };
@@ -90,7 +176,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     root.querySelector?.(".rsp-record-modal select")?.focus?.();
   }
 
-  function createTabs() {
+  function createTabs({ title, actions }) {
     const counts = new Map((state.summary.by_report_process || []).map((item) => [item.code, item.effective_count]));
     const allCount = [...counts.values()].reduce((sum, value) => sum + Number(value || 0), 0);
     const tabs = element(documentRef, "div", { className: "rsp-report-tabs", role: "tablist", "aria-label": "关联报送" });
@@ -128,7 +214,12 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
       });
       tabs.append(tab);
     });
-    return tabs;
+    const header = element(documentRef, "div", { className: "rsp-tabs-header" }, [
+      element(documentRef, "h2", { className: "rsp-tabs-title", text: title }),
+      element(documentRef, "div", { className: "rsp-tabs-actions" }, actions),
+    ]);
+    const card = element(documentRef, "div", { className: "rsp-tabs-card" }, [header, tabs]);
+    return card;
   }
 
   function pagination() {
@@ -186,33 +277,32 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
     const createButton = element(documentRef, "button", {
       type: "button",
       className: "rsp-button rsp-button-primary",
-      text: "新建特殊处理",
+      text: "新建",
       disabled: !state.catalogAvailable,
     });
     createButton.addEventListener("click", () => openCreate(createButton));
     const period = element(documentRef, "input", { type: "date", value: state.reportPeriod, "aria-label": "报送期" });
     period.addEventListener("change", () => { state.reportPeriod = period.value; state.page = 1; loadLedger(); });
 
-    const intro = element(documentRef, "header", { className: "rsp-page-intro" }, [
-      element(documentRef, "div", {}, [
-        element(documentRef, "p", { className: "rsp-breadcrumb", text: "数据录入 / 报表特殊处理录入" }),
-        element(documentRef, "h1", { text: "报表特殊处理录入" }),
-        element(documentRef, "p", { text: "按报送流程维护特殊处理记录，集中查询、编辑和追溯操作留痕。" }),
-      ]),
-      element(documentRef, "div", { className: "rsp-intro-actions" }, [
-        element(documentRef, "label", {}, [element(documentRef, "span", { text: "报送期" }), period]),
-        createButton,
-      ]),
-    ]);
     const availability = state.catalogAvailable ? null : element(documentRef, "div", { className: "rsp-catalog-warning", role: "alert", text: "用户或报送目录暂时不可用，保存功能已禁用。" });
+    const tabsActions = element(documentRef, "div", { className: "rsp-intro-actions" }, [
+      period,
+      createButton,
+    ]);
     const master = element(documentRef, "section", { className: "rsp-master-pane" }, [
+      createTabs({ title: "报表特殊处理", actions: tabsActions }),
       createFilters(documentRef, {
         catalog: state.catalog,
         filters: state.filters,
         onApply: (filters) => { state.filters = filters; state.page = 1; loadLedger(); },
         onReset: () => { state.filters = { status: "", keyword: "", handler_user_id: "" }; state.page = 1; loadLedger(); },
+        onExport: (filters) => { state.filters = filters; exportLedger(filters); },
       }),
-      createRecordTable(documentRef, state.records, { selectedId: state.drawer?.record?.id, onOpen: openRecord }),
+      createRecordTable(documentRef, state.records, {
+        selectedId: state.drawer?.record?.id,
+        onOpen: openRecord,
+        onAction: handleRowAction,
+      }),
       pagination(),
     ]);
     const layout = element(documentRef, "div", { className: "rsp-workbench" }, [master]);
@@ -238,7 +328,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, navi
         },
       })
       : null;
-    root.replaceChildren(...[intro, availability, createTabs(), layout, modal].filter(Boolean));
+    root.replaceChildren(...[availability, layout, modal].filter(Boolean));
   }
 
   return Object.freeze({

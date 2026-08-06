@@ -9,7 +9,7 @@ export function createState() {
     records: [],
     summary: { by_report_process: [] },
     page: 1,
-    pageSize: 20,
+    pageSize: 10,
     total: 0,
     totalPages: 1,
     drawer: null,

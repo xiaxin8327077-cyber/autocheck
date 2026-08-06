@@ -78,7 +78,7 @@ class PlatformUnavailableError(DomainError):
 @dataclass(frozen=True)
 class RecordInput:
     save_mode: str
-    report_process_code: str
+    report_process_codes: tuple[str, ...]
     reports: tuple[str, ...] = ()
     summary: str = ""
     processing_content: str = ""
@@ -88,11 +88,15 @@ class RecordInput:
     handler_user_id: str | None = None
     row_version: int | None = None
 
+    @property
+    def report_process_code(self) -> str:
+        return self.report_process_codes[0] if self.report_process_codes else ""
+
 
 @dataclass(frozen=True)
 class PageQuery:
     page: int = 1
-    page_size: int = 20
+    page_size: int = 10
     sort: str = "special_handling_at_desc"
     filters: Mapping[str, Any] = field(default_factory=dict)
 

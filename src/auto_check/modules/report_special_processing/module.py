@@ -51,6 +51,13 @@ class ReportSpecialProcessingModule:
             {"id", "record_id", "sequence_no", "report_name", "report_name_normalized", "created_at"},
         )
         registry.add(
+            "report_special_processing_processes",
+            {
+                "id", "record_id", "sequence_no", "report_process_code",
+                "report_process_name_snapshot", "created_at",
+            },
+        )
+        registry.add(
             "report_special_processing_audit_logs",
             {
                 "id", "record_id", "record_no_snapshot", "action_code", "operator_user_id",
@@ -66,6 +73,10 @@ class ReportSpecialProcessingModule:
         self._service = SpecialProcessingService(
             storage, user_directory, report_navigation, now=context.now
         )
+        try:
+            storage.backfill_processes_from_records()
+        except Exception:
+            pass
         provider = SpecialHandlingStatistics(storage, now=context.now)
         self._provider_handle = report_navigation.register_card_provider(
             card_code="special_governance",

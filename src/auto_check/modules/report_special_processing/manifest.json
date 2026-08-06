@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -29,9 +29,9 @@
     {"name": "platform.user_directory", "minimum_version": 1},
     {"name": "platform.report_navigation", "minimum_version": 1}
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "release_notes": {
-    "version": "1.0.0",
-    "items": ["新增报表特殊处理录入与真实统计"]
+    "version": "1.2.0",
+    "items": ["支持按筛选结果导出 Excel", "关联报送支持多选", "系统优化及BUG修复"]
   }
 }

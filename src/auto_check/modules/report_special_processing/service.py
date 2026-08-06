@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 import hashlib
 import json
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .contracts import (
     InvalidTransitionError,
@@ -16,12 +16,49 @@ from .contracts import (
 )
 from .permissions import can_edit, can_reopen, can_transition, can_void
 from .statistics import status_metrics
+from .export_workbook import MAX_EXPORT_ROWS, build_export_xlsx
 from .validator import (
     MAX_REPORTS,
     MAX_SCRIPT_BYTES,
     validate_action,
     validate_page_query,
     validate_record_input,
+)
+
+
+_AUDIT_FIELD_LABELS = {
+    "report_process_name_snapshot": "关联报送",
+    "report_period": "所处报送期",
+    "reports": "涉及报表",
+    "summary": "处理摘要",
+    "processing_content": "处理说明",
+    "processing_script": "处理脚本",
+    "special_handling_at": "特殊处理时间",
+    "handler_display_name_snapshot": "处理人",
+    "status": "状态",
+    "void_reason": "作废理由",
+}
+_AUDIT_SKIP_KEYS = frozenset(
+    {
+        "updated_by_user_id",
+        "updated_by_username_snapshot",
+        "updated_at",
+        "handler_user_id",
+        "handler_username_snapshot",
+        "report_process_code",
+        "script_sha256",
+        "completed_at",
+        "voided_at",
+        "voided_by_user_id",
+        "void_reason",
+        "creator_user_id",
+        "creator_username_snapshot",
+        "created_at",
+        "workflow_status",
+        "workflow_instance_id",
+        "workflow_version",
+        "row_version",
+    }
 )
 
 
@@ -71,6 +108,23 @@ class SpecialProcessingService:
             ],
         }
 
+    def export_records(self, query: Mapping[str, str]) -> tuple[str, bytes]:
+        page_query = validate_page_query(
+            {
+                **dict(query),
+                "page": "1",
+                "page_size": "100",
+                "sort": str(query.get("sort") or "special_handling_at_desc"),
+            }
+        )
+        items = self.storage.list_for_export(page_query, limit=MAX_EXPORT_ROWS)
+        if not items:
+            raise ValidationError(message="无数据可导出")
+        period = str(query.get("report_period") or "").strip() or "all"
+        stamp = self._now().astimezone().strftime("%Y%m%d_%H%M%S")
+        filename = f"报表特殊处理_{period}_{stamp}.xlsx"
+        return filename, build_export_xlsx(items)
+
     def get(
         self,
         record_id: int,
@@ -90,12 +144,12 @@ class SpecialProcessingService:
         request_id: str,
     ) -> dict[str, Any]:
         value = validate_record_input(payload)
-        process = self._process(value.report_process_code)
+        processes = self._processes(value.report_process_codes)
         actor = self._user(current_user.get("id"))
         handler = self._user(value.handler_user_id) if value.handler_user_id else None
         now = self._now()
         status = RecordStatus.DRAFT if value.save_mode == "draft" else RecordStatus.PENDING
-        record = self._record_values(value, process, handler)
+        record = self._record_values(value, processes, handler)
         record.update(
             status=status.value,
             creator_user_id=actor.id,
@@ -114,9 +168,16 @@ class SpecialProcessingService:
             row_version=1,
         )
         audit = self._audit(
-            "create", actor, now, None, status.value, {"created": True}, "创建特殊处理记录", request_id
+            "create",
+            actor,
+            now,
+            None,
+            status.value,
+            {"created": True, "save_mode": value.save_mode},
+            "保存草稿" if value.save_mode == "draft" else "创建特殊处理记录",
+            request_id,
         )
-        created = self.storage.create(record, value.reports, audit)
+        created = self.storage.create(record, value.reports, processes, audit)
         self._refresh_special_governance_stats()
         return created
 
@@ -136,19 +197,20 @@ class SpecialProcessingService:
             raise ValidationError(fields={"row_version": "不能为空"})
         if current["status"] != "draft" and value.save_mode != "record":
             raise InvalidTransitionError()
-        process = self._process(value.report_process_code)
+        processes = self._processes(value.report_process_codes)
         handler = self._user(value.handler_user_id) if value.handler_user_id else None
         actor = self._user(current_user.get("id"))
         now = self._now()
         next_status = "pending" if current["status"] == "draft" and value.save_mode == "record" else current["status"]
-        changes = self._record_values(value, process, handler)
+        changes = self._record_values(value, processes, handler)
         changes.update(
             status=next_status,
             updated_by_user_id=actor.id,
             updated_by_username_snapshot=actor.username,
             updated_at=now,
         )
-        changed = self._changed_fields(current, changes, value.processing_script)
+        changed = self._changed_fields(current, changes, value.processing_script, value.reports)
+        draft_save = value.save_mode == "draft" or next_status == "draft"
         audit = self._audit(
             "update" if next_status == current["status"] else "status_change",
             actor,
@@ -156,10 +218,18 @@ class SpecialProcessingService:
             current["status"],
             next_status,
             changed,
-            "更新特殊处理记录",
+            self._build_action_summary(
+                "update" if next_status == current["status"] else "status_change",
+                current["status"],
+                next_status,
+                changed,
+                draft_save=draft_save,
+            ),
             request_id,
         )
-        updated = self.storage.update(record_id, value.row_version, changes, value.reports, audit)
+        updated = self.storage.update(
+            record_id, value.row_version, changes, value.reports, processes, audit
+        )
         self._refresh_special_governance_stats()
         return updated
 
@@ -192,8 +262,14 @@ class SpecialProcessingService:
             changes["completed_at"] = now
         audit = self._audit(
             "status_change", actor, now, current["status"], target,
-            {"status": {"changed": True}, **({"reason": {"present": True}} if reason else {})},
-            "变更处理状态", request_id,
+            {"status": {"changed": True, "old": current["status"], "new": target}, **({"reason": {"present": True}} if reason else {})},
+            self._build_action_summary(
+                "status_change",
+                current["status"],
+                target,
+                {"status": {"changed": True, "old": current["status"], "new": target}},
+            ),
+            request_id,
         )
         changed = self.storage.update_status(record_id, version, changes, audit)
         self._refresh_special_governance_stats()
@@ -205,7 +281,7 @@ class SpecialProcessingService:
         if not can_void(current_user):
             raise PermissionDeniedError()
         current = self._record(record_id)
-        if current["status"] not in {"pending", "processing"}:
+        if current["status"] not in {"draft", "pending", "processing"}:
             raise InvalidTransitionError()
         version, reason = validate_action(payload, require_reason=True)
         actor = self._user(current_user.get("id")); now = self._now()
@@ -214,7 +290,23 @@ class SpecialProcessingService:
             "void_reason": reason, "updated_by_user_id": actor.id,
             "updated_by_username_snapshot": actor.username, "updated_at": now,
         }
-        audit = self._audit("void", actor, now, current["status"], "voided", {"reason": {"present": True}}, "作废特殊处理记录", request_id)
+        changed = {
+            "status": {"changed": True, "old": current["status"], "new": "voided"},
+            "reason": {"present": True, "new": reason},
+        }
+        audit = self._audit(
+            "void",
+            actor,
+            now,
+            current["status"],
+            "voided",
+            changed,
+            self._build_action_summary("void", current["status"], "voided", {
+                "status": changed["status"],
+                "void_reason": {"changed": True, "new": reason},
+            }),
+            request_id,
+        )
         voided = self.storage.update_status(record_id, version, changes, audit)
         self._refresh_special_governance_stats()
         return voided
@@ -235,7 +327,24 @@ class SpecialProcessingService:
             "updated_by_user_id": actor.id, "updated_by_username_snapshot": actor.username,
             "updated_at": now,
         }
-        audit = self._audit("reopen", actor, now, current["status"], "pending", {"reason": {"present": True}}, "重开特殊处理记录", request_id)
+        audit = self._audit(
+            "reopen",
+            actor,
+            now,
+            current["status"],
+            "pending",
+            {
+                "status": {"changed": True, "old": current["status"], "new": "pending"},
+                "reason": {"present": True, "new": reason},
+            },
+            self._build_action_summary(
+                "reopen",
+                current["status"],
+                "pending",
+                {"status": {"changed": True, "old": current["status"], "new": "pending"}},
+            ),
+            request_id,
+        )
         reopened = self.storage.update_status(record_id, version, changes, audit)
         self._refresh_special_governance_stats()
         return reopened
@@ -296,8 +405,15 @@ class SpecialProcessingService:
         except Exception:
             raise PlatformUnavailableError() from None
         if process is None:
-            raise ValidationError(fields={"report_process_code": "关联报送无效"})
+            raise ValidationError(fields={"report_process_codes": "关联报送无效"})
         return process
+
+    def _processes(self, codes: tuple[str, ...]) -> tuple[dict[str, str], ...]:
+        resolved = []
+        for code in codes:
+            process = self._process(code)
+            resolved.append({"code": process.code, "name": process.name})
+        return tuple(resolved)
 
     def _refresh_special_governance_stats(self) -> None:
         """Best-effort single-card refresh; never fail the business write."""
@@ -310,11 +426,13 @@ class SpecialProcessingService:
             return
 
     @staticmethod
-    def _record_values(value: Any, process: Any, handler: Any) -> dict[str, Any]:
+    def _record_values(value: Any, processes: Sequence[Mapping[str, str]] | tuple[dict[str, str], ...], handler: Any) -> dict[str, Any]:
         script = value.processing_script
+        primary = processes[0]
+        names = "、".join(item["name"] for item in processes)
         return {
-            "report_process_code": process.code,
-            "report_process_name_snapshot": process.name,
+            "report_process_code": primary["code"],
+            "report_process_name_snapshot": names[:500],
             "report_period": value.report_period,
             "summary": value.summary or None,
             "processing_content": value.processing_content or None,
@@ -336,12 +454,125 @@ class SpecialProcessingService:
             raise ValidationError(message="完成或正式保存前必须补全必填字段")
 
     @staticmethod
-    def _changed_fields(current: Mapping[str, Any], changes: Mapping[str, Any], script: str | None) -> dict[str, Any]:
-        result = {
-            key: {"changed": True}
-            for key, value in changes.items()
-            if key not in {"processing_script", "script_sha256"} and current.get(key) != value
+    def _format_audit_value(value: Any, *, field: str | None = None) -> str:
+        if value is None or value == "" or value == [] or value == ():
+            return "（空）"
+        if field == "status":
+            return STATUS_LABELS.get(str(value), str(value))
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, datetime):
+            text = value.isoformat()
+            return text.replace("T", " ").replace("+08:00", "").strip()
+        if isinstance(value, (list, tuple)):
+            names = [str(item).strip() for item in value if str(item).strip()]
+            text = "、".join(names) if names else "（空）"
+        else:
+            text = str(value).strip() or "（空）"
+        if field == "report_process_name_snapshot":
+            text = text.replace("/", "、")
+        if len(text) > 40:
+            return f"{text[:40]}…"
+        return text
+
+    @classmethod
+    def _build_action_summary(
+        cls,
+        action: str,
+        from_status: str | None,
+        to_status: str | None,
+        changed: Mapping[str, Any],
+        *,
+        draft_save: bool = False,
+    ) -> str:
+        parts: list[str] = []
+        for key, meta in changed.items():
+            label = _AUDIT_FIELD_LABELS.get(key)
+            if not label or not isinstance(meta, Mapping):
+                continue
+            if key == "processing_script":
+                old_chars = int(meta.get("old_chars") or 0)
+                new_chars = int(meta.get("new_chars") or 0)
+                parts.append(f"处理脚本由{old_chars}字改为{new_chars}字")
+                continue
+            if key == "void_reason":
+                reason_text = cls._format_audit_value(meta.get("new"))
+                if reason_text != "（空）":
+                    parts.append(f"作废理由：{reason_text}")
+                continue
+            old_text = cls._format_audit_value(meta.get("old"), field=key)
+            new_text = cls._format_audit_value(meta.get("new"), field=key)
+            parts.append(f"{label}由{old_text}改为{new_text}")
+        if (
+            from_status
+            and to_status
+            and from_status != to_status
+            and "status" not in changed
+        ):
+            parts.append(
+                f"状态由{cls._format_audit_value(from_status, field='status')}"
+                f"改为{cls._format_audit_value(to_status, field='status')}"
+            )
+        if parts:
+            numbered = [f"{index}.{text}" for index, text in enumerate(parts, 1)]
+            if action == "void" or to_status == "voided":
+                header = "作废记录："
+            elif action == "reopen":
+                header = "重开记录："
+            elif action == "status_change" and to_status == "completed":
+                header = "完成记录："
+            elif action == "status_change":
+                header = "状态变更："
+            elif action == "create":
+                header = "创建记录："
+            elif draft_save or to_status == "draft":
+                header = "保存草稿："
+            else:
+                header = "更新记录："
+            summary = header + "\n" + "\n".join(numbered)
+            return summary[:1000]
+        defaults = {
+            "create": "创建特殊处理记录",
+            "update": "更新特殊处理记录",
+            "status_change": "变更处理状态",
+            "void": "作废特殊处理记录",
+            "reopen": "重开特殊处理记录",
         }
+        if action == "create" and to_status == "draft":
+            return "保存草稿"
+        if draft_save or (action == "update" and to_status == "draft"):
+            return "保存草稿"
+        if action == "status_change" and to_status == "completed":
+            return "完成特殊处理记录"
+        if action == "status_change" and from_status and to_status:
+            return (
+                f"状态由{cls._format_audit_value(from_status, field='status')}"
+                f"改为{cls._format_audit_value(to_status, field='status')}"
+            )
+        return defaults.get(action, "更新特殊处理记录")
+
+    @staticmethod
+    def _changed_fields(
+        current: Mapping[str, Any],
+        changes: Mapping[str, Any],
+        script: str | None,
+        reports: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in changes.items():
+            if key in _AUDIT_SKIP_KEYS or key in {"processing_script", "script_sha256"}:
+                continue
+            if current.get(key) == value:
+                continue
+            if key not in _AUDIT_FIELD_LABELS:
+                result[key] = {"changed": True}
+                continue
+            result[key] = {"changed": True, "old": current.get(key), "new": value}
+        if reports is not None:
+            old_reports = [str(item).strip() for item in (current.get("reports") or []) if str(item).strip()]
+            new_reports = [str(item).strip() for item in reports if str(item).strip()]
+            if old_reports != new_reports:
+                result["reports"] = {"changed": True, "old": old_reports, "new": new_reports}
         if current.get("processing_script") != script:
             old_script = current.get("processing_script") or ""
             result["processing_script"] = {

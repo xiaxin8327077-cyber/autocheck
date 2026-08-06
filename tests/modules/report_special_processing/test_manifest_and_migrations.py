@@ -16,7 +16,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.id == "report_special_processing"
     assert manifest.required is False
     assert manifest.api_prefix == "/api/modules/report-special-processing"
-    assert manifest.schema_version == 1
+    assert manifest.schema_version == 2
     assert manifest.permissions == (
         "report_special_processing.view",
         "report_special_processing.admin",
@@ -27,7 +27,8 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.release_notes.items == ("新增报表特殊处理录入与真实统计",)
+    assert "关联报送支持多选" in manifest.release_notes.items
+    assert "支持按筛选结果导出 Excel" in manifest.release_notes.items
 
 
 def test_module_is_discovered_without_central_registration():
@@ -37,8 +38,9 @@ def test_module_is_discovered_without_central_registration():
 
 def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 1
+    assert len(migrations) == 2
     assert migrations[0].version == 1
+    assert migrations[1].version == 2
     sql = "\n".join(migrations[0].statements)
     assert sql.count("CREATE TABLE report_special_processing_") == 3
     for table in ("records", "reports", "audit_logs"):
@@ -47,6 +49,10 @@ def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     assert "row_version" in sql
     assert "DROP TABLE" not in sql.upper()
     assert "DELETE FROM" not in sql.upper()
+    second = "\n".join(migrations[1].statements)
+    assert "report_special_processing_processes" in second
+    assert "INSERT INTO" not in second.upper()
+    assert "DROP TABLE" not in second.upper()
 
 
 def test_initial_migration_has_chinese_comments_for_every_table_and_column():
@@ -54,7 +60,7 @@ def test_initial_migration_has_chinese_comments_for_every_table_and_column():
     create_pattern = re.compile(
         r"CREATE TABLE (?P<table>report_special_processing_[a-z_]+) \("
         r"(?P<body>.*?)\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
-        r"COMMENT='(?P<comment>[^']+)';?",
+        r"COMMENT='(?P<comment>[^']+)'",
         re.DOTALL,
     )
     matches = list(create_pattern.finditer(sql))
@@ -81,8 +87,34 @@ def test_initial_migration_has_chinese_comments_for_every_table_and_column():
                 column_line,
             ), f"{table_name}.{column_name} lacks a Chinese comment"
 
+    process_sql = (PACKAGE / "migrations/002_multi_report_processes.sql").read_text(encoding="utf-8")
+    process_match = re.search(
+        r"CREATE TABLE(?: IF NOT EXISTS)? (?P<table>report_special_processing_processes) \("
+        r"(?P<body>.*?)\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
+        r"COMMENT='(?P<comment>[^']+)'",
+        process_sql,
+        re.DOTALL,
+    )
+    assert process_match is not None
+    assert re.search(r"[\u4e00-\u9fff]", process_match.group("comment"))
+    column_lines = re.findall(
+        r"(?m)^\s{4}(?!PRIMARY\b|UNIQUE\b|KEY\b)"
+        r"(?P<column>[a-z][a-z0-9_]*)\s+.*$",
+        process_match.group("body"),
+    )
+    assert column_lines
+    for column_name in column_lines:
+        column_line = re.search(
+            rf"(?m)^\s{{4}}{re.escape(column_name)}\s+.*$",
+            process_match.group("body"),
+        ).group(0)
+        assert re.search(
+            r"\bCOMMENT\s+'[^']*[\u4e00-\u9fff][^']*'",
+            column_line,
+        ), f"processes.{column_name} lacks a Chinese comment"
 
-def test_module_registers_only_its_three_schema_tables():
+
+def test_module_registers_only_its_schema_tables():
     from auto_check.app.module_system.schema import ModuleSchemaRegistry
     from auto_check.modules.report_special_processing.module import create_module
 
@@ -92,6 +124,7 @@ def test_module_registers_only_its_three_schema_tables():
         {
             "report_special_processing_records",
             "report_special_processing_reports",
+            "report_special_processing_processes",
             "report_special_processing_audit_logs",
         }
     )

@@ -18,7 +18,6 @@ from sqlalchemy import (
     Table,
     Text,
     and_,
-    case,
     delete,
     func,
     insert,
@@ -72,6 +71,16 @@ REPORTS = Table(
     Column("sequence_no", Integer, nullable=False),
     Column("report_name", String(200), nullable=False),
     Column("report_name_normalized", String(200), nullable=False),
+    Column("created_at", DateTime, nullable=False),
+)
+PROCESSES = Table(
+    "report_special_processing_processes",
+    METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("record_id", BigInteger, nullable=False),
+    Column("sequence_no", Integer, nullable=False),
+    Column("report_process_code", String(64), nullable=False),
+    Column("report_process_name_snapshot", String(100), nullable=False),
     Column("created_at", DateTime, nullable=False),
 )
 AUDITS = Table(
@@ -139,10 +148,48 @@ class SpecialProcessingStorage:
     def __init__(self, database: Any) -> None:
         self.database = database
 
+    def backfill_processes_from_records(self) -> int:
+        """Copy legacy single process columns into the multi-process table once."""
+        missing = (
+            select(
+                RECORDS.c.id,
+                RECORDS.c.report_process_code,
+                RECORDS.c.report_process_name_snapshot,
+                RECORDS.c.created_at,
+            )
+            .select_from(
+                RECORDS.outerjoin(PROCESSES, RECORDS.c.id == PROCESSES.c.record_id)
+            )
+            .where(PROCESSES.c.id.is_(None))
+        )
+        with self.database.transaction() as connection:
+            rows = [
+                row
+                for row in _rows(connection.execute(missing))
+                if row.get("report_process_code")
+            ]
+            if not rows:
+                return 0
+            connection.execute(
+                insert(PROCESSES),
+                [
+                    {
+                        "record_id": int(row["id"]),
+                        "sequence_no": 1,
+                        "report_process_code": str(row["report_process_code"]),
+                        "report_process_name_snapshot": str(row["report_process_name_snapshot"] or "")[:100],
+                        "created_at": _db_value(row["created_at"]),
+                    }
+                    for row in rows
+                ],
+            )
+        return len(rows)
+
     def create(
         self,
         record: Mapping[str, Any],
         reports: Sequence[str],
+        processes: Sequence[Mapping[str, str]],
         audit: Mapping[str, Any],
     ) -> dict[str, Any]:
         values = {key: _db_value(value) for key, value in record.items()}
@@ -151,6 +198,7 @@ class SpecialProcessingStorage:
             result = connection.execute(insert(RECORDS).values(**values))
             record_id = int(result.inserted_primary_key[0])
             self._replace_reports(connection, record_id, reports, record["created_at"])
+            self._replace_processes(connection, record_id, processes, record["created_at"])
             self._write_audit(connection, record_id, values["record_no"], audit)
             created = self._get_with_connection(connection, record_id)
         return created
@@ -165,6 +213,7 @@ class SpecialProcessingStorage:
         row_version: int,
         changes: Mapping[str, Any],
         reports: Sequence[str],
+        processes: Sequence[Mapping[str, str]],
         audit: Mapping[str, Any],
     ) -> dict[str, Any]:
         values = {key: _db_value(value) for key, value in changes.items()}
@@ -177,6 +226,7 @@ class SpecialProcessingStorage:
             if result.rowcount != 1:
                 raise VersionConflictError()
             self._replace_reports(connection, record_id, reports, changes["updated_at"])
+            self._replace_processes(connection, record_id, processes, changes["updated_at"])
             current = self._get_with_connection(connection, record_id)
             self._write_audit(connection, record_id, current["record_no"], audit)
         return current
@@ -227,6 +277,7 @@ class SpecialProcessingStorage:
             total = int(connection.execute(count_statement).scalar_one() or 0)
             items = [_normalize_record(row) for row in _rows(connection.execute(statement))]
             self._attach_reports(connection, items)
+            self._attach_processes(connection, items)
         return {
             "items": items,
             "page": query.page,
@@ -235,20 +286,50 @@ class SpecialProcessingStorage:
             "total_pages": math.ceil(total / query.page_size) if total else 0,
         }
 
+    def list_for_export(self, query: PageQuery, *, limit: int) -> list[dict[str, Any]]:
+        conditions = self._conditions(query.filters)
+        statement = select(RECORDS)
+        keyword = query.filters.get("keyword")
+        if keyword:
+            report_match = select(REPORTS.c.record_id).where(
+                REPORTS.c.report_name_normalized.contains(str(keyword), autoescape=True)
+            )
+            conditions.append(
+                or_(
+                    RECORDS.c.record_no.contains(str(keyword), autoescape=True),
+                    RECORDS.c.summary.contains(str(keyword), autoescape=True),
+                    RECORDS.c.id.in_(report_match),
+                )
+            )
+        if conditions:
+            statement = statement.where(and_(*conditions))
+        statement = statement.order_by(*SORTS[query.sort]).limit(limit)
+        with self.database.connect() as connection:
+            items = [_normalize_record(row) for row in _rows(connection.execute(statement))]
+            self._attach_reports(connection, items)
+            self._attach_processes(connection, items)
+        return items
+
     def audit(self, record_id: int, query: PageQuery) -> dict[str, Any]:
-        statement = (
-            select(AUDITS)
-            .where(AUDITS.c.record_id == record_id)
-            .order_by(AUDITS.c.occurred_at.desc(), AUDITS.c.id.desc())
-            .offset((query.page - 1) * query.page_size)
-            .limit(query.page_size)
-        )
         count_statement = select(func.count()).select_from(AUDITS).where(
             AUDITS.c.record_id == record_id
         )
         with self.database.connect() as connection:
             total = int(connection.execute(count_statement).scalar_one() or 0)
-            items = _rows(connection.execute(statement))
+            total_pages = math.ceil(total / query.page_size) if total else 0
+            page = query.page
+            if total_pages <= 0:
+                page = 1
+            elif page > total_pages:
+                page = total_pages
+            statement = (
+                select(AUDITS)
+                .where(AUDITS.c.record_id == record_id)
+                .order_by(AUDITS.c.occurred_at.desc(), AUDITS.c.id.desc())
+                .offset((page - 1) * query.page_size)
+                .limit(query.page_size)
+            )
+            items = _rows(connection.execute(statement)) if total else []
         for item in items:
             if isinstance(item.get("occurred_at"), datetime):
                 item["occurred_at"] = _aware(item["occurred_at"])
@@ -258,10 +339,10 @@ class SpecialProcessingStorage:
                 item["changed_fields"] = {}
         return {
             "items": items,
-            "page": query.page,
+            "page": page,
             "page_size": query.page_size,
             "total": total,
-            "total_pages": math.ceil(total / query.page_size) if total else 0,
+            "total_pages": total_pages,
         }
 
     def count_by_handling_period(
@@ -289,14 +370,20 @@ class SpecialProcessingStorage:
         )
         process_statement = (
             select(
-                RECORDS.c.report_process_code,
-                RECORDS.c.report_process_name_snapshot,
-                func.sum(
-                    case((RECORDS.c.status.in_(("pending", "processing", "completed")), 1), else_=0)
-                ).label("effective_count"),
+                PROCESSES.c.report_process_code,
+                PROCESSES.c.report_process_name_snapshot,
+                func.count(func.distinct(RECORDS.c.id)).label("effective_count"),
             )
-            .where(RECORDS.c.report_period == period)
-            .group_by(RECORDS.c.report_process_code, RECORDS.c.report_process_name_snapshot)
+            .select_from(
+                PROCESSES.join(RECORDS, PROCESSES.c.record_id == RECORDS.c.id)
+            )
+            .where(
+                and_(
+                    RECORDS.c.report_period == period,
+                    RECORDS.c.status.in_(("pending", "processing", "completed")),
+                )
+            )
+            .group_by(PROCESSES.c.report_process_code, PROCESSES.c.report_process_name_snapshot)
         )
         with self.database.connect() as connection:
             counts_rows = _rows(connection.execute(counts_statement))
@@ -319,6 +406,7 @@ class SpecialProcessingStorage:
             return None
         result = _normalize_record(record)
         self._attach_reports(connection, [result])
+        self._attach_processes(connection, [result])
         return result
 
     @staticmethod
@@ -338,6 +426,29 @@ class SpecialProcessingStorage:
                         "created_at": _db_value(created_at),
                     }
                     for index, name in enumerate(reports, 1)
+                ],
+            )
+
+    @staticmethod
+    def _replace_processes(
+        connection: Any,
+        record_id: int,
+        processes: Sequence[Mapping[str, str]],
+        created_at: datetime,
+    ) -> None:
+        connection.execute(delete(PROCESSES).where(PROCESSES.c.record_id == record_id))
+        if processes:
+            connection.execute(
+                insert(PROCESSES),
+                [
+                    {
+                        "record_id": record_id,
+                        "sequence_no": index,
+                        "report_process_code": item["code"],
+                        "report_process_name_snapshot": item["name"],
+                        "created_at": _db_value(created_at),
+                    }
+                    for index, item in enumerate(processes, 1)
                 ],
             )
 
@@ -375,9 +486,56 @@ class SpecialProcessingStorage:
             record["reports"] = grouped.get(int(record["id"]), [])
 
     @staticmethod
+    def _attach_processes(connection: Any, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        ids = [record["id"] for record in records]
+        rows = _rows(
+            connection.execute(
+                select(PROCESSES)
+                .where(PROCESSES.c.record_id.in_(ids))
+                .order_by(PROCESSES.c.record_id, PROCESSES.c.sequence_no)
+            )
+        )
+        grouped: dict[int, list[dict[str, str]]] = {}
+        for row in rows:
+            grouped.setdefault(int(row["record_id"]), []).append(
+                {
+                    "code": str(row["report_process_code"]),
+                    "name": str(row["report_process_name_snapshot"]),
+                }
+            )
+        for record in records:
+            processes = grouped.get(int(record["id"]), [])
+            if not processes and record.get("report_process_code"):
+                processes = [
+                    {
+                        "code": str(record["report_process_code"]),
+                        "name": str(record.get("report_process_name_snapshot") or ""),
+                    }
+                ]
+            record["report_processes"] = processes
+            record["report_process_codes"] = [item["code"] for item in processes]
+            if processes:
+                record["report_process_name_snapshot"] = "、".join(
+                    item["name"] for item in processes if item["name"]
+                ) or record.get("report_process_name_snapshot")
+
+    @staticmethod
     def _conditions(filters: Mapping[str, Any]) -> list[Any]:
         conditions = []
-        for key in ("report_process_code", "status", "handler_user_id", "report_period"):
+        process_code = filters.get("report_process_code")
+        if process_code not in {None, ""}:
+            process_match = select(PROCESSES.c.record_id).where(
+                PROCESSES.c.report_process_code == process_code
+            )
+            conditions.append(
+                or_(
+                    RECORDS.c.report_process_code == process_code,
+                    RECORDS.c.id.in_(process_match),
+                )
+            )
+        for key in ("status", "handler_user_id", "report_period"):
             if key in filters:
                 conditions.append(RECORDS.c[key] == filters[key])
         if "special_handling_from" in filters:

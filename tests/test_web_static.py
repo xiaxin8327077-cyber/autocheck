@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import subprocess
@@ -8540,6 +8540,13 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "function openCustomDatePicker(input)",
         "function toggleCustomDatePicker(input)",
         "function enhanceCustomDateInput(input, shell)",
+        "function cleanupDetachedCustomDatePickers()",
+        "function cleanupDetachedCustomSelects()",
+        "cleanupDetachedCustomDatePickers();",
+        "cleanupDetachedCustomSelects();",
+        "dropdown._customControlOwner = input;",
+        "dropdown._customControlOwner = select;",
+        'dropdown.classList.add("rsp-compact-select-dropdown");',
         "const CUSTOM_INPUT_TYPES = new Set",
         "const customDateStates = new WeakMap();",
         "const CUSTOM_DATE_WEEKDAYS",
@@ -8576,6 +8583,14 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "initializeCustomSelects();",
     ]:
         assert text in app_js
+    click_close = re.search(
+        r'document\.addEventListener\("click", \(event\) => \{(?P<body>.*?)\n  \}, true\);',
+        app_js,
+        re.S,
+    )
+    assert click_close is not None
+    assert "closeOtherCustomSelects()" in click_close.group("body")
+    assert "closeOtherCustomDatePickers()" in click_close.group("body")
     assert 'input.addEventListener("focus", () => openCustomDatePicker(input));' not in app_js
 
     select_rule = re.search(r"(?m)^select\s*\{(?P<body>.*?)\}", css, re.S)

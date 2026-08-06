@@ -33,9 +33,21 @@ def test_draft_allows_business_fields_to_be_missing_except_process():
     from auto_check.modules.report_special_processing.validator import validate_record_input
 
     value = validate_record_input({"save_mode": "draft", "report_process_code": "pbc"})
+    assert value.report_process_codes == ("pbc",)
     assert value.reports == ()
     assert value.report_period is None
     assert value.handler_user_id is None
+
+
+def test_validator_accepts_multi_report_process_codes():
+    from auto_check.modules.report_special_processing.validator import validate_record_input
+
+    payload = _payload()
+    payload.pop("report_process_code", None)
+    payload["report_process_codes"] = ["pbc", "east5"]
+    value = validate_record_input(payload)
+    assert value.report_process_codes == ("pbc", "east5")
+    assert value.report_process_code == "pbc"
 
 
 @pytest.mark.parametrize(
@@ -47,7 +59,7 @@ def test_draft_allows_business_fields_to_be_missing_except_process():
         _payload(processing_script="汉" * 174763),
         _payload(report_period="2026-02-30"),
         _payload(special_handling_at="2026-08-01T15:32:18"),
-        _payload(summary="x" * 201),
+        _payload(summary="x" * 26),
         {**_payload(), "creator_user_id": "forged"},
     ],
 )

@@ -3672,9 +3672,28 @@ function closeCustomSelect(select) {
   state.dropdown.hidden = true;
 }
 
+function destroyCustomSelect(select) {
+  const state = customSelectStates.get(select);
+  if (!state) return;
+  state.shell?.classList?.remove("custom-select-open");
+  state.trigger?.setAttribute?.("aria-expanded", "false");
+  state.dropdown.remove();
+  customSelectStates.delete(select);
+}
+
 function closeOtherCustomSelects(currentSelect = null) {
   document.querySelectorAll("select.custom-select-native").forEach((select) => {
     if (select !== currentSelect) closeCustomSelect(select);
+  });
+}
+
+function cleanupDetachedCustomSelects() {
+  document.querySelectorAll(".custom-select-dropdown").forEach((dropdown) => {
+    const select = dropdown._customControlOwner;
+    const state = select ? customSelectStates.get(select) : null;
+    if (select && select.isConnected && state?.shell?.isConnected) return;
+    dropdown.remove();
+    if (select) customSelectStates.delete(select);
   });
 }
 
@@ -3703,9 +3722,27 @@ function closeCustomDatePicker(input) {
   state.dropdown.hidden = true;
 }
 
+function destroyCustomDatePicker(input) {
+  const state = customDateStates.get(input);
+  if (!state) return;
+  state.shell?.classList?.remove("custom-date-open");
+  state.dropdown.remove();
+  customDateStates.delete(input);
+}
+
 function closeOtherCustomDatePickers(currentInput = null) {
   document.querySelectorAll("input.custom-date-input").forEach((input) => {
     if (input !== currentInput) closeCustomDatePicker(input);
+  });
+}
+
+function cleanupDetachedCustomDatePickers() {
+  document.querySelectorAll(".custom-date-dropdown").forEach((dropdown) => {
+    const input = dropdown._customControlOwner;
+    const state = input ? customDateStates.get(input) : null;
+    if (input && input.isConnected && state?.shell?.isConnected) return;
+    dropdown.remove();
+    if (input) customDateStates.delete(input);
   });
 }
 
@@ -3799,10 +3836,13 @@ function enhanceCustomSelect(select) {
 
   const dropdown = document.createElement("div");
   dropdown.className = "custom-select-dropdown";
+  if (select.classList.contains("rsp-compact-select")) {
+    dropdown.classList.add("rsp-compact-select-dropdown");
+  }
   dropdown.setAttribute("role", "listbox");
   dropdown.hidden = true;
   document.body.appendChild(dropdown);
-
+  dropdown._customControlOwner = select;
   customSelectStates.set(select, { shell, trigger, dropdown });
   syncCustomSelect(select);
 
@@ -3922,6 +3962,7 @@ function enhanceCustomDateInput(input, shell) {
   dropdown.className = "custom-date-dropdown";
   dropdown.hidden = true;
   document.body.appendChild(dropdown);
+  dropdown._customControlOwner = input;
   customDateStates.set(input, { shell, dropdown, viewYear: null, viewMonth: null });
 
   input.addEventListener("click", () => toggleCustomDatePicker(input));
@@ -4001,9 +4042,13 @@ function enhanceCustomControls(root = document) {
 }
 
 function scheduleCustomSelectEnhancement() {
+  cleanupDetachedCustomDatePickers();
+  cleanupDetachedCustomSelects();
   if (customSelectRaf) return;
   customSelectRaf = requestAnimationFrame(() => {
     customSelectRaf = 0;
+    cleanupDetachedCustomDatePickers();
+    cleanupDetachedCustomSelects();
     enhanceCustomControls();
   });
 }
@@ -4015,13 +4060,15 @@ function initializeCustomSelects() {
     customSelectObserver.observe(document.body, { childList: true, subtree: true });
   }
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".custom-select-shell") && !event.target.closest(".custom-select-dropdown")) {
+    const target = event.target;
+    if (!(target && typeof target.closest === "function")) return;
+    if (!target.closest(".custom-select-shell") && !target.closest(".custom-select-dropdown")) {
       closeOtherCustomSelects();
     }
-    if (!event.target.closest(".custom-date-shell") && !event.target.closest(".custom-date-dropdown")) {
+    if (!target.closest(".custom-date-shell") && !target.closest(".custom-date-dropdown")) {
       closeOtherCustomDatePickers();
     }
-  });
+  }, true);
   window.addEventListener("resize", () => { closeOtherCustomSelects(); closeOtherCustomDatePickers(); });
   window.addEventListener("scroll", (event) => {
     const target = event.target;
@@ -11650,6 +11697,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-07-18</span>
       </div>
               <ul>
+        <li>报表特殊处理支持按筛选结果导出 Excel。</li>
         <li>新增报送导航状态定时统计、鱼骨进度、当期逾期跟踪和治理统计四周期维护。</li>
         <li>新增报送日程、月度负责人维护和鱼骨步骤定位。</li>
         <li>新增报送步骤浮窗人工确认和撤销确认。</li>

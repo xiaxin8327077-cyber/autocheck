@@ -1,5 +1,8 @@
 import { element, labeledField, option } from "./dom.js";
 import { formatDisplayDateTime } from "./record_table.js";
+import { createProcessMultiSelect } from "./process_multi_select.js";
+
+const SUMMARY_MAX_LENGTH = 25;
 
 function nowHandlingAt() {
   const date = new Date();
@@ -10,7 +13,7 @@ function nowHandlingAt() {
 function draftPayload(fields, saveMode, rowVersion, specialHandlingAt) {
   const payload = {
     save_mode: saveMode,
-    report_process_code: fields.process.value,
+    report_process_codes: fields.process.value,
     report_period: fields.period.value,
     reports: fields.reports.value.split("\n").map((value) => value.trim()).filter(Boolean),
     summary: fields.summary.value.trim(),
@@ -34,18 +37,23 @@ export function createRecordDrawer(documentRef, options) {
   const creating = mode === "create";
   const current = record || {};
   const canEdit = creating || Boolean(current.can_edit);
-  const canAdmin = Boolean(current.can_admin || user?.role === "admin" || user?.is_admin);
-  const title = creating ? "新建报表特殊处理" : (current.summary || "报表特殊处理详情");
-  const eyebrow = creating ? "数据录入" : (current.record_no || "记录详情");
+  const title = creating ? "新建报表特殊处理" : (canEdit ? "编辑" : "查看");
 
-  const process = element(documentRef, "select", { "aria-label": "关联报送", disabled: !canEdit });
-  process.append(option(documentRef, "", "请选择关联报送"));
   const report_processes = catalog?.report_processes || [];
-  report_processes.map((item) => process.append(option(documentRef, item.code, item.name)));
-  process.value = current.report_process_code || options.activeProcessCode || "";
+  const initialProcessCodes = Array.isArray(current.report_process_codes) && current.report_process_codes.length
+    ? current.report_process_codes
+    : (current.report_process_code
+      ? [current.report_process_code]
+      : (options.activeProcessCode ? [options.activeProcessCode] : []));
+  const process = createProcessMultiSelect(documentRef, {
+    options: report_processes,
+    values: initialProcessCodes,
+    disabled: !canEdit,
+    "aria-label": "关联报送",
+  });
 
   const users = catalog?.users || [];
-  const handler = element(documentRef, "select", { "aria-label": "处理人", disabled: !canEdit }, [option(documentRef, "", "请选择处理人")]);
+  const handler = element(documentRef, "select", { className: "rsp-compact-select", "aria-label": "处理人", disabled: !canEdit }, [option(documentRef, "", "请选择处理人")]);
   users.map((item) => handler.append(option(documentRef, item.id, item.display_name || item.username)));
   const defaultHandlerId = current.handler_user_id != null && current.handler_user_id !== ""
     ? String(current.handler_user_id)
@@ -65,10 +73,15 @@ export function createRecordDrawer(documentRef, options) {
     handler,
     period: element(documentRef, "input", { type: "date", value: current.report_period || options.reportPeriod || "", "aria-label": "所处报送期", disabled: !canEdit }),
     reports: element(documentRef, "textarea", { className: "rsp-reports-input", "aria-label": "涉及报表，每行一项", placeholder: "每行填写一个报表名称", disabled: !canEdit }),
-    summary: element(documentRef, "input", { value: current.summary || "", maxlength: "200", "aria-label": "处理摘要", disabled: !canEdit }),
+    summary: element(documentRef, "input", {
+      value: current.summary || "",
+      maxlength: String(SUMMARY_MAX_LENGTH),
+      "aria-label": "处理摘要",
+      placeholder: `最多 ${SUMMARY_MAX_LENGTH} 个字符`,
+      disabled: !canEdit,
+    }),
     content: element(documentRef, "textarea", { "aria-label": "特殊处理内容", maxlength: "20000", disabled: !canEdit }),
     script: element(documentRef, "textarea", { className: "rsp-script", "aria-label": "处理脚本", spellcheck: "false", disabled: !canEdit }),
-    reason: element(documentRef, "input", { maxlength: "500", "aria-label": "管理员操作原因", placeholder: "作废或重开时必填" }),
   };
   fields.reports.value = (current.reports || []).map((item) => typeof item === "string" ? item : item.report_name).join("\n");
   fields.content.value = current.processing_content || "";
@@ -80,12 +93,42 @@ export function createRecordDrawer(documentRef, options) {
   }
 
   const errorBox = element(documentRef, "div", { className: "rsp-form-error", role: "alert", hidden: "" });
+  const summaryHint = element(documentRef, "div", {
+    className: "rsp-field-hint",
+    role: "alert",
+    hidden: "",
+  });
+  function clearSummaryHint() {
+    summaryHint.hidden = true;
+    summaryHint.textContent = "";
+    fields.summary.removeAttribute("aria-invalid");
+  }
+  function showSummaryHint(message) {
+    errorBox.hidden = true;
+    errorBox.textContent = "";
+    summaryHint.hidden = false;
+    summaryHint.textContent = message;
+    fields.summary.setAttribute("aria-invalid", "true");
+    fields.summary.focus();
+  }
   function showError(error) {
+    const fieldEntries = Object.entries(error.fields || {});
+    if (fieldEntries.length === 1 && fieldEntries[0][0] === "summary") {
+      showSummaryHint(`处理摘要最多支持${SUMMARY_MAX_LENGTH}个字符`);
+      return;
+    }
+    clearSummaryHint();
     errorBox.hidden = false;
-    errorBox.textContent = error.message || "保存失败，请重试";
+    const fieldMessages = fieldEntries
+      .map(([, message]) => (Array.isArray(message) ? message.join("；") : String(message)))
+      .filter(Boolean);
+    errorBox.textContent = fieldMessages.length
+      ? fieldMessages.join("；")
+      : (error.message || "保存失败，请重试");
     options.notify(errorBox.textContent, "error");
-    Object.entries(error.fields || {}).forEach(([fieldName, message]) => {
-      const control = fields[fieldName];
+    fieldEntries.forEach(([fieldName, message]) => {
+      const control = fields[fieldName]
+        || (fieldName === "report_process_codes" || fieldName === "report_process_code" ? fields.process : null);
       if (control) {
         control.setAttribute("aria-invalid", "true");
         control.setAttribute("title", Array.isArray(message) ? message.join("；") : String(message));
@@ -95,6 +138,7 @@ export function createRecordDrawer(documentRef, options) {
   }
   async function run(operation, successMessage) {
     errorBox.hidden = true;
+    clearSummaryHint();
     try {
       const response = await operation();
       options.notify(successMessage, "success");
@@ -103,53 +147,102 @@ export function createRecordDrawer(documentRef, options) {
       if (error?.name !== "AbortError") showError(error);
     }
   }
-  const saveDraft = () => run(
-    () => creating
-      ? actions.createRecord(draftPayload(fields, "draft", null, resolveHandlingAt()))
-      : actions.updateRecord(current.id, draftPayload(fields, "draft", current.row_version, resolveHandlingAt())),
-    "草稿已保存",
-  );
-  const saveRecord = () => run(
-    () => creating
-      ? actions.createRecord(draftPayload(fields, "record", null, resolveHandlingAt()))
-      : actions.updateRecord(current.id, draftPayload(fields, "record", current.row_version, resolveHandlingAt())),
-    creating ? "特殊处理记录已创建" : "修改已保存",
-  );
-  const completeRecord = async () => {
-    if (!await options.confirm("确认将该记录标记为已完成吗？")) return;
-    await run(() => actions.changeStatus(current.id, { target_status: "completed", row_version: current.row_version, reason: "处理完成" }), "记录已完成");
+  function validateForm() {
+    clearSummaryHint();
+    Object.values(fields).forEach((control) => {
+      control?.removeAttribute?.("aria-invalid");
+      control?.removeAttribute?.("title");
+    });
+    const summary = fields.summary.value.trim();
+    if (summary.length > SUMMARY_MAX_LENGTH) {
+      showSummaryHint(`处理摘要最多支持${SUMMARY_MAX_LENGTH}个字符`);
+      return false;
+    }
+    return true;
+  }
+  fields.summary.addEventListener("input", () => {
+    if (!summaryHint.hidden) clearSummaryHint();
+  });
+  const saveDraft = () => {
+    if (!validateForm()) return;
+    return run(
+      () => creating
+        ? actions.createRecord(draftPayload(fields, "draft", null, resolveHandlingAt()))
+        : actions.updateRecord(current.id, draftPayload(fields, "draft", current.row_version, resolveHandlingAt())),
+      "草稿已保存",
+    );
   };
-  const voidRecord = async () => {
-    const reason = fields.reason.value.trim();
-    if (!reason) { showError(new Error("请输入作废原因")); fields.reason.focus(); return; }
-    if (!await options.confirm("确认作废该记录吗？作废后仍保留完整留痕。")) return;
-    await run(() => actions.voidRecord(current.id, { row_version: current.row_version, reason }), "记录已作废");
+  const saveRecord = () => {
+    if (!validateForm()) return;
+    return run(
+      () => creating
+        ? actions.createRecord(draftPayload(fields, "record", null, resolveHandlingAt()))
+        : actions.updateRecord(current.id, draftPayload(fields, "record", current.row_version, resolveHandlingAt())),
+      creating ? "特殊处理记录已创建" : "修改已保存",
+    );
   };
-  const reopenRecord = async () => {
-    const reason = fields.reason.value.trim();
-    if (!reason) { showError(new Error("请输入重开原因")); fields.reason.focus(); return; }
-    if (!await options.confirm("确认重开该记录并恢复为待处理吗？")) return;
-    await run(() => actions.reopenRecord(current.id, { row_version: current.row_version, reason }), "记录已重开");
-  };
-
   const auditBody = element(documentRef, "tbody");
-  const auditStatus = element(documentRef, "span", { className: "rsp-audit-page", text: "第 1 页" });
+  const auditStatus = element(documentRef, "span", { className: "rsp-audit-page", text: "第 1 / 1 页" });
   let auditPage = 1;
-  async function loadAudit(page = 1) {
+  let auditTotalPages = 1;
+  const auditPrev = actionButton(documentRef, "上一页", "rsp-button-secondary", () => {
+    if (auditPage <= 1) return;
+    loadAudit(auditPage - 1);
+  });
+  const auditNext = actionButton(documentRef, "下一页", "rsp-button-secondary", () => {
+    if (auditPage >= auditTotalPages) return;
+    loadAudit(auditPage + 1);
+  });
+  function syncAuditPager() {
+    auditPrev.disabled = auditPage <= 1;
+    auditNext.disabled = auditPage >= auditTotalPages;
+    auditStatus.textContent = `第 ${auditPage} / ${auditTotalPages} 页`;
+  }
+  async function loadAudit(requestedPage = 1) {
     if (creating) return;
+    const page = Math.max(1, Number(requestedPage) || 1);
     try {
       const response = await actions.audit(current.id, { page, page_size: 10 });
       const data = response?.data || response || {};
+      const total = Number(data.total) || 0;
+      const totalPages = Math.max(1, Number(data.total_pages) || 0);
+      let nextPage = Math.max(1, Number(data.page) || page);
+      if (nextPage > totalPages) {
+        if (page !== totalPages) {
+          await loadAudit(totalPages);
+          return;
+        }
+        nextPage = totalPages;
+      }
       auditBody.replaceChildren();
-      (data.items || []).forEach((item) => auditBody.append(element(documentRef, "tr", {}, [
-        element(documentRef, "td", { text: formatDisplayDateTime(item.occurred_at) || item.occurred_at || "—" }),
-        element(documentRef, "td", { text: item.operator_display_name_snapshot || item.operator_username_snapshot }),
-        element(documentRef, "td", { text: item.action_summary || item.action_code }),
-      ])));
-      auditPage = data.page || page;
-      auditStatus.textContent = `第 ${auditPage} / ${data.total_pages || 1} 页`;
+      const items = data.items || [];
+      if (!items.length) {
+        auditBody.append(element(documentRef, "tr", { className: "rsp-empty-row" }, [
+          element(documentRef, "td", {
+            className: "rsp-empty",
+            colspan: "3",
+            text: total ? "本页暂无操作记录" : "暂无操作记录",
+          }),
+        ]));
+      } else {
+        items.forEach((item) => {
+          const summaryText = item.action_summary || item.action_code || "";
+          const summaryLines = String(summaryText).split(/\n+/).map((line) => line.trim()).filter(Boolean);
+          const summaryCell = summaryLines.length > 1
+            ? element(documentRef, "td", { className: "rsp-audit-summary", title: summaryText }, summaryLines.map((line) => element(documentRef, "div", { className: "rsp-audit-summary-line", text: line })))
+            : element(documentRef, "td", { className: "rsp-audit-summary", text: summaryText || "—", title: summaryText || "" });
+          auditBody.append(element(documentRef, "tr", {}, [
+            element(documentRef, "td", { text: formatDisplayDateTime(item.occurred_at) || item.occurred_at || "—" }),
+            element(documentRef, "td", { text: item.operator_display_name_snapshot || item.operator_username_snapshot }),
+            summaryCell,
+          ]));
+        });
+      }
+      auditPage = nextPage;
+      auditTotalPages = totalPages;
+      syncAuditPager();
     } catch (error) {
-      if (error?.name !== "AbortError") options.notify("操作留痕加载失败", "error");
+      if (error?.name !== "AbortError") options.notify("操作记录加载失败", "error");
     }
   }
 
@@ -172,26 +265,15 @@ export function createRecordDrawer(documentRef, options) {
     onClick: onClose,
   });
   const header = element(documentRef, "header", { className: "rsp-modal-head" }, [
-    element(documentRef, "div", {}, [
-      element(documentRef, "span", { className: "rsp-eyebrow", text: eyebrow }),
-      element(documentRef, "h2", { text: title }),
-    ]),
+    element(documentRef, "h2", { text: title }),
   ]);
   const basic = element(documentRef, "section", { className: "rsp-modal-section" }, [
     element(documentRef, "h3", { text: "基本信息" }),
     element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, [
-      labeledField(documentRef, "关联报送", fields.process),
+      labeledField(documentRef, "关联报送", fields.process.root || fields.process, "rsp-process-field"),
       labeledField(documentRef, "所处报送期", fields.period),
       labeledField(documentRef, "处理人", fields.handler),
       labeledField(documentRef, "涉及报表", fields.reports, "rsp-span-two"),
-      !creating
-        ? element(documentRef, "div", { className: "rsp-workflow-state rsp-span-two" }, [
-          element(documentRef, "span", { text: "流程状态" }),
-          element(documentRef, "strong", { text: "未启用" }),
-          element(documentRef, "small", { text: "审批流程将在后续阶段启用" }),
-        ])
-        : null,
-      !creating && canAdmin ? labeledField(documentRef, "操作原因", fields.reason, "rsp-span-two") : null,
     ]),
   ]);
   const content = element(documentRef, "section", { className: "rsp-modal-section" }, [
@@ -208,47 +290,30 @@ export function createRecordDrawer(documentRef, options) {
     fields.script,
   ]);
   const audit = element(documentRef, "section", { className: "rsp-modal-section rsp-audit", hidden: creating ? "" : null }, [
-    element(documentRef, "h3", { text: "操作留痕" }),
+    element(documentRef, "h3", { text: "操作记录" }),
     element(documentRef, "div", { className: "rsp-audit-table-wrap" }, [element(documentRef, "table", {}, [
       element(documentRef, "thead", {}, [element(documentRef, "tr", {}, ["操作时间", "操作人", "操作内容"].map((label) => element(documentRef, "th", { text: label })))]),
       auditBody,
     ])]),
     element(documentRef, "div", { className: "rsp-audit-pagination" }, [
-      actionButton(documentRef, "上一页", "rsp-button-secondary", () => loadAudit(Math.max(1, auditPage - 1))),
+      auditPrev,
       auditStatus,
-      actionButton(documentRef, "下一页", "rsp-button-secondary", () => loadAudit(auditPage + 1)),
+      auditNext,
     ]),
   ]);
 
   const saveDisabled = !catalogAvailable || !canEdit;
   const footerButtons = [];
   if (canEdit && current.status !== "completed" && current.status !== "voided") {
-    footerButtons.push(actionButton(documentRef, "保存草稿", "rsp-button-secondary", saveDraft, saveDisabled));
+    if (creating || current.status === "draft") {
+      footerButtons.push(actionButton(documentRef, "保存草稿", "rsp-button-secondary", saveDraft, saveDisabled));
+    }
     footerButtons.push(actionButton(documentRef, creating ? "保存记录" : "保存修改", "rsp-button-primary", saveRecord, saveDisabled));
   }
-  if (!creating && canEdit && ["pending", "processing"].includes(current.status)) {
-    footerButtons.push(actionButton(
-      documentRef,
-      current.status === "pending" ? "开始处理" : "转为待处理",
-      "rsp-button-secondary",
-      () => run(
-        () => actions.changeStatus(current.id, {
-          target_status: current.status === "pending" ? "processing" : "pending",
-          row_version: current.row_version,
-          reason: current.status === "pending" ? "开始处理" : "转回待处理",
-        }),
-        current.status === "pending" ? "记录已转为处理中" : "记录已转为待处理",
-      ),
-    ));
-    footerButtons.push(actionButton(documentRef, "完成", "rsp-button-success", completeRecord));
-  }
-  if (!creating && canAdmin && ["draft", "pending", "processing"].includes(current.status)) {
-    footerButtons.push(actionButton(documentRef, "作废", "rsp-button-danger", voidRecord));
-  }
-  if (!creating && canAdmin && ["completed", "voided"].includes(current.status)) {
-    footerButtons.push(actionButton(documentRef, "重开", "rsp-button-warning", reopenRecord));
-  }
-  const footer = element(documentRef, "footer", { className: "rsp-modal-actions" }, footerButtons);
+  const footer = element(documentRef, "footer", { className: "rsp-modal-actions" }, [
+    summaryHint,
+    element(documentRef, "div", { className: "rsp-modal-actions-right" }, footerButtons),
+  ]);
   const body = element(documentRef, "div", { className: "rsp-modal-body" }, [
     errorBox, basic, content, script, audit,
   ]);
@@ -262,17 +327,14 @@ export function createRecordDrawer(documentRef, options) {
     className: "rsp-record-modal-overlay",
   }, [shell]);
 
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) onClose();
-  });
   shell.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
     }
   });
-  shell.addEventListener("click", (event) => event.stopPropagation());
 
   loadAudit(1);
+  syncAuditPager();
   return overlay;
 }

@@ -42,15 +42,33 @@ class Reports:
 
 class MemoryStorage:
     def __init__(self): self.records = {}; self.audits = []; self.calls = []
-    def create(self, record, reports, audit):
-        self.calls.append("create"); value = {**record, "id": 1, "record_no": "RSP-20260802-token", "row_version": 1, "reports": list(reports)}; self.records[1] = value; self.audits.append(audit); return deepcopy(value)
+    def create(self, record, reports, processes, audit):
+        self.calls.append("create")
+        value = {
+            **record,
+            "id": 1,
+            "record_no": "RSP-20260802-token",
+            "row_version": 1,
+            "reports": list(reports),
+            "report_processes": [dict(item) for item in processes],
+            "report_process_codes": [item["code"] for item in processes],
+        }
+        self.records[1] = value
+        self.audits.append(audit)
+        return deepcopy(value)
     def get(self, record_id): return deepcopy(self.records.get(record_id))
-    def update(self, record_id, row_version, changes, reports, audit):
+    def update(self, record_id, row_version, changes, reports, processes, audit):
         current = self.records.get(record_id)
         if current is None: return None
         from auto_check.modules.report_special_processing.contracts import VersionConflictError
         if current["row_version"] != row_version: raise VersionConflictError()
-        current.update(changes); current["reports"] = list(reports); current["row_version"] += 1; self.audits.append(audit); return deepcopy(current)
+        current.update(changes)
+        current["reports"] = list(reports)
+        current["report_processes"] = [dict(item) for item in processes]
+        current["report_process_codes"] = [item["code"] for item in processes]
+        current["row_version"] += 1
+        self.audits.append(audit)
+        return deepcopy(current)
     def update_status(self, record_id, row_version, changes, audit):
         current = self.records[record_id]
         from auto_check.modules.report_special_processing.contracts import VersionConflictError
@@ -101,6 +119,111 @@ def test_resource_permission_status_machine_admin_void_reopen_and_optimistic_loc
     reopened = service.reopen(record["id"], {"row_version": completed["row_version"], "reason": "补充口径"}, {"id": "9", "role": "admin"}, request_id="req")
     voided = service.void(record["id"], {"row_version": reopened["row_version"], "reason": "口径失效"}, {"id": "9", "role": "admin"}, request_id="req")
     assert (completed["status"], reopened["status"], voided["status"]) == ("completed", "pending", "voided")
+
+
+def test_complete_and_void_write_explicit_audit_summaries():
+    service = _service()
+    actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+    admin = {"id": "9", "username": "admin", "display_name": "管理员", "role": "admin"}
+    created = service.create(_payload(), actor, request_id="req-create")
+    completed = service.change_status(
+        created["id"],
+        {"target_status": "completed", "row_version": created["row_version"], "reason": "处理完成"},
+        actor,
+        request_id="req-complete",
+    )
+    assert service.storage.audits[-1]["action_summary"].splitlines() == [
+        "完成记录：",
+        "1.状态由待处理改为已完成",
+    ]
+    reopened = service.reopen(
+        completed["id"],
+        {"row_version": completed["row_version"], "reason": "补充"},
+        admin,
+        request_id="req-reopen",
+    )
+    service.void(
+        reopened["id"],
+        {"row_version": reopened["row_version"], "reason": "口径失效"},
+        admin,
+        request_id="req-void",
+    )
+    assert service.storage.audits[-1]["action_summary"].splitlines() == [
+        "作废记录：",
+        "1.状态由待处理改为已作废",
+        "2.作废理由：口径失效",
+    ]
+
+
+def test_draft_create_and_update_audit_summary():
+    service = _service()
+    actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+    draft = service.create(
+        {"save_mode": "draft", "report_process_code": "pbc", "summary": "草稿摘要"},
+        actor,
+        request_id="req-draft",
+    )
+    assert service.storage.audits[-1]["action_summary"] == "保存草稿"
+    service.update(
+        draft["id"],
+        {
+            "save_mode": "draft",
+            "report_process_code": "pbc",
+            "row_version": draft["row_version"],
+            "summary": "新草稿摘要",
+        },
+        actor,
+        request_id="req-draft-update",
+    )
+    assert service.storage.audits[-1]["action_summary"].splitlines()[0] == "保存草稿："
+    assert "处理摘要由草稿摘要改为新草稿摘要" in service.storage.audits[-1]["action_summary"]
+
+
+def test_draft_can_be_voided_by_admin():
+    service = _service()
+    admin = {"id": "9", "username": "admin", "display_name": "管理员", "role": "admin"}
+    draft = service.create(
+        {"save_mode": "draft", "report_process_code": "pbc", "summary": "草稿"},
+        {"id": "1", "username": "creator", "role": "user"},
+        request_id="req-draft",
+    )
+    voided = service.void(
+        draft["id"],
+        {"row_version": draft["row_version"], "reason": "不再需要"},
+        admin,
+        request_id="req-void-draft",
+    )
+    assert voided["status"] == "voided"
+    assert service.storage.audits[-1]["action_summary"].splitlines() == [
+        "作废记录：",
+        "1.状态由草稿改为已作废",
+        "2.作废理由：不再需要",
+    ]
+
+
+def test_update_audit_summary_describes_field_changes():
+    service = _service()
+    actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+    created = service.create(_payload(), actor, request_id="req-create")
+    service.update(
+        created["id"],
+        {
+            **_payload(),
+            "row_version": created["row_version"],
+            "summary": "新摘要",
+            "processing_content": "新说明",
+            "reports": ["表二", "表三"],
+        },
+        actor,
+        request_id="req-update",
+    )
+    summary = service.storage.audits[-1]["action_summary"]
+    assert summary.splitlines() == [
+        "更新记录：",
+        "1.处理摘要由摘要改为新摘要",
+        "2.处理说明由内容改为新说明",
+        "3.涉及报表由表一改为表二、表三",
+    ]
 
 
 def test_detail_capabilities_match_frontend_resource_actions():

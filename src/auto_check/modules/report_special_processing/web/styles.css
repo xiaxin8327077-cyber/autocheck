@@ -13,6 +13,7 @@
   min-width: 0;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
   color: var(--rsp-text);
   background: transparent;
 }
@@ -131,12 +132,41 @@
 }
 
 .auto-check-module[data-module="report_special_processing"] button:focus-visible,
-.auto-check-module[data-module="report_special_processing"] input:focus-visible,
-.auto-check-module[data-module="report_special_processing"] select:focus-visible,
-.auto-check-module[data-module="report_special_processing"] textarea:focus-visible,
 .auto-check-module[data-module="report_special_processing"] tr:focus-visible {
   outline: 2px solid var(--rsp-brand);
   outline-offset: 2px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal input,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal select,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-multi-select-trigger,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-trigger,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell input {
+  outline: none !important;
+  box-shadow: none !important;
+  transition: border-color 120ms ease;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal input:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal input:focus-visible,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal select:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal select:focus-visible,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea:focus-visible,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-multi-select-trigger:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-multi-select-trigger:focus-visible,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-multi-select.is-open .rsp-multi-select-trigger,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-open .custom-select-trigger,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-trigger:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-trigger:focus-visible,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell:focus-within,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell input:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell input:focus-visible {
+  border-color: var(--rsp-brand) !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-catalog-warning,
@@ -149,15 +179,93 @@
   background: #fff4f4;
 }
 
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-card {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: 0;
+  min-height: 56px;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px solid var(--rsp-line);
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-header .custom-date-shell {
+  width: 118px !important;
+  min-width: 118px !important;
+  max-width: 118px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  --input-width: 118px !important;
+  --input-height: 32px !important;
+  --input-font-size: 12px !important;
+  overflow: visible !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-header .custom-date-shell input {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  line-height: 30px !important;
+  padding: 0 8px !important;
+  font-size: 12px !important;
+  border: 1px solid var(--rsp-line) !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-header input[type="date"],
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-header input[type="text"][aria-label="报送期"] {
+  box-sizing: border-box;
+  width: 118px;
+  min-width: 118px;
+  max-width: 118px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 30px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-header .rsp-button {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-title {
+  margin: 0;
+  color: var(--rsp-text);
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-actions,
+.auto-check-module[data-module="report_special_processing"] .rsp-tabs-actions label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
 .auto-check-module[data-module="report_special_processing"] .rsp-report-tabs {
   display: grid;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  min-width: 0;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  margin: 0 0 16px;
-  overflow-x: auto;
-  border: 1px solid var(--rsp-line);
-  border-radius: var(--ui-radius);
-  background: #fff;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button {
@@ -166,50 +274,48 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 50px;
-  padding: 0 16px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 14px;
   border: 0;
-  border-right: 1px solid var(--rsp-line);
+  border-bottom: 2px solid transparent;
   background: transparent;
-  color: #536176;
+  color: #909399;
   font: inherit;
+  font-size: 14px;
   white-space: nowrap;
   cursor: pointer;
+  transition: color 0.2s, border-bottom-color 0.2s;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button:first-child {
-  padding-left: 20px;
+.auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button:hover {
+  color: var(--rsp-brand);
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button:last-child {
-  padding-right: 20px;
-  border-right: 0;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button:hover,
 .auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button.is-active {
   color: var(--rsp-brand);
-  background: #f4f8ff;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button.is-active::after {
-  content: "";
-  position: absolute;
-  right: 20%;
-  bottom: 0;
-  left: 20%;
-  height: 3px;
-  border-radius: var(--ui-radius) var(--ui-radius) 0 0;
-  background: var(--rsp-brand);
+  font-weight: 600;
+  border-bottom-color: var(--rsp-brand);
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-report-tabs small {
-  min-width: 24px;
-  min-height: 22px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: var(--ui-radius);
-  background: #edf1f7;
+  display: inline-block;
+  vertical-align: middle;
+  align-self: center;
+  box-sizing: border-box;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #f0f2f5;
+  color: #909399;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-report-tabs button.is-active small {
+  background: #ecf5ff;
+  color: var(--rsp-brand);
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-workbench {
@@ -219,6 +325,7 @@
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   margin: 0;
+  overflow: hidden;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-master-pane {
@@ -226,7 +333,7 @@
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--rsp-line);
   border-radius: var(--ui-radius);
@@ -282,10 +389,38 @@
   font-size: 12px;
 }
 
+.auto-check-module[data-module="report_special_processing"] .rsp-filter-actions .rsp-button-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-btn-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
 .auto-check-module[data-module="report_special_processing"] .rsp-table-wrap {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-table-wrap::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-table-wrap::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c5d0e0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-table-wrap::-webkit-scrollbar-track {
+  background: #f3f5f8;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-catalog-warning {
@@ -317,7 +452,7 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:first-child,
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:first-child {
-  padding-left: 20px;
+  padding-left: 28px;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:last-child,
@@ -338,16 +473,33 @@
   background: #f3f5f8;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) { width: 14%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) { width: 18%; }
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(2) { width: 18%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 23%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 16%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 10%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 9%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 10%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 22%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 14%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 9%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 8%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 11%; }
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-row-actions {
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: normal;
+  vertical-align: middle;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-row-actions-inner {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  vertical-align: middle;
+}
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table tbody tr {
-  cursor: pointer;
+  cursor: default;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table tbody tr:hover {
@@ -359,9 +511,64 @@
   box-shadow: inset 3px 0 0 var(--rsp-brand);
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-report-names {
-  color: #315fbf;
-  font-weight: 600;
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-process-names {
+  overflow: hidden;
+  text-align: center;
+  text-overflow: clip;
+  vertical-align: middle;
+  white-space: normal;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-process-names .rsp-cell-fit {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  max-height: calc(13px * 1.4 * 3);
+  margin: 0;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-summary {
+  overflow: hidden;
+  text-overflow: clip;
+  vertical-align: middle;
+  white-space: normal;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-summary .rsp-summary-text {
+  display: block;
+  overflow: hidden;
+  max-height: calc(13px * 1.4 * 3);
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-report-names {
+  overflow: hidden;
+  color: inherit;
+  font-weight: inherit;
+  text-overflow: clip;
+  vertical-align: middle;
+  white-space: normal;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-report-name-line {
+  overflow: hidden;
+  max-width: 100%;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-text-action {
@@ -376,6 +583,30 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-text-action:hover {
   background: #edf4ff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-text-action-success {
+  color: #16875d;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-text-action-success:hover {
+  background: #eaf8f1;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-text-action-danger {
+  color: #cf3d3d;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-text-action-danger:hover {
+  background: #fff0f0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-text-action-warning {
+  color: #c86d08;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-text-action-warning:hover {
+  background: #fff7e8;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-status {
@@ -544,25 +775,24 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-modal-head {
   flex: 0 0 auto;
+  height: 58px;
   min-height: 58px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  margin: 0;
   padding: 17px 48px 17px 24px;
   border-bottom: 1px solid var(--rsp-line);
   background: #fff;
+  box-sizing: border-box;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-modal-head h2 {
-  margin: 3px 0 0;
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-eyebrow {
-  color: var(--rsp-brand);
-  font-size: 12px;
+  line-height: 1.25;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-modal-body {
@@ -570,6 +800,41 @@
   min-height: 0;
   padding: 18px 24px;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #c5d0e0 transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-modal-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-modal-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c5d0e0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-modal-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea {
+  scrollbar-width: thin;
+  scrollbar-color: #c5d0e0 transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c5d0e0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-modal-section {
@@ -620,15 +885,225 @@
   white-space: nowrap;
 }
 
+.auto-check-module[data-module="report_special_processing"] .rsp-field-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: #cf3d3d;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-field-hint[hidden] {
+  display: none;
+}
+
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input,
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) select {
-  min-width: 0;
+  box-sizing: border-box;
+  width: 160px;
+  max-width: 100%;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 30px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input[type="date"],
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input.custom-date-input {
+  width: 118px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-select-shell {
+  width: 160px !important;
+  max-width: 100% !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  --select-width: 160px !important;
+  --select-height: 32px !important;
+  --select-font-size: 12px !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-select-trigger {
+  box-sizing: border-box !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 28px 0 8px !important;
+  font-size: 12px !important;
+  line-height: 30px !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-date-shell,
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-input-shell.custom-date-shell {
+  width: 118px !important;
+  min-width: 118px !important;
+  max-width: 118px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  --input-width: 118px !important;
+  --input-height: 32px !important;
+  --input-font-size: 12px !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-date-shell input {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 8px !important;
+  font-size: 12px !important;
+  line-height: 30px !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .rsp-multi-select {
   width: 100%;
   max-width: 100%;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-process-field .rsp-multi-select {
+  width: 100%;
+  max-width: 100%;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-process-field .rsp-multi-select-panel {
+  min-width: 100%;
+  width: max(100%, 280px);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select {
+  position: relative;
+  min-width: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-trigger {
+  position: relative;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  height: 32px;
+  padding: 0 28px 0 8px;
+  overflow: hidden;
+  border: 1px solid rgba(52, 102, 217, 0.30);
+  border-radius: var(--ui-radius);
+  background: #fff;
+  color: var(--rsp-text);
+  font-size: 12px;
+  line-height: 30px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-trigger::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin-top: -2px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--rsp-brand);
+  pointer-events: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select.is-open .rsp-multi-select-trigger {
+  border-color: var(--rsp-brand);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select.is-open .rsp-multi-select-trigger::after {
+  transform: rotate(180deg);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-trigger[aria-invalid="true"] {
+  border-color: #cf3d3d;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 280px;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid rgba(52, 102, 217, 0.30);
+  border-radius: var(--ui-radius);
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(30, 50, 80, .12);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-option {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 28px 6px 10px;
+  overflow: hidden;
+  border: 0;
+  border-bottom: 1px solid rgba(52, 102, 217, 0.10);
+  border-radius: 0;
+  background: transparent;
+  color: var(--rsp-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-option:last-child {
+  border-bottom: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-option:hover {
+  color: var(--rsp-brand);
+  background: rgba(52, 102, 217, 0.10);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-option.is-selected {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, #3466d9, #6aa4ff);
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-option.is-selected::after {
+  content: "✓";
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  color: #fff;
+  transform: translateY(-50%);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-multi-select-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+/* 下拉挂在 body，用模块标记类收紧选项字号 */
+.rsp-compact-select-dropdown .custom-select-option {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-span-two {
@@ -649,23 +1124,6 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-stacked textarea {
   min-height: 92px;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-workflow-state {
-  grid-column: 2;
-  min-height: 38px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 10px;
-  border: 1px solid var(--rsp-line);
-  border-radius: var(--ui-radius);
-  color: var(--rsp-muted);
-  background: #fbfcfe;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-workflow-state strong {
-  color: #4b5563;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-section-title {
@@ -697,18 +1155,64 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-audit-table-wrap {
   overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--rsp-line);
   border-radius: var(--ui-radius);
+  scrollbar-width: thin;
+  scrollbar-color: #c5d0e0 transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-wrap::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-wrap::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c5d0e0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-audit th,
 .auto-check-module[data-module="report_special_processing"] .rsp-audit td {
   height: 34px;
+  overflow: hidden;
   font-size: 12px;
+  text-align: left;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-audit th:nth-child(1) { width: 180px; }
-.auto-check-module[data-module="report_special_processing"] .rsp-audit th:nth-child(2) { width: 110px; }
+.auto-check-module[data-module="report_special_processing"] .rsp-audit td.rsp-audit-summary {
+  height: auto;
+  min-height: 34px;
+  overflow: visible;
+  text-align: left;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-summary-line {
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-summary-line + .rsp-audit-summary-line {
+  margin-top: 2px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit th:nth-child(1) { width: 160px; }
+.auto-check-module[data-module="report_special_processing"] .rsp-audit th:nth-child(2) { width: 88px; }
+.auto-check-module[data-module="report_special_processing"] .rsp-audit th:nth-child(3) { width: auto; }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-audit-pagination {
   display: flex;
@@ -729,13 +1233,22 @@
   min-height: 60px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   flex-wrap: wrap;
   gap: 9px;
   margin: 0;
   padding: 14px 24px;
   border-top: 1px solid var(--rsp-line);
   background: #fff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-modal-actions-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-left: auto;
 }
 
 @media (max-width: 1366px) {
@@ -753,6 +1266,11 @@
     width: min(260px, 100%);
   }
 
+  .auto-check-module[data-module="report_special_processing"] .rsp-tabs-header {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
   .auto-check-module[data-module="report_special_processing"] .rsp-record-modal {
     width: min(680px, 100%);
     max-height: 90vh;
@@ -760,22 +1278,19 @@
 }
 
 @media (max-width: 900px) {
-  .auto-check-module[data-module="report_special_processing"] .rsp-page-intro {
-    align-items: stretch;
+  .auto-check-module[data-module="report_special_processing"] .rsp-tabs-header {
     flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
   }
 
-  .auto-check-module[data-module="report_special_processing"] .rsp-intro-actions {
+  .auto-check-module[data-module="report_special_processing"] .rsp-tabs-actions {
     justify-content: space-between;
   }
 
   .auto-check-module[data-module="report_special_processing"] .rsp-form-grid,
   .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic {
     grid-template-columns: 1fr;
-  }
-
-  .auto-check-module[data-module="report_special_processing"] .rsp-workflow-state {
-    grid-column: 1;
   }
 }
 
