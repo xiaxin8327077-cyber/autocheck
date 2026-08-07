@@ -61,6 +61,7 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "report_navigation.edit_schedule",
         "report_navigation.edit_stats",
         "rsp.view",
+        "rsp.detail",
         "rsp.create",
         "rsp.edit",
         "rsp.confirm",

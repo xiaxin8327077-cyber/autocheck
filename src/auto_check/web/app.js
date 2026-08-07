@@ -1250,6 +1250,13 @@ function syncNavGroupState(name) {
     group.classList.toggle("active", systemActive);
     group.querySelector("[data-nav-group-toggle]")?.classList.toggle("active", systemActive);
   });
+  // 模块页面由 module_host 独立管理模块导航；清理遗留的平台分组 active，避免同时亮起
+  if (String(name || "").startsWith("module-")) {
+    document.querySelectorAll('[data-nav-group="smart-reconcile"], [data-nav-group="system-management"]').forEach((group) => {
+      group.classList.remove("active");
+      group.querySelector("[data-nav-group-toggle]")?.classList.remove("active");
+    });
+  }
 }
 
 function syncNavState(name) {
@@ -5255,7 +5262,8 @@ const CAPABILITY_MENU_TREE = [
         label: "报表特殊处理",
         type: "group",
         children: [
-          { code: "rsp.view", label: "查看", type: "function" },
+          { code: "rsp.view", label: "页面查看", type: "menu" },
+          { code: "rsp.detail", label: "查看详情", type: "function" },
           { code: "rsp.create", label: "新增", type: "function" },
           { code: "rsp.edit", label: "编辑", type: "function" },
           { code: "rsp.confirm", label: "确认", type: "function" },

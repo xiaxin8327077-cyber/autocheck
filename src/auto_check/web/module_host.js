@@ -161,7 +161,7 @@
         item.classList?.remove("active");
         item.removeAttribute?.("aria-current");
       });
-      documentRef?.querySelectorAll?.('[data-nav-group="smart-reconcile"]').forEach((group) => {
+      documentRef?.querySelectorAll?.("[data-nav-group]").forEach((group) => {
         group.classList?.remove("active");
         group.classList?.remove("open");
         const toggle = group.querySelector?.("[data-nav-group-toggle]");

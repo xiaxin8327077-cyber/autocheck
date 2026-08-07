@@ -22,7 +22,13 @@
   ],
   "permissions": [
     "report_special_processing.view",
-    "report_special_processing.admin"
+    "report_special_processing.detail",
+    "report_special_processing.create",
+    "report_special_processing.edit",
+    "report_special_processing.confirm",
+    "report_special_processing.reopen",
+    "report_special_processing.void",
+    "report_special_processing.delete"
   ],
   "dependencies": [],
   "service_dependencies": [

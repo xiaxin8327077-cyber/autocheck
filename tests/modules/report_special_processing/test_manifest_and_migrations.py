@@ -19,7 +19,13 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.schema_version == 2
     assert manifest.permissions == (
         "report_special_processing.view",
-        "report_special_processing.admin",
+        "report_special_processing.detail",
+        "report_special_processing.create",
+        "report_special_processing.edit",
+        "report_special_processing.confirm",
+        "report_special_processing.reopen",
+        "report_special_processing.void",
+        "report_special_processing.delete",
     )
     assert [(item.name, item.minimum_version) for item in manifest.service_dependencies] == [
         ("platform.user_directory", 1),

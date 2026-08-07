@@ -93,10 +93,17 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
 
         return handler
 
-    view = "report_special_processing.view"
+    page_view = "report_special_processing.view"
+    detail = "report_special_processing.detail"
+    create = "report_special_processing.create"
+    edit = "report_special_processing.edit"
+    confirm = "report_special_processing.confirm"
+    void = "report_special_processing.void"
+    reopen = "report_special_processing.reopen"
+    delete = "report_special_processing.delete"
     routes = (
-        ("GET", "/catalog", lambda service, request, rid: service.catalog(request.current_user), view, 0, 200),
-        ("GET", "/records", lambda service, request, rid: service.list_records(request.query, request.current_user), view, 0, 200),
+        ("GET", "/catalog", lambda service, request, rid: service.catalog(request.current_user), page_view, 0, 200),
+        ("GET", "/records", lambda service, request, rid: service.list_records(request.query, request.current_user), detail, 0, 200),
         (
             "GET",
             "/records/export",
@@ -104,19 +111,19 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
                 *service.export_records(request.query),
                 rid,
             ),
-            view,
+            detail,
             0,
             200,
         ),
-        ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 201),
-        ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request), request.current_user), view, 0, 200),
-        ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
-        ("POST", "/records/{id}/status", lambda service, request, rid: service.change_status(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
-        ("POST", "/records/{id}/void", lambda service, request, rid: service.void(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
-        ("DELETE", "/records/{id}", lambda service, request, rid: service.delete(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
-        ("POST", "/records/{id}/reopen", lambda service, request, rid: service.reopen(_id(request), _body(request), request.current_user, request_id=rid), view, MAX_REQUEST_BYTES, 200),
-        ("GET", "/records/{id}/audit", lambda service, request, rid: service.audit(_id(request), request.query), view, 0, 200),
-        ("GET", "/summary", lambda service, request, rid: service.summary(request.query), view, 0, 200),
+        ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), create, MAX_REQUEST_BYTES, 201),
+        ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request), request.current_user), detail, 0, 200),
+        ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), edit, MAX_REQUEST_BYTES, 200),
+        ("POST", "/records/{id}/status", lambda service, request, rid: service.change_status(_id(request), _body(request), request.current_user, request_id=rid), confirm, MAX_REQUEST_BYTES, 200),
+        ("POST", "/records/{id}/void", lambda service, request, rid: service.void(_id(request), _body(request), request.current_user, request_id=rid), void, MAX_REQUEST_BYTES, 200),
+        ("DELETE", "/records/{id}", lambda service, request, rid: service.delete(_id(request), _body(request), request.current_user, request_id=rid), delete, MAX_REQUEST_BYTES, 200),
+        ("POST", "/records/{id}/reopen", lambda service, request, rid: service.reopen(_id(request), _body(request), request.current_user, request_id=rid), reopen, MAX_REQUEST_BYTES, 200),
+        ("GET", "/records/{id}/audit", lambda service, request, rid: service.audit(_id(request), request.query), detail, 0, 200),
+        ("GET", "/summary", lambda service, request, rid: service.summary(request.query), detail, 0, 200),
     )
     for method, path, callback, permission, maximum, status in routes:
         router.add(

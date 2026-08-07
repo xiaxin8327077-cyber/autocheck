@@ -31,7 +31,19 @@ def _router(service=None):
 
 
 def _dispatch(router, method, suffix, *, body=None, user=None, body_size=0):
-    return router.dispatch(request=ModuleRequest(method, _manifest().api_prefix + suffix, {}, {}, body, user or {}), body_size=body_size)
+    user = dict(user or {})
+    if str(user.get("role")) != "admin" and "capabilities" not in user:
+        user["capabilities"] = [
+            "rsp.view",
+            "rsp.detail",
+            "rsp.create",
+            "rsp.edit",
+            "rsp.confirm",
+            "rsp.reopen",
+            "rsp.void",
+            "rsp.delete",
+        ]
+    return router.dispatch(request=ModuleRequest(method, _manifest().api_prefix + suffix, {}, {}, body, user), body_size=body_size)
 
 
 def test_api_registers_contract_routes_and_enforces_body_limit():

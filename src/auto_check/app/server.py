@@ -3383,7 +3383,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self._send_json(status, payload)
 
     def _handle_module_system(self, method: str, path: str, session: AuthSession) -> None:
-        current_user = _session_user(session)
+        current_user = self.router.session_user_payload(session)
         if method == "GET" and path == "/api/system/modules":
             payload: dict[str, Any] = {
                 "modules": self.router.module_runtime.public_modules(current_user),
@@ -3447,7 +3447,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
                 path=path,
                 query=query,
                 body=body,
-                current_user=_session_user(session),
+                current_user=self.router.session_user_payload(session),
                 body_size=body_size,
             )
         except Exception:

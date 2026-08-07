@@ -154,6 +154,9 @@ def _dispatch(suffix, *, query=None, user=None):
 
     router = ModuleRouter(_manifest(), default_permission_evaluator)
     register_routes(router, lambda: _ExportService())
+    user = dict(user or {"role": "user"})
+    if str(user.get("role")) != "admin" and "capabilities" not in user:
+        user["capabilities"] = ["rsp.view", "rsp.detail"]
     return router.dispatch(
         request=ModuleRequest(
             "GET",
@@ -161,7 +164,7 @@ def _dispatch(suffix, *, query=None, user=None):
             {},
             query or {},
             None,
-            user or {"role": "user"},
+            user,
         ),
         body_size=0,
     )

@@ -337,6 +337,10 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
                 element.dataset.navGroup === "smart-reconcile"
                 || element.getAttribute("data-nav-group") === "smart-reconcile"
               ))
+              || (selector === "[data-nav-group]" && (
+                Boolean(element.dataset.navGroup)
+                || Boolean(element.getAttribute("data-nav-group"))
+              ))
               || (selector === "[data-nav-group-toggle]" && (
                 Boolean(element.dataset.navGroupToggle)
                 || Boolean(element.getAttribute("data-nav-group-toggle"))

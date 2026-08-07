@@ -60,7 +60,8 @@ CAPABILITY_DEFINITIONS: dict[str, dict[str, str]] = {
     "report_navigation.edit_schedule": {"label": "编辑报送日期", "type": TYPE_FUNCTION},
     "report_navigation.edit_stats": {"label": "编辑数据治理统计", "type": TYPE_FUNCTION},
     # 以下 rsp.* 一期仅注册展示，运行时不接通 RSP 业务鉴权。
-    "rsp.view": {"label": "查看", "type": TYPE_FUNCTION},
+    "rsp.view": {"label": "页面查看", "type": TYPE_MENU},
+    "rsp.detail": {"label": "查看详情", "type": TYPE_FUNCTION},
     "rsp.create": {"label": "新增", "type": TYPE_FUNCTION},
     "rsp.edit": {"label": "编辑", "type": TYPE_FUNCTION},
     "rsp.confirm": {"label": "确认", "type": TYPE_FUNCTION},
@@ -100,6 +101,7 @@ _STANDARD_TIER_TRUE: frozenset[str] = frozenset(
         "menu.tools",
         "sys.settings",
         "rsp.view",
+        "rsp.detail",
         "rsp.create",
         "rsp.edit",
         "rsp.void",
