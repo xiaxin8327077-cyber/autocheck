@@ -123,10 +123,13 @@ def test_resource_permission_status_machine_admin_void_reopen_and_optimistic_loc
     service = _service(); record = service.create(_payload(), {"id": "1", "username": "creator", "role": "user"}, request_id="req")
     with pytest.raises(PermissionDeniedError):
         service.update(record["id"], {**_payload(), "row_version": 1}, {"id": "9", "role": "user"}, request_id="req")
-    processing = service.change_status(record["id"], {"target_status": "processing", "row_version": 1}, {"id": "2", "role": "user"}, request_id="req")
+    # 谁创建谁处理：处理人无权改状态；创建人可推进，确认需 rsp.confirm（管理员）
+    with pytest.raises(PermissionDeniedError):
+        service.change_status(record["id"], {"target_status": "processing", "row_version": 1}, {"id": "2", "role": "user"}, request_id="req")
+    processing = service.change_status(record["id"], {"target_status": "processing", "row_version": 1}, {"id": "1", "role": "user"}, request_id="req")
     with pytest.raises(VersionConflictError):
-        service.change_status(record["id"], {"target_status": "completed", "row_version": 1}, {"id": "1", "role": "user"}, request_id="req")
-    completed = service.change_status(record["id"], {"target_status": "completed", "row_version": processing["row_version"]}, {"id": "1", "role": "user"}, request_id="req")
+        service.change_status(record["id"], {"target_status": "completed", "row_version": 1}, {"id": "9", "role": "admin"}, request_id="req")
+    completed = service.change_status(record["id"], {"target_status": "completed", "row_version": processing["row_version"]}, {"id": "9", "role": "admin"}, request_id="req")
     reopened = service.reopen(record["id"], {"row_version": completed["row_version"], "reason": "补充口径"}, {"id": "9", "role": "admin"}, request_id="req")
     voided = service.void(record["id"], {"row_version": reopened["row_version"], "reason": "口径失效"}, {"id": "9", "role": "admin"}, request_id="req")
     assert (completed["status"], reopened["status"], voided["status"]) == ("completed", "pending", "voided")
@@ -140,7 +143,7 @@ def test_complete_and_void_write_explicit_audit_summaries():
     completed = service.change_status(
         created["id"],
         {"target_status": "completed", "row_version": created["row_version"], "reason": "处理完成"},
-        actor,
+        admin,
         request_id="req-complete",
     )
     assert service.storage.audits[-1]["action_summary"].splitlines() == [
@@ -246,9 +249,11 @@ def test_detail_capabilities_match_frontend_resource_actions():
     )
 
     assert service.get(record["id"], {"id": "1", "role": "user"})["can_edit"] is True
+    assert service.get(record["id"], {"id": "2", "role": "user"})["can_edit"] is False  # 处理人不可单独编辑
     assert service.get(record["id"], {"id": "3", "role": "user"})["can_edit"] is False
     admin = service.get(record["id"], {"id": "9", "role": "admin"})
     assert admin["can_edit"] is True
+    assert admin["can_confirm"] is True
     assert admin["can_admin"] is True
 
 
@@ -265,13 +270,13 @@ def test_writes_best_effort_refresh_owned_special_governance_card_only():
     processing = service.change_status(
         updated["id"],
         {"target_status": "processing", "row_version": updated["row_version"]},
-        {"id": "2", "role": "user"},
+        actor,
         request_id="req-status",
     )
     completed = service.change_status(
         processing["id"],
         {"target_status": "completed", "row_version": processing["row_version"]},
-        actor,
+        admin,
         request_id="req-complete",
     )
     reopened = service.reopen(

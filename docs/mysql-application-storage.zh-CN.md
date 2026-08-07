@@ -4,7 +4,7 @@
 
 ## 一、当前架构
 
-当前版本使用 MySQL 应用库 `auto_check` 保存系统自身配置、用户、认证数据、执行历史、报送导航配置/快照、界面偏好和模块宿主状态。DWS 数据源和报表数据源仍由页面配置维护，继续支持 PostgreSQL 或 MySQL，不属于本应用库。完整应用结构为 43 张表，`app_schema_version` 仍为 `1`。
+当前版本使用 MySQL 应用库 `auto_check` 保存系统自身配置、用户、认证数据、执行历史、报送导航配置/快照、界面偏好和模块宿主状态。DWS 数据源和报表数据源仍由页面配置维护，继续支持 PostgreSQL 或 MySQL，不属于本应用库。完整应用结构为 45 张表，`app_schema_version` 仍为 `1`。
 
 运行时只读取现有 `config.json` 中的 `app_database` 启动连接信息。动态配置、用户、自动对数历史、人行逐笔校验历史和流程链执行历史不再写回 JSON 或 SQLite。
 
@@ -35,9 +35,9 @@
 13. 执行 `sql/app_storage/mysql/010_pbc_template_step_seven_display_only.sql`，将资管产品模板、逐笔报送第七步调整为仅展示，并由第六步归档记录提供节点完成时间。
 14. 执行 `sql/app_storage/mysql/011_report_navigation_completion_time_sources.sql`，将归档类报送完成时间统一改为仅取 `create_date`，并配置人行大集中完成时间数据源。
 15. 生产升级必须先完成 MySQL 全库备份，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 `app_modules`、`app_module_schema_versions` 和 `app_module_migration_history` 三张模块平台表。
-16. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`。
+16. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`。再执行 `sql/app_storage/mysql/014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照）。再执行 `sql/app_storage/mysql/015_role_definitions.sql` 新增角色定义表（自定义角色）。再执行 `sql/app_storage/mysql/016_remove_reserved_builtin_roles.sql`，将历史预留角色（`governance` / `regulatory_report` / `data_middle` / `fund_custody`）账号迁移为普通用户，并清理 `role_definitions` 中对应残留行；不修改 `app_schema_version`，矩阵中的旧角色键由应用运行时合并逻辑自动忽略。
 17. 配置 `config.json` 的 `app_database` 节点。
-18. 启动应用并确认连接、43 张表、全局结构版本和关键表数据。
+18. 启动应用并确认连接、45 张表、全局结构版本和关键表数据。
 
 建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产凭据或业务数据。`004`、`006`、`008`、`012_module_system.sql` 和 `013_report_navigation_provider_states.sql` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 与 `007` 通过 `information_schema` 判断字段或约束是否存在后再升级。升级脚本可按顺序重复执行；`008` 会幂等写入年度法定节假日和调休工作日配置，`009` 规范历史人工确认范围，`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，`012` 创建模块平台表，`013` 创建报送导航统计提供方状态表，二者均不修改 `app_schema_version`。如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
 
@@ -133,7 +133,7 @@ python scripts\export_sqlite_to_mysql.py `
 上线连接 MySQL 后，需要分别确认旧数据迁移结果和当前完整表结构。至少确认：
 
 - `app_schema_version` 当前版本为 `1`。
-- 当前完整 43 张应用存储表结构齐全，已按顺序应用至 `011_report_navigation_completion_time_sources.sql`，并在备份后由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`；模块业务表不属于全局 `EXPECTED_APP_SCHEMA`。
+- 当前完整 45 张应用存储表结构齐全，已按顺序应用至 `011_report_navigation_completion_time_sources.sql`，并在备份后由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`；模块业务表不属于全局 `EXPECTED_APP_SCHEMA`。
 - `user_interface_preferences` 包含圆角、折线图风格和两个可空个人主题色；主键、默认值、范围/枚举/HEX 检查约束符合本节完整 DDL，现有行数在结构升级前后保持一致。
 - `system_interface_preferences` 包含唯一行约束、两个兼容色默认值/HEX 约束、最后修改人和更新时间；允许零行，不应出现 `id<>1` 或多余记录。
 - 界面设置中不存在自定义主题色或渐变开关；兼容主题色也不写入 `app_settings`。

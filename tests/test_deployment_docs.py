@@ -147,7 +147,7 @@ def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> 
     for acceptance in acceptance_sections.values():
         assert "原 20 张迁移目标表的数据行数" in acceptance
         assert "与迁移报告一致" in acceptance
-        assert "当前完整 43 张应用存储表结构" in acceptance
+        assert "当前完整 45 张应用存储表结构" in acceptance
         assert "012_module_system.sql" in acceptance
         assert "013_report_navigation_provider_states.sql" in acceptance
         assert "备份" in acceptance
@@ -173,7 +173,7 @@ def test_mysql_rollout_docs_require_module_schema_upgrade_sequence() -> None:
             "012_module_system.sql",
             "013_report_navigation_provider_states.sql",
         ]
-        assert "43 张" in text
+        assert "45 张" in text
         if path == README:
             preparation = text.split("上线前需要按以下顺序处理：", 1)[1].split("示例：", 1)[0]
         elif path == MYSQL_STORAGE_DOC:
@@ -204,7 +204,7 @@ def test_deployment_upgrade_docs_define_safe_manual_004_through_008_boundary() -
         assert "孤儿偏好" in text
         assert "012_module_system.sql" in text
         assert "013_report_navigation_provider_states.sql" in text
-        assert "43 张" in text
+        assert "45 张" in text
         assert "app_schema_version" in text
         assert "备份" in text
         assert "人工执行" in text

@@ -160,7 +160,7 @@ def test_show_confirm_normalizes_and_resets_explicit_action_tone():
         app_js.index("function showPrompt", app_js.index("function showConfirm(title, message, options = {})"))
     ]
     assert 'const allowedTones = new Set(["primary", "danger", "warning", "success"]);' in confirm_body
-    assert 'const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";' in confirm_body
+    assert 'const requestedTone = allowedTones.has(resolvedOptions.tone) ? resolvedOptions.tone : "primary";' in confirm_body
     assert 'const tone = requestedTone === "danger" ? "danger" : "primary";' in confirm_body
     assert "okBtn.dataset.actionTone = tone;" in confirm_body
     assert 'okBtn.dataset.actionVariant = "solid";' in confirm_body
@@ -1805,7 +1805,7 @@ def test_multilevel_navigation_groups_reconcile_pages_and_renames_labels():
     assert "function syncNavGroupState" in app_js
     assert 'item.classList.toggle("active", item.dataset.page === name)' in app_js
     assert '.nav-group[data-nav-group="smart-reconcile"]' in css
-    assert '.top-nav-group[data-nav-group="smart-reconcile"]' in css
+    assert ".top-nav-group" in css
     assert ".nav-subitem" in css
     assert ".top-nav-submenu" in css
     assert "max-height: 0;" in css
@@ -4137,7 +4137,7 @@ def test_v21_changelog_documents_interface_radius_concisely():
         "#RRGGBB",
     ]:
         assert verbose_theme_detail not in body
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+    assert 'const DEFAULT_VERSION = "v2.2";' in app_js
 
 
 def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
@@ -4197,9 +4197,9 @@ def test_version_206_documents_db_validation_engine_update():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
-    assert 'id="statusText">v2.1</span>' in html
-    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
+    assert 'const DEFAULT_VERSION = "v2.2";' in app_js
+    assert 'id="statusText">v2.2</span>' in html
+    assert 'id="topNavStatus" title="v2.2">v2.2</span>' in html
 
     for text in [
         "v2.1",
@@ -4388,10 +4388,10 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
-    assert 'id="statusText">v2.1</span>' in html
-    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
-    assert "- 应用界面版本：`v2.1`" in readme
+    assert 'const DEFAULT_VERSION = "v2.2";' in app_js
+    assert 'id="statusText">v2.2</span>' in html
+    assert 'id="topNavStatus" title="v2.2">v2.2</span>' in html
+    assert "- 应用界面版本：`v2.2`" in readme
 
     change_items = [
         "人行逐笔校验执行历史新增执行人展示",
@@ -4442,9 +4442,9 @@ def test_version_205_documents_scheme_a_logo_update():
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
-    assert 'id="statusText">v2.1</span>' in html
-    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
+    assert 'const DEFAULT_VERSION = "v2.2";' in app_js
+    assert 'id="statusText">v2.2</span>' in html
+    assert 'id="topNavStatus" title="v2.2">v2.2</span>' in html
 
     for text in [
         "v2.0.5",
@@ -5330,6 +5330,7 @@ def test_all_system_modals_use_balanced_shared_shell():
         "reportNavCardMaintenanceModal",
         "userModal",
         "configModal",
+        "rolePermissionsModal",
     )
     for overlay_id in overlay_ids:
         opening = re.search(
@@ -7097,7 +7098,9 @@ def test_fixed_theme_is_applied_before_stylesheet_and_radius_cache_stays_out_of_
     app_js = _read(APP_JS)
 
     assert 'id="initialThemeScript"' in html
-    assert html.index('id="initialThemeScript"') < html.index('href="/styles.css"')
+    stylesheet_ref = re.search(r'href="/styles\.css[^"]*"', html)
+    assert stylesheet_ref is not None
+    assert html.index('id="initialThemeScript"') < html.index(stylesheet_ref.group(0))
     for text in ["data-theme", "data-color-mode"]:
         assert text in html
     initial_script = html[html.index('id="initialThemeScript"'):html.index('</script>', html.index('id="initialThemeScript"'))]
@@ -7666,10 +7669,18 @@ def test_user_management_page_and_role_based_navigation_are_present():
     assert 'id="userTableBody"' in html
     assert 'id="userModal"' in html
     assert 'id="userPassword"' in html
+    assert 'id="userRoleCards"' in html
+    assert '<select id="userRoleCards"' in html
+    assert '<option value="admin">管理员</option>' in html
+    assert '<option value="user">普通用户</option>' in html
+    assert 'value="governance"' not in html
+    assert 'value="regulatory_report"' not in html
+    assert 'value="data_middle"' not in html
+    assert 'value="fund_custody"' not in html
     assert 'class="nav-item admin-only" data-page="users"' in html
-    assert 'class="top-nav-item admin-only" data-page="users"' in html
+    assert 'class="top-nav-item top-nav-subitem" data-page="users"' in html
     assert "function applyRoleAccess" in app_js
-    assert 'document.querySelectorAll(".admin-only")' in app_js
+    assert '.admin-only, [data-capability]' in app_js
     assert 'authState.user?.role === "admin"' in app_js
     assert 'api("/api/users"' in app_js
     assert 'api(`/api/users/${encodeURIComponent(userId)}`' in app_js
@@ -7678,6 +7689,70 @@ def test_user_management_page_and_role_based_navigation_are_present():
     assert ".user-stats" in css
     assert ".user-table-card" in css
     assert ".role-badge" in css
+
+
+def test_role_permissions_page_and_capability_access_are_present():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    # 系统管理分组与角色权限页
+    assert 'data-nav-group="system-management"' in html
+    assert 'data-page="role-permissions"' in html
+    assert 'id="page-role-permissions"' in html
+    assert 'data-capability="sys.settings"' in html
+    assert 'data-capability="sys.users"' in html
+    assert 'data-capability="sys.role_permissions"' in html
+    # 能力判断与显隐
+    assert "function hasCapability" in app_js
+    assert "function applyCapabilityAccess" in app_js
+    # canManageHistory 改为能力判断
+    assert 'hasCapability("history.delete")' in app_js
+    # 系统管理分组 toggle 分流
+    assert '"system-management"' in app_js
+    # 角色权限页加载
+    assert "function loadRolePermissions" in app_js
+    # 版本号升级到 v2.2
+    assert 'const DEFAULT_VERSION = "v2.2"' in app_js
+    assert '"v2.2"' in app_js
+    # 用户角色仅保留管理员/普通用户；其余走自定义角色
+    assert 'governance: "数据治理"' not in app_js
+    assert 'regulatory_report: "监管报表"' not in app_js
+    assert 'admin: "管理员"' in app_js
+    assert 'user: "普通用户"' in app_js
+    # 角色权限页样式与原生能力树
+    assert ".role-permissions" in css
+    assert ".capability-tree" in css
+    assert "capability-tree-checkbox" in css
+    assert "function createCapabilityTree" in app_js
+    assert 'label: "页面查看"' in app_js
+    assert 'code: "menu.history", label: "页面查看"' in app_js or (
+        'code: "menu.history"' in app_js and 'label: "页面查看"' in app_js
+    )
+    assert "role-name-custom-hint" not in app_js
+    assert 'code === "admin" ? 0 : code === "user" ? 1 : 2' in app_js
+    assert "半选/全选按全部子能力勾选态计算" in app_js
+    assert 'maxlength="20"' in html
+    assert 'maxlength="10"' in html
+    assert "角色备注不得超过 20 字" in app_js
+    assert "角色名称不得超过 10 个字" in app_js
+    assert "jstree" not in app_js.lower()
+    assert "jquery.min.js" not in html
+    assert "jstree.min.js" not in html
+    assert "jstree-style.min.css" not in html
+    assert 'input.type = "checkbox"' in app_js
+    assert "getMatrix()" in app_js
+    assert 'id="roleDefinitionModal"' in html
+    assert "function openRoleDefinitionModal" in app_js
+    assert "function saveRoleDefinition" in app_js
+    assert 'showPrompt("新增角色"' not in app_js
+    assert ".user-modal .custom-select-shell.user-role-cards" in css
+    assert 'id="rolePermissionsAddBtn"' in html
+    assert 'id="rolePermissionsEditBtn"' not in html
+    assert 'id="rolePermissionsDeleteBtn"' not in html
+    assert 'id="roleDefinitionCode"' in html
+    assert 'roleTone = role === "admin" ? "admin" : "user"' in app_js
+    assert "#roleDefinitionCode" in css
 
 
 def test_user_management_table_keeps_action_column_compact():
@@ -7724,7 +7799,7 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_removed():
     ]:
         assert script_marker not in app_js
 
-    assert 'document.querySelectorAll(".admin-only")' in app_js
+    assert '.admin-only, [data-capability]' in app_js
 
 
 def test_user_management_cards_and_rows_have_theme_glow_hover_motion():
@@ -7919,7 +7994,7 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
         "user-modal-header",
         "user-modal-title",
         "user-modal-form",
-        "user-role-card",
+        "user-role-cards",
         "user-enable-row",
         "user-modal-footer",
     ]:
@@ -7929,10 +8004,9 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
     assert "user-modal-icon" not in modal.group("body")
     assert '<input id="userRole" type="hidden" value="user" />' in modal.group("body")
     assert '<input id="userEnabled" type="hidden" value="true" />' in modal.group("body")
-    assert '<select id="userRole"' not in modal.group("body")
-    assert '<select id="userEnabled"' not in modal.group("body")
-    assert 'type="radio" name="userRoleChoice" value="admin"' in modal.group("body")
-    assert 'type="radio" name="userRoleChoice" value="user"' in modal.group("body")
+    assert '<select id="userRoleCards"' in modal.group("body")
+    assert 'class="filter-select user-role-cards"' in modal.group("body")
+    assert "function renderUserRoleCards()" in app_js
     assert "function syncUserRoleCards()" in app_js
     assert "function syncUserEnabledSwitch()" in app_js
     assert "function isDelegatedAdminSession()" in app_js
@@ -8044,7 +8118,7 @@ def test_run_history_displays_executor_and_recent_run_summary():
     history_head = html[html.index('id="historyBody"') - 600:html.index('id="historyBody"')]
     assert history_head.index("报告期") < history_head.index("执行时间")
     assert "执行人" in history_head
-    assert '<th class="admin-only">数据源</th>' in history_head
+    assert '<th class="history-source-only">数据源</th>' in history_head
     assert history_head.index("<th>总差异</th>") < history_head.index("<th>已解释</th>")
     assert history_head.index("<th>已解释</th>") < history_head.index("<th>新增差异</th>")
     assert history_head.index("<th>新增差异</th>") < history_head.index("<th>减少差异</th>")
@@ -8158,7 +8232,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "function historyColumnCount()" in app_js
     assert "const deleteAction = canManageHistory()" in app_js
     assert 'if (!canManageHistory()) {' in app_js
-    assert '<td class="admin-only">${escapeHtml(formatHistorySourceName(run))}</td>' in app_js
+    assert '<td>${escapeHtml(formatHistorySourceName(run))}</td>' in app_js
     history_result_table = re.search(r"function historyResultTable\(items\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert history_result_table is not None
     assert "<th>差异类型</th><th>状态</th>" in history_result_table.group("body")

@@ -131,13 +131,16 @@ function buildRowActions(documentRef, record, { onOpen, onAction }) {
     record.can_edit ? "编辑" : "查看",
     () => onOpen(record),
   ));
-  if (record.can_edit && ["pending", "processing"].includes(record.status)) {
+  if (record.can_confirm && ["pending", "processing"].includes(record.status)) {
     actions.push(actionLink(documentRef, "完成", () => onAction?.(record, "complete"), "rsp-text-action rsp-text-action-success"));
   }
-  if (record.can_admin && ["draft", "pending", "processing"].includes(record.status)) {
+  if (record.can_void && ["draft", "pending", "processing"].includes(record.status)) {
     actions.push(actionLink(documentRef, "作废", () => onAction?.(record, "void"), "rsp-text-action rsp-text-action-danger"));
   }
-  if (record.can_admin) {
+  if (record.can_reopen && ["completed", "voided"].includes(record.status)) {
+    actions.push(actionLink(documentRef, "重开", () => onAction?.(record, "reopen"), "rsp-text-action"));
+  }
+  if (record.can_delete) {
     actions.push(actionLink(documentRef, "删除", () => onAction?.(record, "delete"), "rsp-text-action rsp-text-action-danger"));
   }
   return element(documentRef, "td", { className: "rsp-row-actions" }, [

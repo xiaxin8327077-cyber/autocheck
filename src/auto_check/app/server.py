@@ -85,6 +85,30 @@ from auto_check.app.storage_system_interface_preferences import (
     resolve_effective_theme_colors,
     save_system_interface_preferences,
 )
+from auto_check.app.capabilities import (
+    ADMIN_ONLY_CAPABILITIES,
+    CAPABILITY_DEFINITIONS,
+    LOCKED_ROLE,
+    REQUIRED_CAPABILITIES,
+    ROLE_DEFINITIONS,
+    capabilities_for_role,
+    has_capability,
+)
+from auto_check.app.storage_role_capabilities import (
+    load_role_capability_matrix,
+    save_role_capability_matrix,
+    load_role_remarks,
+    save_role_remarks,
+)
+from auto_check.app.storage_role_definitions import (
+    count_users_by_role,
+    create_role_definition,
+    delete_role_definition,
+    load_custom_role_codes,
+    load_custom_role_remarks,
+    load_role_definitions,
+    update_role_definition,
+)
 from auto_check.app.time_utils import beijing_now, beijing_time_text, beijing_timestamp, beijing_today
 from auto_check.app.pbc_import import (
     ColumnMapping,
@@ -144,8 +168,12 @@ def _serialize_interface_preferences(value: UserInterfacePreferences) -> dict[st
     }
 
 
-def _can_manage_system_theme_colors(current_user: dict[str, Any] | None) -> bool:
-    return str((current_user or {}).get("role") or "") == "admin"
+def _can_manage_system_theme_colors(
+    current_user: dict[str, Any] | None,
+    matrix: dict[str, dict[str, bool]] | None = None,
+) -> bool:
+    role = str((current_user or {}).get("role", "") or "user")
+    return has_capability(role, "sys.settings.admin", matrix)
 
 
 def _serialize_theme_colors(
@@ -154,6 +182,7 @@ def _serialize_theme_colors(
     effective: EffectiveThemeColors,
     *,
     current_user: dict[str, Any] | None,
+    matrix: dict[str, dict[str, bool]] | None = None,
 ) -> dict[str, object]:
     return {
         "colors": {
@@ -171,7 +200,7 @@ def _serialize_theme_colors(
             },
         },
         "capabilities": {
-            "can_manage_system_theme_colors": _can_manage_system_theme_colors(current_user)
+            "can_manage_system_theme_colors": _can_manage_system_theme_colors(current_user, matrix)
         },
     }
 
@@ -191,11 +220,13 @@ def _load_theme_colors_payload(
         personal_preferences,
         system_preferences,
     )
+    matrix = load_role_capability_matrix(connection)
     return _serialize_theme_colors(
         system_preferences,
         personal_preferences,
         effective_colors,
         current_user=current_user,
+        matrix=matrix,
     )
 
 
@@ -406,6 +437,60 @@ class ApiRouter:
         if start_field_mapping_auto_refresh:
             self._start_db_validation_field_mapping_auto_refresh()
 
+    def _custom_role_codes(self) -> list[str]:
+        with self.application_database.connect() as connection:
+            return load_custom_role_codes(connection)
+
+    def _custom_role_remarks(self) -> dict[str, str]:
+        with self.application_database.connect() as connection:
+            return load_custom_role_remarks(connection)
+
+    def _current_capability_matrix(self) -> dict[str, dict[str, bool]]:
+        with self.application_database.connect() as connection:
+            return load_role_capability_matrix(connection, custom_roles=self._custom_role_codes())
+
+    def _current_role_remarks(self) -> dict[str, str]:
+        with self.application_database.connect() as connection:
+            return load_role_remarks(connection, custom_role_remarks=self._custom_role_remarks())
+
+    def _all_role_definitions(self) -> list[dict]:
+        from auto_check.app.capabilities import REMOVED_BUILTIN_ROLES
+        from auto_check.app.storage_role_definitions import (
+            load_role_definitions,
+            purge_removed_builtin_role_definitions,
+        )
+
+        with self.application_database.transaction() as connection:
+            purge_removed_builtin_role_definitions(connection)
+            defs = load_role_definitions(connection)
+        return [d for d in defs if d.get("role_code") not in REMOVED_BUILTIN_ROLES]
+
+    def _role_label_map(self) -> dict[str, str]:
+        from auto_check.app.capabilities import REMOVED_BUILTIN_ROLES
+
+        labels = dict(ROLE_DEFINITIONS)
+        for d in self._all_role_definitions():
+            code = str(d.get("role_code") or "")
+            if d.get("is_system") or code in REMOVED_BUILTIN_ROLES:
+                continue
+            labels[code] = d["display_name"]
+        return labels
+
+    def _user_has_capability(
+        self, current_user: dict[str, Any] | None, code: str
+    ) -> bool:
+        role = str((current_user or {}).get("role", "") or "user")
+        return has_capability(role, code, self._current_capability_matrix())
+
+    def session_user_payload(self, session: AuthSession | None) -> dict[str, Any] | None:
+        payload = _session_user(session)
+        if payload is None:
+            return None
+        payload["capabilities"] = capabilities_for_role(
+            session.role, self._current_capability_matrix()
+        )
+        return payload
+
     def handle(
         self,
         method: str,
@@ -415,6 +500,108 @@ class ApiRouter:
         current_user: dict[str, Any] | None = None,
     ) -> tuple[int, dict[str, Any]]:
         try:
+            if path == "/api/role-capabilities":
+                if not self._user_has_capability(current_user, "sys.role_permissions"):
+                    return 403, {"error": "admin role required"}
+                if method == "GET":
+                    return 200, {
+                        "matrix": self._current_capability_matrix(),
+                        "roles": self._role_label_map(),
+                        "capabilities": CAPABILITY_DEFINITIONS,
+                        "locked_roles": [LOCKED_ROLE],
+                        "required_capabilities": sorted(REQUIRED_CAPABILITIES),
+                        "admin_only_capabilities": sorted(ADMIN_ONLY_CAPABILITIES),
+                        "remarks": self._current_role_remarks(),
+                        "role_definitions": self._all_role_definitions(),
+                    }
+                if method == "PUT":
+                    incoming_matrix = (body or {}).get("matrix")
+                    incoming_remarks = (body or {}).get("remarks")
+                    if not isinstance(incoming_matrix, dict) and not isinstance(incoming_remarks, dict):
+                        return 400, {"error": "matrix or remarks is required"}
+                    user_id = str((current_user or {}).get("id") or "")
+                    custom_roles = self._custom_role_codes()
+                    custom_role_remarks = self._custom_role_remarks()
+                    try:
+                        with self.application_database.transaction() as connection:
+                            if isinstance(incoming_matrix, dict):
+                                save_role_capability_matrix(connection, matrix=incoming_matrix, updated_by=user_id, custom_roles=custom_roles)
+                            if isinstance(incoming_remarks, dict):
+                                save_role_remarks(connection, remarks=incoming_remarks, updated_by=user_id, custom_roles=custom_roles, custom_role_remarks=custom_role_remarks)
+                    except ValueError as exc:
+                        return 400, {"error": str(exc)}
+                    return 200, {
+                        "matrix": self._current_capability_matrix(),
+                        "remarks": self._current_role_remarks(),
+                    }
+            # 角色定义 CRUD（自定义角色）
+            role_def_match = re.fullmatch(r"/api/role-definitions(/[^/]*)?", path)
+            if role_def_match and method in {"POST", "PUT", "DELETE"}:
+                if not self._user_has_capability(current_user, "sys.role_permissions"):
+                    return 403, {"error": "admin role required"}
+                user_id = str((current_user or {}).get("id") or "")
+                sub = role_def_match.group(1)
+                try:
+                    with self.application_database.transaction() as connection:
+                        if method == "POST" and not sub:
+                            body = body or {}
+                            created = create_role_definition(
+                                connection,
+                                display_name=str(body.get("display_name", "")),
+                                remark=str(body.get("remark", "")),
+                                updated_by=user_id,
+                            )
+                            from auto_check.app.capabilities import default_matrix_for_role
+                            new_matrix = self._current_capability_matrix()
+                            new_matrix[created["role_code"]] = default_matrix_for_role(created["role_code"])
+                            save_role_capability_matrix(connection, matrix=new_matrix, updated_by=user_id, custom_roles=self._custom_role_codes())
+                            return 201, {"role_definition": created, "matrix": self._current_capability_matrix()}
+                        code = str(sub or "").lstrip("/")
+                        if not code:
+                            return 400, {"error": "role code is required"}
+                        if method == "PUT":
+                            body = body or {}
+                            updated = update_role_definition(
+                                connection,
+                                code,
+                                display_name=body.get("display_name"),
+                                remark=body.get("remark"),
+                                updated_by=user_id,
+                            )
+                            # 同步备注快照，避免 remarks_json 旧值盖住 role_definitions
+                            if body.get("remark") is not None:
+                                save_role_remarks(
+                                    connection,
+                                    remarks={code: updated.get("remark", "")},
+                                    updated_by=user_id,
+                                    custom_roles=load_custom_role_codes(connection),
+                                    custom_role_remarks=load_custom_role_remarks(connection),
+                                )
+                            return 200, {"role_definition": updated}
+                        if method == "DELETE":
+                            from auto_check.app.capabilities import REMOVED_BUILTIN_ROLES
+                            from auto_check.app.storage_role_definitions import (
+                                purge_removed_builtin_role_definitions,
+                            )
+                            from auto_check.app.storage_users import migrate_removed_builtin_roles
+
+                            if code in REMOVED_BUILTIN_ROLES:
+                                migrate_removed_builtin_roles(connection)
+                                purge_removed_builtin_role_definitions(connection)
+                            else:
+                                delete_role_definition(connection, code)
+                            existing = self._current_capability_matrix()
+                            if code in existing:
+                                del existing[code]
+                                save_role_capability_matrix(
+                                    connection,
+                                    matrix=existing,
+                                    updated_by=user_id,
+                                    custom_roles=self._custom_role_codes(),
+                                )
+                            return 200, {"ok": True}
+                except ValueError as exc:
+                    return 400, {"error": str(exc)}
             if path == "/api/settings/interface/theme-colors":
                 user_id = str((current_user or {}).get("id") or "").strip()
                 if method == "GET":
@@ -424,7 +611,7 @@ class ApiRouter:
                 if method == "POST":
                     if not user_id:
                         return 401, {"error": "login required"}
-                    if not _can_manage_system_theme_colors(current_user):
+                    if not self._user_has_capability(current_user, "sys.settings.admin"):
                         return 403, {"error": "admin role required"}
                     vitality_theme_color = _validated_theme_color(body, "vitality_theme_color")
                     calm_theme_color = _validated_theme_color(body, "calm_theme_color")
@@ -470,9 +657,12 @@ class ApiRouter:
             if method == "GET" and path == "/api/report-navigation/dashboard":
                 query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
                 period = str(query.get("period", "month") or "month")
+                dash_user = dict(current_user or {})
+                dash_user["_report_nav_edit_schedule"] = self._user_has_capability(current_user, "report_navigation.edit_schedule")
+                dash_user["_report_nav_edit_stats"] = self._user_has_capability(current_user, "report_navigation.edit_stats")
                 return 200, self.report_navigation.dashboard(
                     period=period,
-                    current_user=current_user,
+                    current_user=dash_user,
                 )
 
             if method == "POST" and path == "/api/report-navigation/refresh":
@@ -491,7 +681,8 @@ class ApiRouter:
                 path,
             )
             if method == "POST" and manual_match:
-                if str((current_user or {}).get("role", "")) != "admin":
+                # 手动完成/取消步骤入口已从页面移除（残留接口），保持管理员专属
+                if str((current_user or {}).get("role") or "") != "admin":
                     return 403, {"error": "admin role required"}
                 step_code, action = manual_match.groups()
                 report_month = str((body or {}).get("report_month", "")).strip()
@@ -509,7 +700,7 @@ class ApiRouter:
                 path,
             )
             if method == "POST" and schedule_match:
-                if str((current_user or {}).get("role", "")) != "admin":
+                if not self._user_has_capability(current_user, "report_navigation.edit_schedule"):
                     return 403, {"error": "admin role required"}
                 report_month = str((body or {}).get("report_month", "")).strip()
                 report_date = str((body or {}).get("report_date", "")).strip()
@@ -527,7 +718,8 @@ class ApiRouter:
                 path,
             )
             if method == "POST" and schedule_owner_match:
-                if str((current_user or {}).get("role", "")) != "admin":
+                # 编辑负责人入口已从页面移除（残留接口），保持管理员专属
+                if str((current_user or {}).get("role") or "") != "admin":
                     return 403, {"error": "admin role required"}
                 report_month = str((body or {}).get("report_month", "")).strip()
                 owner_name = str((body or {}).get("owner_name", "")).strip()
@@ -545,7 +737,7 @@ class ApiRouter:
                 path,
             )
             if method == "POST" and card_values_match:
-                if str((current_user or {}).get("role", "")) != "admin":
+                if not self._user_has_capability(current_user, "report_navigation.edit_stats"):
                     return 403, {"error": "admin role required"}
                 values = (body or {}).get("values")
                 if not isinstance(values, dict):
@@ -571,7 +763,7 @@ class ApiRouter:
                 return 200, {"history": run}
 
             if method == "DELETE" and path == "/api/history":
-                if str((current_user or {}).get("role", "")) != "admin":
+                if not self._user_has_capability(current_user, "history.delete"):
                     return 403, {"error": "admin role required"}
                 history_id = str((body or {}).get("id", "")).strip()
                 if not history_id:
@@ -3454,7 +3646,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
                 "authenticated": session is not None,
                 "setup_required": self.auth_manager.setup_required(),
                 "csrf_token": session.csrf_token if session else "",
-                "user": _session_user(session),
+                "user": self.router.session_user_payload(session),
             })
             return
         if method == "POST" and path in {"/api/auth/setup", "/api/auth/login", "/api/auth/logout"}:
@@ -3504,7 +3696,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json(
             200,
-            {"ok": True, "csrf_token": session.csrf_token, "user": _session_user(session)},
+            {"ok": True, "csrf_token": session.csrf_token, "user": self.router.session_user_payload(session)},
             headers=[("Set-Cookie", f"auto_check_session={session.session_id}; Path=/; HttpOnly; SameSite=Lax")],
         )
 
@@ -3512,7 +3704,9 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         return self.auth_manager.validate_session(_cookie_value(self.headers.get("Cookie", ""), "auto_check_session"))
 
     def _handle_users(self, method: str, path: str, session: AuthSession) -> None:
-        if session.role != "admin":
+        if not self.router._user_has_capability(
+            {"role": session.role, "id": session.user_id}, "sys.users"
+        ):
             self._send_early_json(method, 403, {"error": "admin role required"})
             return
         length = int(self.headers.get("Content-Length", "0"))
@@ -3723,15 +3917,22 @@ def _cookie_value(cookie_header: str, name: str) -> str:
     return ""
 
 
-def _session_user(session: AuthSession | None) -> dict[str, Any] | None:
+def _session_user(
+    session: AuthSession | None,
+    *,
+    capabilities: list[str] | None = None,
+) -> dict[str, Any] | None:
     if session is None:
         return None
-    return {
+    payload = {
         "id": session.user_id,
         "username": session.username,
         "display_name": session.display_name,
         "role": session.role,
     }
+    if capabilities is not None:
+        payload["capabilities"] = list(capabilities)
+    return payload
 
 
 def _public_current_user(user: dict[str, Any] | None) -> dict[str, Any]:

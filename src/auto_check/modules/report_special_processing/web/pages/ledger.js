@@ -182,10 +182,31 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
         "记录已删除",
         { refreshDetail: false },
       );
+      return;
+    }
+    if (action === "reopen") {
+      const reason = await prompt("重开原因", "请输入重开原因", {
+        placeholder: "请输入重开原因",
+        required: true,
+        requiredMessage: "请输入重开原因",
+      });
+      if (reason == null || !String(reason).trim()) return;
+      if (!await confirm("确认重开", "确认将该记录重开为待处理吗？")) return;
+      await run(
+        () => withLatestVersion((latest) => api.reopenRecord(latest.id, {
+          row_version: latest.row_version,
+          reason: String(reason).trim(),
+        })),
+        "记录已重开",
+      );
     }
   }
 
   function openCreate(trigger) {
+    if (!(state.catalog?.capabilities?.can_create ?? true)) {
+      notify("无权新建特殊处理记录", "error");
+      return;
+    }
     state.restoreFocus = { kind: "create" };
     state.drawer = { mode: "create", record: null };
     render();
@@ -298,11 +319,13 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
 
   function render() {
     if (!state.active) return;
+    const canCreate = Boolean(state.catalogAvailable && (state.catalog?.capabilities?.can_create ?? true));
     const createButton = element(documentRef, "button", {
       type: "button",
       className: "rsp-button rsp-button-primary",
       text: "新建",
-      disabled: !state.catalogAvailable,
+      disabled: !canCreate,
+      title: canCreate ? "" : "无权新建特殊处理记录",
     });
     createButton.addEventListener("click", () => openCreate(createButton));
     const period = element(documentRef, "input", { type: "date", value: state.reportPeriod, "aria-label": "报送期" });

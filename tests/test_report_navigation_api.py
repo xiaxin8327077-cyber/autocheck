@@ -70,7 +70,19 @@ def test_dashboard_route_passes_selected_period_and_current_user(tmp_path):
 
     assert status == 200
     assert payload["period"] == "quarter"
-    assert service.calls == [("dashboard", "quarter", _user())]
+    assert len(service.calls) == 1
+    call = service.calls[0]
+    assert call[0] == "dashboard"
+    assert call[1] == "quarter"
+    # dashboard 注入能力键；比较时忽略内部键
+    passed_user = {
+        k: v
+        for k, v in call[2].items()
+        if k not in ("_report_nav_edit_schedule", "_report_nav_edit_stats")
+    }
+    assert passed_user == _user()
+    assert call[2].get("_report_nav_edit_schedule") is False
+    assert call[2].get("_report_nav_edit_stats") is False
 
 
 def test_manual_complete_and_cancel_require_admin_and_delegate_exact_action(tmp_path):

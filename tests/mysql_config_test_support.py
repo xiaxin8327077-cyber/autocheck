@@ -46,6 +46,8 @@ class MySqlContractConnection:
             "users": [],
             "user_interface_preferences": [],
             "system_interface_preferences": [],
+            "role_capability_settings": [],
+            "role_definitions": [],
             "run_headers": [],
             "reconcile_runs": [],
             "reconcile_run_counts": [],
@@ -136,7 +138,18 @@ class MySqlContractConnection:
                     [],
                 )
                 delete_ids = {str(value) for value in ids}
-                column = "result_id" if "result_id" in sql else "id"
+                normalized_sql = sql.upper()
+                column = next(
+                    (
+                        item.name
+                        for item in table.columns
+                        if f".{item.name.upper()} IN " in normalized_sql
+                        or f"{item.name.upper()} IN " in normalized_sql
+                    ),
+                    None,
+                )
+                if column is None:
+                    column = "result_id" if "result_id" in sql else "id"
                 self.tables[table_name] = [
                     row for row in self.tables[table_name] if str(row.get(column)) not in delete_ids
                 ]
@@ -161,6 +174,49 @@ class MySqlContractConnection:
                     row for row in self.tables[table_name] if not self._matches_filters(row, filters)
                 ]
             return MemoryResult(rowcount=before - len(self.tables[table_name]))
+        if getattr(statement, "is_update", False):
+            in_param_keys: set[str] = set()
+            if " IN " in sql.upper():
+                # UPDATE ... SET col=:col WHERE col IN (:col_1) 会把 SET 与 IN
+                # 都编进 params；不能把 SET 值当过滤条件，否则会误匹配全表。
+                in_items = [
+                    (key, value)
+                    for key, value in params.items()
+                    if isinstance(value, (list, tuple, set))
+                ]
+                if len(in_items) != 1:
+                    raise AssertionError(f"unsupported UPDATE IN statement: {sql}")
+                in_key, in_values = in_items[0]
+                column = in_key.rsplit("_", 1)[0] if "_" in in_key else in_key
+                filters = {column: in_values}
+                in_param_keys.add(in_key)
+            else:
+                filters = self._filters_from_params(
+                    params,
+                    (
+                        "kind",
+                        "id",
+                        "run_id",
+                        "result_id",
+                        "key",
+                        "report_month",
+                        "step_code",
+                        "process_code",
+                        "stat_period",
+                        "card_code",
+                        "user_id",
+                        "role_code",
+                        "role",
+                    ),
+                )
+            matched = [row for row in self.tables[table_name] if self._matches_filters(row, filters)]
+            for row in matched:
+                for key, value in params.items():
+                    if key in in_param_keys or isinstance(value, (list, tuple, set)):
+                        continue
+                    if key in row:
+                        row[key] = value
+            return MemoryResult(rowcount=len(matched))
         if getattr(statement, "is_insert", False):
             if isinstance(parameters, list):
                 for item in parameters:
@@ -404,6 +460,8 @@ class MySqlContractConnection:
             return ("process_code",)
         if table_name in {"report_nav_steps"}:
             return ("step_code",)
+        if table_name == "role_definitions":
+            return ("role_code",)
         return ("id",) if "id" in row else ()
 
     def _filters_from_params(self, params: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:

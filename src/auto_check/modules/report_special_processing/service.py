@@ -14,7 +14,17 @@ from .contracts import (
     STATUS_LABELS,
     ValidationError,
 )
-from .permissions import can_delete, can_edit, can_reopen, can_transition, can_void
+from .permissions import (
+    can_confirm,
+    can_create,
+    can_delete,
+    can_edit,
+    can_reopen,
+    can_transition,
+    can_void,
+    can_view,
+    with_resolved_capabilities,
+)
 from .statistics import status_metrics
 from .export_workbook import MAX_EXPORT_ROWS, build_export_xlsx
 from .validator import (
@@ -69,7 +79,22 @@ class SpecialProcessingService:
         self._reports = report_navigation
         self._now = now
 
-    def catalog(self) -> dict[str, Any]:
+    def _actor(self, current_user: Mapping[str, Any] | None) -> dict[str, Any]:
+        """模块内解析能力矩阵并补齐用户 capabilities，不改平台派发协议。"""
+        matrix = None
+        try:
+            from auto_check.app.storage_role_capabilities import load_role_capability_matrix
+            from auto_check.app.storage_role_definitions import load_custom_role_codes
+
+            with self.storage.database.connect() as connection:
+                custom_roles = load_custom_role_codes(connection)
+                matrix = load_role_capability_matrix(connection, custom_roles=custom_roles)
+        except Exception:
+            matrix = None
+        return with_resolved_capabilities(current_user, matrix)
+
+    def catalog(self, current_user: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        actor = self._actor(current_user)
         try:
             processes = tuple(self._reports.list_report_processes())
             users = tuple(self._users.list_active_users())
@@ -92,6 +117,12 @@ class SpecialProcessingService:
             ],
             "limits": {"max_reports": MAX_REPORTS, "max_script_bytes": MAX_SCRIPT_BYTES},
             "workflow": {"enabled": False, "status": "not_enabled"},
+            "capabilities": {
+                "can_view": can_view(actor),
+                "can_create": can_create(actor),
+                "can_confirm": can_confirm(actor),
+                "can_delete": can_delete(actor),
+            },
         }
 
     def list_records(
@@ -99,11 +130,14 @@ class SpecialProcessingService:
         query: Mapping[str, str],
         current_user: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        actor = self._actor(current_user)
+        if not can_view(actor):
+            raise PermissionDeniedError()
         result = self.storage.list(validate_page_query(query))
         return {
             **result,
             "items": [
-                self._with_capabilities(item, current_user)
+                self._with_capabilities(item, actor)
                 for item in result.get("items", [])
             ],
         }
@@ -130,7 +164,7 @@ class SpecialProcessingService:
         record_id: int,
         current_user: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return self._with_capabilities(self._record(record_id), current_user)
+        return self._with_capabilities(self._record(record_id), self._actor(current_user))
 
     def audit(self, record_id: int, query: Mapping[str, str]) -> dict[str, Any]:
         self._record(record_id)
@@ -143,6 +177,8 @@ class SpecialProcessingService:
         *,
         request_id: str,
     ) -> dict[str, Any]:
+        if not can_create(self._actor(current_user)):
+            raise PermissionDeniedError()
         value = validate_record_input(payload)
         processes = self._processes(value.report_process_codes)
         actor = self._user(current_user.get("id"))
@@ -190,7 +226,8 @@ class SpecialProcessingService:
         request_id: str,
     ) -> dict[str, Any]:
         current = self._record(record_id)
-        if not can_edit(current_user, current):
+        actor_user = self._actor(current_user)
+        if not can_edit(actor_user, current):
             raise PermissionDeniedError()
         value = validate_record_input(payload)
         if value.row_version is None:
@@ -242,10 +279,14 @@ class SpecialProcessingService:
         request_id: str,
     ) -> dict[str, Any]:
         current = self._record(record_id)
-        if not can_edit(current_user, current):
+        actor_user = self._actor(current_user)
+        target = payload.get("target_status")
+        if isinstance(target, str) and target in {"completed"}:
+            if not can_confirm(actor_user):
+                raise PermissionDeniedError()
+        elif not can_edit(actor_user, current):
             raise PermissionDeniedError()
         version, reason = validate_action(payload)
-        target = payload.get("target_status")
         if not isinstance(target, str) or not can_transition(str(current["status"]), target):
             raise InvalidTransitionError()
         if target in {"pending", "completed"}:
@@ -278,9 +319,9 @@ class SpecialProcessingService:
     def void(
         self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
     ) -> dict[str, Any]:
-        if not can_void(current_user):
-            raise PermissionDeniedError()
         current = self._record(record_id)
+        if not can_void(self._actor(current_user), current):
+            raise PermissionDeniedError()
         if current["status"] not in {"draft", "pending", "processing"}:
             raise InvalidTransitionError()
         version, reason = validate_action(payload, require_reason=True, reason_max_length=20)
@@ -314,7 +355,7 @@ class SpecialProcessingService:
     def delete(
         self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
     ) -> dict[str, Any]:
-        if not can_delete(current_user):
+        if not can_delete(self._actor(current_user)):
             raise PermissionDeniedError()
         current = self._record(record_id)
         version, _reason = validate_action(payload, require_reason=False)
@@ -325,9 +366,9 @@ class SpecialProcessingService:
     def reopen(
         self, record_id: int, payload: Mapping[str, Any], current_user: Mapping[str, Any], *, request_id: str
     ) -> dict[str, Any]:
-        if not can_reopen(current_user):
-            raise PermissionDeniedError()
         current = self._record(record_id)
+        if not can_reopen(self._actor(current_user), current):
+            raise PermissionDeniedError()
         if current["status"] not in {"completed", "voided"}:
             raise InvalidTransitionError()
         version, reason = validate_action(payload, require_reason=True)
@@ -394,7 +435,13 @@ class SpecialProcessingService:
         return {
             **record,
             "can_edit": can_edit(current_user, record),
-            "can_admin": str((current_user or {}).get("role") or "") == "admin",
+            "can_confirm": can_confirm(current_user),
+            "can_void": can_void(current_user, record),
+            "can_reopen": can_reopen(current_user, record),
+            "can_delete": can_delete(current_user),
+            "can_create": can_create(current_user),
+            "can_view": can_view(current_user),
+            "can_admin": can_delete(current_user),
         }
 
     def _user(self, user_id: Any) -> Any:

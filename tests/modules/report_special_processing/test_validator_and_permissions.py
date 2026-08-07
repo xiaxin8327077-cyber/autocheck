@@ -99,8 +99,10 @@ def test_void_reason_accepts_up_to_20_characters_and_rejects_longer():
     assert "最多 20 个字符" in str(error.value.fields["reason"])
 
 
-def test_permissions_bind_editing_to_owner_handler_or_admin_and_open_status():
+def test_permissions_bind_to_rsp_capabilities_and_creator_scope():
     from auto_check.modules.report_special_processing.permissions import (
+        can_confirm,
+        can_create,
         can_delete,
         can_edit,
         can_reopen,
@@ -108,14 +110,30 @@ def test_permissions_bind_editing_to_owner_handler_or_admin_and_open_status():
     )
 
     record = {"creator_user_id": "1", "handler_user_id": "2", "status": "pending"}
-    assert can_edit({"id": "1", "role": "user"}, record)
-    assert can_edit({"id": "2", "role": "user"}, record)
-    assert not can_edit({"id": "3", "role": "user"}, record)
-    assert can_edit({"id": "3", "role": "admin"}, record)
-    assert not can_edit({"id": "1", "role": "user"}, {**record, "status": "completed"})
-    assert can_void({"role": "admin"}) and not can_void({"role": "user"})
-    assert can_reopen({"role": "admin"}) and not can_reopen({"role": "user"})
-    assert can_delete({"role": "admin"}) and not can_delete({"role": "user"})
+    creator = {"id": "1", "role": "user"}
+    handler = {"id": "2", "role": "user"}
+    other = {"id": "3", "role": "user"}
+    admin = {"id": "9", "role": "admin"}
+    confirmer = {"id": "8", "role": "user", "capabilities": ["rsp.view", "rsp.confirm"]}
+
+    assert can_edit(creator, record)
+    assert not can_edit(handler, record)  # 谁创建谁处理：处理人不可单独编辑
+    assert not can_edit(other, record)
+    assert can_edit(admin, record)
+    assert not can_edit(creator, {**record, "status": "completed"})
+
+    assert can_void(creator, record)
+    assert not can_void(other, record)
+    assert can_void(admin, record)
+
+    assert can_reopen(admin, {**record, "status": "completed"})
+    assert can_reopen(creator, {**record, "status": "completed"})
+    assert not can_reopen(other, {**record, "status": "completed"})
+
+    assert can_delete(admin) and not can_delete(creator)
+    assert can_create(creator) and not can_create(confirmer)
+    assert can_confirm(confirmer) and not can_confirm(creator)
+    assert can_confirm(admin)
 
 
 @pytest.mark.parametrize(

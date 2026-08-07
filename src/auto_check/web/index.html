@@ -16,7 +16,7 @@
         }
       })();
     </script>
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260807aa" />
     <link rel="stylesheet" href="/module_host.css" />
   </head>
   <body>
@@ -31,7 +31,7 @@
         </h1>
       </div>
       <nav class="sidebar-nav">
-        <a class="nav-item" data-page="report-navigation" href="#report-navigation">
+        <a class="nav-item" data-page="report-navigation" data-capability="menu.report_navigation" href="#report-navigation">
           <span class="nav-icon">&#9673;</span>
           <span>报送导航</span>
         </a>
@@ -42,20 +42,20 @@
             <span class="nav-group-chevron" aria-hidden="true">&#9662;</span>
           </button>
           <div class="nav-submenu">
-            <a class="nav-item nav-subitem" data-page="home" href="#home"><span>对数总览</span></a>
-            <a class="nav-item nav-subitem" data-page="auto-check" href="#auto-check"><span>对数执行</span></a>
-            <a class="nav-item nav-subitem" data-page="history" href="#history"><span>对数历史</span></a>
+            <a class="nav-item nav-subitem" data-page="home" data-capability="menu.home" href="#home"><span>对数总览</span></a>
+            <a class="nav-item nav-subitem" data-page="auto-check" data-capability="menu.auto_check" href="#auto-check"><span>对数执行</span></a>
+            <a class="nav-item nav-subitem" data-page="history" data-capability="menu.history" href="#history"><span>对数历史</span></a>
           </div>
         </div>
-        <a class="nav-item" data-page="tools" href="#">
+        <a class="nav-item" data-page="tools" data-capability="menu.tools" href="#">
           <span class="nav-icon">&#9881;</span>
           <span>工具</span>
         </a>
-        <a class="nav-item" data-page="settings" href="#">
+        <a class="nav-item" data-page="settings" data-capability="sys.settings" href="#">
           <span class="nav-icon">&#9730;</span>
           <span>系统设置</span>
         </a>
-        <a class="nav-item admin-only" data-page="users" href="#">
+        <a class="nav-item admin-only" data-page="users" data-capability="sys.users" href="#">
           <span class="nav-icon nav-icon-users" aria-hidden="true"></span>
           <span>用户管理</span>
         </a>
@@ -63,7 +63,7 @@
       </nav>
       <div class="sidebar-footer">
         <div class="sidebar-footer-main">
-          <span class="status" id="statusText">v2.1</span>
+          <span class="status" id="statusText">v2.2</span>
         </div>
         <div class="user-menu user-menu--sidebar" id="sidebarUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
@@ -86,25 +86,34 @@
           <span class="brand-wordmark-main">监管智核</span>
           <span class="brand-wordmark-sub">监管报送核验平台</span>
         </span>
-        <span class="top-nav-status" id="topNavStatus" title="v2.1">v2.1</span>
+        <span class="top-nav-status" id="topNavStatus" title="v2.2">v2.2</span>
       </div>
       <nav class="top-nav-tabs">
-        <a class="top-nav-item" data-page="report-navigation" href="#report-navigation">报送导航</a>
+        <a class="top-nav-item" data-page="report-navigation" data-capability="menu.report_navigation" href="#report-navigation">报送导航</a>
         <div class="top-nav-group" data-nav-group="smart-reconcile">
           <button class="top-nav-item top-nav-group-toggle" type="button" data-nav-group-toggle="smart-reconcile" aria-expanded="false">
             <span>智能核数</span>
             <span class="top-nav-group-chevron" aria-hidden="true">&#9662;</span>
           </button>
           <div class="top-nav-submenu">
-            <a class="top-nav-item top-nav-subitem" data-page="home" href="#home">对数总览</a>
-            <a class="top-nav-item top-nav-subitem" data-page="auto-check" href="#auto-check">对数执行</a>
-            <a class="top-nav-item top-nav-subitem" data-page="history" href="#history">对数历史</a>
+            <a class="top-nav-item top-nav-subitem" data-page="home" data-capability="menu.home" href="#home">对数总览</a>
+            <a class="top-nav-item top-nav-subitem" data-page="auto-check" data-capability="menu.auto_check" href="#auto-check">对数执行</a>
+            <a class="top-nav-item top-nav-subitem" data-page="history" data-capability="menu.history" href="#history">对数历史</a>
           </div>
         </div>
         <div id="moduleTopNavigation"></div>
-        <a class="top-nav-item" data-page="tools" href="#">工具</a>
-        <a class="top-nav-item" data-page="settings" href="#">系统设置</a>
-        <a class="top-nav-item admin-only" data-page="users" href="#">用户管理</a>
+        <a class="top-nav-item" data-page="tools" data-capability="menu.tools" href="#">工具</a>
+        <div class="top-nav-group" data-nav-group="system-management">
+          <button class="top-nav-item top-nav-group-toggle" type="button" data-nav-group-toggle="system-management" aria-expanded="false">
+            <span>系统管理</span>
+            <span class="top-nav-group-chevron" aria-hidden="true">&#9662;</span>
+          </button>
+          <div class="top-nav-submenu">
+            <a class="top-nav-item top-nav-subitem" data-page="settings" data-capability="sys.settings" href="#">系统设置</a>
+            <a class="top-nav-item top-nav-subitem" data-page="role-permissions" data-capability="sys.role_permissions" href="#">角色权限</a>
+            <a class="top-nav-item top-nav-subitem" data-page="users" data-capability="sys.users" href="#">用户管理</a>
+          </div>
+        </div>
       </nav>
       <div class="top-nav-actions">
         <div class="user-menu user-menu--top" id="topUserMenu">
@@ -558,7 +567,7 @@
                   <th>报告期</th>
                   <th>执行时间</th>
                   <th>执行人</th>
-                  <th class="admin-only">数据源</th>
+                  <th class="history-source-only">数据源</th>
                   <th>总差异</th>
                   <th>已解释</th>
                   <th>新增差异</th>
@@ -1069,6 +1078,114 @@
               <button type="button" class="pbc-btn pbc-btn--secondary" id="flowChainEditorCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
               <button type="button" class="pbc-btn pbc-btn--primary" id="flowChainEditorSave" data-action-tone="primary" data-action-variant="solid">保存链路</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 角色权限 -->
+      <section class="page" id="page-role-permissions">
+        <div class="page-header">
+          <h2>角色权限</h2>
+        </div>
+        <section class="card result-card">
+          <div class="card-title card-title--spread">
+            <div class="card-title-left">
+              <span class="card-title-icon">&#9881;</span>
+              <span>角色权限</span>
+            </div>
+            <div class="history-toolbar">
+              <input id="rolePermissionsSearch" class="filter-input history-filter-input" type="search" placeholder="🔍 搜索角色名称 / 英文 / 备注" />
+              <button type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid" id="rolePermissionsAddBtn" title="新增自定义角色">+ 新增角色</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="result-table role-permissions-table">
+              <colgroup>
+                <col class="role-name-col" />
+                <col class="role-code-col" />
+                <col class="role-remark-col" />
+                <col class="role-enabled-col" />
+                <col class="role-actions-col" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>角色名称</th>
+                  <th>角色英文名称</th>
+                  <th>备注</th>
+                  <th>是否可用</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="rolePermissionsTableBody"></tbody>
+            </table>
+          </div>
+          <div class="pagination role-permissions-pagination" id="rolePermissionsPagination">
+            <span class="pagination-info" id="rolePermissionsPageInfo">暂无数据</span>
+            <div class="pagination-controls">
+              <button class="page-btn" id="rolePermissionsPrevPage" disabled>&#9664;</button>
+              <span class="page-current" id="rolePermissionsPageCurrent">-</span>
+              <button class="page-btn" id="rolePermissionsNextPage" disabled>&#9654;</button>
+              <span class="pagination-jump">跳至 <input id="rolePermissionsJumpPage" type="number" min="1" /> 页</span>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <!-- 角色授权弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="rolePermissionsModal" hidden>
+        <div class="app-modal-shell modal role-permissions-modal">
+          <div class="app-modal-header modal-header">
+            <h3 id="rolePermissionsModalTitle">角色授权</h3>
+            <button class="app-modal-close btn-close" id="rolePermissionsModalClose" type="button">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body">
+            <div id="rolePermissionsGroups"></div>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <span class="modal-status" id="rolePermissionsModalStatus"></span>
+            <button id="rolePermissionsModalCancel" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="rolePermissionsModalSave" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 新建/修改角色弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="roleDefinitionModal" hidden>
+        <div class="app-modal-shell modal role-definition-modal">
+          <div class="app-modal-header modal-header">
+            <h3 id="roleDefinitionModalTitle">新建角色</h3>
+            <button class="app-modal-close btn-close" id="roleDefinitionModalClose" type="button">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body">
+            <div class="user-modal-form role-definition-form">
+              <label class="user-form-group">
+                <span class="user-form-label">角色名称 <b>*</b></span>
+                <input id="roleDefinitionDisplayName" class="user-form-control" maxlength="10" autocomplete="off" placeholder="请输入角色名称" />
+                <span class="user-form-help">最多 10 个字；系统内建角色名称不可修改</span>
+              </label>
+              <label class="user-form-group">
+                <span class="user-form-label">角色英文名</span>
+                <input id="roleDefinitionCode" class="user-form-control is-readonly" readonly disabled tabindex="-1" />
+                <span class="user-form-help">由系统自动分配，不可编辑</span>
+              </label>
+              <label class="user-form-group">
+                <span class="user-form-label">备注</span>
+                <input id="roleDefinitionRemark" class="user-form-control" maxlength="20" autocomplete="off" placeholder="可选，最多 20 字" />
+              </label>
+              <div class="user-enable-row role-definition-enable-row">
+                <div>
+                  <strong>是否启用</strong>
+                  <span>当前角色均默认可用，暂不支持停用</span>
+                </div>
+                <input id="roleDefinitionEnabled" type="hidden" value="true" />
+                <button type="button" class="user-enable-switch on" id="roleDefinitionEnabledSwitch" aria-pressed="true" disabled title="角色启用状态暂不可修改"></button>
+              </div>
+            </div>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <span class="modal-status" id="roleDefinitionModalStatus"></span>
+            <button id="roleDefinitionModalCancel" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="roleDefinitionModalSave" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">确定</button>
           </div>
         </div>
       </div>
@@ -1640,18 +1757,7 @@
               <div class="user-form-group">
                 <span class="user-form-label">角色 <b>*</b></span>
                 <input id="userRole" type="hidden" value="user" />
-                <div class="user-role-cards">
-                  <label class="user-role-card" data-user-role-card="admin">
-                    <input type="radio" name="userRoleChoice" value="admin" />
-                    <span class="user-role-card-icon">🛡️</span>
-                    <span><strong>管理员</strong><small>拥有全部功能权限</small></span>
-                  </label>
-                  <label class="user-role-card" data-user-role-card="user">
-                    <input type="radio" name="userRoleChoice" value="user" />
-                    <span class="user-role-card-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg></span>
-                    <span><strong>普通用户</strong><small>仅业务功能权限</small></span>
-                  </label>
-                </div>
+                <select id="userRoleCards" class="filter-select user-role-cards"></select>
                 <span class="user-form-help">至少需保留一个启用的管理员账号</span>
               </div>
 
@@ -1718,6 +1824,6 @@
     <script src="/crypto_fallback.js"></script>
     <script src="/export_detail.js"></script>
     <script src="/module_host.js"></script>
-    <script src="/app.js?v=20260701"></script>
+    <script src="/app.js?v=20260807w"></script>
   </body>
 </html>

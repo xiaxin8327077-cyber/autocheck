@@ -42,7 +42,7 @@ const reportNavCardMaintenanceClose = document.getElementById("reportNavCardMain
 const reportNavCardMaintenanceCancel = document.getElementById("reportNavCardMaintenanceCancel");
 const reportNavCardMaintenanceSave = document.getElementById("reportNavCardMaintenanceSave");
 
-const DEFAULT_VERSION = "v2.1";
+const DEFAULT_VERSION = "v2.2";
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
 const USER_AVATAR_GRADIENTS = [
   ["#6366f1", "#4338ca"],
@@ -1231,6 +1231,7 @@ function applyVisualEffectsSetting() {
 
 /* ===== Navigation ===== */
 const smartReconcilePages = new Set(["home", "auto-check", "history"]);
+const systemMgmtPages = new Set(["settings", "role-permissions", "users"]);
 
 function setNavGroupOpen(group, open) {
   if (!group) return;
@@ -1244,6 +1245,11 @@ function syncNavGroupState(name) {
     group.classList.toggle("active", active);
     group.querySelector("[data-nav-group-toggle]")?.classList.toggle("active", active);
   });
+  const systemActive = systemMgmtPages.has(name);
+  document.querySelectorAll('[data-nav-group="system-management"]').forEach((group) => {
+    group.classList.toggle("active", systemActive);
+    group.querySelector("[data-nav-group-toggle]")?.classList.toggle("active", systemActive);
+  });
 }
 
 function syncNavState(name) {
@@ -1253,23 +1259,46 @@ function syncNavState(name) {
   syncNavGroupState(name);
 }
 
+function hasCapability(code) {
+  return (authState.user?.capabilities || []).includes(code);
+}
+
+function applyCapabilityAccess() {
+  document.querySelectorAll(".admin-only, [data-capability]").forEach((el) => {
+    const code = el.dataset.capability || "sys.settings.admin";
+    el.hidden = !hasCapability(code);
+  });
+  document.querySelectorAll("[data-nav-group]").forEach((group) => {
+    const subitems = group.querySelectorAll("[data-capability]");
+    if (subitems.length === 0) return;
+    const anyVisible = Array.from(subitems).some((el) => !el.hidden);
+    const toggle = group.querySelector("[data-nav-group-toggle]");
+    if (toggle) toggle.hidden = !anyVisible;
+  });
+}
+
 function applySettingsRoleAccess() {
-  const isAdmin = authState.user?.role === "admin";
+  const canManage = hasCapability("sys.settings.admin");
   document.querySelectorAll(".admin-action").forEach((button) => {
-    button.disabled = !isAdmin;
-    button.title = isAdmin ? "" : "普通用户不可执行该操作";
+    button.disabled = !canManage;
+    button.title = canManage ? "" : "无权限执行该操作";
   });
 }
 
 function applyRoleAccess() {
   const isAdmin = authState.user?.role === "admin";
   document.documentElement.dataset.role = isAdmin ? "admin" : "user";
-  document.querySelectorAll(".admin-only").forEach((item) => {
-    item.hidden = !isAdmin;
-  });
+  document.documentElement.dataset.capabilities = (authState.user?.capabilities || []).join(" ");
   applySettingsRoleAccess();
+  applyCapabilityAccess();
+  document.querySelectorAll(".history-source-only").forEach((el) => {
+    el.hidden = !canSeeHistorySource();
+  });
   const currentPageName = document.documentElement.getAttribute("data-page") || location.hash.slice(1);
-  if (!isAdmin && currentPageName === "users") {
+  if (!hasCapability("sys.users") && currentPageName === "users") {
+    switchPage("report-navigation");
+  }
+  if (!hasCapability("sys.role_permissions") && currentPageName === "role-permissions") {
     switchPage("report-navigation");
   }
 }
@@ -1301,6 +1330,7 @@ async function loadSettingsPageData() {
     loadPageSection("业务字段配置", loadReconcileSchemaSettings),
   ]);
   applySettingsRoleAccess();
+  applyCapabilityAccess();
 }
 
 [...navItems, ...topNavItems].forEach((item) => {
@@ -1323,6 +1353,11 @@ navGroupToggles.forEach((toggle) => {
       return;
     }
     if (group.classList.contains("top-nav-group")) {
+      const groupName = group.dataset.navGroup;
+      if (groupName === "system-management") {
+        setNavGroupOpen(group, !group.classList.contains("open"));
+        return;
+      }
       document.querySelectorAll(".top-nav-group.open").forEach((item) => setNavGroupOpen(item, false));
       switchPage("home");
       if (event.detail > 0) toggle.blur();
@@ -1350,8 +1385,27 @@ document.addEventListener("keydown", (event) => {
 async function switchPage(name, options = {}) {
   await window.AutoCheckModuleHost?.deactivate();
   const previousPage = document.documentElement.getAttribute("data-page") || "";
-  if (name === "users" && authState.user?.role !== "admin") {
-    showToast("普通用户无权访问用户管理", "error");
+  if (name === "users" && !hasCapability("sys.users")) {
+    showToast("无权访问用户管理", "error");
+    name = "report-navigation";
+  }
+  if (name === "role-permissions" && !hasCapability("sys.role_permissions")) {
+    showToast("无权访问角色权限", "error");
+    name = "report-navigation";
+  }
+  if (name === "settings" && !hasCapability("sys.settings")) {
+    showToast("无权访问系统设置", "error");
+    name = "report-navigation";
+  }
+  const pageMenuCapability = {
+    "report-navigation": "menu.report_navigation",
+    home: "menu.home",
+    "auto-check": "menu.auto_check",
+    history: "menu.history",
+    tools: "menu.tools",
+  }[name];
+  if (pageMenuCapability && !hasCapability(pageMenuCapability)) {
+    showToast("无权访问该页面", "error");
     name = "report-navigation";
   }
   if (previousPage === "settings" && name !== "settings") {
@@ -1364,6 +1418,7 @@ async function switchPage(name, options = {}) {
   if (name === "history") loadHistoryList(true);
   if (name === "tools") loadToolsPageData();
   if (name === "settings") loadSettingsPageData();
+  if (name === "role-permissions") await loadRolePermissions();
   if (name === "users") await loadUsers();
   if (name === "report-navigation") await loadReportNavigation();
   if (name === "home") {
@@ -1491,7 +1546,7 @@ function reportNavigationCountText(value) {
 }
 
 function reportNavigationCardMaintainable(cardCode) {
-  if (authState.user?.role !== "admin" || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)) return false;
+  if (!hasCapability("report_navigation.edit_stats") || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)) return false;
   const maintenance = reportNavigationPayload?.card_maintenance?.[cardCode];
   return Boolean(maintenance) && maintenance.editable !== false;
 }
@@ -2897,8 +2952,17 @@ function currentUserAvatarGradient() {
   return USER_AVATAR_GRADIENTS[index] || USER_AVATAR_GRADIENTS[0];
 }
 
+let rolePermissionsRoleDefs = [];
+
+const ROLE_DISPLAY_NAMES = {
+  admin: "管理员",
+  user: "普通用户",
+};
+
 function userDisplayRole(role) {
-  return role === "admin" ? "管理员" : "普通用户";
+  if (ROLE_DISPLAY_NAMES[role]) return ROLE_DISPLAY_NAMES[role];
+  const def = (rolePermissionsRoleDefs || []).find((d) => d.role_code === role);
+  return def?.display_name || "普通用户";
 }
 
 function userDisplayStatus(user) {
@@ -3019,6 +3083,7 @@ function renderUsers() {
     const displayName = userDisplayName(user);
     const initials = String(displayName || user.username || "?").slice(0, 2).toUpperCase();
     const roleIcon = role === "admin" ? "🛡️" : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>';
+    const roleTone = role === "admin" ? "admin" : "user";
     const adminLockedTitle = "委派管理员不可操作管理员用户";
     return `<tr>
       <td>
@@ -3036,7 +3101,7 @@ function renderUsers() {
           </div>
         </div>
       </td>
-      <td><span class="role-badge role-badge--${escapeHtml(role)}"><span class="role-badge-icon">${roleIcon}</span>${escapeHtml(userDisplayRole(role))}</span></td>
+      <td><span class="role-badge role-badge--${roleTone}"><span class="role-badge-icon">${roleIcon}</span>${escapeHtml(userDisplayRole(role))}</span></td>
       <td><span class="user-status-badge ${enabled ? "enabled" : "disabled"}">${escapeHtml(userDisplayStatus(user))}</span></td>
       <td>${escapeHtml(formatDisplayTime(user.created_at || ""))}</td>
       <td>${escapeHtml(user.last_login_at ? formatDisplayTime(user.last_login_at) : "-")}</td>
@@ -3069,24 +3134,34 @@ function renderUsersLoading() {
   userTableBody.innerHTML = rows.join("");
 }
 
+function renderUserRoleCards() {
+  const select = document.getElementById("userRoleCards");
+  if (!select) return;
+  const adminChoiceDisabled = isDelegatedAdminSession();
+  const builtinRoles = Object.keys(ROLE_DISPLAY_NAMES);
+  const customRoles = (rolePermissionsRoleDefs || [])
+    .filter((d) => !d.is_system)
+    .map((d) => d.role_code);
+  const allRoles = [...builtinRoles, ...customRoles];
+  select.innerHTML = allRoles.map((role) => {
+    const disabled = role === "admin" && adminChoiceDisabled;
+    return `<option value="${escapeHtml(role)}" ${disabled ? "disabled" : ""}${disabled ? ' title="委派管理员不可创建或设置管理员"' : ""}>${escapeHtml(userDisplayRole(role))}</option>`;
+  }).join("");
+}
+
 function syncUserRoleCards() {
-  const currentRole = userRole?.value || "user";
+  const select = document.getElementById("userRoleCards");
+  if (!select) return;
   const editingUser = editingUserFromModal();
   const roleLocked = isInitialAdminAccount(editingUser);
-  const adminChoiceDisabled = roleLocked || isDelegatedAdminSession();
-  document.querySelectorAll("[data-user-role-card]").forEach((card) => {
-    const selected = card.dataset.userRoleCard === currentRole;
-    const disabled = card.dataset.userRoleCard === "admin" ? adminChoiceDisabled : roleLocked;
-    card.classList.toggle("selected", selected);
-    card.classList.toggle("disabled", disabled);
-    card.setAttribute("aria-disabled", disabled ? "true" : "false");
-    card.title = disabled ? (roleLocked ? "初始管理员角色不可修改" : "委派管理员不可创建或设置管理员") : "";
-    const input = card.querySelector('input[name="userRoleChoice"]');
-    if (input) {
-      input.checked = selected;
-      input.disabled = disabled;
-    }
-  });
+  if (roleLocked) {
+    renderUserRoleCards();
+    if (userRole) userRole.value = "admin";
+  }
+  select.value = userRole?.value || "user";
+  select.disabled = roleLocked;
+  select.title = roleLocked ? "初始管理员角色不可修改" : "";
+  if (typeof syncCustomSelect === "function") syncCustomSelect(select);
 }
 
 function syncUserEnabledSwitch() {
@@ -3102,7 +3177,7 @@ function syncUserEnabledSwitch() {
 }
 
 async function loadUsers({ force = false } = {}) {
-  if (authState.user?.role !== "admin" || !userTableBody) return;
+  if (!hasCapability("sys.users") || !userTableBody) return;
   if (usersLoading) return;
   if (!usersLoaded || force) {
     renderUsersLoading();
@@ -3119,6 +3194,14 @@ async function loadUsers({ force = false } = {}) {
     userTableBody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
   } finally {
     usersLoading = false;
+  }
+  if (!rolePermissionsRoleDefs || rolePermissionsRoleDefs.length === 0) {
+    try {
+      const rolesPayload = await api("/api/role-capabilities");
+      rolePermissionsRoleDefs = rolesPayload.role_definitions || [];
+    } catch (error) {
+      /* 自定义角色数据拉取失败时，用户管理角色下拉回退为系统角色 */
+    }
   }
 }
 
@@ -3143,6 +3226,7 @@ function openUserModal(user = null) {
   userPassword.placeholder = isEdit ? "留空则不修改密码" : "请输入至少 6 位且包含字母的密码";
   userModalTitle.textContent = isEdit ? "编辑用户" : "新建用户";
   userModalStatus.textContent = "";
+  renderUserRoleCards();
   syncUserRoleCards();
   syncUserEnabledSwitch();
   userModal.hidden = false;
@@ -3328,12 +3412,9 @@ document.querySelectorAll("[data-export-users-btn]").forEach((button) => {
 userModalClose?.addEventListener("click", closeUserModal);
 userModalCancel?.addEventListener("click", closeUserModal);
 userModalSave?.addEventListener("click", () => saveUser().catch((error) => { userModalStatus.textContent = userFriendlyError(error.message); }));
-document.querySelectorAll('input[name="userRoleChoice"]').forEach((input) => {
-  input.addEventListener("change", () => {
-    if (!userRole || input.disabled) return;
-    userRole.value = input.value;
-    syncUserRoleCards();
-  });
+document.getElementById("userRoleCards")?.addEventListener("change", (event) => {
+  if (!userRole || event.target.disabled) return;
+  userRole.value = event.target.value;
 });
 userEnabledSwitch?.addEventListener("click", () => {
   if (!userEnabled || userEnabledSwitch.disabled) return;
@@ -3782,11 +3863,15 @@ function positionCustomSelectDropdown(select) {
   const rect = state.shell.getBoundingClientRect();
   const viewportGap = 16;
   const dropdownGap = 8;
-  const dropdownWidth = Math.min(Math.max(rect.width + 24, rect.width), window.innerWidth - viewportGap * 2);
+  const compactRoleSelect = select.classList.contains("user-role-cards") || select.id === "userRoleCards";
+  const dropdownWidth = compactRoleSelect
+    ? Math.min(rect.width, window.innerWidth - viewportGap * 2)
+    : Math.min(Math.max(rect.width + 24, rect.width), window.innerWidth - viewportGap * 2);
   const availableBelow = window.innerHeight - rect.bottom - viewportGap - dropdownGap;
   const availableAbove = rect.top - viewportGap - dropdownGap;
   const openAbove = availableBelow < 160 && availableAbove > availableBelow;
-  const maxHeight = Math.max(120, Math.min(320, openAbove ? availableAbove : availableBelow));
+  const heightCap = compactRoleSelect ? 148 : 320;
+  const maxHeight = Math.max(compactRoleSelect ? 100 : 120, Math.min(heightCap, openAbove ? availableAbove : availableBelow));
   const left = Math.min(Math.max(viewportGap, rect.left), Math.max(viewportGap, window.innerWidth - viewportGap - dropdownWidth));
   const top = openAbove
     ? Math.max(viewportGap, rect.top - dropdownGap - maxHeight)
@@ -3838,6 +3923,9 @@ function enhanceCustomSelect(select) {
   dropdown.className = "custom-select-dropdown";
   if (select.classList.contains("rsp-compact-select")) {
     dropdown.classList.add("rsp-compact-select-dropdown");
+  }
+  if (select.classList.contains("user-role-cards") || select.id === "userRoleCards") {
+    dropdown.classList.add("user-role-cards-dropdown");
   }
   dropdown.setAttribute("role", "listbox");
   dropdown.hidden = true;
@@ -5116,8 +5204,627 @@ function formatHistorySourceName(run) {
 }
 
 function canManageHistory() {
-  return authState.user?.role === "admin";
+  return hasCapability("history.delete");
 }
+
+const ROLE_PERMISSIONS_PAGE_SIZE = 10;
+
+let rolePermissionsMatrix = {};
+let rolePermissionsCapabilities = {};
+let rolePermissionsRequired = [];
+let rolePermissionsAdminOnly = [];
+let rolePermissionsRemarks = {};
+let rolePermissionsRoles = {};
+let rolePermissionsLockedRoles = new Set();
+let rolePermissionsCurrentPage = 1;
+let rolePermissionsEditingRole = "";
+let rolePermissionsTree = null;
+
+const CAPABILITY_MENU_TREE = [
+  {
+    label: "报送导航",
+    type: "group",
+    children: [
+      { code: "menu.report_navigation", label: "页面查看", type: "menu" },
+      { code: "report_navigation.edit_schedule", label: "编辑报送日期", type: "function" },
+      { code: "report_navigation.edit_stats", label: "编辑数据治理统计", type: "function" },
+    ],
+  },
+  {
+    label: "智能核数",
+    type: "group",
+    children: [
+      { code: "menu.home", label: "对数总览", type: "menu" },
+      { code: "menu.auto_check", label: "对数执行", type: "menu" },
+      {
+        label: "对数历史",
+        type: "group",
+        children: [
+          { code: "menu.history", label: "页面查看", type: "menu" },
+          { code: "history.delete", label: "删除对数历史记录", type: "function" },
+        ],
+      },
+    ],
+  },
+  { code: "menu.tools", label: "工具", type: "menu" },
+  {
+    label: "数据录入",
+    type: "group",
+    children: [
+      {
+        label: "报表特殊处理",
+        type: "group",
+        children: [
+          { code: "rsp.view", label: "查看", type: "function" },
+          { code: "rsp.create", label: "新增", type: "function" },
+          { code: "rsp.edit", label: "编辑", type: "function" },
+          { code: "rsp.confirm", label: "确认", type: "function" },
+          { code: "rsp.reopen", label: "重开", type: "function" },
+          { code: "rsp.void", label: "作废", type: "function" },
+          { code: "rsp.delete", label: "删除", type: "function" },
+        ],
+      },
+    ],
+  },
+  {
+    label: "系统管理",
+    type: "group",
+    children: [
+      {
+        label: "系统设置",
+        type: "group",
+        children: [
+          { code: "sys.settings", label: "页面查看", type: "menu" },
+          { code: "sys.settings.admin", label: "系统设置页管理员专属配置", type: "function" },
+        ],
+      },
+      { code: "sys.role_permissions", label: "角色权限", type: "menu" },
+      { code: "sys.users", label: "用户管理", type: "menu" },
+    ],
+  },
+];
+
+function isSystemRole(role) {
+  return Object.prototype.hasOwnProperty.call(ROLE_DISPLAY_NAMES, role);
+}
+
+async function loadRolePermissions() {
+  try {
+    const payload = await api("/api/role-capabilities", { method: "GET" });
+    rolePermissionsRoleDefs = payload.role_definitions || [];
+    rolePermissionsMatrix = payload.matrix || {};
+    rolePermissionsCapabilities = payload.capabilities || {};
+    rolePermissionsRequired = payload.required_capabilities || [];
+    rolePermissionsAdminOnly = payload.admin_only_capabilities || [];
+    rolePermissionsRemarks = payload.remarks || {};
+    rolePermissionsRoles = payload.roles || {};
+    rolePermissionsLockedRoles = new Set(payload.locked_roles || []);
+    rolePermissionsCurrentPage = 1;
+    renderRolePermissionsList();
+  } catch (e) {
+    const body = document.getElementById("rolePermissionsTableBody");
+    if (body) body.innerHTML = `<tr><td colspan="5" class="empty">加载角色权限失败：${escapeHtml(e.message || "")}</td></tr>`;
+  }
+}
+
+function getRolePermissionsEntries() {
+  const keyword = (document.getElementById("rolePermissionsSearch")?.value || "").trim().toLowerCase();
+  let entries = Object.entries(rolePermissionsRoles || {});
+  if (keyword) {
+    entries = entries.filter(([code, label]) => {
+      const remark = rolePermissionsRemarks?.[code] || "";
+      return String(label).toLowerCase().includes(keyword)
+        || code.toLowerCase().includes(keyword)
+        || String(remark).toLowerCase().includes(keyword);
+    });
+  }
+  const rank = (code) => (code === "admin" ? 0 : code === "user" ? 1 : 2);
+  entries.sort((a, b) => {
+    const diff = rank(a[0]) - rank(b[0]);
+    if (diff !== 0) return diff;
+    return String(a[1]).localeCompare(String(b[1]), "zh-CN") || String(a[0]).localeCompare(String(b[0]));
+  });
+  return entries;
+}
+
+function renderRolePermissionsList() {
+  const body = document.getElementById("rolePermissionsTableBody");
+  if (!body) return;
+  const entries = getRolePermissionsEntries();
+  const total = entries.length;
+  const pageCount = Math.max(1, Math.ceil(total / ROLE_PERMISSIONS_PAGE_SIZE));
+  if (rolePermissionsCurrentPage > pageCount) rolePermissionsCurrentPage = pageCount;
+  const pageItems = entries.slice(
+    (rolePermissionsCurrentPage - 1) * ROLE_PERMISSIONS_PAGE_SIZE,
+    rolePermissionsCurrentPage * ROLE_PERMISSIONS_PAGE_SIZE,
+  );
+  if (!pageItems.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">暂无数据</td></tr>';
+  } else {
+    body.innerHTML = pageItems.map(([code, label]) => {
+      const remark = rolePermissionsRemarks?.[code] || "";
+      const isSystem = isSystemRole(code);
+      return `<tr>
+        <td class="role-name-cell">${escapeHtml(label)}</td>
+        <td><code class="role-code-text">${escapeHtml(code)}</code></td>
+        <td class="role-remark-cell">${escapeHtml(remark) || "-"}</td>
+        <td><span class="user-status-badge enabled">可用</span></td>
+        <td class="user-actions-cell">
+          <div class="user-actions">
+            <button class="btn-outline btn-xs role-perm-view" data-action-tone="primary" data-action-variant="weak" data-role="${escapeHtml(code)}">查看权限</button>
+            <button class="btn-outline btn-xs role-perm-edit" data-action-tone="primary" data-action-variant="weak" data-role="${escapeHtml(code)}">角色授权</button>
+            <button class="btn-outline btn-xs role-perm-modify" data-action-tone="primary" data-action-variant="weak" data-role="${escapeHtml(code)}">修改</button>
+            <button class="btn-outline btn-xs role-perm-delete" data-action-tone="danger" data-action-variant="weak" data-role="${escapeHtml(code)}" ${isSystem ? "disabled" : ""} title="${isSystem ? "系统内建角色不可删除" : "删除角色"}">删除</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+  updateRolePermissionsPagination(total);
+}
+
+function updateRolePermissionsPagination(total) {
+  const pageCount = Math.max(1, Math.ceil(total / ROLE_PERMISSIONS_PAGE_SIZE));
+  const info = document.getElementById("rolePermissionsPageInfo");
+  const current = document.getElementById("rolePermissionsPageCurrent");
+  const prev = document.getElementById("rolePermissionsPrevPage");
+  const next = document.getElementById("rolePermissionsNextPage");
+  if (info) info.textContent = total ? `共 ${total} 条，第 ${rolePermissionsCurrentPage} / ${pageCount} 页` : "暂无数据";
+  if (current) current.textContent = total ? String(rolePermissionsCurrentPage) : "-";
+  if (prev) prev.disabled = rolePermissionsCurrentPage <= 1 || !total;
+  if (next) next.disabled = rolePermissionsCurrentPage >= pageCount || !total;
+}
+
+function createCapabilityTree(container, options = {}) {
+  /* 平台共享 UI 服务：原生 checkbox 能力树（勾选/禁用/展开收起/父子半选）。
+   * 供角色权限弹窗使用，也经 ModuleHost 暴露给业务模块（context.uiTree）。
+   * options: { nodes, matrix, required, adminOnly, lockedRoles, role, readOnly }
+   * 返回: { getMatrix(): {code: bool}, destroy() }
+   */
+  const {
+    nodes = [],
+    matrix = {},
+    required = [],
+    adminOnly = [],
+    lockedRoles = [],
+    role = "user",
+    readOnly = false,
+  } = options;
+  if (!container) return null;
+
+  const roleLocked = lockedRoles.includes(role);
+  const isAdminRole = role === "admin";
+  const requiredSet = new Set(required || []);
+  const adminOnlySet = new Set(adminOnly || []);
+
+  function nodeDisabled(code) {
+    if (readOnly || roleLocked) return true;
+    if (!code) return false;
+    if (requiredSet.has(code)) return true;
+    if (adminOnlySet.has(code) && !isAdminRole) return true;
+    return false;
+  }
+
+  function nodeTitle(code) {
+    if (!code) {
+      if (roleLocked) return "管理员列锁定，不可修改";
+      if (readOnly) return "只读模式";
+      return "勾选后将同步子项（已锁定项除外）";
+    }
+    if (requiredSet.has(code)) return "必选能力，不可取消";
+    if (adminOnlySet.has(code) && !isAdminRole) return "管理员专属能力，不可授予";
+    if (roleLocked) return "管理员列锁定，不可修改";
+    if (readOnly) return "只读模式";
+    return "";
+  }
+
+  function descendantCodeInputs(nodeEl) {
+    return Array.from(nodeEl.querySelectorAll(":scope > .capability-tree-children input[data-code]"));
+  }
+
+  function syncAncestors(fromNodeEl) {
+    let parent = fromNodeEl.parentElement?.closest(".capability-tree-node") || null;
+    while (parent) {
+      const parentInput = parent.querySelector(":scope > .capability-tree-row input[type='checkbox']");
+      const codes = descendantCodeInputs(parent);
+      if (parentInput) {
+        // 半选/全选按全部子能力勾选态计算（含必选禁用项），避免必选已勾、可选项未勾时父级空白
+        const checkedCount = codes.filter((input) => input.checked).length;
+        const allChecked = codes.length > 0 && checkedCount === codes.length;
+        const partial = checkedCount > 0 && checkedCount < codes.length;
+        if (parentInput.dataset.code && parentInput.disabled) {
+          // 必选/锁定能力保持自身勾选值，不被子项半选覆盖
+          parentInput.indeterminate = false;
+        } else {
+          parentInput.checked = allChecked;
+          parentInput.indeterminate = partial;
+        }
+      }
+      parent = parent.parentElement?.closest(".capability-tree-node") || null;
+    }
+  }
+
+  function applyCascade(nodeEl, checked) {
+    descendantCodeInputs(nodeEl).forEach((input) => {
+      if (input.disabled) return;
+      input.checked = checked;
+      input.indeterminate = false;
+    });
+    nodeEl.querySelectorAll(":scope > .capability-tree-children .capability-tree-row input[type='checkbox']").forEach((input) => {
+      if (input.disabled || input.dataset.code) return;
+      input.checked = checked;
+      input.indeterminate = false;
+    });
+  }
+
+  function buildNode(node) {
+    const children = Array.isArray(node.children) ? node.children : [];
+    const hasChildren = children.length > 0;
+    const code = node.code ? String(node.code) : "";
+    const disabled = nodeDisabled(code) || (readOnly || roleLocked);
+    const item = document.createElement("li");
+    item.className = "capability-tree-node" + (hasChildren ? " is-branch" : " is-leaf");
+
+    const row = document.createElement("div");
+    row.className = "capability-tree-row" + (disabled ? " is-disabled" : "");
+
+    if (hasChildren) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "capability-tree-toggle";
+      toggle.setAttribute("aria-label", "展开或收起");
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const collapsed = item.classList.toggle("is-collapsed");
+        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      });
+      row.appendChild(toggle);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "capability-tree-toggle-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      row.appendChild(spacer);
+    }
+
+    const label = document.createElement("label");
+    label.className = "capability-tree-label";
+    const title = nodeTitle(code);
+    if (title) label.title = title;
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "capability-tree-checkbox";
+    if (code) {
+      input.dataset.code = code;
+      input.checked = Boolean(matrix[code]);
+    } else {
+      input.dataset.group = "1";
+    }
+    input.disabled = disabled;
+    input.addEventListener("change", () => {
+      if (hasChildren) applyCascade(item, input.checked);
+      input.indeterminate = false;
+      syncAncestors(item);
+    });
+
+    const textWrap = document.createElement("span");
+    textWrap.className = "capability-tree-text";
+    if (!code) {
+      const groupLabel = document.createElement("span");
+      groupLabel.className = "role-perm-group-label";
+      groupLabel.textContent = node.label || "";
+      textWrap.appendChild(groupLabel);
+    } else {
+      const name = document.createElement("span");
+      name.className = "role-perm-label";
+      name.textContent = node.label || code;
+      if (requiredSet.has(code)) {
+        const star = document.createElement("span");
+        star.className = "required-star";
+        star.title = "必选";
+        star.textContent = "★";
+        name.appendChild(document.createTextNode(" "));
+        name.appendChild(star);
+      }
+      if (adminOnlySet.has(code)) {
+        const lock = document.createElement("span");
+        lock.className = "admin-only-lock";
+        lock.title = "管理员专属";
+        lock.textContent = "🔒";
+        name.appendChild(document.createTextNode(" "));
+        name.appendChild(lock);
+      }
+      const codeEl = document.createElement("small");
+      codeEl.className = "role-perm-code";
+      codeEl.textContent = code;
+      textWrap.appendChild(name);
+      textWrap.appendChild(codeEl);
+    }
+
+    label.appendChild(input);
+    label.appendChild(textWrap);
+    row.appendChild(label);
+    item.appendChild(row);
+
+    if (hasChildren) {
+      const childList = document.createElement("ul");
+      childList.className = "capability-tree-children";
+      children.forEach((child) => childList.appendChild(buildNode(child)));
+      item.appendChild(childList);
+    }
+    return item;
+  }
+
+  container.replaceChildren();
+  const root = document.createElement("ul");
+  root.className = "capability-tree";
+  root.setAttribute("role", "tree");
+  (nodes || []).forEach((node) => root.appendChild(buildNode(node)));
+  container.appendChild(root);
+
+  // 子项全部锁定时，分组勾选一并禁用
+  root.querySelectorAll(".capability-tree-node.is-branch").forEach((nodeEl) => {
+    const input = nodeEl.querySelector(":scope > .capability-tree-row input[type='checkbox']");
+    const row = nodeEl.querySelector(":scope > .capability-tree-row");
+    if (!input || !row || input.disabled) return;
+    const codes = descendantCodeInputs(nodeEl);
+    if (codes.length && codes.every((item) => item.disabled)) {
+      input.disabled = true;
+      row.classList.add("is-disabled");
+    }
+  });
+
+  // 初始化父级半选状态
+  Array.from(root.querySelectorAll(".capability-tree-node.is-leaf")).forEach((leaf) => {
+    syncAncestors(leaf);
+  });
+
+  return {
+    getMatrix() {
+      const result = {};
+      container.querySelectorAll("input[data-code]").forEach((input) => {
+        result[input.dataset.code] = Boolean(input.checked);
+      });
+      return result;
+    },
+    destroy() {
+      container.replaceChildren();
+    },
+  };
+}
+
+function openRolePermissionsModal(role, { readOnly = false } = {}) {
+  const modal = document.getElementById("rolePermissionsModal");
+  const title = document.getElementById("rolePermissionsModalTitle");
+  const groups = document.getElementById("rolePermissionsGroups");
+  if (!modal || !groups) return;
+  if (rolePermissionsTree) {
+    rolePermissionsTree.destroy();
+    rolePermissionsTree = null;
+  }
+  if (title) title.textContent = `${readOnly ? "查看权限" : "角色授权"}：${rolePermissionsRoles?.[role] || role}`;
+  const status = document.getElementById("rolePermissionsModalStatus");
+  if (status) status.textContent = "";
+  rolePermissionsTree = createCapabilityTree(groups, {
+    nodes: CAPABILITY_MENU_TREE,
+    matrix: rolePermissionsMatrix?.[role] || {},
+    required: rolePermissionsRequired,
+    adminOnly: rolePermissionsAdminOnly,
+    lockedRoles: Array.from(rolePermissionsLockedRoles),
+    role,
+    readOnly,
+  });
+  rolePermissionsEditingRole = role;
+  modal.hidden = false;
+}
+
+function closeRolePermissionsModal() {
+  const modal = document.getElementById("rolePermissionsModal");
+  if (modal) modal.hidden = true;
+  if (rolePermissionsTree) {
+    rolePermissionsTree.destroy();
+    rolePermissionsTree = null;
+  }
+  rolePermissionsEditingRole = "";
+}
+
+async function saveRolePermissions() {
+  const groups = document.getElementById("rolePermissionsGroups");
+  const status = document.getElementById("rolePermissionsModalStatus");
+  if (!groups || !rolePermissionsEditingRole || !rolePermissionsTree) return;
+  const matrix = JSON.parse(JSON.stringify(rolePermissionsMatrix || {}));
+  matrix[rolePermissionsEditingRole] = rolePermissionsTree.getMatrix();
+  if (status) status.textContent = "保存中...";
+  try {
+    await api("/api/role-capabilities", { method: "PUT", body: JSON.stringify({ matrix }) });
+    rolePermissionsMatrix = matrix;
+    closeRolePermissionsModal();
+    showToast("角色权限已保存", "success");
+  } catch (e) {
+    if (status) status.textContent = e.message || "保存失败";
+  }
+}
+
+let roleDefinitionEditingCode = "";
+
+function peekNextCustomRoleCode() {
+  const used = new Set(
+    (rolePermissionsRoleDefs || [])
+      .filter((item) => !item.is_system)
+      .map((item) => String(item.role_code || "")),
+  );
+  let index = 1;
+  while (used.has(`custom_${index}`) || isSystemRole(`custom_${index}`)) index += 1;
+  return `custom_${index}`;
+}
+
+function closeRoleDefinitionModal() {
+  const modal = document.getElementById("roleDefinitionModal");
+  if (modal) modal.hidden = true;
+  roleDefinitionEditingCode = "";
+  const status = document.getElementById("roleDefinitionModalStatus");
+  if (status) status.textContent = "";
+}
+
+function openRoleDefinitionModal(role = null) {
+  const modal = document.getElementById("roleDefinitionModal");
+  const title = document.getElementById("roleDefinitionModalTitle");
+  const nameInput = document.getElementById("roleDefinitionDisplayName");
+  const codeInput = document.getElementById("roleDefinitionCode");
+  const remarkInput = document.getElementById("roleDefinitionRemark");
+  const enabledSwitch = document.getElementById("roleDefinitionEnabledSwitch");
+  const status = document.getElementById("roleDefinitionModalStatus");
+  if (!modal || !nameInput || !codeInput || !remarkInput) return;
+
+  const isCreate = !role;
+  const isSystem = Boolean(role && isSystemRole(role));
+  roleDefinitionEditingCode = role || "";
+
+  if (title) title.textContent = isCreate ? "新建角色" : "修改角色";
+  nameInput.value = isCreate ? "" : (rolePermissionsRoles?.[role] || role || "");
+  nameInput.readOnly = isSystem;
+  nameInput.disabled = isSystem;
+  nameInput.title = isSystem ? "系统内建角色名称不可修改" : "";
+  codeInput.value = isCreate ? peekNextCustomRoleCode() : role;
+  codeInput.readOnly = true;
+  codeInput.disabled = true;
+  remarkInput.value = isCreate ? "" : (rolePermissionsRemarks?.[role] || "");
+  if (enabledSwitch) {
+    enabledSwitch.classList.add("on");
+    enabledSwitch.setAttribute("aria-pressed", "true");
+    enabledSwitch.disabled = true;
+  }
+  if (status) status.textContent = "";
+  modal.hidden = false;
+  requestAnimationFrame(() => {
+    if (!isSystem) nameInput.focus();
+    else remarkInput.focus();
+  });
+}
+
+async function saveRoleDefinition() {
+  const nameInput = document.getElementById("roleDefinitionDisplayName");
+  const remarkInput = document.getElementById("roleDefinitionRemark");
+  const status = document.getElementById("roleDefinitionModalStatus");
+  const saveBtn = document.getElementById("roleDefinitionModalSave");
+  if (!nameInput || !remarkInput) return;
+
+  const isCreate = !roleDefinitionEditingCode;
+  const isSystem = Boolean(roleDefinitionEditingCode && isSystemRole(roleDefinitionEditingCode));
+  const displayName = String(nameInput.value || "").trim();
+  const remark = String(remarkInput.value || "").trim();
+  if (!isSystem && !displayName) {
+    if (status) status.textContent = "请填写角色名称";
+    nameInput.focus();
+    return;
+  }
+  if (!isSystem && displayName.length > 10) {
+    if (status) status.textContent = "角色名称不得超过 10 个字";
+    nameInput.focus();
+    return;
+  }
+  if (remark.length > 20) {
+    if (status) status.textContent = "角色备注不得超过 20 字";
+    remarkInput.focus();
+    return;
+  }
+
+  if (saveBtn) saveBtn.disabled = true;
+  if (status) status.textContent = "保存中...";
+  try {
+    if (isCreate) {
+      await api("/api/role-definitions", {
+        method: "POST",
+        body: JSON.stringify({ display_name: displayName, remark }),
+      });
+      showToast("角色已创建", "success");
+    } else if (isSystem) {
+      await api("/api/role-capabilities", {
+        method: "PUT",
+        body: JSON.stringify({ remarks: { [roleDefinitionEditingCode]: remark } }),
+      });
+      showToast("角色信息已更新", "success");
+    } else {
+      await api(`/api/role-definitions/${encodeURIComponent(roleDefinitionEditingCode)}`, {
+        method: "PUT",
+        body: JSON.stringify({ display_name: displayName, remark }),
+      });
+      showToast("角色信息已更新", "success");
+    }
+    closeRoleDefinitionModal();
+    await loadRolePermissions();
+  } catch (e) {
+    if (status) status.textContent = e.message || "保存失败";
+    showToast(`保存失败：${e.message || ""}`, "error");
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function addRoleDefinition() {
+  openRoleDefinitionModal(null);
+}
+
+async function deleteRoleDefinition(role) {
+  const confirmed = await showConfirm(
+    "删除角色",
+    `确定删除自定义角色「${rolePermissionsRoles?.[role] || role}」吗？删除后不可恢复。`,
+    { tone: "danger" },
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/role-definitions/${encodeURIComponent(role)}`, { method: "DELETE" });
+    showToast("角色已删除", "success");
+    await loadRolePermissions();
+  } catch (e) {
+    showToast(`删除失败：${e.message || ""}`, "error");
+  }
+}
+
+document.getElementById("rolePermissionsSearch")?.addEventListener("input", () => {
+  rolePermissionsCurrentPage = 1;
+  renderRolePermissionsList();
+});
+document.getElementById("rolePermissionsPrevPage")?.addEventListener("click", () => {
+  if (rolePermissionsCurrentPage <= 1) return;
+  rolePermissionsCurrentPage -= 1;
+  renderRolePermissionsList();
+});
+document.getElementById("rolePermissionsNextPage")?.addEventListener("click", () => {
+  rolePermissionsCurrentPage += 1;
+  renderRolePermissionsList();
+});
+document.getElementById("rolePermissionsJumpPage")?.addEventListener("change", (event) => {
+  const target = Number(event.target.value);
+  if (Number.isFinite(target) && target >= 1) {
+    rolePermissionsCurrentPage = Math.floor(target);
+    renderRolePermissionsList();
+  }
+});
+document.getElementById("rolePermissionsAddBtn")?.addEventListener("click", () => {
+  addRoleDefinition();
+});
+document.getElementById("rolePermissionsModalClose")?.addEventListener("click", closeRolePermissionsModal);
+document.getElementById("rolePermissionsModalCancel")?.addEventListener("click", closeRolePermissionsModal);
+document.getElementById("rolePermissionsModalSave")?.addEventListener("click", () => {
+  saveRolePermissions().catch((e) => showToast(`保存失败：${e.message || ""}`, "error"));
+});
+document.getElementById("roleDefinitionModalClose")?.addEventListener("click", closeRoleDefinitionModal);
+document.getElementById("roleDefinitionModalCancel")?.addEventListener("click", closeRoleDefinitionModal);
+document.getElementById("roleDefinitionModalSave")?.addEventListener("click", () => {
+  saveRoleDefinition().catch((e) => showToast(`保存失败：${e.message || ""}`, "error"));
+});
+document.getElementById("rolePermissionsTableBody")?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-role]");
+  if (!button) return;
+  const role = button.dataset.role;
+  if (button.classList.contains("role-perm-view")) openRolePermissionsModal(role, { readOnly: true });
+  if (button.classList.contains("role-perm-edit")) openRolePermissionsModal(role);
+  if (button.classList.contains("role-perm-modify")) openRoleDefinitionModal(role);
+  if (button.classList.contains("role-perm-delete")) deleteRoleDefinition(role);
+});
 
 function canSeeHistorySource() {
   return authState.user?.role === "admin";
@@ -5160,7 +5867,7 @@ function renderHistoryList() {
   historyBody.innerHTML = pageItems.map((run) => {
     const explained = (run.status_counts || {})["已解释"] || 0;
     const sourceCell = canSeeHistorySource()
-      ? `<td class="admin-only">${escapeHtml(formatHistorySourceName(run))}</td>`
+      ? `<td>${escapeHtml(formatHistorySourceName(run))}</td>`
       : "";
     const deleteAction = canManageHistory()
       ? `<button class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(run.id)}">删除</button>`
@@ -5357,7 +6064,7 @@ historyBody?.addEventListener("click", async (e) => {
       setStatus("已加载历史详情");
     } else if (button.classList.contains("delete-history")) {
       if (!canManageHistory()) {
-        setStatus("普通用户无权删除历史记录");
+        setStatus("无权删除历史记录");
         return;
       }
       const confirmed = await showConfirm("删除历史记录", "确定删除这条历史记录吗？", { tone: "danger" });
@@ -8984,8 +9691,8 @@ function setSystemInfoFeedback(type, message) {
 
 async function runSystemInfoAction(button, pendingText, successText) {
   if (!button) return;
-  if (authState.user?.role !== "admin") {
-    setSystemInfoFeedback("error", "普通用户不可执行该操作");
+  if (!hasCapability("sys.settings.admin")) {
+    setSystemInfoFeedback("error", "无权限执行该操作");
     return;
   }
   const originalText = button.dataset.originalText || button.textContent;
@@ -11738,6 +12445,22 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ${moduleReleaseNotes}
     <div class="changelog-item">
       <div>
+        <span class="changelog-version">v2.2</span>
+        <span class="changelog-date">2026-08-07</span>
+      </div>
+      <ul>
+        <li>新增角色权限配置页，支持按角色×能力矩阵管理功能权限。</li>
+        <li>新增系统管理导航分组，整合系统设置、角色权限与用户管理。</li>
+        <li>角色权限支持菜单/功能权限细分与树形授权界面。</li>
+        <li>系统内建角色仅保留管理员与普通用户；其余通过新增角色创建，原预留角色下线并自动迁移为普通用户。</li>
+        <li>有功能子项的末级菜单增加「页面查看」权限项，取消功能不再连带取消进页权限。</li>
+        <li>对数历史删除改为基于能力码可配置。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
         <span class="changelog-version">v2.1</span>
         <span class="changelog-date">2026-07-18</span>
       </div>
@@ -11988,6 +12711,7 @@ window.addEventListener("resize", syncReportNavigationTodoCardHeight);
     notify: showToast,
     confirm: showConfirm,
     prompt: showPrompt,
+    uiTree: createCapabilityTree,
     legacyNavigate: switchPage,
   });
   if (!moduleHandled) {

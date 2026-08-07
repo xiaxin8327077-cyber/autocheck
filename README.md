@@ -4,14 +4,14 @@
 
 ## 版本信息
 
-- 应用界面版本：`v2.1`
+- 应用界面版本：`v2.2`
 - Python 包版本：`0.1.0`
 - 当前规则版本：`logic-2026-06-12-v1`
 - 运行方式：本地 Web 服务，默认固定端口 `8765`；Windows 可打包为单个 exe，Linux 可通过 Python 服务部署
 - 使用范围：系统面向桌面端浏览器使用，建议在常规电脑屏幕或浏览器窗口宽度不低于 `900px` 的环境下操作；移动端、390px 等极窄屏不纳入本版本交付验收范围
 - 数据访问原则：报表库全程只执行查询；`sql/` 目录脚本仅用于本地测试库造数
-- 应用存储：系统自身配置、用户、历史记录、报送导航配置/快照、界面偏好和模块宿主状态保存到 MySQL `auto_check` 应用库；`config.json` 仅保留 `app_database` 启动连接信息和少量启动参数，动态配置、用户、自动对数历史、人行逐笔校验历史和流程链执行历史不再写回 JSON 或 SQLite；上线需依次执行 `001_init_schema.sql` 至 `013_report_navigation_provider_states.sql` 中适用的迁移。`012_module_system.sql` 新增 3 张模块平台表，`013_report_navigation_provider_states.sql` 新增带持久注册 token 的报送导航统计提供方状态表，并为统计运行记录补充提供方失败数，完整应用结构为 43 张表，`app_schema_version` 仍为 `1`；旧 SQLite 数据仍可由 `scripts/export_sqlite_to_mysql.py` 只读导出，删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
-- 应用存储增量升级：已有应用库在停机备份后，按发布顺序人工执行 `007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`；执行 `011` 后再次确认备份可恢复，再由运维人工执行 `012_module_system.sql` 和 `013_report_navigation_provider_states.sql`。`010` 将第七步调整为仅展示，`011` 将归档类完成时间统一改为仅取 `create_date`，`012` 建立模块注册和迁移状态表，`013` 建立报送导航统计提供方 token 状态表并补充运行失败提供方计数。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由模块自己的迁移和独立 `schema_version` 管理；以后每年只需在同一日历脚本中补录当年例外日期并重新执行，不改变 `app_schema_version=1`。
+- 应用存储：系统自身配置、用户、历史记录、报送导航配置/快照、界面偏好和模块宿主状态保存到 MySQL `auto_check` 应用库；`config.json` 仅保留 `app_database` 启动连接信息和少量启动参数，动态配置、用户、自动对数历史、人行逐笔校验历史和流程链执行历史不再写回 JSON 或 SQLite；上线需依次执行 `001_init_schema.sql` 至 `014_role_capability_settings.sql` 中适用的迁移。`012_module_system.sql` 新增 3 张模块平台表，`013_report_navigation_provider_states.sql` 新增带持久注册 token 的报送导航统计提供方状态表，并为统计运行记录补充提供方失败数，`014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照），完整应用结构为 44 张表，`app_schema_version` 仍为 `1`；旧 SQLite 数据仍可由 `scripts/export_sqlite_to_mysql.py` 只读导出，删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+- 应用存储增量升级：已有应用库在停机备份后，按发布顺序人工执行 `007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`；执行 `011` 后再次确认备份可恢复，再由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 和 `014_role_capability_settings.sql`。`010` 将第七步调整为仅展示，`011` 将归档类完成时间统一改为仅取 `create_date`，`012` 建立模块注册和迁移状态表，`013` 建立报送导航统计提供方 token 状态表并补充运行失败提供方计数，`014` 建立角色能力矩阵配置表（单行 JSON 快照）。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由模块自己的迁移和独立 `schema_version` 管理；以后每年只需在同一日历脚本中补录当年例外日期并重新执行，不改变 `app_schema_version=1`。
 
 ## 当前功能
 
@@ -52,7 +52,7 @@
 1. 在 MySQL 中手工创建空库 `auto_check`，并为应用账号授予必要读写权限。
 2. 执行 `sql/app_storage/mysql/001_init_schema.sql`，创建 20 张应用存储表；脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE` 和生产数据。
 3. 如需迁移旧 `auto-check.db`，在停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读生成 schema SQL、data SQL 和迁移报告，再由运维人员人工执行数据 SQL。
-4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 18 张不设置数据库外键约束的报送导航表（保留主键、唯一索引、普通索引以及中文表/字段注释），再执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入数据源、表、字段、固定判断参数和月度报送日期配置；随后依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`。最后必须先备份生产库，再由运维人工执行 `sql/app_storage/mysql/012_module_system.sql` 和 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，分别新增模块宿主 3 张平台表和报送导航统计提供方状态表。完整应用结构共 43 张表，`app_schema_version` 仍为 `1`；模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由各模块独立迁移管理。正式模块目录不得携带 demo，模块只能作为可信内置扩展发布。
+4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 18 张不设置数据库外键约束的报送导航表（保留主键、唯一索引、普通索引以及中文表/字段注释），再执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入数据源、表、字段、固定判断参数和月度报送日期配置；随后依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`。最后必须先备份生产库，再由运维人工执行 `sql/app_storage/mysql/012_module_system.sql`、`sql/app_storage/mysql/013_report_navigation_provider_states.sql` 和 `sql/app_storage/mysql/014_role_capability_settings.sql`，分别新增模块宿主 3 张平台表、报送导航统计提供方状态表和角色能力矩阵配置表（单行 JSON 快照）。完整应用结构共 44 张表，`app_schema_version` 仍为 `1`；模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由各模块独立迁移管理。正式模块目录不得携带 demo，模块只能作为可信内置扩展发布。
 5. 在现有 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再承载动态配置、用户、历史数据或报送导航规则配置。
 6. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，否则旧数据源加密密码可能无法解密。
 7. 导入后核对迁移报告中的原 20 张迁移目标表、导出行数、SQLite 完整性和外键异常数，并确认 18 张报送导航表、种子配置、年度法定工作日数据及用户/系统界面偏好表已就绪；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
@@ -327,6 +327,18 @@ config/                   本地测试配置样例
 
 ## 最新变更说明
 
+`v2.2` (2026-08-07) 主要变化：
+
+- 新增角色权限配置页：按角色×能力矩阵管理功能权限，管理员列锁定不可改，配置持久化到应用库；授权弹窗使用原生勾选树（白底可勾、灰底禁用），不再依赖 jsTree。
+- 顶栏新增「系统管理」分组，整合系统设置、角色权限与用户管理；子项按能力码显隐。
+- 新增能力码框架（`capabilities.py`）与 `has_capability` 判断，避免业务代码写死 `role === "admin"`；系统内建角色仅保留管理员与普通用户，其余通过「新增角色」创建自定义角色；原预留角色（数据治理/监管报表/数据中台/资金托管部）下线，已占用账号自动迁移为普通用户。
+- 角色授权树中，已有功能子项的末级菜单增加「页面查看」项（复用原 `menu.*` 能力码），取消功能权限不再连带取消进页权限；角色列表去掉「自定义」角标，固定管理员、普通用户排在前两位。
+- 对数历史删除改为基于 `history.delete` 能力码判断（默认仅管理员，行为与现网一致）。
+- 用户管理支持为账号分配系统角色或自定义角色；登录与会话下发当前角色能力列表。
+- 报表特殊处理运行时按 `rsp.view/create/edit/confirm/void/reopen/delete` 能力码鉴权，并遵循“谁创建谁处理”。
+- 新增应用库表 `role_capability_settings`（单行 JSON 快照），完整应用结构为 44 张表，`app_schema_version` 仍为 `1`。
+- 系统优化及BUG修复。
+
 `v2.1` (2026-07-18) 主要变化：
 
 > 以下条目保留本版本开发过程中的界面演进记录；其中关于沉稳主题、暗色模式、自定义主题色和主题光晕的早期条目已由本节顶部最新条目取代。当前交付口径以“当前功能”章节为准。
@@ -381,7 +393,7 @@ config/                   本地测试配置样例
 - 新增通用建表脚本 `sql/app_storage/mysql/001_init_schema.sql`，包含 20 张应用存储表、索引、外键和中文注释，不包含生产数据、建库、删库或清表语句。
 - 新增离线只读导出脚本 `scripts/export_sqlite_to_mysql.py`，用于从旧 SQLite 生成 MySQL 数据 SQL 和迁移报告；生产数据 SQL、真实数据库文件和凭据不得提交 Git。
 - 本地数据查询页面及入口已隐藏，SQLite 查询、导出、备份和旧历史迁移接口停用，不提供新的 MySQL 管理查询页面。
-- 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行；上线核验需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 43 张应用存储表结构与配置升级（完成备份并由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`）齐全。
+- 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行；上线核验需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 44 张应用存储表结构与配置升级（完成备份并由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`）齐全。
 - 重复启动本地服务时检测默认端口占用，端口已被现有实例使用时打开已有服务地址并避免继续初始化数据库。
 - 本地 SQLite 旧库结构迁移前自动生成 `backup-before-storage-v2-*` 备份目录，降低生产库迁移风险。
 - 结构化历史迁移支持旧 SQLite 与同目录旧历史 JSON 同时导入并按记录 ID 去重；旧 `history.json` 或 `db-validation-history.json` 损坏时写入失败迁移记录，不再静默标记为完成。

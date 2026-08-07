@@ -18,6 +18,7 @@ from Cryptodome.Hash import SHA256
 from Cryptodome.PublicKey import RSA
 
 from auto_check.app.app_database import ApplicationDatabase
+from auto_check.app.capabilities import KNOWN_ROLES, REMOVED_BUILTIN_ROLES, SYSTEM_ROLES
 from auto_check.app.time_utils import beijing_timestamp
 
 
@@ -25,6 +26,8 @@ PBKDF2_ITERATIONS = 260_000
 DEFAULT_SESSION_EXPIRE_HOURS = 8
 GENERIC_ERROR_MESSAGE = "操作失败，请检查输入或联系管理员"
 PASSWORD_RULE_ERROR = "password must be at least 6 characters and include a letter"
+CUSTOM_ROLE_PREFIX = "custom_"
+_ROLE_CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 DANGEROUS_ERROR_RE = re.compile(
     r"(?i)(password|passwd|pwd|secret|token|select\s+|insert\s+|update\s+|delete\s+|drop\s+|truncate\s+|alter\s+|create\s+|grant\s+|revoke\s+|where\s+|from\s+)"
 )
@@ -178,6 +181,7 @@ class AuthManager:
         display_name = _normalize_display_name(display_name, username)
         normalized_role = _normalize_role(role)
         validate_auth_password(password)
+        _validate_role_exists(normalized_role, self.database)
         with self._users_lock:
             if self._find_user_by_username(username):
                 raise ValueError("username already exists")
@@ -220,6 +224,8 @@ class AuthManager:
             actor_is_initial_admin = _is_initial_admin(actor or {})
             target_was_admin = _normalize_role(user.get("role")) == "admin"
             normalized_role = _normalize_role(role) if role is not None else ("admin" if target_was_admin else "user")
+            if role is not None:
+                _validate_role_exists(normalized_role, self.database)
             if enabled is False and str(user.get("id")) == str(current_user_id):
                 raise ValueError("cannot disable yourself")
             if enabled is False and _is_initial_admin(user):
@@ -322,9 +328,12 @@ class AuthManager:
             )
 
     def _auth_payload(self) -> dict[str, Any]:
-        from auto_check.app.storage_users import load_users
+        from auto_check.app.storage_role_definitions import purge_removed_builtin_role_definitions
+        from auto_check.app.storage_users import load_users, migrate_removed_builtin_roles
 
-        with self.database.connect() as connection:
+        with self.database.transaction() as connection:
+            migrate_removed_builtin_roles(connection)
+            purge_removed_builtin_role_definitions(connection)
             users = load_users(connection)
         return {"users": [_normalize_user(user) for user in users]}
 
@@ -397,10 +406,40 @@ def _normalize_display_name(display_name: Any, username: str) -> str:
 
 
 def _normalize_role(role: Any) -> str:
+    """归一化角色码：接受系统内建角色或 custom_ 前缀的自定义角色码。
+
+    仅做格式校验，不查库；真正的存在性校验见 :func:`_validate_role_exists`。
+    已下线的内建预留角色统一映射为普通用户。
+    """
     value = str(role or "user").strip()
-    if value not in {"admin", "user"}:
-        raise ValueError("role must be admin or user")
-    return value
+    if value in REMOVED_BUILTIN_ROLES:
+        return "user"
+    if value in KNOWN_ROLES:
+        return value
+    if (
+        value.startswith(CUSTOM_ROLE_PREFIX)
+        and len(value) > len(CUSTOM_ROLE_PREFIX)
+        and _ROLE_CODE_PATTERN.fullmatch(value)
+    ):
+        return value
+    raise ValueError(
+        "role must be a builtin role or start with 'custom_' "
+        "(lowercase letters, digits, underscores only)"
+    )
+
+
+def _validate_role_exists(role: str, database: ApplicationDatabase) -> None:
+    """校验角色码在应用库中存在（系统内建角色跳过；自定义角色查 role_definitions）。"""
+    if role in SYSTEM_ROLES:
+        return
+    if not role.startswith(CUSTOM_ROLE_PREFIX):
+        raise ValueError(f"unknown role: {role}")
+    from auto_check.app.storage_role_definitions import load_custom_role_codes
+
+    with database.connect() as connection:
+        known = set(load_custom_role_codes(connection))
+    if role not in known:
+        raise ValueError(f"unknown role: {role}")
 
 
 def _normalize_user(user: dict[str, Any]) -> dict[str, Any]:

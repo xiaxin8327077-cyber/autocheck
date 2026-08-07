@@ -240,11 +240,14 @@ def test_ledger_row_actions_include_status_operations():
     ledger_source = read("pages/ledger.js")
     css = read("styles.css")
 
-    for label in ("编辑", "查看", "完成", "作废", "删除"):
+    for label in ("编辑", "查看", "完成", "作废", "删除", "重开"):
         assert label in table_source
-    for removed in ("开始处理", "转为待处理", "重开"):
+    for removed in ("开始处理", "转为待处理"):
         assert removed not in table_source
         assert removed not in ledger_source
+    assert "record.can_reopen" in table_source
+    assert 'action === "reopen"' in ledger_source
+    assert "reopenRecord" in read("api.js")
     assert "buildRowActions" in table_source
     assert "onAction" in table_source
     assert 'onClick: () => onOpen(record, row)' not in table_source
@@ -261,7 +264,7 @@ def test_ledger_row_actions_include_status_operations():
     assert 'action === "complete"' in ledger_source
     assert 'action === "start"' not in ledger_source
     assert 'action === "pend"' not in ledger_source
-    assert 'action === "reopen"' not in ledger_source
+    assert 'action === "reopen"' in ledger_source
     assert "rsp-row-actions" in table_source
     assert "rsp-row-actions-inner" in table_source
     assert ".rsp-row-actions-inner" in css

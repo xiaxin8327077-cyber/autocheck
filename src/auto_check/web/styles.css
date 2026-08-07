@@ -437,6 +437,7 @@
 :root[data-page="settings"] #page-settings { display: flex !important; }
 :root[data-page="users"] #page-users { display: flex !important; }
 :root[data-page="local-storage"] #page-local-storage { display: flex !important; }
+:root[data-page="role-permissions"] #page-role-permissions { display: flex !important; }
 
 :root[data-page="home"] .nav-item[data-page="home"],
 :root:not([data-page]) .nav-item[data-page="home"],
@@ -1267,7 +1268,7 @@ h1, h2, h3, p { margin: 0; }
   min-width: 0;
 }
 
-.top-nav-group[data-nav-group="smart-reconcile"] {
+.top-nav-group {
   position: relative;
   display: inline-flex;
 }
@@ -1405,6 +1406,7 @@ h1, h2, h3, p { margin: 0; }
 }
 #page-auto-check { height: 100%; }
 #page-history { height: 100%; }
+#page-role-permissions { height: 100%; }
 
 /* ===== Report Navigation ===== */
 #page-report-navigation {
@@ -10423,9 +10425,71 @@ input:focus, select:focus {
 }
 
 .user-role-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  width: 100%;
+  max-width: 280px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.user-modal .custom-select-shell.user-role-cards {
+  width: 100%;
+  max-width: 280px;
+  height: 36px;
+}
+
+.user-modal .custom-select-shell.user-role-cards .custom-select-trigger {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0 32px 0 12px;
+}
+
+.user-role-cards-dropdown {
+  max-height: 148px !important;
+  border-radius: var(--ui-radius);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.10);
+}
+
+.user-role-cards-dropdown .custom-select-option {
+  min-height: 30px;
+  padding: 6px 28px 6px 10px;
+  font-size: 12px;
+  line-height: 1.3;
+  border-bottom-color: color-mix(in srgb, var(--outline-variant) 70%, transparent);
+}
+
+.user-role-cards-dropdown .custom-select-option-text {
+  -webkit-line-clamp: 1;
+  word-break: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: block;
+  overflow: hidden;
+}
+
+.user-role-cards-dropdown .custom-select-option:hover,
+.user-role-cards-dropdown .custom-select-option:focus {
+  padding-left: 10px;
+}
+
+.user-role-cards-dropdown .custom-select-option.active::after {
+  right: 10px;
+  font-size: 12px;
+}
+
+.user-role-cards:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 1px;
+}
+
+.user-role-cards:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .user-role-card {
@@ -16064,4 +16128,218 @@ input.custom-input-native:disabled {
   border-color: color-mix(in srgb, var(--theme-accent) 36%, var(--outline-variant)) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;
   transform: translateY(-2px) !important;
+}
+
+
+/* 角色权限页 */
+.role-permissions { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.role-permissions-card {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.role-permissions-table-wrap { overflow-x: auto; }
+.role-permissions-table { width: 100%; font-size: 13px; }
+.role-permissions-table .role-name-col { width: 16%; }
+.role-permissions-table .role-code-col { width: 16%; }
+.role-permissions-table .role-remark-col { width: 26%; }
+.role-permissions-table .role-enabled-col { width: 8%; }
+.role-permissions-table .role-actions-col { width: 26%; }
+.role-permissions-table .user-actions { gap: 4px; justify-content: center; }
+.role-permissions-table td.user-actions-cell { text-align: center; }
+.role-permissions-table .user-actions .btn-xs { padding: 3px 8px; }
+.role-permissions-table td.role-name-cell {
+  color: var(--on-surface);
+  font-weight: 500;
+}
+.role-permissions-table td.role-remark-cell { color: var(--on-surface-variant); }
+.role-permissions-table .role-code-text {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+.role-permissions-hint { margin: 12px 0 0; font-size: 12px; color: var(--on-surface-variant); }
+
+.role-definition-modal {
+  width: min(520px, calc(100vw - 32px));
+}
+.role-definition-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.role-definition-form .user-form-control[readonly],
+.role-definition-form .user-form-control:disabled,
+.role-definition-form .user-form-control.is-readonly,
+#roleDefinitionCode {
+  background: #e8eaef !important;
+  color: var(--on-surface-variant) !important;
+  border-color: #d0d4dc !important;
+  cursor: not-allowed !important;
+  opacity: 1;
+}
+.role-definition-enable-row.disabled,
+.role-definition-enable-row {
+  opacity: 1;
+}
+.role-definition-enable-row .user-enable-switch[disabled] {
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+/* ===== 原生能力树（平台共享组件，角色授权/模块 uiTree） ===== */
+.capability-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--on-surface);
+}
+.capability-tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+.capability-tree-node.is-collapsed > .capability-tree-children {
+  display: none;
+}
+.capability-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: var(--ui-radius);
+}
+.capability-tree-row:hover {
+  background: var(--surface-container-low);
+}
+.capability-tree-row.is-disabled:hover {
+  background: transparent;
+}
+.capability-tree-toggle,
+.capability-tree-toggle-spacer {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.capability-tree-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  border-radius: var(--ui-radius);
+  position: relative;
+}
+.capability-tree-toggle::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent currentColor;
+  transform: rotate(90deg);
+  transform-origin: 3px 4px;
+  transition: transform 120ms ease;
+}
+.capability-tree-node.is-collapsed > .capability-tree-row > .capability-tree-toggle::before {
+  transform: rotate(0deg);
+}
+.capability-tree-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.capability-tree-row.is-disabled .capability-tree-label {
+  cursor: not-allowed;
+  color: var(--on-surface-variant);
+}
+.capability-tree-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 16px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: #fff;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  color: #fff;
+  vertical-align: middle;
+}
+.capability-tree-checkbox:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--theme-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+.capability-tree-checkbox:checked,
+.capability-tree-checkbox:indeterminate {
+  border-color: var(--theme-accent);
+  background: var(--theme-accent);
+}
+.capability-tree-checkbox:checked::before {
+  content: "✓";
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.capability-tree-checkbox:indeterminate::before {
+  content: "−";
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.capability-tree-checkbox:disabled {
+  cursor: not-allowed;
+  border-color: #c5cad3 !important;
+  background: #e8eaef !important;
+  color: #8b919c !important;
+}
+.capability-tree-checkbox:disabled:checked,
+.capability-tree-checkbox:disabled:indeterminate {
+  border-color: #b0b6c2 !important;
+  background: #d5d9e1 !important;
+}
+.role-permissions-modal #rolePermissionsGroups {
+  min-height: 120px;
+}
+
+.capability-tree-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.role-perm-label,
+.role-perm-code {
+  white-space: nowrap;
+}
+.role-perm-label { color: inherit; }
+.role-perm-code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+.role-perm-group-label {
+  font-weight: 600;
+  color: var(--on-surface);
+}
+.required-star {
+  color: var(--theme-accent-readable);
+  margin-left: 2px;
+}
+.admin-only-lock {
+  margin-left: 2px;
+  font-size: 12px;
 }
