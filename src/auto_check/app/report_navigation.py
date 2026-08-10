@@ -19,6 +19,8 @@ from auto_check.app.report_navigation_platform import (
     ProviderManagedCardError,
     ReportProcess,
     SHANGHAI_TZ,
+    TodoProviderRegistry,
+    collect_todo_payloads,
     normalize_aware_datetime,
     validate_statistics_result,
 )
@@ -624,6 +626,7 @@ class ReportNavigationService:
         self._query_executor_factory = query_executor_factory or self._default_query_executor
         self._evaluator = evaluator
         self._card_providers = CardProviderRegistry(self.store)
+        self._todo_providers = TodoProviderRegistry()
 
     @property
     def interval_minutes(self) -> int:
@@ -641,6 +644,9 @@ class ReportNavigationService:
 
     def register_card_provider(self, **kwargs: Any):
         return self._card_providers.register(**kwargs)
+
+    def register_todo_provider(self, **kwargs: Any):
+        return self._todo_providers.register(**kwargs)
 
     def refresh_card_provider(
         self,
@@ -1141,6 +1147,16 @@ class ReportNavigationService:
             )
         business_report_date = report_navigation_business_report_date(current)
         work_calendar = self.store.load_work_calendar(current.year)
+        aware_now = (
+            current.replace(tzinfo=SHANGHAI_TZ)
+            if current.tzinfo is None or current.utcoffset() is None
+            else normalize_aware_datetime(current)
+        )
+        todos = collect_todo_payloads(
+            self._todo_providers,
+            current_user=current_user,
+            now=aware_now,
+        )
         return {
             "period": period,
             "report_month": report_month,
@@ -1149,6 +1165,7 @@ class ReportNavigationService:
             "card_maintenance": card_maintenance,
             "processes": process_payload,
             "work_calendar": work_calendar,
+            "todos": todos,
             "last_run": _run_payload(last_run),
             "manual_refresh": self.manual_refresh_state(
                 current_user=current_user,
