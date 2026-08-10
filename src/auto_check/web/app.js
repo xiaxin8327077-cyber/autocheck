@@ -44,7 +44,7 @@ const reportNavCardMaintenanceClose = document.getElementById("reportNavCardMain
 const reportNavCardMaintenanceCancel = document.getElementById("reportNavCardMaintenanceCancel");
 const reportNavCardMaintenanceSave = document.getElementById("reportNavCardMaintenanceSave");
 
-const DEFAULT_VERSION = "v2.2";
+const DEFAULT_VERSION = "v2.3";
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
 const USER_AVATAR_GRADIENTS = [
   ["#6366f1", "#4338ca"],
@@ -12526,6 +12526,17 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     : "";
   showInfo("更新日志", `
     ${moduleReleaseNotes}
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v2.3</span>
+        <span class="changelog-date">2026-08-10</span>
+      </div>
+      <ul>
+        <li>报表特殊处理字段与待确认待办。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v2.2</span>
