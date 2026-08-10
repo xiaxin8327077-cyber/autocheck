@@ -71,8 +71,19 @@ def can_edit(user: Mapping[str, Any] | None, record: Mapping[str, Any]) -> bool:
     return is_creator(user, record)
 
 
-def can_confirm(user: Mapping[str, Any] | None) -> bool:
-    return user_has_capability(user, "rsp.confirm")
+def can_confirm(
+    user: Mapping[str, Any] | None,
+    record: Mapping[str, Any] | None = None,
+) -> bool:
+    if not user_has_capability(user, "rsp.confirm"):
+        return False
+    if is_admin(user):
+        return True
+    if record is None:
+        return False
+    return str((user or {}).get("id") or "") == str(
+        record.get("governance_owner_user_id") or ""
+    )
 
 
 def can_transition(source: str, target: str) -> bool:

@@ -16,10 +16,19 @@ class RecordStatus(StrEnum):
 
 STATUS_LABELS = {
     RecordStatus.DRAFT: "草稿",
-    RecordStatus.PENDING: "待处理",
+    RecordStatus.PENDING: "待确认",
     RecordStatus.PROCESSING: "处理中",
     RecordStatus.COMPLETED: "已完成",
     RecordStatus.VOIDED: "已作废",
+}
+
+DIMENSIONS = frozenset({"project", "fund", "asset", "finance"})
+
+DIMENSION_LABELS = {
+    "project": "项目端",
+    "fund": "资金端",
+    "asset": "资产端",
+    "finance": "财务端",
 }
 
 
@@ -87,6 +96,12 @@ class RecordInput:
     special_handling_at: datetime | None = None
     handler_user_id: str | None = None
     row_version: int | None = None
+    dimension: str | None = None
+    governance_owner_user_id: str | None = None
+    table_name: str | None = None
+    field_name: str | None = None
+    value_before: str | None = None
+    value_after: str | None = None
 
     @property
     def report_process_code(self) -> str:

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-import re
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from .contracts import PageQuery, RecordInput, RecordStatus, ValidationError
+from .contracts import DIMENSIONS, PageQuery, RecordInput, RecordStatus, ValidationError
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -29,6 +28,12 @@ _RECORD_FIELDS = frozenset(
         "special_handling_at",
         "handler_user_id",
         "row_version",
+        "dimension",
+        "governance_owner_user_id",
+        "table_name",
+        "field_name",
+        "value_before",
+        "value_after",
     }
 )
 
@@ -81,26 +86,6 @@ def _optional_datetime(value: Any, field: str, *, required: bool) -> datetime | 
     return parsed.astimezone(SHANGHAI)
 
 
-def _reports(value: Any, *, required: bool) -> tuple[str, ...]:
-    if value is None:
-        value = []
-    if not isinstance(value, list) or len(value) > MAX_REPORTS:
-        raise _error("reports")
-    normalized: list[str] = []
-    for item in value:
-        if not isinstance(item, str):
-            raise _error("reports")
-        name = re.sub(r"\s+", " ", item.strip())
-        if not name or len(name) > 200:
-            raise _error("reports")
-        normalized.append(name)
-    if required and not normalized:
-        raise _error("reports", "至少填写一项")
-    if len(set(normalized)) != len(normalized):
-        raise _error("reports", "报表名称不能重复")
-    return tuple(normalized)
-
-
 def _process_codes(payload: Mapping[str, Any]) -> tuple[str, ...]:
     raw = payload.get("report_process_codes", None)
     if raw is None and "report_process_code" in payload:
@@ -125,6 +110,23 @@ def _process_codes(payload: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(codes)
 
 
+def _optional_dimension(value: Any, *, required: bool) -> str | None:
+    if value is None or value == "":
+        if required:
+            raise _error("dimension", "不能为空")
+        return None
+    if not isinstance(value, str) or value not in DIMENSIONS:
+        raise _error("dimension")
+    return value
+
+
+def _optional_text_field(
+    value: Any, field: str, maximum: int, *, required: bool
+) -> str | None:
+    text = _text(value, field, maximum, required=required)
+    return text or None
+
+
 def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
     if not isinstance(payload, Mapping) or any(key not in _RECORD_FIELDS for key in payload):
         raise ValidationError()
@@ -145,11 +147,9 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
     return RecordInput(
         save_mode=save_mode,
         report_process_codes=process_codes,
-        reports=_reports(payload.get("reports"), required=formal),
-        summary=_text(payload.get("summary"), "summary", 25, required=formal),
-        processing_content=_text(
-            payload.get("processing_content"), "processing_content", 20_000, required=formal
-        ),
+        reports=(),
+        summary=_text(payload.get("summary"), "summary", 50, required=formal),
+        processing_content="",
         processing_script=script,
         report_period=_optional_date(payload.get("report_period"), "report_period", required=formal),
         special_handling_at=_optional_datetime(
@@ -157,6 +157,21 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         ),
         handler_user_id=handler,
         row_version=row_version,
+        dimension=_optional_dimension(payload.get("dimension"), required=formal),
+        governance_owner_user_id=_optional_text_field(
+            payload.get("governance_owner_user_id"),
+            "governance_owner_user_id",
+            64,
+            required=formal,
+        ),
+        table_name=_optional_text_field(payload.get("table_name"), "table_name", 128, required=formal),
+        field_name=_optional_text_field(payload.get("field_name"), "field_name", 128, required=formal),
+        value_before=_optional_text_field(
+            payload.get("value_before"), "value_before", 500, required=formal
+        ),
+        value_after=_optional_text_field(
+            payload.get("value_after"), "value_after", 500, required=formal
+        ),
     )
 
 

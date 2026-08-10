@@ -282,7 +282,7 @@ class SpecialProcessingService:
         actor_user = self._actor(current_user)
         target = payload.get("target_status")
         if isinstance(target, str) and target in {"completed"}:
-            if not can_confirm(actor_user):
+            if not can_confirm(actor_user, current):
                 raise PermissionDeniedError()
         elif not can_edit(actor_user, current):
             raise PermissionDeniedError()
@@ -435,7 +435,7 @@ class SpecialProcessingService:
         return {
             **record,
             "can_edit": can_edit(current_user, record),
-            "can_confirm": can_confirm(current_user),
+            "can_confirm": can_confirm(current_user, record),
             "can_void": can_void(current_user, record),
             "can_reopen": can_reopen(current_user, record),
             "can_delete": can_delete(current_user),
