@@ -35,7 +35,7 @@
     {"name": "platform.user_directory", "minimum_version": 1},
     {"name": "platform.report_navigation", "minimum_version": 1}
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "release_notes": {
     "version": "1.2.1",
     "items": ["管理员可删除特殊处理记录", "系统优化及BUG修复"]
