@@ -1943,20 +1943,20 @@ def test_report_navigation_page_uses_readonly_panorama_details_and_compact_todo_
     assert 'class="report-nav-schedule-layout"' in body
     assert 'id="reportNavTodoTitle"' in body
     assert "我的待办" in body
-    assert "（3）" in body
+    assert 'id="reportNavTodoCount"' in body
     assert 'class="report-nav-todo-all"' in body
     assert '<span class="report-nav-todo-all">全部 <b aria-hidden="true">&gt;</b></span>' in body
     assert "注意事项" not in body
     assert 'class="report-nav-filter-chips"' not in body
     for title in ["数据治理流程", "报表特殊治理", "源系统输出确认"]:
-        assert title in body
-    assert 'class="report-nav-todo-list"' in body
-    assert body.count('class="report-nav-todo-primary"') == 3
-    assert body.count('class="report-nav-todo-action"') == 3
-    assert body.count('class="report-nav-todo-deadline"') == 3
-    assert body.count('type="button" class="report-nav-todo-action"') == 3
-    assert body.count(">处理</button>") == 3
-    assert body.count("<time datetime=") == 3
+        assert title not in body
+    assert 'id="reportNavTodoList"' in body or 'class="report-nav-todo-list"' in body
+    assert body.count('class="report-nav-todo-primary"') == 0
+    assert body.count('class="report-nav-todo-action"') == 0
+    assert body.count('class="report-nav-todo-deadline"') == 0
+    assert body.count('type="button" class="report-nav-todo-action"') == 0
+    assert body.count(">处理</button>") == 0
+    assert "（3）" not in body
     todo_all = re.search(
         r"#page-report-navigation \.report-nav-todo-all\s*\{(?P<body>.*?)\}",
         _read(STYLES_CSS),
@@ -2016,6 +2016,11 @@ def test_report_navigation_frontend_preserves_snapshot_period_refresh_and_card_m
     assert 'function renderReportNavigation' in app_js
     assert 'function renderReportNavigationCards' in app_js
     assert 'function renderReportNavigationProcesses' in app_js
+    assert 'function renderReportNavTodos' in app_js
+    assert 'renderReportNavTodos(payload.todos || [])' in app_js
+    assert "暂无待办" in app_js
+    assert "buildReportNavTodoHash" in app_js
+    assert "handleReportNavTodoAction" in app_js
     assert 'if (name === "report-navigation") await loadReportNavigation();' in app_js
     assert 'reportNavPeriodSelect?.addEventListener("change"' in app_js
     assert 'process.process_code === "five_articles"' in app_js

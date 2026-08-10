@@ -49,6 +49,28 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
     }
   }
 
+  async function applyLocateContext(recordId) {
+    if (!recordId) return;
+    try {
+      const response = await api.getRecord(recordId);
+      const record = dataOf(response, null);
+      if (!record?.id) return;
+      const period = String(record.report_period || "").slice(0, 10);
+      if (period) state.reportPeriod = period;
+      state.activeProcessCode = ALL_PROCESS_CODE;
+      state.filters = {
+        status: "",
+        keyword: String(record.record_no || record.id || ""),
+        handler_user_id: "",
+      };
+      state.page = 1;
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        notify("待办记录定位失败，已按当前筛选加载列表", "warning");
+      }
+    }
+  }
+
   async function loadLedger() {
     if (!state.catalogAvailable) {
       render();
@@ -429,6 +451,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       state.locateHighlight = Boolean(locate.recordId && locate.highlight);
       render();
       await loadCatalog();
+      if (state.locateRecordId) await applyLocateContext(state.locateRecordId);
       await loadLedger();
       return route;
     },

@@ -45,6 +45,11 @@ class ReportFacade:
         self.registration = kwargs
         return self.handle
 
+    def register_todo_provider(self, **kwargs):
+        self.todo_registration = kwargs
+        self.todo_handle = Handle()
+        return self.todo_handle
+
     def refresh_card_provider(self, *, card_code):
         self.refresh_calls.append(card_code)
         return {"ok": True, "refreshed": True}
@@ -77,3 +82,5 @@ def test_module_binds_owner_scoped_directories_and_closes_report_provider(monkey
     assert registration["refresh_on_dashboard"] is True
     module.stop()
     assert context.services.report.handle.closed
+    assert context.services.report.todo_handle.closed
+    assert context.services.report.todo_registration["provider_id"] == "rsp_pending_confirm"

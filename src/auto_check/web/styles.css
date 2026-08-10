@@ -15806,6 +15806,14 @@ input.custom-input-native:disabled {
   gap: 0;
 }
 
+#page-report-navigation .report-nav-todo-empty {
+  margin: 18px 0 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 #page-report-navigation .report-nav-todo {
   display: grid;
   grid-template-columns: 5px minmax(0, 1fr);

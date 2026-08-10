@@ -14,6 +14,8 @@ export function createState() {
     totalPages: 1,
     drawer: null,
     restoreFocus: null,
+    locateRecordId: "",
+    locateHighlight: false,
   };
 }
 

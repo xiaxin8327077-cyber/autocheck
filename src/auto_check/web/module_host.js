@@ -15,6 +15,7 @@
       instances: new Map(),
       activeModuleId: "",
       activeRoute: "",
+      activeRouteFull: "",
       navigationTree: [],
       expandedGroupId: "",
       releaseNotes: Object.freeze([]),
@@ -215,6 +216,22 @@
       if (root) delete root.dataset.page;
     }
 
+    function splitModuleRoute(route) {
+      const raw = String(route || "");
+      const queryIndex = raw.indexOf("?");
+      if (queryIndex < 0) {
+        return { name: raw, queryText: "", query: {}, full: raw };
+      }
+      const name = raw.slice(0, queryIndex);
+      const queryText = raw.slice(queryIndex + 1);
+      const params = new URLSearchParams(queryText);
+      const query = {};
+      params.forEach((value, key) => {
+        query[key] = value;
+      });
+      return { name, queryText, query, full: raw };
+    }
+
     function updateHash(route) {
       const nextHash = `#${route}`;
       if (locationRef && locationRef.hash !== nextHash) locationRef.hash = nextHash;
@@ -360,19 +377,21 @@
         confirm: state.platform.confirm,
         prompt: state.platform.prompt,
         navigate: async (route) => {
-          const routeName = String(route || "");
+          const parsed = splitModuleRoute(route);
+          const routeName = parsed.name;
+          const routeFull = parsed.full || routeName;
           const frame = lifecycleState.frame;
           if (frame) {
             if (frame.phase === "mount" || frame.phase === "activate") {
               if (frame.phase === "activate" && frame.route === routeName) return true;
               lifecycleState.acceptNavigation = false;
-              frame.navigation = { route: routeName, version: ++lifecycleVersion };
+              frame.navigation = { route: routeFull, version: ++lifecycleVersion };
               return state.routes.has(routeName);
             }
             return false;
           }
           if (!lifecycleState.acceptNavigation || state.activeModuleId !== module.id) return false;
-          if (await activate(routeName)) return true;
+          if (await activate(routeFull)) return true;
           await state.platform.legacyNavigate(routeName);
           return false;
         },
@@ -526,6 +545,7 @@
       if (host) host.hidden = true;
       state.activeModuleId = "";
       state.activeRoute = "";
+      state.activeRouteFull = "";
       setModuleNavigationActive("");
       if (restoreLegacy) {
         clearModulePageState();
@@ -534,19 +554,51 @@
     }
 
     async function activateNow(route, version, { syncHash = true } = {}, redirectTrail = []) {
-      const routeName = String(route || "");
+      const parsedRoute = splitModuleRoute(route);
+      const routeName = parsedRoute.name;
+      const routeFull = parsedRoute.full || routeName;
+      const activatePayload = Object.keys(parsedRoute.query).length
+        ? { name: routeName, route: routeName, query: parsedRoute.query }
+        : routeName;
       const moduleId = state.routes.get(routeName);
       if (!moduleId) return false;
       if (redirectTrail.includes(routeName)) {
         failures.set(moduleId, "模块导航形成循环");
-        showModuleError(moduleId, "模块导航形成循环");
+        showModuleError(moduleId, failures.get(moduleId));
+        return true;
+      }
+      if (
+        state.activeModuleId === moduleId
+        && state.activeRoute === routeName
+        && state.activeRouteFull === routeFull
+        && !pageHost()?.hidden
+      ) {
+        const current = state.instances.get(moduleId);
+        if (current) current.lifecycleState.acceptNavigation = true;
+        if (syncHash) updateHash(routeFull);
         return true;
       }
       if (state.activeModuleId === moduleId && state.activeRoute === routeName && !pageHost()?.hidden) {
-        const current = state.instances.get(moduleId);
-        if (current) current.lifecycleState.acceptNavigation = true;
-        if (syncHash) updateHash(routeName);
-        return true;
+        const record = state.instances.get(moduleId);
+        if (record) {
+          try {
+            await invokeLifecycle(
+              record.lifecycleState,
+              "activate",
+              () => record.instance.activate(activatePayload),
+              routeName,
+            );
+            state.activeRouteFull = routeFull;
+            record.lifecycleState.acceptNavigation = true;
+            if (syncHash) updateHash(routeFull);
+            return true;
+          } catch (_) {
+            failures.set(moduleId, "模块运行时发生异常");
+            showModuleError(moduleId, "模块运行时发生异常");
+            if (syncHash) updateHash(routeFull);
+            return true;
+          }
+        }
       }
       if (state.activeModuleId) await deactivateNow({ restoreLegacy: false });
       const failed = failures.get(moduleId);
@@ -557,7 +609,8 @@
         showModuleError(moduleId, failed);
         state.activeModuleId = moduleId;
         state.activeRoute = routeName;
-        if (syncHash) updateHash(routeName);
+        state.activeRouteFull = routeFull;
+        if (syncHash) updateHash(routeFull);
         return true;
       }
       const record = state.instances.get(moduleId);
@@ -577,7 +630,7 @@
         const activation = await invokeLifecycle(
           record.lifecycleState,
           "activate",
-          () => instance.activate(route),
+          () => instance.activate(activatePayload),
           routeName,
         );
         const redirectedRoute = activation.navigation;
@@ -593,7 +646,7 @@
           }
           record.root.hidden = true;
           if (redirectedRoute.version !== lifecycleVersion) return true;
-          if (state.routes.has(redirectedRoute.route)) {
+          if (state.routes.has(splitModuleRoute(redirectedRoute.route).name)) {
             return activateNow(
               redirectedRoute.route,
               redirectedRoute.version,
@@ -606,6 +659,7 @@
           if (host) host.hidden = true;
           state.activeModuleId = "";
           state.activeRoute = "";
+          state.activeRouteFull = "";
           setModuleNavigationActive("");
           clearModulePageState();
           setLegacyVisibility(false);
@@ -627,8 +681,9 @@
         }
         state.activeModuleId = moduleId;
         state.activeRoute = routeName;
+        state.activeRouteFull = routeFull;
         record.lifecycleState.acceptNavigation = true;
-        if (syncHash) updateHash(routeName);
+        if (syncHash) updateHash(routeFull);
       } catch (_) {
         if (version !== lifecycleVersion) {
           record.root.hidden = true;
@@ -638,7 +693,8 @@
         showModuleError(moduleId, "模块运行时发生异常");
         state.activeModuleId = moduleId;
         state.activeRoute = routeName;
-        if (syncHash) updateHash(routeName);
+        state.activeRouteFull = routeFull;
+        if (syncHash) updateHash(routeFull);
       }
       return true;
     }
@@ -667,10 +723,11 @@
 
     async function handleHashChange() {
       const route = String(locationRef?.hash || "").replace(/^#/, "");
-      if (!state.routes.has(route) && legacyRouteIsAlreadyActive(route)) return;
+      const routeName = splitModuleRoute(route).name;
+      if (!state.routes.has(routeName) && legacyRouteIsAlreadyActive(routeName)) return;
       if (await activate(route, { syncHash: false })) return;
       await deactivate();
-      await state.platform?.legacyNavigate(route || "report-navigation");
+      await state.platform?.legacyNavigate(routeName || "report-navigation");
     }
 
     function bindHashChange() {
@@ -804,6 +861,7 @@
       removeHashChange();
       state.activeModuleId = "";
       state.activeRoute = "";
+      state.activeRouteFull = "";
       state.initialized = false;
       state.platform = null;
     }

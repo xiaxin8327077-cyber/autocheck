@@ -31,6 +31,8 @@ const reportNavFishbone = document.getElementById("reportNavFishbone");
 const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine");
 const reportNavScheduleCard = document.getElementById("reportNavScheduleCard");
 const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");
+const reportNavTodoList = document.getElementById("reportNavTodoList");
+const reportNavTodoCount = document.getElementById("reportNavTodoCount");
 const reportNavScheduleRange = document.getElementById("reportNavScheduleRange");
 const reportNavScheduleTable = document.getElementById("reportNavScheduleTable");
 const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
@@ -2644,6 +2646,78 @@ function renderReportNavigationProcesses(payload) {
   animateReportNavigationSort(reportNavBranches, previousPositions);
 }
 
+function escapeReportNavHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildReportNavTodoHash(action = {}) {
+  const route = String(action.route || "").replace(/^#/, "").trim();
+  if (!route) return "";
+  const query = action.query && typeof action.query === "object" ? action.query : {};
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === "" || value === null || value === undefined) return;
+    params.set(String(key), String(value));
+  });
+  const encoded = params.toString();
+  return encoded ? `#${route}?${encoded}` : `#${route}`;
+}
+
+async function handleReportNavTodoAction(action = {}) {
+  if (String(action.type || "") !== "navigate") return;
+  const nextHash = buildReportNavTodoHash(action);
+  if (!nextHash) return;
+  const routeWithQuery = nextHash.replace(/^#/, "");
+  if (typeof window.AutoCheckModuleHost?.activate === "function") {
+    const handled = await window.AutoCheckModuleHost.activate(routeWithQuery);
+    if (handled) {
+      if (location.hash !== nextHash) location.hash = nextHash;
+      return;
+    }
+  }
+  if (location.hash !== nextHash) location.hash = nextHash;
+}
+
+function renderReportNavTodos(todos = []) {
+  const items = Array.isArray(todos) ? todos : [];
+  if (reportNavTodoCount) reportNavTodoCount.textContent = `（${items.length}）`;
+  if (!reportNavTodoList) return;
+  if (!items.length) {
+    reportNavTodoList.innerHTML = '<p class="report-nav-todo-empty">暂无待办</p>';
+    return;
+  }
+  reportNavTodoList.innerHTML = items.map((item, index) => {
+    const title = escapeReportNavHtml(item.title || "待办");
+    const summary = escapeReportNavHtml(item.summary || "");
+    const createdAt = String(item.created_at || "").trim();
+    const midClass = index % 2 === 1 ? " mid" : "";
+    const deadline = createdAt
+      ? `<p class="report-nav-todo-deadline">发起时间：<time datetime="${escapeReportNavHtml(createdAt)}">${escapeReportNavHtml(createdAt)}</time></p>`
+      : "";
+    return `<article class="report-nav-todo${midClass}" data-todo-id="${escapeReportNavHtml(item.id || "")}">
+      <i aria-hidden="true"></i>
+      <div class="report-nav-todo-main">
+        <div class="report-nav-todo-primary">
+          <h3>${title}</h3>
+          <button type="button" class="report-nav-todo-action" data-todo-action="handle" aria-label="处理${title}">处理</button>
+        </div>
+        ${summary ? `<p>${summary}</p>` : ""}
+        ${deadline}
+      </div>
+    </article>`;
+  }).join("");
+  reportNavTodoList.querySelectorAll("[data-todo-action='handle']").forEach((button, index) => {
+    button.addEventListener("click", () => {
+      void handleReportNavTodoAction(items[index]?.action || {});
+    });
+  });
+}
+
 function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
   reportNavigationPayload = payload;
   if (reportNavMonth) {
@@ -2657,6 +2731,7 @@ function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
   );
   renderReportNavigationProcesses(payload);
   if (!preserveSchedule) renderReportNavigationSchedule(payload);
+  renderReportNavTodos(payload.todos || []);
   const refreshState = payload.manual_refresh || {};
   reportNavigationRefreshRemoteRunning = Boolean(refreshState.running);
   setReportNavigationRefreshCooldown(Number(refreshState.retry_after_seconds || 0));

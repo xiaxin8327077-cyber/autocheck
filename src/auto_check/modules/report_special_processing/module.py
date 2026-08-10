@@ -11,6 +11,7 @@ from .api import register_routes
 from .service import SpecialProcessingService
 from .statistics import SEMANTICS_VERSION, SpecialHandlingStatistics
 from .storage import SpecialProcessingStorage
+from .todos import PROVIDER_ID, SEMANTICS_VERSION as TODO_SEMANTICS_VERSION, PendingConfirmTodoProvider
 
 
 def _manifest() -> ModuleManifest:
@@ -28,6 +29,7 @@ class ReportSpecialProcessingModule:
     manifest: ModuleManifest = field(default=MANIFEST)
     _service: SpecialProcessingService | None = field(default=None, init=False, repr=False)
     _provider_handle: Any = field(default=None, init=False, repr=False)
+    _todo_provider_handle: Any = field(default=None, init=False, repr=False)
 
     def register_routes(self, router: Any) -> None:
         register_routes(router, self._require_service)
@@ -105,11 +107,20 @@ class ReportSpecialProcessingModule:
             include_in_collect=False,
             refresh_on_dashboard=True,
         )
+        self._todo_provider_handle = report_navigation.register_todo_provider(
+            provider_id=PROVIDER_ID,
+            provider=PendingConfirmTodoProvider(storage),
+            semantics_version=TODO_SEMANTICS_VERSION,
+        )
 
     def stop(self) -> None:
+        todo_handle = self._todo_provider_handle
         handle = self._provider_handle
+        self._todo_provider_handle = None
         self._provider_handle = None
         self._service = None
+        if todo_handle is not None:
+            todo_handle.close()
         if handle is not None:
             handle.close()
 

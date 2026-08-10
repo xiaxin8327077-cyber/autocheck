@@ -181,6 +181,9 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
 
     assert "record_id" in ledger
     assert "highlight" in ledger
+    assert "applyLocateContext" in ledger
+    assert "api.getRecord(recordId)" in ledger or "api.getRecord(recordId)" in ledger
+    assert 'keyword: String(record.record_no' in ledger
     assert 'action === "confirm"' in ledger
     assert 'target_status: "completed"' in drawer
     assert 'await confirm("确认完成"' not in ledger

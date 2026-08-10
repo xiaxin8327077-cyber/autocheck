@@ -26,7 +26,8 @@ def test_module_host_has_stable_lifecycle_contract():
         'api("/api/system/modules")',
         "importModule(module.frontend_entry)",
         "instance.mount(context)",
-        "instance.activate(route)",
+        "function splitModuleRoute(route)",
+        "instance.activate(activatePayload)",
         "instance.deactivate()",
         "instance.unmount()",
         "prompt: state.platform.prompt",
@@ -387,6 +388,52 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
     scenario_path = tmp_path / "module_host_review_scenario.cjs"
     scenario_path.write_text(script, encoding="utf-8")
     subprocess.run(["node", str(scenario_path), str(HOST_JS)], check=True, cwd=ROOT)
+
+
+def test_module_host_preserves_query_when_activating_route(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#alpha");
+        const activations = [];
+        const alpha = {
+          mount: async () => {},
+          activate: async (route) => { activations.push(route); },
+          deactivate: async () => {},
+          unmount: async () => {},
+        };
+        const host = createModuleHost({
+          ...env,
+          importModule: async () => ({ default: alpha }),
+        });
+        const platform = {
+          api: async () => ({ modules: [
+            { id: "alpha", frontend_entry: "/alpha.js", frontend_style: "/alpha.css", navigation: [{ id: "alpha", label: "Alpha", route: "alpha" }] },
+          ] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+        assert.equal(await host.initialize(platform), true);
+        activations.length = 0;
+        assert.equal(await host.activate("alpha?record_id=42&highlight=1"), true);
+        assert.equal(env.locationRef.hash, "#alpha?record_id=42&highlight=1");
+        assert.equal(activations.length, 1);
+        assert.deepEqual(activations[0], {
+          name: "alpha",
+          route: "alpha",
+          query: { record_id: "42", highlight: "1" },
+        });
+        env.locationRef.hash = "#alpha?record_id=99&highlight=1";
+        env.windowRef.dispatch("hashchange");
+        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
+        assert.equal(activations.length, 2);
+        assert.deepEqual(activations[1], {
+          name: "alpha",
+          route: "alpha",
+          query: { record_id: "99", highlight: "1" },
+        });
+        """,
+    )
 
 
 def test_module_host_owns_module_legacy_visibility_and_hash_history(tmp_path: Path):

@@ -277,6 +277,26 @@ class SpecialProcessingStorage:
             if result.rowcount != 1:
                 raise VersionConflictError()
 
+    def list_pending_for_governance_owner(self, user_id: str) -> list[dict[str, Any]]:
+        owner = str(user_id or "").strip()
+        if not owner:
+            return []
+        statement = (
+            select(RECORDS)
+            .where(
+                and_(
+                    RECORDS.c.status == "pending",
+                    RECORDS.c.governance_owner_user_id == owner,
+                )
+            )
+            .order_by(RECORDS.c.special_handling_at.desc(), RECORDS.c.id.desc())
+        )
+        with self.database.connect() as connection:
+            items = [_normalize_record(row) for row in _rows(connection.execute(statement))]
+            self._attach_reports(connection, items)
+            self._attach_processes(connection, items)
+        return items
+
     def list(self, query: PageQuery) -> dict[str, Any]:
         conditions = self._conditions(query.filters)
         statement = select(RECORDS)
