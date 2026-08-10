@@ -20,6 +20,7 @@ class PublicUser:
     username: str
     display_name: str
     active: bool
+    role: str = ""
 
 
 class _UserDirectoryFacade:
@@ -51,6 +52,7 @@ class _UserDirectoryFacade:
                 username=str(user["username"]),
                 display_name=str(user["display_name"]),
                 active=True,
+                role=str(user.get("role") or ""),
             )
             for user in self._auth_manager.list_users()
             if bool(user.get("enabled"))

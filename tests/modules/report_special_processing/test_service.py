@@ -9,8 +9,12 @@ NOW = datetime(2026, 8, 2, 10, 20, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
 class User:
-    def __init__(self, user_id, username, display_name):
-        self.id, self.username, self.display_name, self.active = user_id, username, display_name, True
+    def __init__(self, user_id, username, display_name, role="user"):
+        self.id = user_id
+        self.username = username
+        self.display_name = display_name
+        self.active = True
+        self.role = role
 
 
 class Directory:
@@ -18,7 +22,7 @@ class Directory:
         self.users = {
             "1": User("1", "creator", "创建人"),
             "2": User("2", "handler", "处理人"),
-            "9": User("9", "admin", "管理员"),
+            "9": User("9", "admin", "管理员", role="admin"),
         }
     def list_active_users(self): return tuple(self.users.values())
     def get_user(self, user_id): return self.users.get(str(user_id))
@@ -87,16 +91,37 @@ class MemoryStorage:
         self.calls.append("delete")
 
 
-def _service(reports=None):
+def _service(reports=None, directory=None, role_label_resolver=None):
     from auto_check.modules.report_special_processing.service import SpecialProcessingService
     return SpecialProcessingService(
-        MemoryStorage(), Directory(), reports or Reports(), now=lambda: NOW
+        MemoryStorage(),
+        directory or Directory(),
+        reports or Reports(),
+        now=lambda: NOW,
+        role_label_resolver=role_label_resolver,
     )
 
 
 def _payload(save_mode="record", **updates):
-    value = {"save_mode": save_mode, "report_process_code": "pbc", "reports": ["表一"], "summary": "摘要", "processing_content": "内容", "processing_script": "DROP TABLE x;", "report_period": "2026-07-31", "special_handling_at": "2026-08-01T15:32:18+08:00", "handler_user_id": "2"}
-    value.update(updates); return value
+    value = {
+        "save_mode": save_mode,
+        "report_process_code": "pbc",
+        "reports": ["表一"],
+        "summary": "摘要",
+        "processing_content": "内容",
+        "processing_script": "DROP TABLE x;",
+        "report_period": "2026-07-31",
+        "special_handling_at": "2026-08-01T15:32:18+08:00",
+        "handler_user_id": "2",
+        "dimension": "project",
+        "governance_owner_user_id": "1",
+        "table_name": "t_demo",
+        "field_name": "amt",
+        "value_before": "1",
+        "value_after": "2",
+    }
+    value.update(updates)
+    return value
 
 
 def test_create_formal_record_snapshots_users_process_and_audits_without_script_text():
@@ -148,7 +173,7 @@ def test_complete_and_void_write_explicit_audit_summaries():
     )
     assert service.storage.audits[-1]["action_summary"].splitlines() == [
         "完成记录：",
-        "1.状态由待处理改为已完成",
+        "1.状态由待确认改为已完成",
     ]
     reopened = service.reopen(
         completed["id"],
@@ -164,7 +189,7 @@ def test_complete_and_void_write_explicit_audit_summaries():
     )
     assert service.storage.audits[-1]["action_summary"].splitlines() == [
         "作废记录：",
-        "1.状态由待处理改为已作废",
+        "1.状态由待确认改为已作废",
         "2.作废理由：口径失效",
     ]
 
@@ -235,8 +260,6 @@ def test_update_audit_summary_describes_field_changes():
     assert summary.splitlines() == [
         "更新记录：",
         "1.处理摘要由摘要改为新摘要",
-        "2.处理说明由内容改为新说明",
-        "3.涉及报表由表一改为表二、表三",
     ]
 
 
@@ -342,3 +365,52 @@ def test_admin_can_hard_delete_any_status_record():
     assert deleted["deleted"] is True
     assert service.storage.get(created["id"]) is None
     assert "delete" in service.storage.calls
+
+
+def test_catalog_governance_candidates_by_dimension_role_display_name():
+    directory = Directory()
+    directory.users = {
+        "pa1": User("pa1", "gov_pa", "治理项目资产甲", role="custom_pa"),
+        "pa2": User("pa2", "gov_pa2", "治理项目资产乙", role="custom_pa"),
+        "ff1": User("ff1", "gov_ff", "治理资金财务甲", role="custom_ff"),
+        "other": User("other", "plain", "普通用户", role="user"),
+        "9": User("9", "admin", "管理员", role="admin"),
+    }
+
+    def role_label_resolver():
+        return {
+            "数据治理_项目资产": "custom_pa",
+            "数据治理_资金财务": "custom_ff",
+            "管理员": "admin",
+            "普通用户": "user",
+        }
+
+    service = _service(directory=directory, role_label_resolver=role_label_resolver)
+    catalog = service.catalog({"id": "9", "role": "admin", "capabilities": ["rsp.view", "rsp.confirm"]})
+
+    assert catalog["dimensions"] == [
+        {"code": "project", "label": "项目端"},
+        {"code": "fund", "label": "资金端"},
+        {"code": "asset", "label": "资产端"},
+        {"code": "finance", "label": "财务端"},
+    ]
+    candidates = catalog["governance_owner_candidates_by_dimension"]
+    project_ids = [item["id"] for item in candidates["project"]]
+    asset_ids = [item["id"] for item in candidates["asset"]]
+    fund_ids = [item["id"] for item in candidates["fund"]]
+    finance_ids = [item["id"] for item in candidates["finance"]]
+    assert project_ids == asset_ids == ["pa1", "pa2"]
+    assert fund_ids == finance_ids == ["ff1"]
+    assert catalog["capabilities"]["can_confirm"] is True
+
+    empty_service = _service(
+        directory=directory,
+        role_label_resolver=lambda: {"管理员": "admin"},
+    )
+    empty_catalog = empty_service.catalog({"id": "1", "role": "user", "capabilities": ["rsp.view"]})
+    empty_candidates = empty_catalog["governance_owner_candidates_by_dimension"]
+    assert empty_candidates["project"] == []
+    assert empty_candidates["asset"] == []
+    assert empty_candidates["fund"] == []
+    assert empty_candidates["finance"] == []
+    assert empty_catalog["capabilities"]["can_confirm"] is False

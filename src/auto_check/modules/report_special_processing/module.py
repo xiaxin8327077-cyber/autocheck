@@ -73,8 +73,25 @@ class ReportSpecialProcessingModule:
         user_directory = context.services.resolve("platform.user_directory", 1)
         report_navigation = context.services.resolve("platform.report_navigation", 1)
         storage = SpecialProcessingStorage(context.application_database)
+
+        def role_label_resolver() -> dict[str, str]:
+            from auto_check.app.storage_role_definitions import load_role_definitions
+
+            mapping: dict[str, str] = {}
+            with context.application_database.connect() as connection:
+                for item in load_role_definitions(connection):
+                    display_name = str(item.get("display_name") or "").strip()
+                    role_code = str(item.get("role_code") or "").strip()
+                    if display_name and role_code:
+                        mapping[display_name] = role_code
+            return mapping
+
         self._service = SpecialProcessingService(
-            storage, user_directory, report_navigation, now=context.now
+            storage,
+            user_directory,
+            report_navigation,
+            now=context.now,
+            role_label_resolver=role_label_resolver,
         )
         try:
             storage.backfill_processes_from_records()

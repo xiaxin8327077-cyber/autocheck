@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime
 import hashlib
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from .contracts import (
+    DIMENSION_LABELS,
     InvalidTransitionError,
     PermissionDeniedError,
     PlatformUnavailableError,
@@ -23,6 +24,7 @@ from .permissions import (
     can_transition,
     can_void,
     can_view,
+    user_has_capability,
     with_resolved_capabilities,
 )
 from .statistics import status_metrics
@@ -71,13 +73,26 @@ _AUDIT_SKIP_KEYS = frozenset(
     }
 )
 
+_GOVERNANCE_ROLE_DISPLAY_PROJECT_ASSET = "数据治理_项目资产"
+_GOVERNANCE_ROLE_DISPLAY_FUND_FINANCE = "数据治理_资金财务"
+_DIMENSION_ORDER = ("project", "fund", "asset", "finance")
+
 
 class SpecialProcessingService:
-    def __init__(self, storage: Any, user_directory: Any, report_navigation: Any, *, now: Any) -> None:
+    def __init__(
+        self,
+        storage: Any,
+        user_directory: Any,
+        report_navigation: Any,
+        *,
+        now: Any,
+        role_label_resolver: Callable[[], Mapping[str, str]] | None = None,
+    ) -> None:
         self.storage = storage
         self._users = user_directory
         self._reports = report_navigation
         self._now = now
+        self._role_label_resolver = role_label_resolver
 
     def _actor(self, current_user: Mapping[str, Any] | None) -> dict[str, Any]:
         """模块内解析能力矩阵并补齐用户 capabilities，不改平台派发协议。"""
@@ -100,6 +115,7 @@ class SpecialProcessingService:
             users = tuple(self._users.list_active_users())
         except Exception:
             raise PlatformUnavailableError() from None
+        candidates_by_dimension = self._governance_owner_candidates_by_dimension(users)
         return {
             "report_processes": [
                 {"code": item.code, "name": item.name, "order": item.order, "active": item.active}
@@ -111,6 +127,11 @@ class SpecialProcessingService:
                 for item in users
                 if item.active
             ],
+            "dimensions": [
+                {"code": code, "label": DIMENSION_LABELS[code]}
+                for code in _DIMENSION_ORDER
+            ],
+            "governance_owner_candidates_by_dimension": candidates_by_dimension,
             "statuses": [
                 {"code": status.value, "label": label}
                 for status, label in STATUS_LABELS.items()
@@ -120,9 +141,56 @@ class SpecialProcessingService:
             "capabilities": {
                 "can_view": can_view(actor),
                 "can_create": can_create(actor),
-                "can_confirm": can_confirm(actor),
+                "can_confirm": user_has_capability(actor, "rsp.confirm"),
                 "can_delete": can_delete(actor),
             },
+        }
+
+    def _role_display_name_to_code(self) -> dict[str, str]:
+        resolver = self._role_label_resolver
+        if resolver is None:
+            return {}
+        try:
+            raw = resolver()
+        except Exception:
+            return {}
+        mapping: dict[str, str] = {}
+        for display_name, role_code in dict(raw or {}).items():
+            label = str(display_name or "").strip()
+            code = str(role_code or "").strip()
+            if label and code:
+                mapping[label] = code
+        return mapping
+
+    def _governance_owner_candidates_by_dimension(
+        self,
+        users: Sequence[Any],
+    ) -> dict[str, list[dict[str, str]]]:
+        label_to_code = self._role_display_name_to_code()
+        project_asset_code = label_to_code.get(_GOVERNANCE_ROLE_DISPLAY_PROJECT_ASSET)
+        fund_finance_code = label_to_code.get(_GOVERNANCE_ROLE_DISPLAY_FUND_FINANCE)
+
+        def _users_for_role(role_code: str | None) -> list[dict[str, str]]:
+            if not role_code:
+                return []
+            return [
+                {
+                    "id": str(item.id),
+                    "username": str(item.username),
+                    "display_name": str(item.display_name),
+                }
+                for item in users
+                if bool(getattr(item, "active", False))
+                and str(getattr(item, "role", "") or "") == role_code
+            ]
+
+        project_asset_users = _users_for_role(project_asset_code)
+        fund_finance_users = _users_for_role(fund_finance_code)
+        return {
+            "project": list(project_asset_users),
+            "asset": list(project_asset_users),
+            "fund": list(fund_finance_users),
+            "finance": list(fund_finance_users),
         }
 
     def list_records(
@@ -506,8 +574,10 @@ class SpecialProcessingService:
     @staticmethod
     def _require_complete(record: Mapping[str, Any]) -> None:
         required = (
-            record.get("reports"), record.get("summary"), record.get("processing_content"),
-            record.get("report_period"), record.get("special_handling_at"), record.get("handler_user_id"),
+            record.get("summary"),
+            record.get("report_period"),
+            record.get("special_handling_at"),
+            record.get("handler_user_id"),
         )
         if any(value is None or value == "" or value == () or value == [] for value in required):
             raise ValidationError(message="完成或正式保存前必须补全必填字段")
