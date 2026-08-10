@@ -18,62 +18,80 @@ from auto_check.modules.report_special_processing.export_workbook import (
 NOW = datetime(2026, 8, 6, 11, 20, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
-def test_export_rows_follow_requested_column_order_and_include_script():
+def test_export_rows_follow_requested_column_order_with_dimension_fields():
     rows = export_rows(
         [
             {
                 "report_period": date(2026, 7, 31),
                 "report_process_name_snapshot": "人行大集中报送、1104报送",
-                "reports": ["报表A", "报表B"],
+                "dimension": "project",
                 "summary": "摘要",
-                "processing_content": "说明",
-                "processing_script": "select 1;",
+                "table_name": "t_demo",
+                "field_name": "amt",
+                "value_before": "1",
+                "value_after": "2",
                 "special_handling_at": NOW,
                 "handler_display_name_snapshot": "管理员",
+                "governance_owner_display_name_snapshot": "治理负责人",
                 "status": "pending",
                 "record_no": "RSP-should-not-export",
+                "reports": ["报表A"],
+                "processing_content": "说明",
+                "processing_script": "select 1;",
             }
         ]
     )
     assert EXPORT_HEADERS == (
         "所属报送期",
         "关联报送",
-        "涉及报表",
+        "所属维度",
         "处理摘要",
-        "处理说明",
-        "处理脚本",
-        "处理时间",
+        "处理表名",
+        "处理字段名",
+        "修改前",
+        "修改后",
         "处理人",
+        "数据治理负责人",
+        "处理时间",
         "状态",
     )
     assert rows == [
         [
             "2026-07-31",
             "人行大集中报送、1104报送",
-            "报表A、报表B",
+            "项目端",
             "摘要",
-            "说明",
-            "select 1;",
-            "2026-08-06 11:20:00",
+            "t_demo",
+            "amt",
+            "1",
+            "2",
             "管理员",
-            "待处理",
+            "治理负责人",
+            "2026-08-06 11:20:00",
+            "待确认",
         ]
     ]
     assert "RSP-should-not-export" not in str(rows)
+    assert "报表A" not in str(rows)
+    assert "说明" not in str(rows)
+    assert "select 1;" not in str(rows)
 
 
-def test_build_export_xlsx_writes_headers_and_script_column():
+def test_build_export_xlsx_writes_headers_and_dimension_columns():
     payload = build_export_xlsx(
         [
             {
                 "report_period": "2026-07-31",
                 "report_process_name_snapshot": "1104报送",
-                "reports": [{"report_name": "F1104"}],
+                "dimension": "fund",
                 "summary": "s",
-                "processing_content": "c",
-                "processing_script": "print(1)",
+                "table_name": "t_fund",
+                "field_name": "bal",
+                "value_before": "a",
+                "value_after": "b",
                 "special_handling_at": "2026-08-06T11:20:00+08:00",
                 "handler_username_snapshot": "admin",
+                "governance_owner_display_name_snapshot": "治理资金",
                 "status": "completed",
             }
         ]
@@ -81,8 +99,10 @@ def test_build_export_xlsx_writes_headers_and_script_column():
     workbook = load_workbook(BytesIO(payload))
     sheet = workbook.active
     assert [cell.value for cell in sheet[1]] == list(EXPORT_HEADERS)
-    assert sheet["F2"].value == "print(1)"
-    assert sheet["I2"].value == "已完成"
+    assert sheet["C2"].value == "资金端"
+    assert sheet["E2"].value == "t_fund"
+    assert sheet["J2"].value == "治理资金"
+    assert sheet["L2"].value == "已完成"
 
 
 class _ExportService:
@@ -100,12 +120,15 @@ class _ExportService:
                 {
                     "report_period": query.get("report_period"),
                     "report_process_name_snapshot": "1104报送",
-                    "reports": ["R1"],
+                    "dimension": "asset",
                     "summary": "摘要",
-                    "processing_content": "说明",
-                    "processing_script": "script",
+                    "table_name": "t_asset",
+                    "field_name": "qty",
+                    "value_before": "3",
+                    "value_after": "4",
                     "special_handling_at": NOW,
                     "handler_display_name_snapshot": "管理员",
+                    "governance_owner_display_name_snapshot": "治理资产",
                     "status": "pending",
                 }
             ]

@@ -5,19 +5,22 @@ from io import BytesIO
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
-from .contracts import STATUS_LABELS, RecordStatus
+from .contracts import DIMENSION_LABELS, STATUS_LABELS, RecordStatus
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 EXPORT_HEADERS = (
     "所属报送期",
     "关联报送",
-    "涉及报表",
+    "所属维度",
     "处理摘要",
-    "处理说明",
-    "处理脚本",
-    "处理时间",
+    "处理表名",
+    "处理字段名",
+    "修改前",
+    "修改后",
     "处理人",
+    "数据治理负责人",
+    "处理时间",
     "状态",
 )
 MAX_EXPORT_ROWS = 5_000
@@ -47,28 +50,17 @@ def _datetime_text(value: Any) -> str:
     )
 
 
-def _reports_text(value: Any) -> str:
-    if not value:
-        return ""
-    names: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            name = item.strip()
-        elif isinstance(item, Mapping):
-            name = str(item.get("report_name") or item.get("name") or "").strip()
-        else:
-            name = str(item or "").strip()
-        if name:
-            names.append(name)
-    return "、".join(names)
-
-
 def _status_text(value: Any) -> str:
     code = str(value or "").strip()
     try:
         return STATUS_LABELS[RecordStatus(code)]
     except ValueError:
         return code
+
+
+def _dimension_text(value: Any) -> str:
+    code = str(value or "").strip()
+    return DIMENSION_LABELS.get(code, code)
 
 
 def export_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
@@ -78,16 +70,23 @@ def export_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
             [
                 _period_text(record.get("report_period")),
                 str(record.get("report_process_name_snapshot") or record.get("report_process_name") or ""),
-                _reports_text(record.get("reports")),
+                _dimension_text(record.get("dimension")),
                 str(record.get("summary") or ""),
-                str(record.get("processing_content") or ""),
-                str(record.get("processing_script") or ""),
-                _datetime_text(record.get("special_handling_at")),
+                str(record.get("table_name") or ""),
+                str(record.get("field_name") or ""),
+                str(record.get("value_before") or ""),
+                str(record.get("value_after") or ""),
                 str(
                     record.get("handler_display_name_snapshot")
                     or record.get("handler_username_snapshot")
                     or ""
                 ),
+                str(
+                    record.get("governance_owner_display_name_snapshot")
+                    or record.get("governance_owner_username_snapshot")
+                    or ""
+                ),
+                _datetime_text(record.get("special_handling_at")),
                 _status_text(record.get("status")),
             ]
         )

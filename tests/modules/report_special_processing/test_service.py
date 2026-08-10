@@ -45,9 +45,10 @@ class Reports:
 
 
 class MemoryStorage:
-    def __init__(self): self.records = {}; self.audits = []; self.calls = []
+    def __init__(self): self.records = {}; self.audits = []; self.calls = []; self.create_reports_args = []
     def create(self, record, reports, processes, audit):
         self.calls.append("create")
+        self.create_reports_args.append(list(reports))
         value = {
             **record,
             "id": 1,
@@ -61,6 +62,9 @@ class MemoryStorage:
         self.audits.append(audit)
         return deepcopy(value)
     def get(self, record_id): return deepcopy(self.records.get(record_id))
+    def list(self, query):
+        items = [deepcopy(item) for item in self.records.values()]
+        return {"items": items, "total": len(items), "page": 1, "page_size": 10}
     def update(self, record_id, row_version, changes, reports, processes, audit):
         current = self.records.get(record_id)
         if current is None: return None
@@ -133,6 +137,69 @@ def test_create_formal_record_snapshots_users_process_and_audits_without_script_
     audit = service.storage.audits[0]
     assert "DROP TABLE" not in audit["changed_fields_json"]
     assert record["processing_script"] == "DROP TABLE x;"
+
+
+def test_create_formal_record_persists_dimension_governance_fields_and_skips_reports():
+    directory = Directory()
+    directory.users["owner"] = User("owner", "gov_owner", "治理负责人甲", role="custom_pa")
+    service = _service(directory=directory)
+    record = service.create(
+        _payload(governance_owner_user_id="owner"),
+        {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"},
+        request_id="req-dim",
+    )
+    assert record["status"] == "pending"
+    assert record["dimension"] == "project"
+    assert record["governance_owner_user_id"] == "owner"
+    assert record["governance_owner_username_snapshot"] == "gov_owner"
+    assert record["governance_owner_display_name_snapshot"] == "治理负责人甲"
+    assert record["table_name"] == "t_demo"
+    assert record["field_name"] == "amt"
+    assert record["value_before"] == "1"
+    assert record["value_after"] == "2"
+    assert record["processing_content"] in {"", None}
+    assert record["reports"] == []
+    assert service.storage.create_reports_args == [[]]
+
+    listed = service.list_records({}, {"id": "1", "role": "user", "capabilities": ["rsp.view"]})
+    item = listed["items"][0]
+    assert item["dimension"] == "project"
+    assert item["governance_owner_display_name_snapshot"] == "治理负责人甲"
+    assert item["table_name"] == "t_demo"
+    assert item["field_name"] == "amt"
+
+
+def test_confirm_denied_for_non_governance_owner_even_with_capability():
+    from auto_check.modules.report_special_processing.contracts import PermissionDeniedError
+
+    directory = Directory()
+    directory.users["owner"] = User("owner", "gov_owner", "治理负责人甲", role="custom_pa")
+    service = _service(directory=directory)
+    record = service.create(
+        _payload(governance_owner_user_id="owner"),
+        {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"},
+        request_id="req-create",
+    )
+    stranger = {
+        "id": "1",
+        "username": "creator",
+        "role": "user",
+        "capabilities": ["rsp.view", "rsp.edit", "rsp.confirm"],
+    }
+    with pytest.raises(PermissionDeniedError):
+        service.change_status(
+            record["id"],
+            {"target_status": "completed", "row_version": record["row_version"]},
+            stranger,
+            request_id="req-deny",
+        )
+    completed = service.change_status(
+        record["id"],
+        {"target_status": "completed", "row_version": record["row_version"]},
+        {"id": "owner", "role": "custom_pa", "capabilities": ["rsp.confirm"]},
+        request_id="req-ok",
+    )
+    assert completed["status"] == "completed"
 
 
 def test_draft_can_be_partial_but_completion_requires_complete_data():

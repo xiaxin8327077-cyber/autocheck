@@ -41,12 +41,16 @@ from .validator import (
 _AUDIT_FIELD_LABELS = {
     "report_process_name_snapshot": "关联报送",
     "report_period": "所处报送期",
-    "reports": "涉及报表",
+    "dimension": "所属维度",
     "summary": "处理摘要",
-    "processing_content": "处理说明",
+    "table_name": "处理表名",
+    "field_name": "处理字段名",
+    "value_before": "修改前",
+    "value_after": "修改后",
     "processing_script": "处理脚本",
     "special_handling_at": "特殊处理时间",
     "handler_display_name_snapshot": "处理人",
+    "governance_owner_display_name_snapshot": "数据治理负责人",
     "status": "状态",
     "void_reason": "作废理由",
 }
@@ -251,9 +255,14 @@ class SpecialProcessingService:
         processes = self._processes(value.report_process_codes)
         actor = self._user(current_user.get("id"))
         handler = self._user(value.handler_user_id) if value.handler_user_id else None
+        governance_owner = (
+            self._user(value.governance_owner_user_id, field="governance_owner_user_id")
+            if value.governance_owner_user_id
+            else None
+        )
         now = self._now()
         status = RecordStatus.DRAFT if value.save_mode == "draft" else RecordStatus.PENDING
-        record = self._record_values(value, processes, handler)
+        record = self._record_values(value, processes, handler, governance_owner)
         record.update(
             status=status.value,
             creator_user_id=actor.id,
@@ -281,7 +290,7 @@ class SpecialProcessingService:
             "保存草稿" if value.save_mode == "draft" else "创建特殊处理记录",
             request_id,
         )
-        created = self.storage.create(record, value.reports, processes, audit)
+        created = self.storage.create(record, (), processes, audit)
         self._refresh_special_governance_stats()
         return created
 
@@ -304,17 +313,22 @@ class SpecialProcessingService:
             raise InvalidTransitionError()
         processes = self._processes(value.report_process_codes)
         handler = self._user(value.handler_user_id) if value.handler_user_id else None
+        governance_owner = (
+            self._user(value.governance_owner_user_id, field="governance_owner_user_id")
+            if value.governance_owner_user_id
+            else None
+        )
         actor = self._user(current_user.get("id"))
         now = self._now()
         next_status = "pending" if current["status"] == "draft" and value.save_mode == "record" else current["status"]
-        changes = self._record_values(value, processes, handler)
+        changes = self._record_values(value, processes, handler, governance_owner)
         changes.update(
             status=next_status,
             updated_by_user_id=actor.id,
             updated_by_username_snapshot=actor.username,
             updated_at=now,
         )
-        changed = self._changed_fields(current, changes, value.processing_script, value.reports)
+        changed = self._changed_fields(current, changes, value.processing_script)
         draft_save = value.save_mode == "draft" or next_status == "draft"
         audit = self._audit(
             "update" if next_status == current["status"] else "status_change",
@@ -333,7 +347,7 @@ class SpecialProcessingService:
             request_id,
         )
         updated = self.storage.update(
-            record_id, value.row_version, changes, value.reports, processes, audit
+            record_id, value.row_version, changes, (), processes, audit
         )
         self._refresh_special_governance_stats()
         return updated
@@ -512,15 +526,15 @@ class SpecialProcessingService:
             "can_admin": can_delete(current_user),
         }
 
-    def _user(self, user_id: Any) -> Any:
+    def _user(self, user_id: Any, *, field: str = "handler_user_id") -> Any:
         if user_id in {None, ""}:
-            raise ValidationError(fields={"handler_user_id": "用户不存在或已停用"})
+            raise ValidationError(fields={field: "用户不存在或已停用"})
         try:
             user = self._users.get_user(str(user_id))
         except Exception:
             raise PlatformUnavailableError() from None
         if user is None or not user.active:
-            raise ValidationError(fields={"handler_user_id": "用户不存在或已停用"})
+            raise ValidationError(fields={field: "用户不存在或已停用"})
         return user
 
     def _process(self, code: str) -> Any:
@@ -553,7 +567,12 @@ class SpecialProcessingService:
             return
 
     @staticmethod
-    def _record_values(value: Any, processes: Sequence[Mapping[str, str]] | tuple[dict[str, str], ...], handler: Any) -> dict[str, Any]:
+    def _record_values(
+        value: Any,
+        processes: Sequence[Mapping[str, str]] | tuple[dict[str, str], ...],
+        handler: Any,
+        governance_owner: Any = None,
+    ) -> dict[str, Any]:
         script = value.processing_script
         primary = processes[0]
         names = "；".join(item["name"] for item in processes)
@@ -561,14 +580,26 @@ class SpecialProcessingService:
             "report_process_code": primary["code"],
             "report_process_name_snapshot": names[:500],
             "report_period": value.report_period,
+            "dimension": value.dimension,
             "summary": value.summary or None,
-            "processing_content": value.processing_content or None,
+            "table_name": value.table_name,
+            "field_name": value.field_name,
+            "value_before": value.value_before,
+            "value_after": value.value_after,
+            "processing_content": "",
             "processing_script": script,
             "script_sha256": hashlib.sha256(script.encode("utf-8")).hexdigest() if script else None,
             "special_handling_at": value.special_handling_at,
             "handler_user_id": handler.id if handler else None,
             "handler_username_snapshot": handler.username if handler else None,
             "handler_display_name_snapshot": handler.display_name if handler else None,
+            "governance_owner_user_id": governance_owner.id if governance_owner else None,
+            "governance_owner_username_snapshot": (
+                governance_owner.username if governance_owner else None
+            ),
+            "governance_owner_display_name_snapshot": (
+                governance_owner.display_name if governance_owner else None
+            ),
         }
 
     @staticmethod
@@ -578,6 +609,12 @@ class SpecialProcessingService:
             record.get("report_period"),
             record.get("special_handling_at"),
             record.get("handler_user_id"),
+            record.get("dimension"),
+            record.get("governance_owner_user_id"),
+            record.get("table_name"),
+            record.get("field_name"),
+            record.get("value_before"),
+            record.get("value_after"),
         )
         if any(value is None or value == "" or value == () or value == [] for value in required):
             raise ValidationError(message="完成或正式保存前必须补全必填字段")
@@ -684,23 +721,32 @@ class SpecialProcessingService:
         current: Mapping[str, Any],
         changes: Mapping[str, Any],
         script: str | None,
-        reports: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in changes.items():
-            if key in _AUDIT_SKIP_KEYS or key in {"processing_script", "script_sha256"}:
+            if key in _AUDIT_SKIP_KEYS or key in {
+                "processing_script",
+                "script_sha256",
+                "processing_content",
+                "governance_owner_user_id",
+                "governance_owner_username_snapshot",
+            }:
                 continue
             if current.get(key) == value:
+                continue
+            if key == "dimension":
+                old_code = current.get(key)
+                new_code = value
+                result[key] = {
+                    "changed": True,
+                    "old": DIMENSION_LABELS.get(str(old_code or ""), old_code),
+                    "new": DIMENSION_LABELS.get(str(new_code or ""), new_code),
+                }
                 continue
             if key not in _AUDIT_FIELD_LABELS:
                 result[key] = {"changed": True}
                 continue
             result[key] = {"changed": True, "old": current.get(key), "new": value}
-        if reports is not None:
-            old_reports = [str(item).strip() for item in (current.get("reports") or []) if str(item).strip()]
-            new_reports = [str(item).strip() for item in reports if str(item).strip()]
-            if old_reports != new_reports:
-                result["reports"] = {"changed": True, "old": old_reports, "new": new_reports}
         if current.get("processing_script") != script:
             old_script = current.get("processing_script") or ""
             result["processing_script"] = {
