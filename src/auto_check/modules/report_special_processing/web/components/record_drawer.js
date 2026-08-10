@@ -2,7 +2,7 @@ import { element, labeledField, option } from "./dom.js";
 import { formatDisplayDateTime } from "./record_table.js";
 import { createProcessMultiSelect } from "./process_multi_select.js";
 
-const SUMMARY_MAX_LENGTH = 25;
+const SUMMARY_MAX_LENGTH = 50;
 
 function nowHandlingAt() {
   const date = new Date();
@@ -15,9 +15,13 @@ function draftPayload(fields, saveMode, rowVersion, specialHandlingAt) {
     save_mode: saveMode,
     report_process_codes: fields.process.value,
     report_period: fields.period.value,
-    reports: fields.reports.value.split("\n").map((value) => value.trim()).filter(Boolean),
+    dimension: fields.dimension.value || null,
+    governance_owner_user_id: fields.governanceOwner.value || null,
     summary: fields.summary.value.trim(),
-    processing_content: fields.content.value.trim(),
+    table_name: fields.tableName.value.trim(),
+    field_name: fields.fieldName.value.trim(),
+    value_before: fields.valueBefore.value.trim(),
+    value_after: fields.valueAfter.value.trim(),
     processing_script: fields.script.value,
     special_handling_at: specialHandlingAt,
     handler_user_id: fields.handler.value,
@@ -30,14 +34,29 @@ function actionButton(documentRef, text, className, onClick, disabled = false) {
   return element(documentRef, "button", { type: "button", className: `rsp-button ${className}`, text, onClick, disabled });
 }
 
+function fillSelect(select, items, emptyLabel) {
+  select.replaceChildren(option(select.ownerDocument, "", emptyLabel));
+  (items || []).forEach((item) => {
+    select.append(option(select.ownerDocument, item.id, item.display_name || item.username));
+  });
+}
+
+function pickRandomId(items) {
+  if (!items?.length) return "";
+  return String(items[Math.floor(Math.random() * items.length)].id);
+}
+
 export function createRecordDrawer(documentRef, options) {
   const {
     catalog, record, mode, user, catalogAvailable, actions, onClose, onSaved, onConflict,
   } = options;
   const creating = mode === "create";
+  const confirming = mode === "confirm";
   const current = record || {};
-  const canEdit = creating || Boolean(current.can_edit);
-  const title = creating ? "新建报表特殊处理" : (canEdit ? "编辑" : "查看");
+  const canEdit = !confirming && (creating || Boolean(current.can_edit));
+  const title = creating
+    ? "新建报表特殊处理"
+    : (confirming ? "确认特殊处理" : (canEdit ? "编辑" : "查看"));
 
   const report_processes = catalog?.report_processes || [];
   const initialProcessCodes = Array.isArray(current.report_process_codes) && current.report_process_codes.length
@@ -68,11 +87,68 @@ export function createRecordDrawer(documentRef, options) {
     handler.value = defaultHandlerId;
   }
 
+  const dimensions = catalog?.dimensions || [];
+  const dimension = element(documentRef, "select", {
+    className: "rsp-compact-select",
+    "aria-label": "所属维度",
+    disabled: !canEdit,
+  }, [option(documentRef, "", "请选择所属维度")]);
+  dimensions.forEach((item) => dimension.append(option(documentRef, item.code, item.label || item.code)));
+
+  const governanceOwner = element(documentRef, "select", {
+    className: "rsp-compact-select",
+    "aria-label": "数据治理负责人",
+    disabled: !canEdit,
+  }, [option(documentRef, "", "请选择数据治理负责人")]);
+
+  const candidatesByDimension = catalog?.governance_owner_candidates_by_dimension || {};
+
+  function syncGovernanceOwnerOptions({ preferExisting = false, autoPick = true } = {}) {
+    const code = dimension.value || "";
+    const candidates = code ? (candidatesByDimension[code] || []) : [];
+    const previous = governanceOwner.value;
+    fillSelect(governanceOwner, candidates, "请选择数据治理负责人");
+
+    let next = "";
+    if (preferExisting) {
+      const existingId = current.governance_owner_user_id != null && current.governance_owner_user_id !== ""
+        ? String(current.governance_owner_user_id)
+        : "";
+      if (existingId && candidates.some((item) => String(item.id) === existingId)) {
+        next = existingId;
+      } else if (existingId) {
+        governanceOwner.append(option(
+          documentRef,
+          existingId,
+          current.governance_owner_display_name_snapshot
+            || current.governance_owner_username_snapshot
+            || existingId,
+        ));
+        next = existingId;
+      }
+    } else if (previous && candidates.some((item) => String(item.id) === previous)) {
+      next = previous;
+    }
+
+    if (!next && autoPick && candidates.length) {
+      next = pickRandomId(candidates);
+    }
+    governanceOwner.value = next;
+  }
+
+  if (current.dimension) dimension.value = String(current.dimension);
+  syncGovernanceOwnerOptions({ preferExisting: true, autoPick: creating && !current.governance_owner_user_id });
+
+  dimension.addEventListener("change", () => {
+    syncGovernanceOwnerOptions({ preferExisting: false, autoPick: true });
+  });
+
   const fields = {
     process,
     handler,
+    dimension,
+    governanceOwner,
     period: element(documentRef, "input", { type: "date", value: current.report_period || options.reportPeriod || "", "aria-label": "所处报送期", disabled: !canEdit }),
-    reports: element(documentRef, "textarea", { className: "rsp-reports-input", "aria-label": "涉及报表，每行一项", placeholder: "每行填写一个报表名称", disabled: !canEdit }),
     summary: element(documentRef, "input", {
       value: current.summary || "",
       maxlength: String(SUMMARY_MAX_LENGTH),
@@ -80,11 +156,32 @@ export function createRecordDrawer(documentRef, options) {
       placeholder: `最多 ${SUMMARY_MAX_LENGTH} 个字符`,
       disabled: !canEdit,
     }),
-    content: element(documentRef, "textarea", { "aria-label": "特殊处理内容", maxlength: "20000", disabled: !canEdit }),
+    tableName: element(documentRef, "input", {
+      value: current.table_name || "",
+      "aria-label": "处理表名",
+      maxlength: "128",
+      disabled: !canEdit,
+    }),
+    fieldName: element(documentRef, "input", {
+      value: current.field_name || "",
+      "aria-label": "处理字段名",
+      maxlength: "128",
+      disabled: !canEdit,
+    }),
+    valueBefore: element(documentRef, "input", {
+      value: current.value_before || "",
+      "aria-label": "修改前",
+      maxlength: "500",
+      disabled: !canEdit,
+    }),
+    valueAfter: element(documentRef, "input", {
+      value: current.value_after || "",
+      "aria-label": "修改后",
+      maxlength: "500",
+      disabled: !canEdit,
+    }),
     script: element(documentRef, "textarea", { className: "rsp-script", "aria-label": "处理脚本", spellcheck: "false", disabled: !canEdit }),
   };
-  fields.reports.value = (current.reports || []).map((item) => typeof item === "string" ? item : item.report_name).join("\n");
-  fields.content.value = current.processing_content || "";
   fields.script.value = current.processing_script || "";
 
   function resolveHandlingAt() {
@@ -102,17 +199,25 @@ export function createRecordDrawer(documentRef, options) {
     report_process_code: "关联报送",
     report_period: "所处报送期",
     handler_user_id: "处理人",
-    reports: "涉及报表",
+    dimension: "所属维度",
+    governance_owner_user_id: "数据治理负责人",
     summary: "处理摘要",
-    processing_content: "处理说明",
+    table_name: "处理表名",
+    field_name: "处理字段名",
+    value_before: "修改前",
+    value_after: "修改后",
     processing_script: "处理脚本",
     special_handling_at: "特殊处理时间",
   };
   function resolveControl(fieldName) {
     if (fieldName === "report_process_codes" || fieldName === "report_process_code") return fields.process;
     if (fieldName === "handler_user_id") return fields.handler;
+    if (fieldName === "governance_owner_user_id") return fields.governanceOwner;
     if (fieldName === "report_period") return fields.period;
-    if (fieldName === "processing_content") return fields.content;
+    if (fieldName === "table_name") return fields.tableName;
+    if (fieldName === "field_name") return fields.fieldName;
+    if (fieldName === "value_before") return fields.valueBefore;
+    if (fieldName === "value_after") return fields.valueAfter;
     if (fieldName === "processing_script") return fields.script;
     return fields[fieldName] || null;
   }
@@ -197,6 +302,14 @@ export function createRecordDrawer(documentRef, options) {
       creating ? "特殊处理记录已创建" : "修改已保存",
     );
   };
+  const confirmSourceSystem = () => run(
+    () => actions.changeStatus(current.id, {
+      target_status: "completed",
+      row_version: current.row_version,
+      reason: "源系统已确认",
+    }),
+    "记录已确认完成",
+  );
   const auditBody = element(documentRef, "tbody");
   const auditStatus = element(documentRef, "span", { className: "rsp-audit-page", text: "第 1 / 1 页" });
   let auditPage = 1;
@@ -289,13 +402,19 @@ export function createRecordDrawer(documentRef, options) {
       labeledField(documentRef, "关联报送", fields.process.root || fields.process, "rsp-process-field"),
       labeledField(documentRef, "所处报送期", fields.period),
       labeledField(documentRef, "处理人", fields.handler),
-      labeledField(documentRef, "涉及报表", fields.reports, "rsp-span-two"),
+      labeledField(documentRef, "所属维度", fields.dimension),
+      labeledField(documentRef, "数据治理负责人", fields.governanceOwner),
     ]),
   ]);
   const content = element(documentRef, "section", { className: "rsp-modal-section" }, [
     element(documentRef, "h3", { text: "特殊处理内容" }),
     labeledField(documentRef, "处理摘要", fields.summary, "rsp-stacked"),
-    labeledField(documentRef, "处理说明", fields.content, "rsp-stacked"),
+    element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, [
+      labeledField(documentRef, "处理表名", fields.tableName),
+      labeledField(documentRef, "处理字段名", fields.fieldName),
+      labeledField(documentRef, "修改前", fields.valueBefore),
+      labeledField(documentRef, "修改后", fields.valueAfter),
+    ]),
   ]);
   const script = element(documentRef, "section", { className: "rsp-modal-section" }, [
     element(documentRef, "div", { className: "rsp-section-title" }, [
@@ -320,7 +439,16 @@ export function createRecordDrawer(documentRef, options) {
 
   const saveDisabled = !catalogAvailable || !canEdit;
   const footerButtons = [];
-  if (canEdit && current.status !== "completed" && current.status !== "voided") {
+  if (confirming) {
+    footerButtons.push(actionButton(documentRef, "取消", "rsp-button-secondary", onClose));
+    footerButtons.push(actionButton(
+      documentRef,
+      "源系统已确认",
+      "rsp-button-primary",
+      confirmSourceSystem,
+      !catalogAvailable || !current.can_confirm,
+    ));
+  } else if (canEdit && current.status !== "completed" && current.status !== "voided") {
     if (creating || current.status === "draft") {
       footerButtons.push(actionButton(documentRef, "保存草稿", "rsp-button-secondary", saveDraft, saveDisabled));
     }

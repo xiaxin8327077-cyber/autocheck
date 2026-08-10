@@ -2,7 +2,7 @@ import { element } from "./dom.js";
 
 const STATUS_LABELS = {
   draft: "草稿",
-  pending: "待处理",
+  pending: "待确认",
   processing: "处理中",
   completed: "已完成",
   voided: "已作废",
@@ -37,7 +37,7 @@ function compareByDisplayWidth(left, right) {
   return String(left).localeCompare(String(right), "zh-CN");
 }
 
-function processNameList(record, activeProcessCode = "") {
+function processNameList(record) {
   const items = Array.isArray(record?.report_processes) ? record.report_processes : [];
   const ordered = items
     .map((item) => ({
@@ -77,39 +77,6 @@ function processNamesCell(documentRef, record) {
   return element(documentRef, "td", { className: "rsp-process-names", title: fullText }, [block]);
 }
 
-function summaryCell(documentRef, text) {
-  const value = text || "—";
-  return element(documentRef, "td", { className: "rsp-summary", title: text || "" }, [
-    element(documentRef, "span", { className: "rsp-summary-text", text: value }),
-  ]);
-}
-
-function reportNameList(reports) {
-  return (reports || [])
-    .map((item) => (typeof item === "string" ? item : item?.report_name || item?.name || ""))
-    .map((name) => String(name || "").trim())
-    .filter(Boolean)
-    .sort(compareByDisplayWidth);
-}
-
-function reportNamesCell(documentRef, reports) {
-  const names = reportNameList(reports);
-  const fullText = names.join("、");
-  if (!names.length) {
-    return element(documentRef, "td", { className: "rsp-report-names", text: "—", title: "" });
-  }
-  const maxLines = 7;
-  const visibleNames = names.slice(0, maxLines);
-  const visible = visibleNames.map((name, index) => {
-    const text = index === maxLines - 1 && names.length > maxLines ? `${name}等` : name;
-    return element(documentRef, "div", { className: "rsp-report-name-line", text });
-  });
-  const block = element(documentRef, "div", {
-    className: names.length > 3 ? "rsp-report-names-block is-compact" : "rsp-report-names-block",
-  }, visible);
-  return element(documentRef, "td", { className: "rsp-report-names", title: fullText }, [block]);
-}
-
 function actionLink(documentRef, text, onClick, className = "rsp-text-action") {
   const button = element(documentRef, "button", {
     type: "button",
@@ -132,7 +99,7 @@ function buildRowActions(documentRef, record, { onOpen, onAction }) {
     () => onOpen(record),
   ));
   if (record.can_confirm && ["pending", "processing"].includes(record.status)) {
-    actions.push(actionLink(documentRef, "完成", () => onAction?.(record, "complete"), "rsp-text-action rsp-text-action-success"));
+    actions.push(actionLink(documentRef, "确认", () => onAction?.(record, "confirm"), "rsp-text-action rsp-text-action-success"));
   }
   if (record.can_void && ["draft", "pending", "processing"].includes(record.status)) {
     actions.push(actionLink(documentRef, "作废", () => onAction?.(record, "void"), "rsp-text-action rsp-text-action-danger"));
@@ -148,24 +115,31 @@ function buildRowActions(documentRef, record, { onOpen, onAction }) {
   ]);
 }
 
-export function createRecordTable(documentRef, records, { selectedId, onOpen, onAction }) {
+export function createRecordTable(documentRef, records, { selectedId, highlightId, onOpen, onAction }) {
   const head = element(documentRef, "thead", {}, [
-    element(documentRef, "tr", {}, ["处理摘要", "关联报送", "涉及报表", "特殊处理时间", "处理人", "状态", "操作"].map((label) => element(documentRef, "th", { text: label, scope: "col" }))),
+    element(documentRef, "tr", {}, ["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"].map((label) => element(documentRef, "th", { text: label, scope: "col" }))),
   ]);
   const body = element(documentRef, "tbody");
   records.forEach((record) => {
     const handledAt = formatDisplayDateTime(record.special_handling_at);
+    const selected = String(record.id) === String(selectedId);
+    const highlighted = String(record.id) === String(highlightId);
+    const rowClass = [
+      selected ? "is-selected" : "",
+      highlighted ? "is-highlighted" : "",
+    ].filter(Boolean).join(" ");
     const row = element(documentRef, "tr", {
-      className: String(record.id) === String(selectedId) ? "is-selected" : "",
+      className: rowClass,
       dataset: { recordId: String(record.id) },
-      "aria-label": `${record.record_no || "记录"}，${record.summary || "未填写摘要"}`,
+      "aria-label": `${record.record_no || "记录"}，${record.field_name || record.summary || "未填写字段"}`,
     }, [
-      summaryCell(documentRef, record.summary),
+      cell(documentRef, record.field_name),
+      cell(documentRef, record.value_before),
+      cell(documentRef, record.value_after),
       processNamesCell(documentRef, record),
-      reportNamesCell(documentRef, record.reports),
-      cell(documentRef, handledAt),
-      cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),
       element(documentRef, "td", {}, [element(documentRef, "span", { className: `rsp-status rsp-status-${record.status}`, text: STATUS_LABELS[record.status] || record.status })]),
+      cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),
+      cell(documentRef, handledAt),
       buildRowActions(documentRef, record, { onOpen: (item) => onOpen(item), onAction }),
     ]);
     body.append(row);
@@ -177,7 +151,7 @@ export function createRecordTable(documentRef, records, { selectedId, onOpen, on
       element(documentRef, "tr", { className: "rsp-empty-row" }, [
         element(documentRef, "td", {
           className: "rsp-empty",
-          colspan: "7",
+          colspan: "8",
           text: "没有符合条件的特殊处理记录",
         }),
       ]),

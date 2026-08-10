@@ -79,9 +79,14 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
     assert 'tabIndex: "0"' in source or 'tabIndex: active ? "0"' in source
     assert 'event.key === "Enter"' in source or "ArrowLeft" in source
     assert "关联报送" in source
-    assert "涉及报表" in source
+    assert "所属维度" in source
+    assert "数据治理负责人" in source
     assert "处理摘要" in source
-    assert "特殊处理时间" in source
+    assert "处理表名" in source
+    assert "处理字段名" in source
+    assert "修改前" in source
+    assert "修改后" in source
+    assert "处理时间" in source
     assert "createProcessMultiSelect" in read("components/record_drawer.js")
     assert "report_process_codes" in read("components/record_drawer.js")
     assert "rsp-multi-select" in read("styles.css")
@@ -91,12 +96,22 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
     assert 'labeledField(documentRef, "关联报送"' in read("components/record_drawer.js")
     assert "rsp-span-two rsp-process-field" not in read("components/record_drawer.js")
     drawer = read("components/record_drawer.js")
+    assert "涉及报表" not in drawer
+    assert "处理说明" not in drawer
     assert 'labeledField(documentRef, "特殊处理时间"' not in drawer
     assert "nowHandlingAt" in drawer
     assert 'labeledField(documentRef, "所处报送期", fields.period)' in drawer
     assert 'labeledField(documentRef, "处理人", fields.handler)' in drawer
+    assert 'labeledField(documentRef, "所属维度"' in drawer
+    assert 'labeledField(documentRef, "数据治理负责人"' in drawer
+    assert 'labeledField(documentRef, "处理表名"' in drawer
+    assert 'labeledField(documentRef, "处理字段名"' in drawer
+    assert 'labeledField(documentRef, "修改前"' in drawer
+    assert 'labeledField(documentRef, "修改后"' in drawer
     assert "rsp-form-grid-basic" in drawer
     assert "defaultHandlerId" in drawer
+    assert "governance_owner_candidates_by_dimension" in drawer
+    assert "Math.floor(Math.random()" in drawer
     assert 'labeledField(documentRef, "操作原因"' not in drawer
     assert "rsp-workflow-state" not in drawer
     assert "流程状态" not in drawer
@@ -131,6 +146,46 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
     assert "exportLedger" in read("pages/ledger.js")
     assert "rsp-btn-icon" in read("components/filters.js")
     assert "data-export-label" in read("components/filters.js")
+    filters = read("components/filters.js")
+    assert "涉及报表" not in filters
+    assert 'labeledField(documentRef, "处理状态"' in filters
+    assert 'labeledField(documentRef, "处理人"' in filters
+    assert 'labeledField(documentRef, "关键词"' in filters
+
+
+def test_dimension_governance_drawer_list_and_confirm_modal():
+    drawer = read("components/record_drawer.js")
+    table = read("components/record_table.js")
+    ledger = read("pages/ledger.js")
+
+    assert "SUMMARY_MAX_LENGTH = 50" in drawer
+    assert 'maxlength: String(SUMMARY_MAX_LENGTH)' in drawer
+    assert "涉及报表" not in drawer
+    assert "处理说明" not in drawer
+    assert "所属维度" in drawer
+    assert "数据治理负责人" in drawer
+    assert "处理表名" in drawer
+    assert "处理字段名" in drawer
+    assert "修改前" in drawer
+    assert "修改后" in drawer
+    assert "源系统已确认" in drawer
+    assert 'mode === "confirm"' in drawer or 'mode === "confirm"' in ledger
+
+    assert 'pending: "待确认"' in table
+    assert '["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"]' in table
+    assert 'colspan: "8"' in table
+    assert "涉及报表" not in table
+    assert 'text: "完成"' not in table
+    assert 'text: "确认"' in table or '确认"' in table
+    assert "record.can_confirm" in table
+
+    assert "record_id" in ledger
+    assert "highlight" in ledger
+    assert 'action === "confirm"' in ledger
+    assert 'target_status: "completed"' in drawer
+    assert 'await confirm("确认完成"' not in ledger
+    assert 'confirm("确认将该记录标记为已完成吗？")' not in ledger
+    assert "源系统已确认" in drawer
 
 
 def test_ledger_pagination_matches_system_arrow_jump_style():
@@ -200,7 +255,7 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert "暂无操作记录" in source
     assert 'creating || current.status === "draft"' in source
     assert 'footerButtons.push(actionButton(documentRef, "保存草稿"' in source
-    assert "SUMMARY_MAX_LENGTH = 25" in source
+    assert "SUMMARY_MAX_LENGTH = 50" in source
     assert "validateForm" in source
     assert "showFormHint" in source
     assert "formatFieldMessage" in source
@@ -223,7 +278,7 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert "overflow-x: auto" in css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
     assert "scrollbar-width: thin" in css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
     assert "height: 6px" in css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
-    for moved in ("开始处理", "转为待处理", "完成", "作废", "重开", "操作原因", "completeRecord", "voidRecord", "reopenRecord"):
+    for moved in ("开始处理", "转为待处理", "作废", "重开", "操作原因", "completeRecord", "voidRecord", "reopenRecord"):
         assert moved not in source
     assert "row_version" in source
     assert "catalogAvailable" in source
@@ -240,7 +295,7 @@ def test_ledger_row_actions_include_status_operations():
     ledger_source = read("pages/ledger.js")
     css = read("styles.css")
 
-    for label in ("编辑", "查看", "完成", "作废", "删除", "重开"):
+    for label in ("编辑", "查看", "确认", "作废", "删除", "重开"):
         assert label in table_source
     for removed in ("开始处理", "转为待处理"):
         assert removed not in table_source
@@ -253,7 +308,10 @@ def test_ledger_row_actions_include_status_operations():
     assert 'onClick: () => onOpen(record, row)' not in table_source
     assert 'if (event.key === "Enter") onOpen(record, row)' not in table_source
     assert "handleRowAction" in ledger_source
-    assert 'await confirm("确认完成"' in ledger_source or 'confirm("确认完成"' in ledger_source
+    assert 'await confirm("确认完成"' not in ledger_source
+    assert 'confirm("确认完成"' not in ledger_source
+    assert 'action === "confirm"' in ledger_source
+    assert "源系统已确认" in read("components/record_drawer.js")
     assert 'confirm("确认作废"' in ledger_source
     assert 'confirm("确认删除"' in ledger_source
     assert "删除后不可恢复" in ledger_source
@@ -261,7 +319,7 @@ def test_ledger_row_actions_include_status_operations():
     assert 'action === "delete"' in ledger_source
     assert 'confirm("确认将该记录标记为已完成吗？")' not in ledger_source
     assert 'confirm("确认作废该记录吗？作废后仍保留完整留痕。")' not in ledger_source
-    assert 'action === "complete"' in ledger_source
+    assert 'action === "complete"' not in ledger_source
     assert 'action === "start"' not in ledger_source
     assert 'action === "pend"' not in ledger_source
     assert 'action === "reopen"' in ledger_source
@@ -281,17 +339,12 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     scope = '.auto-check-module[data-module="report_special_processing"]'
 
     assert 'className: "rsp-empty-row"' in table_source
-    assert 'colspan: "7"' in table_source
+    assert 'colspan: "8"' in table_source
     assert "没有符合条件的特殊处理记录" in table_source
     assert "wrap.append(element(documentRef, \"div\", { className: \"rsp-empty\"" not in table_source
     assert "formatDisplayDateTime" in table_source
     assert "formatDisplayDateTime(record.special_handling_at)" in table_source
     assert 'replace("T", " ")' in table_source
-    assert "reportNamesCell" in table_source
-    assert "rsp-report-name-line" in table_source
-    assert "rsp-report-names-block" in table_source
-    assert "summaryCell" in table_source
-    assert "rsp-summary-text" in table_source
     assert "processNameList" in table_source
     assert "displayWidth" in table_source
     assert "compareByDisplayWidth" in table_source
@@ -303,14 +356,6 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "normalizeProcessNames" not in table_source
     assert 'replace(/\\//g, "、")' not in table_source
     assert 'names.join("；")' in read("components/process_multi_select.js")
-    assert "max-height: calc(13px * 1.55 * 3)" in css
-    assert "const maxLines = 7" in table_source
-    assert "names.length > 3" in table_source
-    assert "rsp-report-names-block" in table_source
-    assert ".rsp-report-names-block.is-compact" in css
-    assert "${name}等" in table_source
-    assert "names.slice(0, 3)" not in table_source.split("function processNamesCell")[1].split("function summaryCell")[0]
-    assert "${name}等" not in table_source.split("function processNamesCell")[1].split("function summaryCell")[0]
     assert "rsp-process-names-block" in table_source
     assert "is-compact" in table_source
     assert "names.length > 3" in table_source
@@ -320,12 +365,10 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "scheduleProcessNameFit" not in table_source
     assert "rsp-cell-fit" not in table_source
     assert '(record.reports || []).join("、")' not in table_source
-    assert '["处理摘要", "关联报送", "涉及报表", "特殊处理时间", "处理人", "状态", "操作"]' in table_source
-    assert "th:nth-child(1) { width: 22%; }" in css
-    assert "th:nth-child(2) { width: 13%; }" in css
+    assert '["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"]' in table_source
+    assert "th:nth-child(1)" in css
+    assert "th:nth-child(8)" in css
     assert "td.rsp-process-names" in css
-    assert "td.rsp-report-names" in css
-    assert "td.rsp-summary" in css
     assert "rsp-process-name-line" in css
     assert "text-align: center" in css
     assert f"{scope} .rsp-ledger-table th" in css
@@ -363,6 +406,7 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "\nbutton {" not in css
     assert "\ntable {" not in css
     assert "\ninput {" not in css
+    assert "is-highlighted" in css or "rsp-row-highlight" in css
 
 
 def test_module_css_is_scoped_light_only_and_keeps_centered_modal():

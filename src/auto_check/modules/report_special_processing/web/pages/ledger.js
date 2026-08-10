@@ -7,6 +7,30 @@ import { createRecordDrawer } from "../components/record_drawer.js";
 const ALL_PROCESS_CODE = "";
 const ALL_PROCESS_TAB = Object.freeze({ code: ALL_PROCESS_CODE, name: "全部" });
 
+function readLocateQuery(route, documentRef) {
+  const fromRoute = (() => {
+    if (!route || typeof route !== "object") return {};
+    const query = route.query || route.params || {};
+    return {
+      recordId: query.record_id || query.recordId || "",
+      highlight: query.highlight === true || query.highlight === "1" || query.highlight === 1,
+    };
+  })();
+  if (fromRoute.recordId) return fromRoute;
+
+  const locationRef = documentRef?.defaultView?.location;
+  const hash = String(locationRef?.hash || "");
+  const queryText = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : String(locationRef?.search || "").replace(/^\?/, "");
+  if (!queryText) return { recordId: "", highlight: false };
+  const params = new URLSearchParams(queryText);
+  const recordId = params.get("record_id") || params.get("recordId") || "";
+  const highlightRaw = params.get("highlight");
+  return {
+    recordId,
+    highlight: highlightRaw === "1" || highlightRaw === "true",
+  };
+}
+
 export function createLedgerPage({ root, api, state, user, notify, confirm, prompt, navigate }) {
   const documentRef = root.ownerDocument;
 
@@ -51,8 +75,33 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       state.totalPages = records.total_pages || 1;
       state.summary = dataOf(summaryResponse, { by_report_process: [] });
       render();
+      locateHighlightedRecord();
     } catch (error) {
       if (error?.name !== "AbortError") notify("台账加载失败，请重试", "error");
+    }
+  }
+
+  function locateHighlightedRecord() {
+    const recordId = state.locateRecordId;
+    if (!recordId) return;
+    const escapedId = (typeof CSS !== "undefined" && typeof CSS.escape === "function")
+      ? CSS.escape(String(recordId))
+      : String(recordId).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const row = root.querySelector?.(`[data-record-id="${escapedId}"]`);
+    if (!row) return;
+    row.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    if (state.locateHighlight) {
+      row.classList.add("is-highlighted");
+      const view = documentRef.defaultView;
+      view?.setTimeout?.(() => {
+        row.classList.remove("is-highlighted");
+        if (String(state.locateRecordId) === String(recordId)) {
+          state.locateRecordId = "";
+          state.locateHighlight = false;
+        }
+      }, 3500);
+    } else {
+      state.locateRecordId = "";
     }
   }
 
@@ -89,7 +138,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
 
   async function refreshRecord(recordId) {
     const response = await api.getRecord(recordId);
-    state.drawer = { mode: "detail", record: dataOf(response, response) };
+    state.drawer = { mode: state.drawer?.mode || "detail", record: dataOf(response, response) };
     render();
   }
 
@@ -102,11 +151,11 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
     state.restoreFocus = null;
   }
 
-  async function openRecord(record, trigger) {
+  async function openRecord(record, trigger, mode = "detail") {
     state.restoreFocus = { kind: "record", id: String(record.id) };
     try {
       const response = await api.getRecord(record.id);
-      state.drawer = { mode: "detail", record: dataOf(response, response) };
+      state.drawer = { mode, record: dataOf(response, response) };
       render();
       root.querySelector?.(".rsp-record-modal button")?.focus?.();
     } catch (error) {
@@ -129,7 +178,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
     return reason;
   }
 
-    async function handleRowAction(record, action) {
+  async function handleRowAction(record, action) {
     const run = async (operation, successMessage, { refreshDetail = true } = {}) => {
       try {
         await operation();
@@ -148,16 +197,8 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       return operation(latest);
     };
 
-    if (action === "complete") {
-      if (!await confirm("确认完成", "确认将该记录标记为已完成吗？")) return;
-      await run(
-        () => withLatestVersion((latest) => api.changeStatus(latest.id, {
-          target_status: "completed",
-          row_version: latest.row_version,
-          reason: "处理完成",
-        })),
-        "记录已完成",
-      );
+    if (action === "confirm") {
+      await openRecord(record, null, "confirm");
       return;
     }
     if (action === "void") {
@@ -191,7 +232,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
         requiredMessage: "请输入重开原因",
       });
       if (reason == null || !String(reason).trim()) return;
-      if (!await confirm("确认重开", "确认将该记录重开为待处理吗？")) return;
+      if (!await confirm("确认重开", "确认将该记录重开为待确认吗？")) return;
       await run(
         () => withLatestVersion((latest) => api.reopenRecord(latest.id, {
           row_version: latest.row_version,
@@ -347,6 +388,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       }),
       createRecordTable(documentRef, state.records, {
         selectedId: state.drawer?.record?.id,
+        highlightId: state.locateHighlight ? state.locateRecordId : "",
         onOpen: openRecord,
         onAction: handleRowAction,
       }),
@@ -382,6 +424,9 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
     async activate(route) {
       state.active = true;
       state.reportPeriod ||= defaultPeriod();
+      const locate = readLocateQuery(route, documentRef);
+      state.locateRecordId = locate.recordId ? String(locate.recordId) : "";
+      state.locateHighlight = Boolean(locate.recordId && locate.highlight);
       render();
       await loadCatalog();
       await loadLedger();
@@ -391,6 +436,8 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       state.active = false;
       state.drawer = null;
       state.restoreFocus = null;
+      state.locateRecordId = "";
+      state.locateHighlight = false;
       api.cancelAll();
       root.replaceChildren();
     },

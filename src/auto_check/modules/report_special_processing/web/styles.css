@@ -474,13 +474,14 @@
   background: #f3f5f8;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) { width: 22%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(2) { width: 13%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 20%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) { width: 12%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(2) { width: 12%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 12%; }
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 14%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 9%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 8%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 8%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 9%; }
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 14%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(8) { width: 14%; }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-row-actions {
   overflow: hidden;
@@ -512,6 +513,11 @@
   box-shadow: inset 3px 0 0 var(--rsp-brand);
 }
 
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table tbody tr.is-highlighted {
+  background: #eef5ff;
+  box-shadow: inset 3px 0 0 var(--rsp-brand);
+}
+
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-process-names {
   overflow: hidden;
   text-align: center;
@@ -535,62 +541,6 @@
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-process-name-line {
-  overflow: hidden;
-  max-width: 100%;
-  line-height: inherit;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-summary {
-  overflow: hidden;
-  text-align: center;
-  text-overflow: clip;
-  vertical-align: middle;
-  white-space: normal;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-summary .rsp-summary-text {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  max-height: calc(13px * 1.55 * 3);
-  margin: 0;
-  color: inherit;
-  font-size: 13px;
-  line-height: 1.55;
-  text-align: center;
-  text-overflow: clip;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-report-names {
-  overflow: hidden;
-  color: inherit;
-  font-weight: inherit;
-  text-align: center;
-  text-overflow: clip;
-  vertical-align: middle;
-  white-space: normal;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-report-names-block {
-  display: block;
-  width: 100%;
-  color: inherit;
-  font-size: 13px;
-  line-height: 1.55;
-  text-align: center;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-report-names-block.is-compact {
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.auto-check-module[data-module="report_special_processing"] .rsp-report-name-line {
   overflow: hidden;
   max-width: 100%;
   line-height: inherit;

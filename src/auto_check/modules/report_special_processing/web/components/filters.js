@@ -8,8 +8,8 @@ export function createFilters(documentRef, { catalog, filters, onApply, onReset,
   const keyword = element(documentRef, "input", {
     type: "search",
     value: filters.keyword,
-    placeholder: "报表名称、处理摘要或记录编号",
-    "aria-label": "涉及报表或摘要关键词",
+    placeholder: "字段名、处理摘要或记录编号",
+    "aria-label": "关键词",
     maxlength: "100",
   });
 
@@ -50,7 +50,7 @@ export function createFilters(documentRef, { catalog, filters, onApply, onReset,
 
   return element(documentRef, "section", { className: "rsp-filters", "aria-label": "筛选条件" }, [
     labeledField(documentRef, "处理状态", status),
-    labeledField(documentRef, "涉及报表", keyword),
+    labeledField(documentRef, "关键词", keyword),
     labeledField(documentRef, "处理人", handler),
     element(documentRef, "div", { className: "rsp-filter-actions" }, [reset, apply, exportButton]),
   ]);
