@@ -29,7 +29,9 @@ export function createProcessMultiSelect(documentRef, {
     "aria-multiselectable": "true",
     hidden: "",
   });
-  const root = element(documentRef, "div", { className: "rsp-multi-select" }, [trigger, list]);
+  const root = element(documentRef, "div", {
+    className: disabled ? "rsp-multi-select is-disabled" : "rsp-multi-select",
+  }, [trigger, list]);
 
   function syncOption(code) {
     const row = optionNodes.get(code);

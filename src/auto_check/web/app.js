@@ -483,7 +483,12 @@ function revealAuthenticatedApp() {
     document.documentElement.classList.add("main-entry-animate");
     window.setTimeout(() => {
       document.documentElement.classList.remove("main-entry-animate");
+      refreshReportNavigationScheduleLayout();
     }, 720);
+  } else {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(refreshReportNavigationScheduleLayout);
+    });
   }
   document.documentElement.classList.remove("auth-pending");
 }
@@ -1125,15 +1130,10 @@ saveInterfaceSettingsBtn?.addEventListener("click", saveInterfaceRadiusPreferenc
 
 function updateSpaceTopNavFrost() {
   if (!topNav) return;
-  const scrollOffset = Math.max(window.scrollY, mainContent?.scrollTop || 0);
-  const activePage = Array.from(pages).find(
-    (page) => window.getComputedStyle(page).display !== "none"
-  );
-  const navBottom = topNav.getBoundingClientRect().bottom;
-  const contentTop = activePage?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
-  // Only frost the nav once scrolled content actually reaches the nav edge.
-  const shouldFrost = scrollOffset > 1 && contentTop < navBottom;
-  document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);
+  // Edge-stuck opaque top nav no longer overlays scrolling content, so the old
+  // frost class only causes Edge to re-layer and clip the active-tab glow.
+  // Keep the class cleared to avoid scroll-triggered glow断层.
+  document.documentElement.classList.remove("space-nav-over-content");
 }
 
 function syncThemeBootCache() {
@@ -1816,6 +1816,28 @@ function syncReportNavigationTodoCardHeight() {
   if (collapsedHeight) reportNavTodoCard.style.height = `${collapsedHeight}px`;
 }
 
+function reportNavigationScheduleMinWidth(dates = []) {
+  const dayCount = Array.isArray(dates) ? dates.length : 0;
+  if (!dayCount) return null;
+  return 172 + (dayCount * 38) + 64;
+}
+
+function refreshReportNavigationScheduleLayout() {
+  if (!reportNavScheduleCard) return;
+  const payload = reportNavigationPayload || {};
+  const processes = reportNavigationDisplayProcesses(payload);
+  const dates = reportNavigationScheduleDates(payload.report_month, processes);
+  const scheduleMinWidth = reportNavigationScheduleMinWidth(dates);
+  if (scheduleMinWidth) {
+    reportNavScheduleCard.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);
+  } else {
+    reportNavScheduleCard.style.removeProperty("--report-nav-schedule-min-width");
+  }
+  // Force flex re-wrap after login/entry animation or late size changes.
+  void reportNavScheduleCard.offsetWidth;
+  syncReportNavigationTodoCardHeight();
+}
+
 function reportNavigationScheduleStepItems(process = {}) {
   const processCode = escapeHtml(String(process.process_code || ""));
   const processSteps = Array.isArray(process.steps) ? process.steps : [];
@@ -1976,13 +1998,15 @@ function renderReportNavigationSchedule(payload = {}) {
   if (reportNavScheduleRange) reportNavScheduleRange.textContent = reportNavigationScheduleRangeText(dates);
   if (!dates.length || !processes.length) {
     selectedReportNavigationScheduleProcessCode = "";
+    reportNavScheduleCard?.style.removeProperty("--report-nav-schedule-min-width");
     reportNavScheduleTable.innerHTML = '<div class="report-nav-process-empty">暂无报送日程</div>';
+    syncReportNavigationTodoCardHeight();
     return;
   }
   if (!processes.some((process) => process.process_code === selectedReportNavigationScheduleProcessCode)) {
     selectedReportNavigationScheduleProcessCode = "";
   }
-  const scheduleMinWidth = 172 + (dates.length * 38) + 64;
+  const scheduleMinWidth = reportNavigationScheduleMinWidth(dates);
   reportNavScheduleCard?.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);
   reportNavScheduleTable.style.setProperty("--report-nav-schedule-day-count", String(dates.length));
   const dateKeys = dates.map(reportNavigationDateKey);
@@ -2118,6 +2142,9 @@ function renderReportNavigationSchedule(payload = {}) {
   animateReportNavigationSort(reportNavScheduleTable, previousPositions);
   reportNavScheduleCard?.classList.toggle("has-selection", Boolean(selectedReportNavigationScheduleProcessCode));
   syncReportNavigationTodoCardHeight();
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(refreshReportNavigationScheduleLayout);
+  });
 }
 
 function selectReportNavigationScheduleProcess(processCode) {
@@ -2689,6 +2716,7 @@ function renderReportNavTodos(todos = []) {
   if (!reportNavTodoList) return;
   if (!items.length) {
     reportNavTodoList.innerHTML = '<p class="report-nav-todo-empty">暂无待办</p>';
+    syncReportNavigationTodoCardHeight();
     return;
   }
   reportNavTodoList.innerHTML = items.map((item, index) => {
@@ -2706,7 +2734,7 @@ function renderReportNavTodos(todos = []) {
           <h3>${title}</h3>
           <button type="button" class="report-nav-todo-action" data-todo-action="handle" aria-label="处理${title}">处理</button>
         </div>
-        ${summary ? `<p>${summary}</p>` : ""}
+        ${summary ? `<p class="report-nav-todo-summary">${summary}</p>` : ""}
         ${deadline}
       </div>
     </article>`;
@@ -2716,6 +2744,7 @@ function renderReportNavTodos(todos = []) {
       void handleReportNavTodoAction(items[index]?.action || {});
     });
   });
+  syncReportNavigationTodoCardHeight();
 }
 
 function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
@@ -2749,6 +2778,8 @@ function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
 
 function setReportNavigationLoadingState(state) {
   if (!reportNavPage) return;
+  const previous = String(reportNavPage.dataset.loadingState || "");
+  const wasHidden = previous === "initial-loading" || previous === "error-empty";
   const loading = state === "initial-loading" || state === "refreshing-with-cache";
   reportNavPage.dataset.loadingState = state;
   reportNavPage.setAttribute("aria-busy", loading ? "true" : "false");
@@ -2757,6 +2788,13 @@ function setReportNavigationLoadingState(state) {
   if (reportNavInitialLoadingText) reportNavInitialLoadingText.textContent = "正在读取最新统计结果…";
   reportNavInitialLoading?.classList.remove("error");
   reportNavRefreshButton?.classList.toggle("refreshing", state === "refreshing-with-cache");
+  const isHidden = state === "initial-loading" || state === "error-empty";
+  if (wasHidden && !isHidden) {
+    // Content was rendered while display:none; reflow after reveal.
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(refreshReportNavigationScheduleLayout);
+    });
+  }
 }
 
 function showReportNavigationEmptyLoadError() {
@@ -12779,7 +12817,7 @@ mainContent?.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true 
 window.addEventListener("resize", updateSpaceTopNavFrost);
 window.addEventListener("resize", fitHomeReportPeriodValue);
 window.addEventListener("resize", scheduleHomeChartsResize);
-window.addEventListener("resize", syncReportNavigationTodoCardHeight);
+window.addEventListener("resize", refreshReportNavigationScheduleLayout);
 
 // Initial load
 (async () => {

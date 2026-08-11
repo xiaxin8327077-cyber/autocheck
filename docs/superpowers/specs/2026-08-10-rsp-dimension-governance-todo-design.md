@@ -40,7 +40,7 @@
 **特殊处理内容**
 
 - 去掉：处理说明（`processing_content`）
-- 处理摘要：最多 50 字
+- 处理摘要：最多 128 字
 - 新增一组（单组，非多行）：
   - 处理表名
   - 处理字段名
@@ -121,7 +121,8 @@
 
 - `reports` 子表：保留；新数据不再写入；列表/弹窗不再展示
 - `processing_content`：列保留；新数据写空字符串；界面不再展示
-- `summary`：应用校验上限改为 50；DB `VARCHAR(200)` 不变
+- `summary`：应用校验上限改为 128；DB `VARCHAR(200)` 不变
+- `table_name` / `field_name` / `value_before` / `value_after`：应用校验上限均为 128（`value_*` DB 仍为 `VARCHAR(500)`）
 
 ## 5. 后端行为
 
@@ -144,7 +145,7 @@
 
 - `report_process_codes`、`report_period`、`handler_user_id`
 - `dimension`、`governance_owner_user_id`
-- `summary`（≤50）、`table_name`、`field_name`、`value_before`、`value_after`
+- `summary`（≤128）、`table_name`、`field_name`、`value_before`、`value_after`（均 ≤128）
 
 草稿可放宽，但字段长度仍校验。
 
@@ -257,7 +258,7 @@ register_todo_provider(
 
 ## 9. 测试计划
 
-1. 校验器：新字段必填、摘要 ≤50、维度枚举、负责人必填
+1. 校验器：新字段必填、摘要与表名/字段/前后值均 ≤128、维度枚举、负责人必填
 2. 存储迁移：新列读写
 3. 确认权限：负责人可确认；非负责人有能力码也拒绝；admin 可确认
 4. Todo provider：pending + 负责人匹配才返回；完成后消失

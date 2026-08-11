@@ -45,16 +45,32 @@ def test_validator_normalizes_complete_input_without_executing_script():
     assert value.special_handling_at.tzinfo == ZoneInfo("Asia/Shanghai")
 
 
-def test_draft_allows_business_fields_to_be_missing_except_process():
+def test_draft_allows_optional_business_fields_but_requires_table_and_field():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
     from auto_check.modules.report_special_processing.validator import validate_record_input
 
-    value = validate_record_input({"save_mode": "draft", "report_process_code": "pbc"})
+    value = validate_record_input({
+        "save_mode": "draft",
+        "report_process_code": "pbc",
+        "table_name": "t_draft",
+        "field_name": "col_a",
+    })
     assert value.report_process_codes == ("pbc",)
     assert value.reports == ()
     assert value.report_period is None
     assert value.handler_user_id is None
     assert value.dimension is None
     assert value.governance_owner_user_id is None
+    assert value.table_name == "t_draft"
+    assert value.field_name == "col_a"
+
+    with pytest.raises(ValidationError) as missing_table:
+        validate_record_input({"save_mode": "draft", "report_process_code": "pbc", "field_name": "col_a"})
+    assert "table_name" in missing_table.value.fields
+
+    with pytest.raises(ValidationError) as missing_field:
+        validate_record_input({"save_mode": "draft", "report_process_code": "pbc", "table_name": "t_draft"})
+    assert "field_name" in missing_field.value.fields
 
 
 def test_validator_accepts_multi_report_process_codes():
@@ -84,14 +100,14 @@ def test_validate_record_input_requires_dimension_fields_for_formal_save():
     assert "dimension" in exc.value.fields
 
 
-def test_summary_allows_50_chars_rejects_51():
+def test_summary_allows_128_chars_rejects_129():
     from auto_check.modules.report_special_processing.contracts import ValidationError
     from auto_check.modules.report_special_processing.validator import validate_record_input
 
-    payload = _payload(summary="字" * 50)
-    assert validate_record_input(payload).summary == "字" * 50
+    payload = _payload(summary="字" * 128)
+    assert validate_record_input(payload).summary == "字" * 128
     with pytest.raises(ValidationError):
-        validate_record_input({**payload, "summary": "字" * 51})
+        validate_record_input({**payload, "summary": "字" * 129})
 
 
 @pytest.mark.parametrize(
@@ -100,12 +116,12 @@ def test_summary_allows_50_chars_rejects_51():
         _payload(processing_script="汉" * 174763),
         _payload(report_period="2026-02-30"),
         _payload(special_handling_at="2026-08-01T15:32:18"),
-        _payload(summary="x" * 51),
+        _payload(summary="x" * 129),
         _payload(dimension="unknown"),
         _payload(table_name="t" * 129),
         _payload(field_name="f" * 129),
-        _payload(value_before="b" * 501),
-        _payload(value_after="a" * 501),
+        _payload(value_before="b" * 129),
+        _payload(value_after="a" * 129),
         {**_payload(), "creator_user_id": "forged"},
     ],
 )

@@ -158,22 +158,35 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
     table = read("components/record_table.js")
     ledger = read("pages/ledger.js")
 
-    assert "SUMMARY_MAX_LENGTH = 50" in drawer
+    assert "SUMMARY_MAX_LENGTH = 128" in drawer
+    assert "FIELD_TEXT_MAX_LENGTH = 128" in drawer
     assert 'maxlength: String(SUMMARY_MAX_LENGTH)' in drawer
+    assert 'maxlength: String(FIELD_TEXT_MAX_LENGTH)' in drawer
     assert "涉及报表" not in drawer
     assert "处理说明" not in drawer
     assert "所属维度" in drawer
     assert "数据治理负责人" in drawer
+    assert "处理编号" in drawer
+    assert 'aria-label": "处理编号"' in drawer
+    assert "rsp-readonly-input" in drawer
+    assert "保存后自动生成" in drawer
     assert "处理表名" in drawer
     assert "处理字段名" in drawer
     assert "修改前" in drawer
     assert "修改后" in drawer
+    assert 'labeledField(documentRef, "处理摘要", fields.summary, "rsp-stacked")' not in drawer
+    assert 'labeledField(documentRef, "处理摘要", fields.summary, "rsp-span-cols-2")' in drawer
     assert "源系统已确认" in drawer
     assert 'mode === "confirm"' in drawer or 'mode === "confirm"' in ledger
 
     assert 'pending: "待确认"' in table
     assert '["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"]' in table
     assert 'colspan: "8"' in table
+    assert "clampedTextCell" in table
+    assert "rsp-cell-clamp" in table
+    assert "rsp-cell-tip" in table
+    assert "showCellTip" in table
+    assert "-webkit-line-clamp: 3" in read("styles.css")
     assert "涉及报表" not in table
     assert 'text: "完成"' not in table
     assert 'text: "确认"' in table or '确认"' in table
@@ -228,7 +241,16 @@ def test_ledger_does_not_pass_null_availability_into_replace_children():
     assert "height: 32px" in css
     assert "width: 118px" in css
     assert ".rsp-form-grid-basic > label:not(.rsp-span-two) .custom-select-shell" in css
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
+    assert ".rsp-span-cols-2" in css
+    assert "grid-column: span 2" in css
+    assert "background: #e8eef6 !important" in css
+    assert ".rsp-record-modal input:disabled" in css
+    assert ".custom-select-disabled .custom-select-trigger" in css
+    assert ".rsp-multi-select-trigger:disabled" in css
     assert "--select-height: 32px !important" in css
+    assert '请填写处理表名' in read("components/record_drawer.js")
+    assert '请填写处理字段名' in read("components/record_drawer.js")
     assert "rsp-compact-select" in read("components/record_drawer.js")
     assert ".rsp-compact-select-dropdown .custom-select-option" in css
     assert "font-size: 12px" in css
@@ -258,7 +280,8 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert "暂无操作记录" in source
     assert 'creating || current.status === "draft"' in source
     assert 'footerButtons.push(actionButton(documentRef, "保存草稿"' in source
-    assert "SUMMARY_MAX_LENGTH = 50" in source
+    assert "SUMMARY_MAX_LENGTH = 128" in source
+    assert "FIELD_TEXT_MAX_LENGTH = 128" in source
     assert "validateForm" in source
     assert "showFormHint" in source
     assert "formatFieldMessage" in source
@@ -331,8 +354,13 @@ def test_ledger_row_actions_include_status_operations():
     assert ".rsp-row-actions-inner" in css
     assert "rsp-text-action-danger" in css
     assert "rsp-text-action-success" in css
-    assert 'width: 14%' in css
-    assert "padding-left: 28px" in css
+    assert 'width: 20%' in css
+    assert "min-width: calc(20em + 62px)" in css
+    assert "padding-left: 40px" in css
+    assert "padding-left: 22px" in css
+    assert "padding-left: 8px" in css
+    assert "padding-right: 22px" in css
+    assert "padding-right: 8px" in css
 
 
 def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
@@ -388,8 +416,9 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "grid-template-rows: auto auto minmax(0, 1fr) auto" in css
     assert "rsp-name-line" not in css
     assert "rsp-name-more" not in css
-    assert "rsp-cell-clamp" not in css
-    assert "-webkit-line-clamp" not in css
+    assert "rsp-cell-clamp" in css
+    assert "-webkit-line-clamp: 3" in css
+    assert "rsp-cell-tip" in css
     assert "scrollbar-width: thin" in css
     assert "processCatalog:" not in read("pages/ledger.js")
     assert "td.rsp-process-names" in css
@@ -404,7 +433,7 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "padding: 4px 0 12px" in css
     assert "padding: 12px 20px" in css
     assert "padding: 8px 20px" in css
-    assert "padding-left: 28px" in css
+    assert "padding-left: 40px" in css
     assert "padding-right: 20px" in css
     assert "\nbutton {" not in css
     assert "\ntable {" not in css

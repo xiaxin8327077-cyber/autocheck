@@ -53,6 +53,7 @@ _AUDIT_FIELD_LABELS = {
     "governance_owner_display_name_snapshot": "数据治理负责人",
     "status": "状态",
     "void_reason": "作废理由",
+    "reopen_reason": "重开原因",
 }
 _AUDIT_SKIP_KEYS = frozenset(
     {
@@ -475,7 +476,10 @@ class SpecialProcessingService:
                 "reopen",
                 current["status"],
                 "pending",
-                {"status": {"changed": True, "old": current["status"], "new": "pending"}},
+                {
+                    "status": {"changed": True, "old": current["status"], "new": "pending"},
+                    "reopen_reason": {"changed": True, "new": reason},
+                },
             ),
             request_id,
         )
@@ -664,6 +668,11 @@ class SpecialProcessingService:
                 reason_text = cls._format_audit_value(meta.get("new"))
                 if reason_text != "（空）":
                     parts.append(f"作废理由：{reason_text}")
+                continue
+            if key == "reopen_reason":
+                reason_text = cls._format_audit_value(meta.get("new"))
+                if reason_text != "（空）":
+                    parts.append(f"重开原因：{reason_text}")
                 continue
             old_text = cls._format_audit_value(meta.get("old"), field=key)
             new_text = cls._format_audit_value(meta.get("new"), field=key)

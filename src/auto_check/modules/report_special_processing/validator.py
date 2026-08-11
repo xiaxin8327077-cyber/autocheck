@@ -148,7 +148,7 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         save_mode=save_mode,
         report_process_codes=process_codes,
         reports=(),
-        summary=_text(payload.get("summary"), "summary", 50, required=formal),
+        summary=_text(payload.get("summary"), "summary", 128, required=formal),
         processing_content="",
         processing_script=script,
         report_period=_optional_date(payload.get("report_period"), "report_period", required=formal),
@@ -164,13 +164,13 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
             64,
             required=formal,
         ),
-        table_name=_optional_text_field(payload.get("table_name"), "table_name", 128, required=formal),
-        field_name=_optional_text_field(payload.get("field_name"), "field_name", 128, required=formal),
+        table_name=_optional_text_field(payload.get("table_name"), "table_name", 128, required=True),
+        field_name=_optional_text_field(payload.get("field_name"), "field_name", 128, required=True),
         value_before=_optional_text_field(
-            payload.get("value_before"), "value_before", 500, required=formal
+            payload.get("value_before"), "value_before", 128, required=formal
         ),
         value_after=_optional_text_field(
-            payload.get("value_after"), "value_after", 500, required=formal
+            payload.get("value_after"), "value_after", 128, required=formal
         ),
     )
 

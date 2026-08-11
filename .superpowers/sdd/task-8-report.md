@@ -6,7 +6,7 @@
 
 ## Commit
 
-- (pending at write time; see git log after commit) — `docs: note RSP dimension governance and confirmation todos`
+- `1556658` — `docs: note RSP dimension governance and confirmation todos`
 
 ## Version
 

@@ -2224,6 +2224,8 @@ def test_report_navigation_has_first_load_placeholder_and_accessible_loading_sta
     assert "function setReportNavigationLoadingState(state)" in app_js
     assert 'reportNavPage.dataset.loadingState = state;' in app_js
     assert 'reportNavPage.setAttribute("aria-busy"' in app_js
+    assert 'const wasHidden = previous === "initial-loading" || previous === "error-empty";' in app_js
+    assert "window.requestAnimationFrame(refreshReportNavigationScheduleLayout)" in app_js
     assert 'setReportNavigationLoadingState(restoredFromCache ? "refreshing-with-cache" : "initial-loading");' in app_js
     assert 'setReportNavigationLoadingState("ready");' in app_js
     assert 'setReportNavigationLoadingState(restoredFromCache ? "error-with-cache" : "error-empty");' in app_js
@@ -2879,7 +2881,9 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "min-width: min(100%, var(--report-nav-schedule-min-width, 1148px));" in css
     assert "flex: 1 1 320px;" in css
     assert "grid-template-columns: 172px minmax(0, 1fr);" in css
-    assert "const scheduleMinWidth = 172 + (dates.length * 38) + 64;" in app_js
+    assert "function reportNavigationScheduleMinWidth(dates = [])" in app_js
+    assert "return 172 + (dayCount * 38) + 64;" in app_js
+    assert "function refreshReportNavigationScheduleLayout()" in app_js
     assert 'reportNavScheduleCard?.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);' in app_js
     assert 'const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");' in app_js
     assert "function syncReportNavigationTodoCardHeight()" in app_js
@@ -2889,7 +2893,27 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "scheduleHeight - detailHeight" in app_js
     assert 'reportNavTodoCard.style.removeProperty("height");' in app_js
     assert "syncReportNavigationTodoCardHeight();" in app_js
-    assert 'window.addEventListener("resize", syncReportNavigationTodoCardHeight);' in app_js
+    assert 'class="report-nav-todo-summary"' in app_js
+    assert "#page-report-navigation .report-nav-todo-summary" in css
+    assert "text-overflow: ellipsis" in css
+    todo_summary = re.search(
+        r"#page-report-navigation \.report-nav-todo-summary\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert todo_summary is not None
+    assert "overflow: hidden" in todo_summary.group("body")
+    assert "white-space: nowrap" in todo_summary.group("body")
+    assert 'window.addEventListener("resize", refreshReportNavigationScheduleLayout);' in app_js
+    reveal_fn = re.search(
+        r"function revealAuthenticatedApp\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert reveal_fn is not None
+    reveal_body = reveal_fn.group("body")
+    assert "refreshReportNavigationScheduleLayout();" in reveal_body
+    assert "window.requestAnimationFrame(refreshReportNavigationScheduleLayout)" in reveal_body
     assert 'class="report-nav-schedule-header-label" aria-hidden="true"></div>' in app_js
     assert ">流程 / 进度</div>" not in app_js
 
@@ -5076,7 +5100,6 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".nav-item",
         ".nav-group-toggle",
         ".nav-submenu",
-        '[data-theme="space-tech"] .top-nav',
         '[data-theme="space-tech"] .top-nav-item',
         '[data-theme="space-tech"] .top-nav-group-toggle',
         '[data-theme="space-tech"] .top-nav-submenu',
@@ -7056,10 +7079,12 @@ def test_space_tech_theme_hides_in_page_heading_text_and_tightens_gap():
 
     assert '[data-theme="space-tech"] .page-header h2' in css
     assert '[data-theme="space-tech"] .page-header' in css
-    assert "margin: 12px 32px 0" in css
-    assert "padding: 64px 0 32px" in css
-    assert "margin: 8px 14px 0" in css
-    assert "padding: 78px 0 18px" in css
+    # Edge-stuck shell: content hugs the nav without floating offsets.
+    assert "padding: 12px 32px 32px" in css
+    assert "margin: 12px 32px 0" not in css
+    assert "padding: 64px 0 32px" not in css
+    assert "margin: 8px 14px 0" not in css
+    assert "padding: 78px 0 18px" not in css
 
 
 def test_theme_is_saved_per_user_without_updating_global_defaults():
@@ -7557,6 +7582,7 @@ def test_index_hides_home_until_auth_check_finishes():
     assert 'document.documentElement.classList.add("main-entry-animate");' in app_js
     assert 'document.documentElement.classList.remove("auth-pending");' in app_js
     assert 'document.documentElement.classList.remove("main-entry-animate");' in app_js
+    assert "refreshReportNavigationScheduleLayout();" in app_js
     assert ".main-entry-animate .sidebar" in css
     assert ".main-entry-animate .top-nav" in css
     assert ".main-entry-animate .main-content" in css
@@ -8443,6 +8469,22 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "width: 0" in webkit_scrollbar.group("body")
     assert "height: 0" in webkit_scrollbar.group("body")
 
+    history_scroll = re.search(
+        r"(?m)^\.app-modal-shell\.modal-info--history-detail \.history-detail\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert history_scroll is not None
+    assert "scrollbar-width: thin" in history_scroll.group("body")
+    assert "scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent" in history_scroll.group("body")
+    assert "--ui-thin-scrollbar-size: 6px;" in css
+    assert "--ui-thin-scrollbar-thumb: #c5d0e0;" in css
+    assert (
+        ".app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar"
+        in css
+    )
+    assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
+
     modal_body = re.search(
         r"(?m)^\.app-modal-shell:not\(#pbcModal\):not\(#dbValidationModal\):not\(#flowModal\)"
         r" > \.app-modal-body\s*\{(?P<body>.*?)\}",
@@ -8451,6 +8493,115 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     )
     assert modal_body is not None
     assert "overflow: auto" in modal_body.group("body")
+
+
+def test_report_navigation_and_settings_show_thin_main_content_scrollbar():
+    css = _read(STYLES_CSS)
+    html = _read(INDEX_HTML)
+
+    page_scroll = re.search(
+        r"(?m)^:root\[data-page=\"report-navigation\"\]\[data-theme=\"space-tech\"\] \.main-content,\s*\n"
+        r":root\[data-page=\"settings\"\]\[data-theme=\"space-tech\"\] \.main-content\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert page_scroll is not None
+    body = page_scroll.group("body")
+    assert "scrollbar-width: thin" in body
+    assert "scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent" in body
+    assert "margin-top: 76px" not in body
+    assert "height: calc(100vh - 76px)" not in body
+    assert (
+        ':root[data-page="report-navigation"][data-theme="space-tech"] .main-content::-webkit-scrollbar'
+        in css
+    )
+    assert (
+        ':root[data-page="settings"][data-theme="space-tech"] .main-content::-webkit-scrollbar'
+        in css
+    )
+    assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
+    assert "background: var(--ui-thin-scrollbar-thumb, #c5d0e0);" in css
+    assert 'href="/styles.css?v=20260810u"' in html
+    assert 'src="/app.js?v=20260810u"' in html
+
+
+def test_space_tech_top_nav_is_edge_stuck_not_floating():
+    css = _read(STYLES_CSS)
+
+    space_top_nav = re.search(
+        r'\[data-theme="space-tech"\] \.top-nav\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert space_top_nav is not None
+    body = space_top_nav.group("body")
+    assert "position: relative" in body
+    assert "top: 0" in body
+    assert "left: 0" in body
+    assert "right: 0" in body
+    assert "width: 100%" in body
+    assert "border-radius: 0 !important" in body
+    assert "border-bottom: 1px solid rgba(148, 163, 184, 0.22)" in body
+    assert "box-shadow: none" in body
+    assert "background: var(--surface-container-lowest)" in body
+    assert "backdrop-filter: none" in body
+    assert "overflow: visible" in body
+    assert "z-index: 40" in body
+    assert "padding: 8px 32px;" in body
+    assert "flex: 0 0 auto" in body
+    assert '[data-theme="space-tech"] .top-nav,' not in css.split("User interface radius preference: start", 1)[1].split("User interface radius preference: end", 1)[0]
+    # Active tab keeps Logo gradient but never casts a blue glow under the nav.
+    assert "0 8px 18px rgba(59, 130, 246, 0.24)" not in css
+    assert "Keep Logo gradient fill; do not cast a blue glow under the active tab." in css
+    assert (
+        ".top-nav-item.active,\n.top-nav-group.active > .top-nav-group-toggle,\n.nav-item.active,"
+        not in css
+    )
+    assert (
+        ".nav-item.active,\n.nav-group.active > .nav-group-toggle,\n.btn-primary,"
+        in css
+    )
+    assert "box-shadow: 0 6px 16px var(--theme-focus-ring);" in css
+    glow_cleanup = re.search(
+        r"/\* Top nav glow cleanup:[\s\S]*?\*/\n(?P<sel>[^{]+)\{(?P<body>[^}]+)\}",
+        css,
+    )
+    assert glow_cleanup is not None
+    assert ".top-nav .top-nav-item.active" in glow_cleanup.group("sel")
+    assert "box-shadow: none !important;" in glow_cleanup.group("body")
+    assert "filter: none !important;" in glow_cleanup.group("body")
+    assert "top-nav-glow-off-20260810t" in css
+    assert "-webkit-box-shadow: none !important;" in css
+    assert "Clip Edge antialias fringe around the rounded gradient pill." in css
+    assert "background-image: var(--theme-accent-gradient) !important;" in css
+    assert "transition: color var(--transition-fast), background-color var(--transition-fast);" in css
+    assert "transition: all var(--transition-fast);" not in re.search(
+        r"(?m)^\.top-nav-item\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    ).group("body")
+
+    space_body = re.search(r'\[data-theme="space-tech"\] body\s*\{(?P<body>.*?)\}', css, re.S)
+    assert space_body is not None
+    assert "flex-direction: column" in space_body.group("body")
+    assert "height: 100vh" in space_body.group("body")
+    assert "overflow: hidden" in space_body.group("body")
+
+    main_content = re.search(
+        r"\[data-theme=\"space-tech\"\] \.main-content\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert main_content is not None
+    main_body = main_content.group("body")
+    assert "flex: 1 1 auto" in main_body
+    assert "margin: 0" in main_body
+    assert "padding: 12px 32px 32px" in main_body
+    assert "border-radius: 0" in main_body
+    assert "background: var(--surface-container-lowest)" in main_body
+    assert "height: calc(100vh - 12px)" not in main_body
+    assert "margin: 12px 32px 0" not in main_body
+    assert "padding: 64px 0 32px" not in main_body
 
 
 def test_history_list_shows_loading_animation_while_fetching():
@@ -9094,8 +9245,8 @@ def test_space_tech_top_nav_aligns_with_content_padding():
 
     top_nav = re.search(r"(?m)^\.top-nav\s*\{(?P<body>.*?)\}", css, re.S)
     assert top_nav is not None
-    assert "left: 32px" in top_nav.group("body")
-    assert "right: 32px" in top_nav.group("body")
+    # Base rule may still describe the legacy floating shell; space-tech overrides to edge-stuck.
+    assert "position: fixed" in top_nav.group("body")
 
     space_top_nav = re.search(
         r'\[data-theme="space-tech"\] \.top-nav\s*\{(?P<body>.*?)\}',
@@ -9103,19 +9254,21 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert space_top_nav is not None
-    assert "backdrop-filter: blur(18px) saturate(1.1);" in space_top_nav.group("body")
-    assert "-webkit-backdrop-filter: blur(18px) saturate(1.1);" in space_top_nav.group("body")
+    assert "background: var(--surface-container-lowest);" in space_top_nav.group("body")
+    assert "backdrop-filter: none;" in space_top_nav.group("body")
+    assert "-webkit-backdrop-filter: none;" in space_top_nav.group("body")
+    assert "position: relative" in space_top_nav.group("body")
+    assert "left: 0" in space_top_nav.group("body")
+    assert "right: 0" in space_top_nav.group("body")
+    assert "border-radius: 0 !important" in space_top_nav.group("body")
 
     assert "const topNav = document.querySelector(\".top-nav\");" in app_js
     assert "const mainContent = document.querySelector(\".main-content\");" in app_js
     assert "function updateSpaceTopNavFrost()" in app_js
-    assert "mainContent?.scrollTop || 0" in app_js
-    assert "Array.from(pages).find" in app_js
-    assert "window.getComputedStyle(page).display !== \"none\"" in app_js
-    assert "getBoundingClientRect().bottom" in app_js
-    assert "getBoundingClientRect().top" in app_js
-    assert "scrollOffset > 1" in app_js
-    assert 'document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);' in app_js
+    # Edge-stuck opaque nav clears frost instead of toggling it on scroll.
+    assert 'document.documentElement.classList.remove("space-nav-over-content");' in app_js
+    assert 'document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);' not in app_js
+    assert "scrollOffset > 1" not in app_js
     assert 'window.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true });' in app_js
     assert 'mainContent?.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true });' in app_js
     assert "function handleMainContentScroll()" not in app_js
@@ -9147,16 +9300,18 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     )
     assert main_content is not None
     main_content_body = main_content.group("body")
-    assert "height: calc(100vh - 12px)" in main_content_body
-    assert "margin: 12px 32px 0" in main_content_body
-    assert "padding: 64px 0 32px" in main_content_body
-    assert "border: 0" in main_content_body
-    assert "border-radius: 12px 12px 0 0" in main_content_body
-    assert "background: transparent" in main_content_body
+    assert "flex: 1 1 auto" in main_content_body
+    assert "margin: 0" in main_content_body
+    assert "padding: 12px 32px 32px" in main_content_body
+    assert "border-radius: 0" in main_content_body
+    assert "background: var(--surface-container-lowest)" in main_content_body
     assert "overflow-x: hidden" in main_content_body
     assert "overflow-y: auto" in main_content_body
     assert "--space-scrollbar-top-offset" not in main_content_body
     assert "scrollbar-width: none" in main_content_body
+    assert "height: calc(100vh - 12px)" not in main_content_body
+    assert "margin: 12px 32px 0" not in main_content_body
+    assert "padding: 64px 0 32px" not in main_content_body
 
     hidden_scrollbar = re.search(
         r"\[data-theme=\"space-tech\"\] \.main-content::-webkit-scrollbar\s*\{(?P<body>.*?)\}",
@@ -9203,8 +9358,10 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert mobile_top_nav is not None
-    assert "left: 14px" in mobile_top_nav.group("body")
-    assert "right: 14px" in mobile_top_nav.group("body")
+    assert "left: 0" in mobile_top_nav.group("body")
+    assert "right: 0" in mobile_top_nav.group("body")
+    assert "width: 100%" in mobile_top_nav.group("body")
+    assert "border-radius: 0" in mobile_top_nav.group("body")
 
     mobile_main_content = re.search(
         r"\[data-theme=\"space-tech\"\] \.main-content\s*\{(?P<body>.*?)\}",
@@ -9213,10 +9370,13 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     )
     assert mobile_main_content is not None
     mobile_main_content_body = mobile_main_content.group("body")
-    assert "height: calc(100vh - 8px)" in mobile_main_content_body
-    assert "margin: 8px 14px 0" in mobile_main_content_body
-    assert "padding: 78px 0 18px" in mobile_main_content_body
+    assert "height: auto" in mobile_main_content_body
+    assert "margin: 0" in mobile_main_content_body
+    assert "padding: 12px 14px 18px" in mobile_main_content_body
     assert "--space-scrollbar-top-offset" not in mobile_main_content_body
+    assert "height: calc(100vh - 8px)" not in mobile_main_content_body
+    assert "margin: 8px 14px 0" not in mobile_main_content_body
+    assert "padding: 78px 0 18px" not in mobile_main_content_body
 
     compact_css = css[css.index("@media (max-width: 640px)") :]
     compact_top_nav = re.search(
@@ -9225,7 +9385,11 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert compact_top_nav is not None
-    assert "max-width: calc(100vw - 20px)" in compact_top_nav.group("body")
+    assert "left: 0" in compact_top_nav.group("body")
+    assert "right: 0" in compact_top_nav.group("body")
+    assert "width: 100%" in compact_top_nav.group("body")
+    assert "max-width: none" in compact_top_nav.group("body")
+    assert "max-width: calc(100vw - 20px)" not in compact_top_nav.group("body")
     compact_tabs = re.search(
         r"\[data-theme=\"space-tech\"\] \.top-nav-tabs\s*\{(?P<body>.*?)\}",
         compact_css,

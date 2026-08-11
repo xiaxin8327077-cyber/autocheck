@@ -205,7 +205,16 @@ def test_confirm_denied_for_non_governance_owner_even_with_capability():
 def test_draft_can_be_partial_but_completion_requires_complete_data():
     from auto_check.modules.report_special_processing.contracts import ValidationError
     service = _service()
-    draft = service.create({"save_mode": "draft", "report_process_code": "pbc"}, {"id": "1", "username": "creator", "role": "user"}, request_id="req")
+    draft = service.create(
+        {
+            "save_mode": "draft",
+            "report_process_code": "pbc",
+            "table_name": "t_draft",
+            "field_name": "col_a",
+        },
+        {"id": "1", "username": "creator", "role": "user"},
+        request_id="req",
+    )
     with pytest.raises(ValidationError):
         service.change_status(draft["id"], {"target_status": "pending", "row_version": 1}, {"id": "1", "role": "user"}, request_id="req")
 
@@ -248,6 +257,11 @@ def test_complete_and_void_write_explicit_audit_summaries():
         admin,
         request_id="req-reopen",
     )
+    assert service.storage.audits[-1]["action_summary"].splitlines() == [
+        "重开记录：",
+        "1.状态由已完成改为待确认",
+        "2.重开原因：补充",
+    ]
     service.void(
         reopened["id"],
         {"row_version": reopened["row_version"], "reason": "口径失效"},
@@ -265,7 +279,13 @@ def test_draft_create_and_update_audit_summary():
     service = _service()
     actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
     draft = service.create(
-        {"save_mode": "draft", "report_process_code": "pbc", "summary": "草稿摘要"},
+        {
+            "save_mode": "draft",
+            "report_process_code": "pbc",
+            "summary": "草稿摘要",
+            "table_name": "t_draft",
+            "field_name": "col_a",
+        },
         actor,
         request_id="req-draft",
     )
@@ -277,6 +297,8 @@ def test_draft_create_and_update_audit_summary():
             "report_process_code": "pbc",
             "row_version": draft["row_version"],
             "summary": "新草稿摘要",
+            "table_name": "t_draft",
+            "field_name": "col_a",
         },
         actor,
         request_id="req-draft-update",
@@ -289,7 +311,13 @@ def test_draft_can_be_voided_by_admin():
     service = _service()
     admin = {"id": "9", "username": "admin", "display_name": "管理员", "role": "admin"}
     draft = service.create(
-        {"save_mode": "draft", "report_process_code": "pbc", "summary": "草稿"},
+        {
+            "save_mode": "draft",
+            "report_process_code": "pbc",
+            "summary": "草稿",
+            "table_name": "t_draft",
+            "field_name": "col_a",
+        },
         {"id": "1", "username": "creator", "role": "user"},
         request_id="req-draft",
     )

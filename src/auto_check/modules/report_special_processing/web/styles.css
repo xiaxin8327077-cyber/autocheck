@@ -451,13 +451,26 @@
   white-space: nowrap;
 }
 
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(-n+3),
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:nth-child(-n+3) {
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(n+4):nth-child(-n+7),
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:nth-child(n+4):nth-child(-n+7) {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:first-child,
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:first-child {
-  padding-left: 28px;
+  padding-left: 40px;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:last-child,
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:last-child {
+  padding-left: 8px;
   padding-right: 20px;
 }
 
@@ -474,14 +487,20 @@
   background: #f3f5f8;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) { width: 12%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(2) { width: 12%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 12%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 14%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 8%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 9%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 14%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(8) { width: 14%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) {
+  width: 20%;
+  min-width: calc(20em + 62px);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:nth-child(1) {
+  min-width: calc(20em + 62px);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(2) { width: 11%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 11%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 12%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 7%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 8%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 13%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(8) { width: 13%; }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-row-actions {
   overflow: hidden;
@@ -516,6 +535,51 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table tbody tr.is-highlighted {
   background: #eef5ff;
   box-shadow: inset 3px 0 0 var(--rsp-brand);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-clamp-cell {
+  overflow: hidden;
+  vertical-align: middle;
+  text-align: center;
+  white-space: normal;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-cell-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  max-height: calc(1.4em * 3);
+  margin: 0 auto;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  text-overflow: ellipsis;
+  word-break: break-all;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  outline: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-cell-tip,
+.rsp-cell-tip {
+  position: fixed;
+  z-index: 12000;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #d0d8e4;
+  border-radius: var(--ui-radius, 4px);
+  background: #ffffff;
+  color: var(--rsp-text, #17233c);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  box-shadow: 0 8px 20px rgba(23, 35, 60, 0.14);
+  pointer-events: none;
+}
+
+.rsp-cell-tip[hidden] {
+  display: none !important;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-process-names {
@@ -845,7 +909,7 @@
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic {
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   column-gap: 14px;
 }
 
@@ -860,7 +924,9 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid .rsp-field-label,
 .auto-check-module[data-module="report_special_processing"] .rsp-stacked .rsp-field-label {
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-field-hint {
@@ -884,7 +950,7 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input,
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) select {
   box-sizing: border-box;
-  width: 160px;
+  width: 100%;
   max-width: 100%;
   height: 32px;
   min-height: 32px;
@@ -895,21 +961,22 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input[type="date"],
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input.custom-date-input {
-  width: 118px;
+  width: 100%;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-select-shell {
-  width: 160px !important;
+  width: 100% !important;
   max-width: 100% !important;
   height: 32px !important;
   min-height: 32px !important;
-  --select-width: 160px !important;
+  --select-width: 100% !important;
   --select-height: 32px !important;
   --select-font-size: 12px !important;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-select-trigger {
   box-sizing: border-box !important;
+  width: 100% !important;
   height: 32px !important;
   min-height: 32px !important;
   padding: 0 28px 0 8px !important;
@@ -919,12 +986,12 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-date-shell,
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) .custom-input-shell.custom-date-shell {
-  width: 118px !important;
-  min-width: 118px !important;
-  max-width: 118px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
   height: 32px !important;
   min-height: 32px !important;
-  --input-width: 118px !important;
+  --input-width: 100% !important;
   --input-height: 32px !important;
   --input-font-size: 12px !important;
 }
@@ -947,6 +1014,64 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-process-field .rsp-multi-select {
   width: 100%;
   max-width: 100%;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-field .rsp-readonly-input,
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label.rsp-readonly-field input:disabled {
+  color: var(--rsp-muted) !important;
+  background: #e8eef6 !important;
+  border-color: #d0d8e4 !important;
+  cursor: default;
+  opacity: 1 !important;
+  -webkit-text-fill-color: var(--rsp-muted);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal input:disabled,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal select:disabled,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal textarea:disabled,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-script:disabled,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-multi-select-trigger:disabled {
+  color: var(--rsp-muted) !important;
+  background: #e8eef6 !important;
+  border-color: #d0d8e4 !important;
+  cursor: default;
+  opacity: 1 !important;
+  -webkit-text-fill-color: var(--rsp-muted);
+  box-shadow: none !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-disabled,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-shell.custom-select-disabled,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-shell:has(select:disabled),
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell:has(input:disabled),
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-input-shell:has(input:disabled),
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .rsp-multi-select.is-disabled {
+  background: #e8eef6 !important;
+  border-color: #d0d8e4 !important;
+  cursor: default;
+  opacity: 1 !important;
+  box-shadow: none !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-disabled .custom-select-trigger,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-shell.custom-select-disabled .custom-select-trigger,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-select-shell:has(select:disabled) .custom-select-trigger {
+  color: var(--rsp-muted) !important;
+  background: #e8eef6 !important;
+  border-color: #d0d8e4 !important;
+  cursor: default;
+  opacity: 1 !important;
+  -webkit-text-fill-color: var(--rsp-muted);
+  box-shadow: none !important;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-date-shell:has(input:disabled) input,
+.auto-check-module[data-module="report_special_processing"] .rsp-record-modal .custom-input-shell:has(input:disabled) input {
+  color: var(--rsp-muted) !important;
+  background: transparent !important;
+  -webkit-text-fill-color: var(--rsp-muted);
+  cursor: default;
+  opacity: 1 !important;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-process-field .rsp-multi-select-panel {
@@ -1086,6 +1211,10 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-span-two {
   grid-column: 1 / -1;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-span-cols-2 {
+  grid-column: span 2;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-field-label {

@@ -2,7 +2,8 @@ import { element, labeledField, option } from "./dom.js";
 import { formatDisplayDateTime } from "./record_table.js";
 import { createProcessMultiSelect } from "./process_multi_select.js";
 
-const SUMMARY_MAX_LENGTH = 50;
+const SUMMARY_MAX_LENGTH = 128;
+const FIELD_TEXT_MAX_LENGTH = 128;
 
 function nowHandlingAt() {
   const date = new Date();
@@ -159,26 +160,33 @@ export function createRecordDrawer(documentRef, options) {
     tableName: element(documentRef, "input", {
       value: current.table_name || "",
       "aria-label": "处理表名",
-      maxlength: "128",
+      maxlength: String(FIELD_TEXT_MAX_LENGTH),
       disabled: !canEdit,
     }),
     fieldName: element(documentRef, "input", {
       value: current.field_name || "",
       "aria-label": "处理字段名",
-      maxlength: "128",
+      maxlength: String(FIELD_TEXT_MAX_LENGTH),
       disabled: !canEdit,
     }),
     valueBefore: element(documentRef, "input", {
       value: current.value_before || "",
       "aria-label": "修改前",
-      maxlength: "500",
+      maxlength: String(FIELD_TEXT_MAX_LENGTH),
       disabled: !canEdit,
     }),
     valueAfter: element(documentRef, "input", {
       value: current.value_after || "",
       "aria-label": "修改后",
-      maxlength: "500",
+      maxlength: String(FIELD_TEXT_MAX_LENGTH),
       disabled: !canEdit,
+    }),
+    recordNo: element(documentRef, "input", {
+      className: "rsp-readonly-input",
+      value: current.record_no || "",
+      "aria-label": "处理编号",
+      placeholder: creating ? "保存后自动生成" : "",
+      disabled: true,
     }),
     script: element(documentRef, "textarea", { className: "rsp-script", "aria-label": "处理脚本", spellcheck: "false", disabled: !canEdit }),
   };
@@ -274,6 +282,16 @@ export function createRecordDrawer(documentRef, options) {
   }
   function validateForm() {
     clearFormHint();
+    const tableName = fields.tableName.value.trim();
+    if (!tableName) {
+      showFormHint("请填写处理表名", fields.tableName);
+      return false;
+    }
+    const fieldName = fields.fieldName.value.trim();
+    if (!fieldName) {
+      showFormHint("请填写处理字段名", fields.fieldName);
+      return false;
+    }
     const summary = fields.summary.value.trim();
     if (summary.length > SUMMARY_MAX_LENGTH) {
       showFormHint(`处理摘要最多支持${SUMMARY_MAX_LENGTH}个字符`, fields.summary);
@@ -404,16 +422,17 @@ export function createRecordDrawer(documentRef, options) {
       labeledField(documentRef, "处理人", fields.handler),
       labeledField(documentRef, "所属维度", fields.dimension),
       labeledField(documentRef, "数据治理负责人", fields.governanceOwner),
+      labeledField(documentRef, "处理编号", fields.recordNo, "rsp-readonly-field"),
     ]),
   ]);
   const content = element(documentRef, "section", { className: "rsp-modal-section" }, [
     element(documentRef, "h3", { text: "特殊处理内容" }),
-    labeledField(documentRef, "处理摘要", fields.summary, "rsp-stacked"),
     element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, [
       labeledField(documentRef, "处理表名", fields.tableName),
       labeledField(documentRef, "处理字段名", fields.fieldName),
       labeledField(documentRef, "修改前", fields.valueBefore),
       labeledField(documentRef, "修改后", fields.valueAfter),
+      labeledField(documentRef, "处理摘要", fields.summary, "rsp-span-cols-2"),
     ]),
   ]);
   const script = element(documentRef, "section", { className: "rsp-modal-section" }, [

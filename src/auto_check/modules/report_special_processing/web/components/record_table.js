@@ -21,6 +21,66 @@ function cell(documentRef, text, className = "") {
   return element(documentRef, "td", { className, text: text || "—", title: text || "" });
 }
 
+function ensureCellTip(documentRef) {
+  let tip = documentRef.getElementById("rsp-cell-tip");
+  if (tip) return tip;
+  tip = element(documentRef, "div", {
+    id: "rsp-cell-tip",
+    className: "rsp-cell-tip",
+    role: "tooltip",
+    hidden: "",
+  });
+  documentRef.body.append(tip);
+  return tip;
+}
+
+function hideCellTip(documentRef) {
+  const tip = documentRef.getElementById("rsp-cell-tip");
+  if (!tip) return;
+  tip.hidden = true;
+  tip.textContent = "";
+}
+
+function showCellTip(documentRef, anchor, text) {
+  if (!text) return;
+  if (anchor.scrollHeight <= anchor.clientHeight + 1) return;
+  const tip = ensureCellTip(documentRef);
+  tip.textContent = text;
+  tip.hidden = false;
+  const rect = anchor.getBoundingClientRect();
+  const tipWidth = Math.min(360, Math.max(180, rect.width));
+  tip.style.width = `${tipWidth}px`;
+  tip.style.maxWidth = "min(360px, calc(100vw - 24px))";
+  const tipRect = tip.getBoundingClientRect();
+  let left = rect.left;
+  let top = rect.bottom + 8;
+  if (left + tipRect.width > window.innerWidth - 12) {
+    left = Math.max(12, window.innerWidth - tipRect.width - 12);
+  }
+  if (top + tipRect.height > window.innerHeight - 12) {
+    top = Math.max(12, rect.top - tipRect.height - 8);
+  }
+  tip.style.left = `${Math.max(12, left)}px`;
+  tip.style.top = `${top}px`;
+}
+
+function clampedTextCell(documentRef, text) {
+  const value = String(text || "").trim();
+  const display = value || "—";
+  const content = element(documentRef, "div", {
+    className: "rsp-cell-clamp",
+    text: display,
+  });
+  if (value) {
+    content.addEventListener("mouseenter", () => showCellTip(documentRef, content, value));
+    content.addEventListener("mouseleave", () => hideCellTip(documentRef));
+    content.addEventListener("focus", () => showCellTip(documentRef, content, value));
+    content.addEventListener("blur", () => hideCellTip(documentRef));
+    content.tabIndex = 0;
+  }
+  return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
+}
+
 function displayWidth(text) {
   let width = 0;
   for (const char of String(text || "")) {
@@ -133,9 +193,9 @@ export function createRecordTable(documentRef, records, { selectedId, highlightI
       dataset: { recordId: String(record.id) },
       "aria-label": `${record.record_no || "记录"}，${record.field_name || record.summary || "未填写字段"}`,
     }, [
-      cell(documentRef, record.field_name),
-      cell(documentRef, record.value_before),
-      cell(documentRef, record.value_after),
+      clampedTextCell(documentRef, record.field_name),
+      clampedTextCell(documentRef, record.value_before),
+      clampedTextCell(documentRef, record.value_after),
       processNamesCell(documentRef, record),
       element(documentRef, "td", {}, [element(documentRef, "span", { className: `rsp-status rsp-status-${record.status}`, text: STATUS_LABELS[record.status] || record.status })]),
       cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),
