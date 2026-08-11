@@ -3538,7 +3538,7 @@ def test_report_navigation_docs_changelog_and_page_titles_are_updated():
     assert "默认进入“报送导航”" in readme
 
     current_changelog = re.search(
-        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)</div>\s*<div class="changelog-item">',
+        r'<span class="changelog-version">v1\.2\.13</span>(?P<body>.*?)</div>\s*<div class="changelog-item">',
         app_js,
         re.S,
     )
@@ -4255,7 +4255,7 @@ def test_changelog_documents_latest_setting_and_cleanup_changes():
     app_js = _read(APP_JS)
 
     for text in [
-        "v1.3.0",
+        "v1.2.2",
         "新增后台执行、停止执行和执行日志。",
         "新增默认设置持久化、历史分页和系统信息操作反馈。",
         "新增估值表资产合计列、导出详情和 1541 财产权核对。",
@@ -4284,7 +4284,7 @@ def test_changelog_documents_latest_setting_and_cleanup_changes():
 def test_v21_changelog_documents_interface_radius_concisely():
     app_js = _read(APP_JS)
     changelog = re.search(
-        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)<div class="changelog-item">',
+        r'<span class="changelog-version">v1\.2\.13</span>(?P<body>.*?)<div class="changelog-item">',
         app_js,
         re.S,
     )
@@ -4326,10 +4326,10 @@ def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
         "当前唯一启用的浅色主题",
     ]:
         assert text in readme
-    assert "`v2.1` (2026-07-18) 主要变化：" in readme
+    assert "`v1.2.13` (2026-07-18) 主要变化：" in readme
 
     current = re.search(
-        r'<span class="changelog-version">v2\.1</span>(?P<body>.*?)<div class="changelog-item">',
+        r'<span class="changelog-version">v1\.2\.13</span>(?P<body>.*?)<div class="changelog-item">',
         app_js,
         re.S,
     )
@@ -4370,15 +4370,15 @@ def test_version_206_documents_db_validation_engine_update():
     assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
 
     for text in [
-        "v2.1",
-        "v2.0.8",
+        "v1.2.13",
+        "v1.2.12",
         "新增监管智核品牌名称和系统 Logo。",
         "首页组合图表指标改为每期差异个数。",
-        "v2.0.7",
+        "v1.2.11",
         "新增流程链配置、手工执行及执行记录查看。",
         "流程链配置支持从流程表选择流程。",
         "自动对数新增3001共同类科目与实收本金多次重复识别。",
-        "v2.0.6",
+        "v1.2.10",
         "新增人行逐笔校验引擎公开信息校验、模板校验和规则说明能力。",
         "自动对数差异原因调整为固定基础分类，细分原因在详情展示。",
         "自动对数资产缺失细分新增多资产格式化具体原因和详情表格。",
@@ -4404,7 +4404,7 @@ def test_version_206_documents_db_validation_engine_update():
         assert text in app_js
 
     for text in [
-        "v2.0.7",
+        "v1.2.11",
         "自动对数资产端候选新增 `3001.XX` 正数共同类科目",
         "自动对数实收本金重复支持多次重复计入识别",
         "新增流程执行工具",
@@ -4414,7 +4414,7 @@ def test_version_206_documents_db_validation_engine_update():
         "sp_task.end_time",
         "仅支持手工执行",
         "流程功能独立于自动对数",
-        "v2.0.6",
+        "v1.2.10",
         "人行逐笔校验引擎新增数据库逐笔校验能力",
         "新增公开信息交叉校验",
         "新增模板交叉校验",
@@ -4529,7 +4529,7 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
         assert "A compact ZX monogram" not in asset
 
     for text in [
-        "v2.0.8",
+        "v1.2.12",
         "新增监管智核品牌名称和系统 Logo。",
         "新增点击 Logo 切换主题能力。",
         "新增登录进入主界面动效。",
@@ -4538,7 +4538,7 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
         assert text in app_js
 
     for text in [
-        "v2.0.8",
+        "v1.2.12",
         "系统对外名称更新为“监管智核”",
         "使用 `logo/regulatory-intelligence-core` 资源包中的双环对勾设计替换系统 Logo",
         "主应用、登录页、关于系统和浏览器页签品牌文案同步调整",
@@ -4574,8 +4574,8 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
         "表字段配置保存失败弹框按缺失字段逐行展示",
         "自动对账表字段配置新增“标准中文名”输入框",
     ]
-    assert "`v2.1` (2026-07-18) 主要变化：" in readme
-    assert '<span class="changelog-version">v2.1</span>' in app_js
+    assert "`v1.2.13` (2026-07-18) 主要变化：" in readme
+    assert '<span class="changelog-version">v1.2.13</span>' in app_js
     assert '<span class="changelog-date">2026-07-18</span>' in app_js
     for text in change_items:
         assert text in readme
@@ -4616,13 +4616,13 @@ def test_version_205_documents_scheme_a_logo_update():
     assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
 
     for text in [
-        "v2.0.5",
+        "v1.2.9",
         "系统优化及BUG修复。",
     ]:
         assert text in app_js
 
     for text in [
-        "v2.0.5",
+        "v1.2.9",
         "系统 Logo 采用方案 A",
         "ZX 数据网格设计",
         "绿色命中点",
@@ -4693,14 +4693,14 @@ def test_version_204_documents_tab_and_brand_hierarchy_update():
     readme = _read(README_MD)
 
     for text in [
-        "v2.0.4",
+        "v1.2.8",
         "新增浏览器页签品牌精简显示。",
         "系统优化及BUG修复。",
     ]:
         assert text in app_js
 
     for text in [
-        "v2.0.4",
+        "v1.2.8",
         "浏览器页签标题精简为“准星”",
         "开启您的智能工作台",
         "小字监管报送助手",
@@ -4715,14 +4715,14 @@ def test_version_203_documents_brand_logo_update():
     readme = _read(README_MD)
 
     for text in [
-        "v2.0.3",
+        "v1.2.7",
         "新增准星·监管报送助手品牌名称和系统 Logo。",
         "系统优化及BUG修复。",
     ]:
         assert text in app_js
 
     for text in [
-        "v2.0.3",
+        "v1.2.7",
         "系统对外名称更新为“准星·监管报送助手”",
         "使用 `logo/scheme-D-zx-grid` 资源包中的 ZX 数据网格设计替换系统 Logo",
         "登录页功能卡片中的旧闪电符号替换为校验符号",
@@ -4736,7 +4736,7 @@ def test_version_202_documents_security_login_update():
     readme = _read(README_MD)
 
     for text in [
-        "v2.0.2",
+        "v1.2.6",
         "导出 Excel 新增处理脚本列。",
         "新增用户姓名，导航用户按钮、用户列表和执行历史优先显示姓名。",
         "新增对数任务全局互斥和一键导入同表冲突提示。",
@@ -4745,7 +4745,7 @@ def test_version_202_documents_security_login_update():
         assert text in app_js
 
     for text in [
-        "v2.0.2",
+        "v1.2.6",
         "自动对数导出 Excel 新增“处理脚本”列",
         "系统时间统一按北京时间生成和展示",
         "核对历史按核对日期倒序、同日按执行时间倒序排列",
@@ -4775,7 +4775,7 @@ def test_version_201_documents_confirm_button_update():
     readme = _read(README_MD)
 
     for text in [
-        "v2.0.1",
+        "v1.2.5",
         "系统优化及BUG修复。",
     ]:
         assert text in app_js
@@ -4787,7 +4787,7 @@ def test_version_201_documents_confirm_button_update():
         assert verbose_text not in app_js
 
     for text in [
-        "v2.0.1",
+        "v1.2.5",
         "导入确认弹窗按钮更清晰",
         "系统设置改为太空科技三列卡片布局",
         "太空主题导航上下内容模糊感加重",
@@ -4851,7 +4851,7 @@ def test_business_settings_displays_current_table_field_mapping():
     assert "function openReconcileFieldOptionsForInput(" in app_js
     assert "reconcile-schema-required-error" in app_js
     assert "reconcile-schema-error-message" in app_js
-    assert "v2.1" in app_js
+    assert "v1.2.13" in app_js
     assert "scrollIntoView" in app_js
     assert 'querySelector("select.reconcile-schema-source")' in app_js
     assert 'querySelector("input.reconcile-schema-display-name")' in app_js
@@ -5170,8 +5170,30 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
         re.S,
     )
     assert about_body_rule is not None
-    assert "overflow-y: auto" not in about_body_rule.group("body")
-    assert "overflow: visible" in about_body_rule.group("body")
+    assert "display: flex" in about_body_rule.group("body")
+    assert "flex-direction: column" in about_body_rule.group("body")
+    assert "overflow: hidden" in about_body_rule.group("body")
+    about_content_rule = re.search(
+        r"#page-settings \.card-about \.about-content\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert about_content_rule is not None
+    assert "overflow-y: auto" in about_content_rule.group("body")
+    about_links_rule = re.search(
+        r"#page-settings \.card-about \.about-links\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert about_links_rule is not None
+    assert "flex-shrink: 0" in about_links_rule.group("body")
+    assert 'id="aboutHelp"' in html
+    assert 'id="aboutChangelog"' in html
+    assert re.search(
+        r'class="about-content">.*?class="about-links"',
+        html,
+        re.S,
+    ) is not None
     assert 'setupSettingsDashboardCollapsible("businessSettingsToggle", "businessSettingsBody")' not in app_js
     assert "settings-expanded-card" not in css
     assert "settings-expanded-card" not in app_js
@@ -7891,9 +7913,9 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert '"system-management"' in app_js
     # 角色权限页加载
     assert "function loadRolePermissions" in app_js
-    # 展示用月度版本号；更新日志仍保留 v2.3 等条目版本
+    # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
-    assert '<span class="changelog-version">v2.3</span>' in app_js
+    assert '<span class="changelog-version">v1.2.15</span>' in app_js
     # 用户角色仅保留管理员/普通用户；其余走自定义角色
     assert 'governance: "数据治理"' not in app_js
     assert 'regulatory_report: "监管报表"' not in app_js

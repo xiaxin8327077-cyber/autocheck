@@ -151,7 +151,9 @@ def test_module_host_release_notes_are_readonly_and_cleared_on_reload_failure(tm
 
 def test_legacy_changelog_safely_renders_generic_module_release_notes(tmp_path: Path):
     source = APP_JS.read_text(encoding="utf-8")
-    start = source.find("function renderModuleReleaseNotes")
+    start = source.find("function normalizeChangelogItemText")
+    if start < 0:
+        start = source.find("function collectModuleReleaseNoteItems")
     assert start >= 0
     end = source.find('document.getElementById("aboutChangelog")', start)
     assert end > start
@@ -160,22 +162,46 @@ def test_legacy_changelog_safely_renders_generic_module_release_notes(tmp_path: 
     helper = source[start:end]
     assert "AutoCheckModuleHost" not in helper
     assert "report_special" not in helper
+    assert "<h4>模块更新</h4>" not in helper
+    assert "module-release-notes" not in helper
+    assert "moduleChangelogLabel" in helper
+    assert "normalizeChangelogItemText" in helper
     script = textwrap.dedent(
         rf"""
         const assert = require("node:assert/strict");
         {escape.group(0)}
         {helper}
-        assert.equal(renderModuleReleaseNotes([]), "");
-        const html = renderModuleReleaseNotes([
+        assert.deepEqual(collectModuleReleaseNoteItems([]), []);
+        const items = collectModuleReleaseNoteItems([
           {{ module_id: "one", module_name: "<img src=x onerror=1>", version: "1.0.0", items: ["<script>alert(1)</script>"] }},
           {{ module_id: "two", module_name: "Two", version: "2.0.0", items: ["Second", "Third"] }},
+          {{ module_id: "rsp", module_name: "报表特殊处理录入", version: "1.2.1", items: ["系统优化及BUG修复", "管理员可删除特殊处理记录"] }},
         ]);
-        assert.match(html, /模块更新/);
-        assert.match(html, /&lt;img src=x onerror=1&gt;/);
-        assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.deepEqual(items, [
+          {{ label: "<img src=x onerror=1>模块", text: "<script>alert(1)</script>" }},
+          {{ label: "Two模块", text: "Second" }},
+          {{ label: "Two模块", text: "Third" }},
+          {{ label: "报表特殊处理录入模块", text: "系统优化及BUG修复" }},
+          {{ label: "报表特殊处理录入模块", text: "管理员可删除特殊处理记录" }},
+        ]);
+        const base = `<div class="changelog-item"><div><span class="changelog-version">v1.2.15</span></div><ul><li>base</li><li>系统优化及BUG修复。</li></ul></div>`;
+        const html = mergeModuleReleaseNotesIntoSystemChangelog(base, [
+          {{ module_id: "one", module_name: "<img src=x onerror=1>", version: "1.0.0", items: ["<script>alert(1)</script>"] }},
+          {{ module_id: "two", module_name: "Two", version: "2.0.0", items: ["Second", "Third"] }},
+          {{ module_id: "rsp", module_name: "报表特殊处理录入", version: "1.2.1", items: ["系统优化及BUG修复", "管理员可删除特殊处理记录"] }},
+        ]);
+        assert.match(html, /v1\.2\.15/);
+        assert.match(html, /base/);
+        assert.match(html, /&lt;img src=x onerror=1&gt;模块：&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+        assert.match(html, /Two模块：Second/);
+        assert.match(html, /Two模块：Third/);
+        assert.match(html, /报表特殊处理录入模块：管理员可删除特殊处理记录/);
+        assert.equal((html.match(/系统优化及BUG修复/g) || []).length, 1);
+        assert.doesNotMatch(html, /报表特殊处理录入模块：系统优化及BUG修复/);
+        assert.doesNotMatch(html, /<h4>模块更新<\/h4>/);
+        assert.doesNotMatch(html, /module-release-notes/);
         assert.doesNotMatch(html, /<script>|<img/);
-        assert.match(html, /Second/);
-        assert.match(html, /Third/);
+        assert.doesNotMatch(html, /v1\.0\.0|v2\.0\.0/);
         """
     )
     scenario_path = tmp_path / "render_module_release_notes.cjs"
@@ -183,6 +209,8 @@ def test_legacy_changelog_safely_renders_generic_module_release_notes(tmp_path: 
     subprocess.run(["node", str(scenario_path)], check=True, cwd=ROOT)
 
     assert "window.AutoCheckModuleHost.releaseNotes()" in source
+    assert "mergeModuleReleaseNotesIntoSystemChangelog(changelogHtml, moduleNotes)" in source
+    assert "renderModuleReleaseNotes(" not in source
 
 
 def test_module_host_lifecycle_and_failure_isolation(tmp_path: Path):

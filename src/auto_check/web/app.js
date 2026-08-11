@@ -12891,73 +12891,117 @@ document.getElementById("aboutHelp")?.addEventListener("click", (e) => {
   showInfo("使用帮助", `
     <h4>快速开始</h4>
     <ul>
-      <li>在系统设置中配置数据源（DWS 和报表库）</li>
-      <li>在对数执行页面选择日期并运行</li>
-      <li>查看核对结果和差异分析</li>
-      <li>对数历史页面可查看过往核对记录</li>
+      <li>在系统设置中配置 DWS / 报表等数据源，并完成对账业务设置</li>
+      <li>打开报送导航查看当期统计、流程进度、报送日程与我的待办</li>
+      <li>在对数执行页选择核对日期并运行，查看差异详情后可导出 Excel</li>
+      <li>在对数历史中回顾记录，必要时从历史详情恢复到结果页</li>
     </ul>
 
     <h4>功能说明</h4>
     <ul>
-      <li><strong>报送导航</strong>：查看监管报送统计、流程进度、报送日程和我的待办</li>
-      <li><strong>智能核数 / 对数总览</strong>：查看核对趋势和统计图表</li>
-      <li><strong>智能核数 / 对数执行</strong>：执行余额核对，查看差异详情</li>
-      <li><strong>智能核数 / 对数历史</strong>：查看历史核对记录，并可在详情中恢复到结果页</li>
-      <li><strong>系统设置</strong>：配置数据源、默认选项、业务字段清单、主题等</li>
+      <li><strong>报送导航</strong>：监管报送概览、流程鱼骨、报送日程、我的待办与处理记录</li>
+      <li><strong>智能核数 / 对数总览</strong>：核对趋势与统计图表</li>
+      <li><strong>智能核数 / 对数执行</strong>：执行余额核对、查看差异与处理脚本</li>
+      <li><strong>智能核数 / 对数历史</strong>：历史核对记录、详情对比与恢复到结果页</li>
+      <li><strong>工具</strong>：人行全量产品一键导入、人行逐笔校验、流程链执行</li>
+      <li><strong>数据录入 / 报表特殊处理</strong>：特殊处理台账、待确认确认与导出</li>
+      <li><strong>系统管理</strong>：系统设置、角色权限、用户管理</li>
     </ul>
 
     <h4>主要功能</h4>
     <ul>
-      <li>自动对数：根据预设规则自动核对项目余额</li>
-      <li>差异分析：智能识别差异原因并提供详细说明</li>
-      <li>历史记录：保存每次核对结果，支持对比分析</li>
-      <li>数据导出：支持导出核对结果为 Excel 文件</li>
-      <li>多数据源：支持 PostgreSQL 和 MySQL 数据库</li>
+      <li>报送导航：统计卡片、流程进度、日程轴与待办聚合</li>
+      <li>自动对数：按规则核对项目余额并识别差异原因</li>
+      <li>工具链：人行导入、逐笔校验与申报流程链后台执行</li>
+      <li>报表特殊处理：维度与治理负责人、待确认待办与台账导出</li>
+      <li>权限与用户：角色能力矩阵、自定义角色与账号管理</li>
     </ul>
 
     <h4>技术栈</h4>
     <ul>
       <li>后端：Python 3.12 + psycopg + PyMySQL</li>
-      <li>前端：原生 HTML/CSS/JavaScript</li>
-      <li>打包：PyInstaller</li>
+      <li>应用存储：MySQL（配置、用户、历史、报送导航与模块状态）</li>
+      <li>前端：原生 HTML / CSS / JavaScript</li>
+      <li>打包：PyInstaller（Windows / Linux）</li>
+      <li>扩展：可信内置模块机制（更新点并入系统版本日志）</li>
     </ul>
 
     <h4>常见问题</h4>
     <p><strong>Q: 连接测试失败怎么办？</strong></p>
-    <p>A: 检查数据库地址、端口、用户名和密码是否正确。</p>
+    <p>A: 检查数据库地址、端口、用户名和密码，并确认网络与库权限可用。</p>
 
     <p><strong>Q: 如何导出核对结果？</strong></p>
-    <p>A: 在对数执行页面点击"导出"按钮，可导出 Excel 文件。</p>
+    <p>A: 在对数执行页面点击「导出」，可导出 Excel；报表特殊处理台账也可按筛选结果导出。</p>
+
+    <p><strong>Q: 菜单或按钮看不到？</strong></p>
+    <p>A: 功能按角色能力码控制，请管理员在「角色权限」中授权后重新登录。</p>
   `);
 });
 
-function renderModuleReleaseNotes(releaseNotes) {
-  if (!Array.isArray(releaseNotes) || releaseNotes.length === 0) return "";
-  const entries = releaseNotes
-    .filter((note) => note && Array.isArray(note.items) && note.items.length > 0)
-    .map((note) => `
-      <div class="changelog-item module-release-note">
-        <div>
-          <span class="changelog-version">${escapeHtml(note.module_name)}</span>
-          <span class="changelog-date">v${escapeHtml(note.version)}</span>
-        </div>
-        <ul>${note.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
-      </div>
-    `);
-  if (entries.length === 0) return "";
-  return `<div class="module-release-notes"><h4>模块更新</h4>${entries.join("")}</div>`;
+function normalizeChangelogItemText(text) {
+  return String(text || "").trim().replace(/[。.]+$/u, "").trim();
+}
+
+function moduleChangelogLabel(moduleName) {
+  const name = String(moduleName || "").trim() || "模块";
+  return name.endsWith("模块") ? name : `${name}模块`;
+}
+
+function collectModuleReleaseNoteItems(releaseNotes) {
+  if (!Array.isArray(releaseNotes) || releaseNotes.length === 0) return [];
+  const items = [];
+  for (const note of releaseNotes) {
+    if (!note || !Array.isArray(note.items)) continue;
+    const label = moduleChangelogLabel(note.module_name);
+    for (const item of note.items) {
+      const text = String(item || "").trim();
+      if (text) items.push({ label, text });
+    }
+  }
+  return items;
+}
+
+function extractFirstChangelogListItems(changelogHtml) {
+  const match = String(changelogHtml || "").match(/<ul>([\s\S]*?)<\/ul>/i);
+  if (!match) return [];
+  const items = [];
+  const re = /<li>([\s\S]*?)<\/li>/gi;
+  let found;
+  while ((found = re.exec(match[1])) !== null) {
+    items.push(String(found[1] || "").replace(/<[^>]+>/g, "").trim());
+  }
+  return items;
+}
+
+function mergeModuleReleaseNotesIntoSystemChangelog(changelogHtml, releaseNotes) {
+  const moduleItems = collectModuleReleaseNoteItems(releaseNotes);
+  if (!moduleItems.length) return String(changelogHtml || "");
+  const seen = new Set(extractFirstChangelogListItems(changelogHtml).map(normalizeChangelogItemText));
+  const extra = [];
+  for (const { label, text } of moduleItems) {
+    const bare = normalizeChangelogItemText(text);
+    if (!bare || seen.has(bare)) continue;
+    const display = `${label}：${text}`;
+    const displayNorm = normalizeChangelogItemText(display);
+    if (seen.has(displayNorm)) continue;
+    seen.add(bare);
+    seen.add(displayNorm);
+    extra.push(`<li>${escapeHtml(display)}</li>`);
+  }
+  if (!extra.length) return String(changelogHtml || "");
+  // 模块更新点并入最新系统版本条目：前缀「XX模块：」，去重，不单独成块、不单独列模块版本号。
+  return String(changelogHtml || "").replace("</ul>", `${extra.join("")}</ul>`);
 }
 
 document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   e.preventDefault();
-  const moduleReleaseNotes = typeof window.AutoCheckModuleHost?.releaseNotes === "function"
-    ? renderModuleReleaseNotes(window.AutoCheckModuleHost.releaseNotes())
-    : "";
-  showInfo("更新日志", `
-    ${moduleReleaseNotes}
+  const moduleNotes = typeof window.AutoCheckModuleHost?.releaseNotes === "function"
+    ? window.AutoCheckModuleHost.releaseNotes()
+    : [];
+  const changelogHtml = `
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.3</span>
+        <span class="changelog-version">v1.2.15</span>
         <span class="changelog-date">2026-08-10</span>
       </div>
       <ul>
@@ -12970,7 +13014,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.2</span>
+        <span class="changelog-version">v1.2.14</span>
         <span class="changelog-date">2026-08-07</span>
       </div>
       <ul>
@@ -12984,9 +13028,10 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       </ul>
     </div>
 
+
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.1</span>
+        <span class="changelog-version">v1.2.13</span>
         <span class="changelog-date">2026-07-18</span>
       </div>
               <ul>
@@ -13004,7 +13049,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.8</span>
+        <span class="changelog-version">v1.2.12</span>
         <span class="changelog-date">2026-06-12</span>
       </div>
        <ul>
@@ -13029,7 +13074,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.7</span>
+        <span class="changelog-version">v1.2.11</span>
         <span class="changelog-date">2026-06-11</span>
       </div>
       <ul>
@@ -13042,7 +13087,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.6</span>
+        <span class="changelog-version">v1.2.10</span>
         <span class="changelog-date">2026-06-06</span>
       </div>
       <ul>
@@ -13072,7 +13117,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.5</span>
+        <span class="changelog-version">v1.2.9</span>
         <span class="changelog-date">2026-06-06</span>
       </div>
       <ul>
@@ -13082,7 +13127,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.4</span>
+        <span class="changelog-version">v1.2.8</span>
         <span class="changelog-date">2026-06-06</span>
       </div>
       <ul>
@@ -13093,7 +13138,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.3</span>
+        <span class="changelog-version">v1.2.7</span>
         <span class="changelog-date">2026-06-06</span>
       </div>
       <ul>
@@ -13104,7 +13149,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.2</span>
+        <span class="changelog-version">v1.2.6</span>
         <span class="changelog-date">2026-06-04</span>
       </div>
       <ul>
@@ -13117,7 +13162,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0.1</span>
+        <span class="changelog-version">v1.2.5</span>
         <span class="changelog-date">2026-06-03</span>
       </div>
       <ul>
@@ -13127,7 +13172,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v2.0</span>
+        <span class="changelog-version">v1.2.4</span>
         <span class="changelog-date">2026-06-03</span>
       </div>
       <ul>
@@ -13138,7 +13183,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v1.4.0</span>
+        <span class="changelog-version">v1.2.3</span>
         <span class="changelog-date">2026-06-02</span>
       </div>
       <ul>
@@ -13149,7 +13194,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
 
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v1.3.0</span>
+        <span class="changelog-version">v1.2.2</span>
         <span class="changelog-date">2026-06-01</span>
       </div>
       <ul>
@@ -13200,7 +13245,9 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>初始版本：自动对数、历史记录、多数据源和 Excel 导出。</li>
       </ul>
     </div>
-  `);
+
+  `;
+  showInfo("更新日志", mergeModuleReleaseNotesIntoSystemChangelog(changelogHtml, moduleNotes));
 });
 
 // Initialize settings

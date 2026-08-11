@@ -51,10 +51,10 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         line for line in current_features.splitlines() if line.startswith("- 系统设置：")
     )
     latest_changes = readme.split("## 最新变更说明", 1)[1]
-    v21_changes = _changelog_version_block(latest_changes, "v2.1")
-    v21_radius_change = next(
+    v1213_changes = _changelog_version_block(latest_changes, "v1.2.13")
+    v1213_radius_change = next(
         line
-        for line in v21_changes.splitlines()
+        for line in v1213_changes.splitlines()
         if line.startswith("- 新增用户级界面圆角个性化设置：")
     )
 
@@ -85,7 +85,7 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
         "仅影响显示、不改变系统功能",
         "特殊形状保持原样",
     ]:
-        assert expected in v21_radius_change
+        assert expected in v1213_radius_change
 
 
 def test_readme_documents_fixed_logo_theme_and_personal_line_style() -> None:
@@ -94,7 +94,7 @@ def test_readme_documents_fixed_logo_theme_and_personal_line_style() -> None:
         "## MySQL 应用库上线准备", 1
     )[0]
     latest_changes = readme.split("## 最新变更说明", 1)[1]
-    v21_changes = _changelog_version_block(latest_changes, "v2.1")
+    v1213_changes = _changelog_version_block(latest_changes, "v1.2.13")
 
     for expected in [
         "#3466D9",
@@ -121,7 +121,7 @@ def test_readme_documents_fixed_logo_theme_and_personal_line_style() -> None:
         "登录页",
         "强制浅色",
     ]:
-        assert expected in v21_changes
+        assert expected in v1213_changes
 
 
 def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> None:
