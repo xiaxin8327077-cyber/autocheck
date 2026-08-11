@@ -8447,7 +8447,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
 
     modal = re.search(r"(?m)^\.modal-info\.modal-info--history-detail\s*\{(?P<body>.*?)\}", css, re.S)
     assert modal is not None
-    assert "width: min(1240px, 94vw)" in modal.group("body")
+    assert "width: min(960px, 88vw)" in modal.group("body")
     assert "max-height: 92vh" in modal.group("body")
     assert "display: flex" in modal.group("body")
     assert "flex-direction: column" in modal.group("body")
@@ -8476,6 +8476,7 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert detail is not None
     assert "flex: 1 1 auto" in detail.group("body")
     assert "overflow: auto" in detail.group("body")
+    assert "padding: 12px 8px" in detail.group("body")
 
     assert html.index('id="infoBody"') < html.index('id="infoFooter"')
     section = re.search(r"(?m)^\.history-section\s*\{(?P<body>.*?)\}", css, re.S)
@@ -8507,6 +8508,57 @@ def test_history_detail_modal_layout_keeps_tables_readable():
     assert "font-weight: 600" in result_header.group("body")
     assert "background: var(--surface-container-low)" in result_header.group("body")
     assert "border-bottom: 1px solid color-mix(in srgb, var(--outline-variant) 32%, var(--surface-container-lowest))" in result_header.group("body")
+
+    status_col = re.search(
+        r"(?m)^\.history-result-table th:nth-child\(5\),\s*\n\.history-result-table td:nth-child\(5\)\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert status_col is not None
+    assert "width: 96px" in status_col.group("body")
+
+    code_col = re.search(
+        r"(?m)^\.history-result-table th:nth-child\(1\),\s*\n\.history-result-table td:nth-child\(1\)\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert code_col is not None
+    assert "width: calc(11ch + 16px)" in code_col.group("body")
+    assert "white-space: nowrap" in code_col.group("body")
+
+    name_col = re.search(
+        r"(?m)^\.history-result-table th:nth-child\(2\),\s*\n\.history-result-table td:nth-child\(2\)\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert name_col is not None
+    assert "white-space: normal" in name_col.group("body")
+    assert "overflow-wrap: anywhere" in name_col.group("body")
+    assert "word-break: break-word" in name_col.group("body")
+
+    money_col = re.search(
+        r"(?m)^\.history-result-table th:nth-child\(3\),\s*\n\.history-result-table td:nth-child\(3\)\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert money_col is not None
+    assert "white-space: nowrap" in money_col.group("body")
+    assert "width: calc(18ch + 28px)" in money_col.group("body")
+    assert "padding-right: 14px" in money_col.group("body")
+
+    reason_col = re.search(
+        r"(?m)^\.history-result-table th:nth-child\(4\),\s*\n\.history-result-table td:nth-child\(4\)\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert reason_col is not None
+    assert "padding-left: 12px" in reason_col.group("body")
+    assert "white-space: normal" in reason_col.group("body")
+
+    history_status = re.search(r"(?m)^\.history-status\s*\{(?P<body>.*?)\}", css, re.S)
+    assert history_status is not None
+    assert "padding: 2px 8px" in history_status.group("body")
+    assert "max-width: 100%" in history_status.group("body")
 
     cells = re.search(
         r"(?m)^\.history-result-table th,\s*\n\.history-result-table td\s*\{(?P<body>.*?)\}",
@@ -8613,8 +8665,9 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "height: 0" in webkit_scrollbar.group("body")
 
     history_scroll = re.search(
-        r"(?m)^\.app-modal-shell\.modal-info--history-detail \.history-detail,\s*\n"
-        r"\.app-modal-shell\.modal-info--history-detail \.history-section--scroll \.history-section-table\s*\{(?P<body>.*?)\}",
+        r"(?m)^\.app-modal-shell\.modal-info--history-detail \.history-detail\.is-scrolling,\s*\n"
+        r"\.app-modal-shell\.modal-info--history-detail \.history-section--scroll \.history-section-table\.is-scrolling,\s*\n"
+        r"\.app-modal-shell\.modal-info--history-detail \.history-section-table\.is-scrolling\s*\{(?P<body>.*?)\}",
         css,
         re.S,
     )
@@ -8624,11 +8677,17 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "--ui-thin-scrollbar-size: 6px;" in css
     assert "--ui-thin-scrollbar-thumb: #c5d0e0;" in css
     assert (
-        ".app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar,\n"
-        ".app-modal-shell.modal-info--history-detail .history-section--scroll .history-section-table::-webkit-scrollbar"
+        ".app-modal-shell.modal-info--history-detail .history-detail.is-scrolling::-webkit-scrollbar,\n"
+        ".app-modal-shell.modal-info--history-detail .history-section--scroll .history-section-table.is-scrolling::-webkit-scrollbar,\n"
+        ".app-modal-shell.modal-info--history-detail .history-section-table.is-scrolling::-webkit-scrollbar"
         in css
     )
     assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
+    assert ":hover, .is-scrolling" not in css or ".history-detail:is(:hover, .is-scrolling)" not in css
+    assert "function bindHistoryDetailAutoHideScrollbars()" in _read(APP_JS)
+    assert "bindHistoryDetailAutoHideScrollbars();" in _read(APP_JS)
+    assert 'el.classList.add("is-scrolling");' in _read(APP_JS)
+    assert "}, 2000);" in _read(APP_JS)
 
     modal_body = re.search(
         r"(?m)^\.app-modal-shell:not\(#pbcModal\):not\(#dbValidationModal\):not\(#flowModal\)"

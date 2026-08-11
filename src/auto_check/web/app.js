@@ -6364,6 +6364,7 @@ async function loadHistoryDetail(id) {
 
 async function showHistoryDetailModal(id) {
   showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });
+  bindHistoryDetailAutoHideScrollbars();
   try {
     const history = await loadHistoryDetail(id);
     showInfo("历史详情", renderHistoryDetailContent(history), {
@@ -6374,6 +6375,7 @@ async function showHistoryDetailModal(id) {
         await restoreHistoryRun(history);
       },
     });
+    bindHistoryDetailAutoHideScrollbars();
     return history;
   } catch (e) {
     selectedHistory = null;
@@ -6384,6 +6386,30 @@ async function showHistoryDetailModal(id) {
     });
     throw e;
   }
+}
+
+function bindHistoryDetailAutoHideScrollbars() {
+  const root = document.querySelector(".app-modal-shell.modal-info--history-detail");
+  if (!root) return;
+  const targets = root.querySelectorAll(
+    ".history-detail, .history-section--scroll .history-section-table, .history-section-table",
+  );
+  targets.forEach((el) => {
+    if (!(el instanceof HTMLElement) || el.dataset.autoHideScrollBound === "1") return;
+    el.dataset.autoHideScrollBound = "1";
+    let hideTimer = 0;
+    el.addEventListener(
+      "scroll",
+      () => {
+        el.classList.add("is-scrolling");
+        window.clearTimeout(hideTimer);
+        hideTimer = window.setTimeout(() => {
+          el.classList.remove("is-scrolling");
+        }, 2000);
+      },
+      { passive: true },
+    );
+  });
 }
 
 function renderHistoryDetailContent(run) {
