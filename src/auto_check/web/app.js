@@ -72,7 +72,10 @@ const reportNavCardMaintenanceClose = document.getElementById("reportNavCardMain
 const reportNavCardMaintenanceCancel = document.getElementById("reportNavCardMaintenanceCancel");
 const reportNavCardMaintenanceSave = document.getElementById("reportNavCardMaintenanceSave");
 
-const DEFAULT_VERSION = "v2.3";
+// 顶栏/系统信息展示用月度版本号（约每月更新）；更新日志 changelog 仍用独立版本号，互不影响。
+const DEFAULT_VERSION = "V1.2";
+const sysVersion = document.getElementById("sysVersion");
+if (sysVersion) sysVersion.textContent = DEFAULT_VERSION;
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
 const USER_AVATAR_GRADIENTS = [
   ["#6366f1", "#4338ca"],
@@ -1271,6 +1274,13 @@ function setNavGroupOpen(group, open) {
   group.querySelector("[data-nav-group-toggle]")?.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
+function clearTopNavGroupFocus(group) {
+  if (!group) return;
+  setNavGroupOpen(group, false);
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && group.contains(active)) active.blur();
+}
+
 function syncNavGroupState(name) {
   const active = smartReconcilePages.has(name);
   document.querySelectorAll('[data-nav-group="smart-reconcile"]').forEach((group) => {
@@ -1376,8 +1386,15 @@ async function loadSettingsPageData() {
   item.addEventListener("click", (e) => {
     e.preventDefault();
     document.querySelectorAll(".top-nav-group.open").forEach((group) => setNavGroupOpen(group, false));
-    switchPage(item.dataset.page);
+    // 先失焦再切页，避免系统设置等重页加载时 :focus-within 拖住下拉、鼠标移走后收回变慢。
     if (item.classList.contains("top-nav-subitem") && e.detail > 0) item.blur();
+    switchPage(item.dataset.page);
+  });
+});
+
+document.querySelectorAll(".top-nav-group").forEach((group) => {
+  group.addEventListener("pointerleave", () => {
+    clearTopNavGroupFocus(group);
   });
 });
 
@@ -1456,7 +1473,12 @@ async function switchPage(name, options = {}) {
   if (location.hash !== nextHash) location.hash = name;
   if (name === "history") loadHistoryList(true);
   if (name === "tools") loadToolsPageData();
-  if (name === "settings") loadSettingsPageData();
+  // 延后加载，避免设置页并发请求卡住顶栏 :hover/:focus-within 状态刷新。
+  if (name === "settings") {
+    window.setTimeout(() => {
+      void loadSettingsPageData();
+    }, 0);
+  }
   if (name === "role-permissions") await loadRolePermissions();
   if (name === "users") await loadUsers();
   if (name === "report-navigation") await loadReportNavigation();
@@ -3938,6 +3960,7 @@ function setStatus(t) {
       topNavStatus.title = DEFAULT_VERSION;
       topNavStatus.classList.remove("top-nav-status--notice");
     }
+    if (sysVersion) sysVersion.textContent = DEFAULT_VERSION;
   }, 30000);
 }
 

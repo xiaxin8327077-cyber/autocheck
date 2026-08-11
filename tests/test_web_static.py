@@ -4305,7 +4305,7 @@ def test_v21_changelog_documents_interface_radius_concisely():
         "#RRGGBB",
     ]:
         assert verbose_theme_detail not in body
-    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
+    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
 
 
 def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
@@ -4365,9 +4365,9 @@ def test_version_206_documents_db_validation_engine_update():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
-    assert 'id="statusText">v2.3</span>' in html
-    assert 'id="topNavStatus" title="v2.3">v2.3</span>' in html
+    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
+    assert 'id="statusText">V1.2</span>' in html
+    assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
 
     for text in [
         "v2.1",
@@ -4556,10 +4556,11 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
-    assert 'id="statusText">v2.3</span>' in html
-    assert 'id="topNavStatus" title="v2.3">v2.3</span>' in html
-    assert "- 应用界面版本：`v2.3`" in readme
+    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
+    assert 'id="statusText">V1.2</span>' in html
+    assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
+    assert "- 应用界面版本：`V1.2`" in readme
+    assert 'id="sysVersion">V1.2</span>' in html
 
     change_items = [
         "人行逐笔校验执行历史新增执行人展示",
@@ -4610,9 +4611,9 @@ def test_version_205_documents_scheme_a_logo_update():
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
-    assert 'id="statusText">v2.3</span>' in html
-    assert 'id="topNavStatus" title="v2.3">v2.3</span>' in html
+    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
+    assert 'id="statusText">V1.2</span>' in html
+    assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
 
     for text in [
         "v2.0.5",
@@ -7334,10 +7335,14 @@ def test_tool_and_settings_page_loaders_are_isolated():
     assert switch_page is not None
     switch_body = switch_page.group("body")
     assert 'if (name === "tools") loadToolsPageData();' in switch_body
-    assert 'if (name === "settings") loadSettingsPageData();' in switch_body
-    assert 'if (name === "tools") await loadToolsPageData();' not in switch_body
+    assert "void loadSettingsPageData();" in switch_body
     assert 'if (name === "settings") await loadSettingsPageData();' not in switch_body
+    assert 'if (name === "tools") await loadToolsPageData();' not in switch_body
     assert 'await loadPbcImportSettings(); await loadDbValidationSettings(); await loadFlowSettings();' not in switch_body
+    assert "function clearTopNavGroupFocus(group)" in app_js
+    assert 'group.addEventListener("pointerleave"' in app_js
+    assert "submenu-dismissed" not in app_js
+    assert "submenu-dismissed" not in _read(STYLES_CSS)
 
 
 def test_system_info_uses_lightweight_summary_api():
@@ -7886,9 +7891,9 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert '"system-management"' in app_js
     # 角色权限页加载
     assert "function loadRolePermissions" in app_js
-    # 版本号升级到 v2.3
-    assert 'const DEFAULT_VERSION = "v2.3"' in app_js
-    assert '"v2.3"' in app_js
+    # 展示用月度版本号；更新日志仍保留 v2.3 等条目版本
+    assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v2.3</span>' in app_js
     # 用户角色仅保留管理员/普通用户；其余走自定义角色
     assert 'governance: "数据治理"' not in app_js
     assert 'regulatory_report: "监管报表"' not in app_js
