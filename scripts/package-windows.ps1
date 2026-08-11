@@ -62,6 +62,8 @@ $pyinstallerArgs = @(
   "--paths", $srcPath,
   "--add-data", "$webPath;auto_check/web",
   "--add-data", "$resourcesPath;auto_check/resources",
+  "--collect-submodules", "auto_check.modules",
+  "--collect-data", "auto_check.modules",
   "--hidden-import", "py7zr",
   "--hidden-import", "rarfile",
   "--hidden-import", "psycopg",
@@ -80,6 +82,10 @@ if ($Clean) {
 }
 
 $pyinstallerArgs += $entry
+
+# PyInstaller resolves --collect-submodules/--collect-data while parsing arguments,
+# before --paths applies, so expose src via PYTHONPATH or auto_check.modules is skipped.
+$env:PYTHONPATH = $srcPath
 
 Write-Host "Packaging Windows executable..."
 & $python @pyinstallerArgs

@@ -23,6 +23,29 @@ def _columns(*names: str) -> frozenset[str]:
 EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "app_schema_version": _columns("version", "applied_at"),
+        "app_modules": _columns(
+            "module_id",
+            "module_version",
+            "enabled",
+            "status",
+            "last_error",
+            "installed_at",
+            "updated_at",
+        ),
+        "app_module_schema_versions": _columns(
+            "module_id", "schema_version", "applied_at", "checksum"
+        ),
+        "app_module_migration_history": _columns(
+            "id",
+            "module_id",
+            "from_version",
+            "to_version",
+            "status",
+            "checksum",
+            "started_at",
+            "finished_at",
+            "error_message",
+        ),
         "data_sources": _columns(
             "id",
             "name",
@@ -61,6 +84,24 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "id",
             "vitality_theme_color",
             "calm_theme_color",
+            "updated_by",
+            "updated_at",
+        ),
+        "role_capability_settings": _columns(
+            "id",
+            "matrix_json",
+            "remarks_json",
+            "version",
+            "updated_by",
+            "updated_at",
+        ),
+        "role_definitions": _columns(
+            "role_code",
+            "display_name",
+            "remark",
+            "is_system",
+            "created_by",
+            "created_at",
             "updated_by",
             "updated_at",
         ),
@@ -263,6 +304,19 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "evaluated_at",
             "run_id",
         ),
+        "report_nav_card_provider_states": _columns(
+            "card_code",
+            "owner",
+            "registration_token",
+            "semantics_version",
+            "provider_active",
+            "stale",
+            "last_attempt_at",
+            "last_success_at",
+            "last_success_period_key",
+            "last_error",
+            "updated_at",
+        ),
         "report_nav_card_manual_values": _columns(
             "stat_period",
             "card_code",
@@ -313,6 +367,7 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "status",
             "completed_processes",
             "failed_steps",
+            "failed_providers",
             "error_message",
         ),
         "report_nav_scheduler_state": _columns(

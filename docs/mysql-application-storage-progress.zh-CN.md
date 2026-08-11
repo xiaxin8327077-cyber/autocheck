@@ -151,6 +151,10 @@ python -m pytest -q tests/test_security.py
 
 ## 5. 未完成部分
 
+### 5.0 模块化基础能力后续状态
+
+模块宿主的数据库初始化已新增 `012_module_system.sql`：该人工升级脚本在生产备份后创建 3 张模块平台表，使完整应用库由 39 张表增至 42 张表，`app_schema_version` 仍为 `1`。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，而由各模块独立迁移、checksum 和锁控制。模块只能作为可信内置扩展随源码或安装包发布，不提供在线第三方插件入口，也不在正式模块目录保留 demo；本次没有实现自定义报表。新业务模块只应新增 `src/auto_check/modules/<module_id>/` 和对应测试，平台内核改动必须单独评审。
+
 ### 5.1 三类历史记录迁移
 
 以下运行历史仍使用 SQLite：

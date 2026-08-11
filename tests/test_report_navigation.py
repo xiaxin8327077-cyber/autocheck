@@ -1,6 +1,8 @@
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 import importlib
 from pathlib import Path
+from threading import Barrier, Event, Lock, Thread
 
 from mysql_config_test_support import MemoryApplicationDatabase
 
@@ -1670,3 +1672,758 @@ def test_schedule_owner_rejects_non_admin_historical_month_and_long_name():
             assert expected in str(exc)
         else:
             raise AssertionError("invalid schedule owner update should be rejected")
+
+
+def _provider_result(platform_module, request, *, completed=3, incomplete=2, previous=1):
+    return platform_module.CardStatisticsResult(
+        total=completed + incomplete,
+        completed=completed,
+        incomplete=incomplete,
+        previous_completed=previous,
+        generated_at=request.as_of,
+        semantics_version=1,
+    )
+
+
+def test_report_navigation_platform_lists_processes_and_validates_provider_contract():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database, store=storage_module.ReportNavigationStore(database)
+    )
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+
+    assert [(item.code, item.name, item.order, item.active) for item in bound.value.list_report_processes()] == [
+        ("p1", "节点1", 1, True),
+        ("p2", "节点2", 2, True),
+        ("supplement_tasks", "补录任务", 1000, False),
+    ]
+    for card_code, semantics_version in [
+        ("", 1),
+        (True, 1),
+        ("bad code", 1),
+        ("data_governance", 0),
+        ("data_governance", True),
+    ]:
+        try:
+            bound.value.register_card_provider(
+                card_code=card_code,
+                provider=lambda request: _provider_result(platform_module, request),
+                semantics_version=semantics_version,
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid provider registration should be rejected")
+
+
+def test_provider_claim_is_persistent_owner_exclusive_and_bound_lifecycle_is_idempotent():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    spec = platform_module.create_report_navigation_service(service)
+    alpha = spec.binder("alpha")
+    handle = alpha.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: _provider_result(platform_module, request),
+        semantics_version=1,
+    )
+
+    state = store.load_card_provider_state("special_governance")
+    assert (state.owner, state.provider_active, state.stale) == ("alpha", True, True)
+    beta = spec.binder("beta")
+    try:
+        beta.value.register_card_provider(
+            card_code="special_governance",
+            provider=lambda request: _provider_result(platform_module, request),
+            semantics_version=1,
+        )
+    except platform_module.CardProviderConflictError as exc:
+        assert exc.args == ("card statistics provider is already claimed",)
+    else:
+        raise AssertionError("a persisted provider claim must be owner exclusive")
+
+    alpha.close()
+    alpha.close()
+    handle.close()
+    assert store.load_card_provider_state("special_governance").provider_active is False
+
+    restarted = report_module.ReportNavigationService(database, store=store)
+    restarted_bound = platform_module.create_report_navigation_service(restarted).binder("alpha")
+    old_handle = handle
+    new_handle = restarted_bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: _provider_result(platform_module, request),
+        semantics_version=1,
+    )
+    old_handle.close()
+    assert store.load_card_provider_state("special_governance").provider_active is True
+    new_handle.close()
+    assert store.load_card_provider_state("special_governance").provider_active is False
+
+
+def test_provider_collection_calls_four_aware_periods_and_dashboard_exposes_platform_metadata():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+    requests = []
+
+    def provider(request):
+        requests.append(request)
+        offset = ("week", "month", "quarter", "year").index(request.period_kind)
+        return platform_module.CardStatisticsResult(
+            total=10 + offset,
+            completed=6 + offset,
+            incomplete=4,
+            previous_completed=2,
+            generated_at=request.as_of,
+            semantics_version=1,
+        )
+
+    bound.value.register_card_provider(
+        card_code="special_governance", provider=provider, semantics_version=1
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    result = service.collect_once(now=current)
+    payload = service.dashboard(period="quarter", current_user={"role": "admin"}, now=current)
+    card = next(item for item in payload["cards"] if item["card_code"] == "special_governance")
+
+    assert result.failed_providers == 0
+    assert [request.period_kind for request in requests] == ["week", "month", "quarter", "year"]
+    assert all(request.as_of.tzinfo is not None for request in requests)
+    assert all(request.period_start.tzinfo is not None for request in requests)
+    assert (card["total_count"], card["completed_count"], card["comparison_delta"]) == (12, 8, 6)
+    assert card | {
+        "source": "provider",
+        "available": True,
+        "stale": False,
+        "provider_active": True,
+        "snapshot_period_key": "2026-Q3",
+        "semantics_version": 1,
+    } == card
+    assert payload["card_maintenance"]["special_governance"]["editable"] is False
+
+
+def test_provider_failure_is_sanitized_stale_and_keeps_last_success_while_first_failure_is_unavailable():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+    fail = {"value": False}
+
+    def provider(request):
+        if fail["value"]:
+            raise RuntimeError(r"C:\private\source.sql token=secret")
+        return _provider_result(platform_module, request)
+
+    bound.value.register_card_provider(
+        card_code="special_governance", provider=provider, semantics_version=1
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    service.collect_once(now=current)
+    fail["value"] = True
+    result = service.collect_once(now=current + timedelta(minutes=10))
+    card = next(
+        item
+        for item in service.dashboard(
+            period="month", current_user={"role": "user"}, now=current + timedelta(minutes=10)
+        )["cards"]
+        if item["card_code"] == "special_governance"
+    )
+
+    assert (result.status, result.failed_steps, result.failed_providers) == ("partial", 0, 1)
+    assert result.provider_issues == ({"card_code": "special_governance", "error_message": "provider statistics failed"},)
+    assert "private" not in str(result).lower() and "secret" not in str(result).lower()
+    assert (card["available"], card["stale"], card["completed_count"]) == (True, True, 3)
+
+    first_failure_db = _database()
+    _seed_collection_configuration(first_failure_db)
+    first_failure_service = report_module.ReportNavigationService(
+        first_failure_db,
+        store=storage_module.ReportNavigationStore(first_failure_db),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    first_bound = platform_module.create_report_navigation_service(first_failure_service).binder("beta")
+    first_bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda _request: (_ for _ in ()).throw(RuntimeError("secret")),
+        semantics_version=1,
+    )
+    first_failure_service.collect_once(now=current)
+    unavailable = next(
+        item
+        for item in first_failure_service.dashboard(
+            period="month", current_user={"role": "user"}, now=current
+        )["cards"]
+        if item["card_code"] == "special_governance"
+    )
+    assert unavailable["available"] is False
+    assert unavailable["total_count"] is None
+
+
+def test_managed_card_rejects_manual_values_even_when_inactive_and_unclaimed_card_stays_manual():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    service = report_module.ReportNavigationService(
+        database, store=storage_module.ReportNavigationStore(database)
+    )
+    admin = {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"}
+    values = {
+        period: {"completed_count": 1, "incomplete_count": 2}
+        for period in ("week", "month", "quarter", "year")
+    }
+    service.update_card_manual_values("data_governance", values, admin)
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+    handle = bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: _provider_result(platform_module, request),
+        semantics_version=1,
+    )
+    handle.close()
+
+    try:
+        service.update_card_manual_values("special_governance", values, admin)
+    except platform_module.ProviderManagedCardError as exc:
+        assert exc.args == ("card statistics are managed by a provider",)
+    else:
+        raise AssertionError("claimed cards must reject manual maintenance")
+
+    data_card = next(
+        item
+        for item in service.dashboard(period="month", current_user=admin)["cards"]
+        if item["card_code"] == "data_governance"
+    )
+    assert (data_card["completed_count"], data_card["incomplete_count"]) == (1, 2)
+
+
+def test_provider_callback_runs_outside_registry_lock_and_obsolete_result_cannot_overwrite_new_provider():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+    handles = {}
+    replaced = {"value": False}
+
+    def replacement(request):
+        return _provider_result(platform_module, request, completed=9, incomplete=1)
+
+    def original(request):
+        assert bound.value.list_report_processes()
+        if not replaced["value"]:
+            replaced["value"] = True
+            handles["old"].close()
+            handles["new"] = bound.value.register_card_provider(
+                card_code="special_governance", provider=replacement, semantics_version=1
+            )
+        return _provider_result(platform_module, request)
+
+    handles["old"] = bound.value.register_card_provider(
+        card_code="special_governance", provider=original, semantics_version=1
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    service.collect_once(now=current)
+    first = next(
+        item
+        for item in service.dashboard(period="month", current_user={"role": "user"}, now=current)["cards"]
+        if item["card_code"] == "special_governance"
+    )
+    assert first["available"] is False
+
+    service.collect_once(now=current + timedelta(minutes=10))
+    second = next(
+        item
+        for item in service.dashboard(
+            period="month", current_user={"role": "user"}, now=current + timedelta(minutes=10)
+        )["cards"]
+        if item["card_code"] == "special_governance"
+    )
+    assert second["completed_count"] == 9
+
+
+def test_provider_claim_is_database_atomic_across_independent_service_instances():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+
+    class InterleavingDatabase(MemoryApplicationDatabase):
+        def __init__(self):
+            super().__init__()
+            self.claim_barrier = Barrier(2)
+            self.write_lock = Lock()
+
+        @contextmanager
+        def transaction(self):
+            self.claim_barrier.wait(timeout=3)
+            with self.write_lock:
+                with super().transaction() as connection:
+                    yield connection
+
+    database = InterleavingDatabase()
+    services = [
+        report_module.ReportNavigationService(
+            database, store=storage_module.ReportNavigationStore(database)
+        )
+        for _ in range(2)
+    ]
+    successes = []
+    failures = []
+
+    def register(index, owner):
+        facade = platform_module.create_report_navigation_service(services[index]).binder(owner).value
+        try:
+            successes.append(
+                (
+                    owner,
+                    facade.register_card_provider(
+                        card_code="special_governance",
+                        provider=lambda request: _provider_result(platform_module, request),
+                        semantics_version=1,
+                    ),
+                )
+            )
+        except Exception as exc:
+            failures.append(exc)
+
+    threads = [
+        Thread(target=register, args=(0, "alpha")),
+        Thread(target=register, args=(1, "beta")),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert isinstance(failures[0], platform_module.CardProviderConflictError)
+    state = storage_module.ReportNavigationStore(database).load_card_provider_state(
+        "special_governance"
+    )
+    assert state.owner == successes[0][0]
+
+
+def test_rejected_cross_owner_claim_does_not_mutate_existing_provider_state():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    first_service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    platform_module.create_report_navigation_service(first_service).binder("alpha").value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: _provider_result(platform_module, request),
+        semantics_version=1,
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    first_service.collect_once(now=current)
+    store = storage_module.ReportNavigationStore(database)
+    before = store.load_card_provider_state("special_governance")
+
+    second_service = report_module.ReportNavigationService(database, store=store)
+    try:
+        platform_module.create_report_navigation_service(second_service).binder("beta").value.register_card_provider(
+            card_code="special_governance",
+            provider=lambda request: _provider_result(platform_module, request),
+            semantics_version=2,
+        )
+    except platform_module.CardProviderConflictError:
+        pass
+    else:
+        raise AssertionError("cross-owner claim should be rejected")
+
+    assert store.load_card_provider_state("special_governance") == before
+
+
+def test_persistent_registration_token_fences_old_handle_and_late_provider_result():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    first_service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    second_service = report_module.ReportNavigationService(
+        database,
+        store=storage_module.ReportNavigationStore(database),
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    entered = Event()
+    release = Event()
+
+    def old_provider(request):
+        if request.period_kind == "week":
+            entered.set()
+            assert release.wait(timeout=3)
+        return _provider_result(platform_module, request, completed=3, incomplete=2)
+
+    first_bound = platform_module.create_report_navigation_service(first_service).binder("alpha")
+    old_handle = first_bound.value.register_card_provider(
+        card_code="special_governance", provider=old_provider, semantics_version=1
+    )
+    old_token = store.load_card_provider_state("special_governance").registration_token
+    collection_thread = Thread(
+        target=lambda: first_service.collect_once(now=datetime(2026, 7, 16, 9, 30))
+    )
+    collection_thread.start()
+    assert entered.wait(timeout=3)
+
+    second_bound = platform_module.create_report_navigation_service(second_service).binder("alpha")
+    second_bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: _provider_result(
+            platform_module, request, completed=9, incomplete=1
+        ),
+        semantics_version=1,
+    )
+    new_token = store.load_card_provider_state("special_governance").registration_token
+    assert new_token != old_token
+    old_handle.close()
+    assert store.load_card_provider_state("special_governance").provider_active is True
+
+    release.set()
+    collection_thread.join(timeout=5)
+    unavailable = next(
+        card
+        for card in second_service.dashboard(
+            period="month",
+            current_user={"role": "user"},
+            now=datetime(2026, 7, 16, 9, 31),
+        )["cards"]
+        if card["card_code"] == "special_governance"
+    )
+    assert unavailable["available"] is False
+    assert store.load_card_provider_state("special_governance").registration_token == new_token
+
+
+def test_semantics_version_upgrade_does_not_relabel_previous_version_snapshot():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    first_service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    first_bound = platform_module.create_report_navigation_service(first_service).binder("alpha")
+    first_handle = first_bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: _provider_result(platform_module, request),
+        semantics_version=1,
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    first_service.collect_once(now=current)
+    first_handle.close()
+
+    second_service = report_module.ReportNavigationService(
+        database, store=storage_module.ReportNavigationStore(database)
+    )
+    second_bound = platform_module.create_report_navigation_service(second_service).binder("alpha")
+    second_bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=lambda request: platform_module.CardStatisticsResult(
+            total=10,
+            completed=9,
+            incomplete=1,
+            previous_completed=4,
+            generated_at=request.as_of,
+            semantics_version=2,
+        ),
+        semantics_version=2,
+    )
+    state = store.load_card_provider_state("special_governance")
+    card = next(
+        item
+        for item in second_service.dashboard(
+            period="month", current_user={"role": "user"}, now=current
+        )["cards"]
+        if item["card_code"] == "special_governance"
+    )
+
+    assert state.semantics_version == 2
+    assert state.last_success_at is None
+    assert state.stale is True
+    assert card["semantics_version"] == 2
+    assert card["available"] is False
+    assert card["completed_count"] is None
+
+
+def test_failed_provider_count_is_persisted_for_scheduled_and_manual_runs_and_recovers():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    failing = {"value": True}
+
+    def provider(request):
+        if failing["value"]:
+            raise RuntimeError("secret")
+        return _provider_result(platform_module, request)
+
+    platform_module.create_report_navigation_service(service).binder("alpha").value.register_card_provider(
+        card_code="special_governance", provider=provider, semantics_version=1
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+    scheduled = service.collect_once(now=current)
+    scheduled_row = store.load_latest_run()
+
+    assert scheduled.failed_providers == 1
+    assert scheduled_row["failed_providers"] == 1
+    assert service.dashboard(
+        period="month", current_user={"role": "user"}, now=current
+    )["last_run"]["failed_providers"] == 1
+
+    failing["value"] = False
+    manual = service.manual_refresh(
+        current_user={"role": "admin"}, now=current + timedelta(minutes=1)
+    )
+    manual_row = store.load_latest_run(trigger_type="manual")
+
+    assert manual["failed_providers"] == 0
+    assert manual_row["failed_providers"] == 0
+    assert service.dashboard(
+        period="month",
+        current_user={"role": "admin"},
+        now=current + timedelta(minutes=1),
+    )["last_run"]["failed_providers"] == 0
+
+
+def test_manual_refresh_partial_message_reports_step_and_provider_failures(monkeypatch):
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    service = report_module.ReportNavigationService(
+        database, store=storage_module.ReportNavigationStore(database)
+    )
+    monkeypatch.setattr(
+        service,
+        "collect_once",
+        lambda **_kwargs: report_module.CollectionResult(
+            "partial",
+            "2026-07",
+            1,
+            3,
+            2,
+            failed_providers=1,
+        ),
+    )
+
+    payload = service.manual_refresh(
+        current_user={"role": "admin"}, now=datetime(2026, 7, 16, 9, 30)
+    )
+
+    assert payload["error_message"] == (
+        "刷新完成，但有 2 个步骤统计异常、1 个模块统计异常，请查看具体问题"
+    )
+
+
+def test_refresh_card_provider_updates_owned_card_only_without_collect_once(monkeypatch):
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    spec = platform_module.create_report_navigation_service(service)
+    alpha = spec.binder("alpha")
+    beta = spec.binder("beta")
+    called = {"special_governance": 0, "data_governance": 0}
+
+    def special_provider(request):
+        called["special_governance"] += 1
+        return _provider_result(platform_module, request, completed=4, incomplete=1, previous=2)
+
+    def data_provider(request):
+        called["data_governance"] += 1
+        return _provider_result(platform_module, request, completed=1, incomplete=1, previous=0)
+
+    alpha.value.register_card_provider(
+        card_code="special_governance", provider=special_provider, semantics_version=1
+    )
+    beta.value.register_card_provider(
+        card_code="data_governance", provider=data_provider, semantics_version=1
+    )
+
+    def collect_once(**_kwargs):
+        raise AssertionError("single-card refresh must not call collect_once")
+
+    monkeypatch.setattr(service, "collect_once", collect_once)
+    current = datetime(2026, 7, 16, 9, 30)
+    before_data = store.load_card_provider_state("data_governance")
+    result = alpha.value.refresh_card_provider(card_code="special_governance")
+    payload = service.dashboard(
+        period="month", current_user={"role": "admin"}, now=current
+    )
+    special = next(item for item in payload["cards"] if item["card_code"] == "special_governance")
+    after_data = store.load_card_provider_state("data_governance")
+
+    assert result == {"ok": True, "refreshed": True}
+    assert called == {"special_governance": 4, "data_governance": 0}
+    assert (special["total_count"], special["completed_count"], special["source"]) == (
+        5,
+        4,
+        "provider",
+    )
+    assert special["available"] is True
+    assert after_data == before_data
+    assert after_data.last_success_at is None
+    assert store.load_latest_run() is None
+    assert alpha.value.refresh_card_provider(card_code="data_governance") == {
+        "ok": False,
+        "refreshed": False,
+        "reason": "not_registered",
+    }
+    assert called["data_governance"] == 0
+    assert beta.value.refresh_card_provider(card_code="special_governance") == {
+        "ok": False,
+        "refreshed": False,
+        "reason": "not_registered",
+    }
+    assert called["special_governance"] == 4
+
+
+def test_collect_skips_opt_out_provider_and_dashboard_refreshes_opt_in_provider():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=OrderedEvaluator(report_module),
+    )
+    bound = platform_module.create_report_navigation_service(service).binder(
+        "report_special_processing"
+    )
+    calls = {"count": 0, "completed": 1}
+
+    def provider(request):
+        calls["count"] += 1
+        return _provider_result(
+            platform_module,
+            request,
+            completed=calls["completed"],
+            incomplete=0,
+            previous=0,
+        )
+
+    bound.value.register_card_provider(
+        card_code="special_governance",
+        provider=provider,
+        semantics_version=1,
+        include_in_collect=False,
+        refresh_on_dashboard=True,
+    )
+    current = datetime(2026, 7, 16, 9, 30)
+
+    scheduled = service.collect_once(trigger_type="scheduled", now=current)
+    manual = service.collect_once(trigger_type="manual", now=current + timedelta(minutes=1))
+    assert scheduled.status in {"completed", "partial"}
+    assert manual.status in {"completed", "partial"}
+    assert calls["count"] == 0
+    assert store.load_card_provider_state("special_governance").last_success_at is None
+
+    first = service.dashboard(
+        period="month", current_user={"role": "admin"}, now=current + timedelta(minutes=2)
+    )
+    special = next(item for item in first["cards"] if item["card_code"] == "special_governance")
+    assert calls["count"] == 4
+    assert (special["total_count"], special["completed_count"], special["source"]) == (
+        1,
+        1,
+        "provider",
+    )
+
+    calls["completed"] = 3
+    second = service.dashboard(
+        period="month", current_user={"role": "admin"}, now=current + timedelta(minutes=3)
+    )
+    special = next(item for item in second["cards"] if item["card_code"] == "special_governance")
+    assert calls["count"] == 8
+    assert (special["total_count"], special["completed_count"]) == (3, 3)
+    assert (second.get("last_run") or {}).get("id") == (first.get("last_run") or {}).get("id")
+
+
+
+def test_refresh_card_provider_returns_provider_failed_without_raising():
+    platform_module = importlib.import_module("auto_check.app.report_navigation_platform")
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    store = storage_module.ReportNavigationStore(database)
+    service = report_module.ReportNavigationService(database, store=store)
+    bound = platform_module.create_report_navigation_service(service).binder("alpha")
+
+    def provider(_request):
+        raise RuntimeError("secret")
+
+    bound.value.register_card_provider(
+        card_code="special_governance", provider=provider, semantics_version=1
+    )
+    result = bound.value.refresh_card_provider(card_code="special_governance")
+    state = store.load_card_provider_state("special_governance")
+
+    assert result == {"ok": False, "refreshed": False, "reason": "provider_failed"}
+    assert state.provider_active is True
+    assert state.stale is True
+    assert "secret" not in str(state.last_error or "")

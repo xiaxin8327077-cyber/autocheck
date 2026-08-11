@@ -16,6 +16,7 @@ Start-Sleep 1
 # Build
 & $python -m PyInstaller --noconfirm --onefile --name auto-check `
   --paths $src --add-data "${web};auto_check/web" --add-data "${resources};auto_check/resources" `
+  --collect-submodules auto_check.modules --collect-data auto_check.modules `
   --distpath $dist --workpath $build --specpath $build `
   --clean $entry
 

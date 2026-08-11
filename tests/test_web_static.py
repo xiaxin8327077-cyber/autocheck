@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 import subprocess
@@ -17,10 +17,66 @@ SERVER_PY = ROOT / "src" / "auto_check" / "app" / "server.py"
 STYLES_CSS = ROOT / "src" / "auto_check" / "web" / "styles.css"
 README_MD = ROOT / "README.md"
 PYINSTALLER_SPEC = ROOT / "auto-check.spec"
+MODULE_HOST_JS = ROOT / "src" / "auto_check" / "web" / "module_host.js"
+MODULE_HOST_CSS = ROOT / "src" / "auto_check" / "web" / "module_host.css"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def test_module_host_assets_are_loaded_before_legacy_app():
+    html = _read(INDEX_HTML)
+
+    assert html.count('href="/module_host.css"') == 1
+    assert html.count('src="/module_host.js') == 1
+    assert html.index('src="/module_host.js') < html.index('src="/app.js')
+    assert 'id="moduleSideNavigation"' in html
+    assert 'id="moduleTopNavigation"' in html
+    assert 'id="modulePageHost"' in html
+
+
+def test_module_host_assets_keep_module_styles_scoped():
+    css = _read(MODULE_HOST_CSS)
+    script = _read(MODULE_HOST_JS)
+
+    assert ".auto-check-module" in css
+    assert "\nbutton {" not in css
+    assert "\ninput {" not in css
+    assert "\ntable {" not in css
+    assert "Object.freeze(context)" in script
+    assert "hashchange" in script
+    assert "await window.AutoCheckModuleHost?.deactivate();" in _read(APP_JS)
+
+
+def test_module_host_grouped_top_navigation_keeps_accessibility_and_theme_boundaries():
+    html = _read(INDEX_HTML)
+    css = _read(MODULE_HOST_CSS)
+    script = _read(MODULE_HOST_JS)
+
+    for fragment in [
+        "module-top-nav-group-toggle",
+        "aria-expanded",
+        "aria-controls",
+        "aria-current",
+        "group_order",
+        "group_id",
+    ]:
+        assert fragment in script
+    assert "border-radius: var(--ui-radius)" in css
+    assert "z-index: 50" in css
+    assert "box-shadow: none" in css
+    assert "width: max-content" in css
+    assert "min-width: 100%" in css
+    assert "white-space: nowrap" in css
+    assert "font-family: inherit" in css
+    assert "font: inherit" not in css
+    assert "width: min(280px" not in css
+    assert html.index('data-nav-group="smart-reconcile"', html.index('<nav class="top-nav-tabs">')) < html.index('id="moduleTopNavigation"')
+    assert html.index('id="moduleTopNavigation"') < html.index('data-page="tools"', html.index('<nav class="top-nav-tabs">'))
+    assert 'wrapper.addEventListener("mouseenter"' in script
+    assert 'wrapper.addEventListener("mouseleave"' in script
+    assert "box-shadow: 0 0" not in css
 
 
 def test_semantic_action_tokens_and_disabled_priority_are_centralized():
@@ -104,7 +160,7 @@ def test_show_confirm_normalizes_and_resets_explicit_action_tone():
         app_js.index("function showPrompt", app_js.index("function showConfirm(title, message, options = {})"))
     ]
     assert 'const allowedTones = new Set(["primary", "danger", "warning", "success"]);' in confirm_body
-    assert 'const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";' in confirm_body
+    assert 'const requestedTone = allowedTones.has(resolvedOptions.tone) ? resolvedOptions.tone : "primary";' in confirm_body
     assert 'const tone = requestedTone === "danger" ? "danger" : "primary";' in confirm_body
     assert "okBtn.dataset.actionTone = tone;" in confirm_body
     assert 'okBtn.dataset.actionVariant = "solid";' in confirm_body
@@ -1749,7 +1805,7 @@ def test_multilevel_navigation_groups_reconcile_pages_and_renames_labels():
     assert "function syncNavGroupState" in app_js
     assert 'item.classList.toggle("active", item.dataset.page === name)' in app_js
     assert '.nav-group[data-nav-group="smart-reconcile"]' in css
-    assert '.top-nav-group[data-nav-group="smart-reconcile"]' in css
+    assert ".top-nav-group" in css
     assert ".nav-subitem" in css
     assert ".top-nav-submenu" in css
     assert "max-height: 0;" in css
@@ -1887,20 +1943,20 @@ def test_report_navigation_page_uses_readonly_panorama_details_and_compact_todo_
     assert 'class="report-nav-schedule-layout"' in body
     assert 'id="reportNavTodoTitle"' in body
     assert "我的待办" in body
-    assert "（3）" in body
+    assert 'id="reportNavTodoCount"' in body
     assert 'class="report-nav-todo-all"' in body
     assert '<span class="report-nav-todo-all">全部 <b aria-hidden="true">&gt;</b></span>' in body
     assert "注意事项" not in body
     assert 'class="report-nav-filter-chips"' not in body
     for title in ["数据治理流程", "报表特殊治理", "源系统输出确认"]:
-        assert title in body
-    assert 'class="report-nav-todo-list"' in body
-    assert body.count('class="report-nav-todo-primary"') == 3
-    assert body.count('class="report-nav-todo-action"') == 3
-    assert body.count('class="report-nav-todo-deadline"') == 3
-    assert body.count('type="button" class="report-nav-todo-action"') == 3
-    assert body.count(">处理</button>") == 3
-    assert body.count("<time datetime=") == 3
+        assert title not in body
+    assert 'id="reportNavTodoList"' in body or 'class="report-nav-todo-list"' in body
+    assert body.count('class="report-nav-todo-primary"') == 0
+    assert body.count('class="report-nav-todo-action"') == 0
+    assert body.count('class="report-nav-todo-deadline"') == 0
+    assert body.count('type="button" class="report-nav-todo-action"') == 0
+    assert body.count(">处理</button>") == 0
+    assert "（3）" not in body
     todo_all = re.search(
         r"#page-report-navigation \.report-nav-todo-all\s*\{(?P<body>.*?)\}",
         _read(STYLES_CSS),
@@ -1960,6 +2016,11 @@ def test_report_navigation_frontend_preserves_snapshot_period_refresh_and_card_m
     assert 'function renderReportNavigation' in app_js
     assert 'function renderReportNavigationCards' in app_js
     assert 'function renderReportNavigationProcesses' in app_js
+    assert 'function renderReportNavTodos' in app_js
+    assert 'renderReportNavTodos(payload.todos || [])' in app_js
+    assert "暂无待办" in app_js
+    assert "buildReportNavTodoHash" in app_js
+    assert "handleReportNavTodoAction" in app_js
     assert 'if (name === "report-navigation") await loadReportNavigation();' in app_js
     assert 'reportNavPeriodSelect?.addEventListener("change"' in app_js
     assert 'process.process_code === "five_articles"' in app_js
@@ -1986,6 +2047,101 @@ def test_report_navigation_schedule_save_updates_locally_before_background_refre
     assert 'showToast("截止日期已更新", "success");' in body
     assert "void loadReportNavigation();" in body
     assert "await loadReportNavigation();" not in body
+
+
+def test_report_navigation_processes_sort_by_report_date_ascending_and_stably(tmp_path):
+    app_js = _read(APP_JS)
+    start_marker = "// Report navigation process ordering start"
+    end_marker = "// Report navigation process ordering end"
+
+    assert start_marker in app_js
+    assert end_marker in app_js
+    ordering_code = app_js.split(start_marker, 1)[1].split(end_marker, 1)[0]
+    script = textwrap.dedent(
+        f"""
+        const assert = require("node:assert/strict");
+        {ordering_code}
+
+        const processes = [
+          {{ process_code: "late", report_date: "2026-07-20" }},
+          {{ process_code: "same-a", report_date: "2026-07-05" }},
+          {{ process_code: "missing" }},
+          {{ process_code: "early", report_date: "2026-07-01T08:00:00" }},
+          {{ process_code: "same-b", report_date: "2026-07-05" }},
+          {{ process_code: "invalid-day", report_date: "2026-02-30" }},
+          {{ process_code: "invalid-month", report_date: "2026-13-01" }},
+          {{ process_code: "invalid", report_date: "not-a-date" }},
+        ];
+        const originalOrder = processes.map((item) => item.process_code);
+        const sorted = sortReportNavigationProcessesByDate(processes);
+
+        assert.deepEqual(
+          sorted.map((item) => item.process_code),
+          [
+            "early", "same-a", "same-b", "late",
+            "missing", "invalid-day", "invalid-month", "invalid",
+          ],
+        );
+        assert.deepEqual(processes.map((item) => item.process_code), originalOrder);
+        """
+    )
+    script_path = tmp_path / "report_navigation_process_ordering_test.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    subprocess.run(["node", str(script_path)], check=True, cwd=ROOT)
+
+    display_body = app_js.split(
+        "function reportNavigationDisplayProcesses(payload = {})", 1
+    )[1].split("function reportNavigationSpineProgress", 1)[0]
+    assert "sortReportNavigationProcessesByDate" in display_body
+
+
+def test_report_navigation_reorder_uses_immediate_lightweight_flip_animation():
+    app_js = _read(APP_JS)
+    readme = _read(README_MD)
+    css = _read(STYLES_CSS)
+
+    assert "function captureReportNavigationSortPositions(container)" in app_js
+    assert "function animateReportNavigationSort(container, previousPositions)" in app_js
+    animation_body = app_js.split(
+        "function animateReportNavigationSort(container, previousPositions)", 1
+    )[1].split("function animateReportNavigationScheduleCardHeight", 1)[0]
+    assert "getBoundingClientRect()" in animation_body
+    assert "if (!visualEffectsEnabled()) return;" in animation_body
+    assert 'window.matchMedia("(prefers-reduced-motion: reduce)").matches' in animation_body
+    assert "element.animate(" in animation_body
+    assert "translate:" in animation_body
+    assert "duration: 220" in animation_body
+    assert 'easing: "cubic-bezier(0.22, 1, 0.36, 1)"' in animation_body
+
+    flow_body = app_js.split(
+        "function renderReportNavigationProcesses(payload)", 1
+    )[1].split("function renderReportNavigation(payload", 1)[0]
+    assert "const previousPositions = captureReportNavigationSortPositions(reportNavBranches);" in flow_body
+    assert '<div class="report-nav-branch ${side} ${shift}${done ? " done" : " running"}">' in flow_body
+    assert 'class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-sort-key="flow:${escapeHtml(process.process_code || "")}"' in flow_body
+    assert "animateReportNavigationSort(reportNavBranches, previousPositions);" in flow_body
+    assert flow_body.index("captureReportNavigationSortPositions") < flow_body.index("reportNavBranches.innerHTML")
+    assert flow_body.index("reportNavBranches.innerHTML") < flow_body.index("animateReportNavigationSort")
+
+    schedule_body = app_js.split(
+        "function renderReportNavigationSchedule(payload = {})", 1
+    )[1].split("function selectReportNavigationScheduleProcess", 1)[0]
+    assert "const previousPositions = captureReportNavigationSortPositions(reportNavScheduleTable);" in schedule_body
+    assert 'data-report-nav-sort-key="schedule:${processCode}"' in schedule_body
+    assert 'data-report-nav-sort-key="schedule-detail:${processCode}"' in schedule_body
+    assert 'const detailReordering = previousPositions.has(`schedule-detail:${processCode}`);' in schedule_body
+    assert 'class="report-nav-schedule-detail ${state.code}${detailReordering ? " reordering" : ""}"' in schedule_body
+    assert "animateReportNavigationSort(reportNavScheduleTable, previousPositions);" in schedule_body
+    assert schedule_body.index("captureReportNavigationSortPositions") < schedule_body.index("reportNavScheduleTable.innerHTML")
+    assert schedule_body.index("reportNavScheduleTable.innerHTML") < schedule_body.index("animateReportNavigationSort")
+    detail_reordering_rule = re.search(
+        r"#page-report-navigation \.report-nav-schedule-detail\.reordering\s*\{(?P<body>[^}]*)\}",
+        css,
+    )
+    assert detail_reordering_rule is not None
+    assert "animation: none;" in detail_reordering_rule.group("body")
+    assert "鱼骨图从左到右、报送日程从上到下按报送日期升序排列" in readme
+    assert "保存截止日期后立即以轻量位移动画完成重排" in readme
 
 
 def test_report_navigation_browser_refresh_restores_scoped_session_cache(tmp_path):
@@ -2068,6 +2224,8 @@ def test_report_navigation_has_first_load_placeholder_and_accessible_loading_sta
     assert "function setReportNavigationLoadingState(state)" in app_js
     assert 'reportNavPage.dataset.loadingState = state;' in app_js
     assert 'reportNavPage.setAttribute("aria-busy"' in app_js
+    assert 'const wasHidden = previous === "initial-loading" || previous === "error-empty";' in app_js
+    assert "window.requestAnimationFrame(refreshReportNavigationScheduleLayout)" in app_js
     assert 'setReportNavigationLoadingState(restoredFromCache ? "refreshing-with-cache" : "initial-loading");' in app_js
     assert 'setReportNavigationLoadingState("ready");' in app_js
     assert 'setReportNavigationLoadingState(restoredFromCache ? "error-with-cache" : "error-empty");' in app_js
@@ -2723,7 +2881,9 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "min-width: min(100%, var(--report-nav-schedule-min-width, 1148px));" in css
     assert "flex: 1 1 320px;" in css
     assert "grid-template-columns: 172px minmax(0, 1fr);" in css
-    assert "const scheduleMinWidth = 172 + (dates.length * 38) + 64;" in app_js
+    assert "function reportNavigationScheduleMinWidth(dates = [])" in app_js
+    assert "return 172 + (dayCount * 38) + 64;" in app_js
+    assert "function refreshReportNavigationScheduleLayout()" in app_js
     assert 'reportNavScheduleCard?.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);' in app_js
     assert 'const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");' in app_js
     assert "function syncReportNavigationTodoCardHeight()" in app_js
@@ -2733,7 +2893,27 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "scheduleHeight - detailHeight" in app_js
     assert 'reportNavTodoCard.style.removeProperty("height");' in app_js
     assert "syncReportNavigationTodoCardHeight();" in app_js
-    assert 'window.addEventListener("resize", syncReportNavigationTodoCardHeight);' in app_js
+    assert 'class="report-nav-todo-summary"' in app_js
+    assert "#page-report-navigation .report-nav-todo-summary" in css
+    assert "text-overflow: ellipsis" in css
+    todo_summary = re.search(
+        r"#page-report-navigation \.report-nav-todo-summary\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert todo_summary is not None
+    assert "overflow: hidden" in todo_summary.group("body")
+    assert "white-space: nowrap" in todo_summary.group("body")
+    assert 'window.addEventListener("resize", refreshReportNavigationScheduleLayout);' in app_js
+    reveal_fn = re.search(
+        r"function revealAuthenticatedApp\(\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert reveal_fn is not None
+    reveal_body = reveal_fn.group("body")
+    assert "refreshReportNavigationScheduleLayout();" in reveal_body
+    assert "window.requestAnimationFrame(refreshReportNavigationScheduleLayout)" in reveal_body
     assert 'class="report-nav-schedule-header-label" aria-hidden="true"></div>' in app_js
     assert ">流程 / 进度</div>" not in app_js
 
@@ -3986,7 +4166,7 @@ def test_v21_changelog_documents_interface_radius_concisely():
         "#RRGGBB",
     ]:
         assert verbose_theme_detail not in body
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
+    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
 
 
 def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
@@ -4046,9 +4226,9 @@ def test_version_206_documents_db_validation_engine_update():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
-    assert 'id="statusText">v2.1</span>' in html
-    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
+    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
+    assert 'id="statusText">v2.3</span>' in html
+    assert 'id="topNavStatus" title="v2.3">v2.3</span>' in html
 
     for text in [
         "v2.1",
@@ -4237,10 +4417,10 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
-    assert 'id="statusText">v2.1</span>' in html
-    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
-    assert "- 应用界面版本：`v2.1`" in readme
+    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
+    assert 'id="statusText">v2.3</span>' in html
+    assert 'id="topNavStatus" title="v2.3">v2.3</span>' in html
+    assert "- 应用界面版本：`v2.3`" in readme
 
     change_items = [
         "人行逐笔校验执行历史新增执行人展示",
@@ -4291,9 +4471,9 @@ def test_version_205_documents_scheme_a_logo_update():
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "v2.1";' in app_js
-    assert 'id="statusText">v2.1</span>' in html
-    assert 'id="topNavStatus" title="v2.1">v2.1</span>' in html
+    assert 'const DEFAULT_VERSION = "v2.3";' in app_js
+    assert 'id="statusText">v2.3</span>' in html
+    assert 'id="topNavStatus" title="v2.3">v2.3</span>' in html
 
     for text in [
         "v2.0.5",
@@ -4920,7 +5100,6 @@ def test_user_radius_override_is_semantic_and_border_radius_only():
         ".nav-item",
         ".nav-group-toggle",
         ".nav-submenu",
-        '[data-theme="space-tech"] .top-nav',
         '[data-theme="space-tech"] .top-nav-item',
         '[data-theme="space-tech"] .top-nav-group-toggle',
         '[data-theme="space-tech"] .top-nav-submenu',
@@ -5179,6 +5358,7 @@ def test_all_system_modals_use_balanced_shared_shell():
         "reportNavCardMaintenanceModal",
         "userModal",
         "configModal",
+        "rolePermissionsModal",
     )
     for overlay_id in overlay_ids:
         opening = re.search(
@@ -6899,10 +7079,12 @@ def test_space_tech_theme_hides_in_page_heading_text_and_tightens_gap():
 
     assert '[data-theme="space-tech"] .page-header h2' in css
     assert '[data-theme="space-tech"] .page-header' in css
-    assert "margin: 12px 32px 0" in css
-    assert "padding: 64px 0 32px" in css
-    assert "margin: 8px 14px 0" in css
-    assert "padding: 78px 0 18px" in css
+    # Edge-stuck shell: content hugs the nav without floating offsets.
+    assert "padding: 12px 32px 32px" in css
+    assert "margin: 12px 32px 0" not in css
+    assert "padding: 64px 0 32px" not in css
+    assert "margin: 8px 14px 0" not in css
+    assert "padding: 78px 0 18px" not in css
 
 
 def test_theme_is_saved_per_user_without_updating_global_defaults():
@@ -6946,7 +7128,9 @@ def test_fixed_theme_is_applied_before_stylesheet_and_radius_cache_stays_out_of_
     app_js = _read(APP_JS)
 
     assert 'id="initialThemeScript"' in html
-    assert html.index('id="initialThemeScript"') < html.index('href="/styles.css"')
+    stylesheet_ref = re.search(r'href="/styles\.css[^"]*"', html)
+    assert stylesheet_ref is not None
+    assert html.index('id="initialThemeScript"') < html.index(stylesheet_ref.group(0))
     for text in ["data-theme", "data-color-mode"]:
         assert text in html
     initial_script = html[html.index('id="initialThemeScript"'):html.index('</script>', html.index('id="initialThemeScript"'))]
@@ -7398,6 +7582,7 @@ def test_index_hides_home_until_auth_check_finishes():
     assert 'document.documentElement.classList.add("main-entry-animate");' in app_js
     assert 'document.documentElement.classList.remove("auth-pending");' in app_js
     assert 'document.documentElement.classList.remove("main-entry-animate");' in app_js
+    assert "refreshReportNavigationScheduleLayout();" in app_js
     assert ".main-entry-animate .sidebar" in css
     assert ".main-entry-animate .top-nav" in css
     assert ".main-entry-animate .main-content" in css
@@ -7486,6 +7671,16 @@ def test_system_prompt_supports_the_custom_date_component():
     assert 'const dialogEl = modal.querySelector(".modal-prompt");' in prompt_body
     assert "const focusTargetEl = isDate ? dialogEl : activeInputEl;" in prompt_body
     assert "setTimeout(() => focusTargetEl?.focus(), 0);" in prompt_body
+    assert "options.maxlength" in prompt_body
+    assert "inputEl.maxLength = Number(options.maxlength);" in prompt_body
+    assert 'inputEl.removeAttribute("maxLength");' in prompt_body
+    assert "const submit = () => {" in prompt_body
+    assert "options.required" in prompt_body
+    assert "options.onInvalid" in prompt_body
+    assert "prompt-required-hint" in prompt_body
+    assert 'activeInputEl.setAttribute("aria-invalid", "true")' in prompt_body
+    assert "okBtn.onclick = () => submit();" in prompt_body
+    assert "cleanup(activeInputEl.value);" not in prompt_body
     assert "setTimeout(() => activeInputEl.focus(), 0);" not in prompt_body
     assert "closeCustomDatePicker(dateInputEl);" in prompt_body
     assert 'class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1"' in html
@@ -7505,10 +7700,18 @@ def test_user_management_page_and_role_based_navigation_are_present():
     assert 'id="userTableBody"' in html
     assert 'id="userModal"' in html
     assert 'id="userPassword"' in html
+    assert 'id="userRoleCards"' in html
+    assert '<select id="userRoleCards"' in html
+    assert '<option value="admin">管理员</option>' in html
+    assert '<option value="user">普通用户</option>' in html
+    assert 'value="governance"' not in html
+    assert 'value="regulatory_report"' not in html
+    assert 'value="data_middle"' not in html
+    assert 'value="fund_custody"' not in html
     assert 'class="nav-item admin-only" data-page="users"' in html
-    assert 'class="top-nav-item admin-only" data-page="users"' in html
+    assert 'class="top-nav-item top-nav-subitem" data-page="users"' in html
     assert "function applyRoleAccess" in app_js
-    assert 'document.querySelectorAll(".admin-only")' in app_js
+    assert '.admin-only, [data-capability]' in app_js
     assert 'authState.user?.role === "admin"' in app_js
     assert 'api("/api/users"' in app_js
     assert 'api(`/api/users/${encodeURIComponent(userId)}`' in app_js
@@ -7517,6 +7720,70 @@ def test_user_management_page_and_role_based_navigation_are_present():
     assert ".user-stats" in css
     assert ".user-table-card" in css
     assert ".role-badge" in css
+
+
+def test_role_permissions_page_and_capability_access_are_present():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    # 系统管理分组与角色权限页
+    assert 'data-nav-group="system-management"' in html
+    assert 'data-page="role-permissions"' in html
+    assert 'id="page-role-permissions"' in html
+    assert 'data-capability="sys.settings"' in html
+    assert 'data-capability="sys.users"' in html
+    assert 'data-capability="sys.role_permissions"' in html
+    # 能力判断与显隐
+    assert "function hasCapability" in app_js
+    assert "function applyCapabilityAccess" in app_js
+    # canManageHistory 改为能力判断
+    assert 'hasCapability("history.delete")' in app_js
+    # 系统管理分组 toggle 分流
+    assert '"system-management"' in app_js
+    # 角色权限页加载
+    assert "function loadRolePermissions" in app_js
+    # 版本号升级到 v2.3
+    assert 'const DEFAULT_VERSION = "v2.3"' in app_js
+    assert '"v2.3"' in app_js
+    # 用户角色仅保留管理员/普通用户；其余走自定义角色
+    assert 'governance: "数据治理"' not in app_js
+    assert 'regulatory_report: "监管报表"' not in app_js
+    assert 'admin: "管理员"' in app_js
+    assert 'user: "普通用户"' in app_js
+    # 角色权限页样式与原生能力树
+    assert ".role-permissions" in css
+    assert ".capability-tree" in css
+    assert "capability-tree-checkbox" in css
+    assert "function createCapabilityTree" in app_js
+    assert 'label: "页面查看"' in app_js
+    assert 'code: "menu.history", label: "页面查看"' in app_js or (
+        'code: "menu.history"' in app_js and 'label: "页面查看"' in app_js
+    )
+    assert "role-name-custom-hint" not in app_js
+    assert 'code === "admin" ? 0 : code === "user" ? 1 : 2' in app_js
+    assert "半选/全选按全部子能力勾选态计算" in app_js
+    assert 'maxlength="20"' in html
+    assert 'maxlength="10"' in html
+    assert "角色备注不得超过 20 字" in app_js
+    assert "角色名称不得超过 10 个字" in app_js
+    assert "jstree" not in app_js.lower()
+    assert "jquery.min.js" not in html
+    assert "jstree.min.js" not in html
+    assert "jstree-style.min.css" not in html
+    assert 'input.type = "checkbox"' in app_js
+    assert "getMatrix()" in app_js
+    assert 'id="roleDefinitionModal"' in html
+    assert "function openRoleDefinitionModal" in app_js
+    assert "function saveRoleDefinition" in app_js
+    assert 'showPrompt("新增角色"' not in app_js
+    assert ".user-modal .custom-select-shell.user-role-cards" in css
+    assert 'id="rolePermissionsAddBtn"' in html
+    assert 'id="rolePermissionsEditBtn"' not in html
+    assert 'id="rolePermissionsDeleteBtn"' not in html
+    assert 'id="roleDefinitionCode"' in html
+    assert 'roleTone = role === "admin" ? "admin" : "user"' in app_js
+    assert "#roleDefinitionCode" in css
 
 
 def test_user_management_table_keeps_action_column_compact():
@@ -7563,7 +7830,7 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_removed():
     ]:
         assert script_marker not in app_js
 
-    assert 'document.querySelectorAll(".admin-only")' in app_js
+    assert '.admin-only, [data-capability]' in app_js
 
 
 def test_user_management_cards_and_rows_have_theme_glow_hover_motion():
@@ -7758,7 +8025,7 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
         "user-modal-header",
         "user-modal-title",
         "user-modal-form",
-        "user-role-card",
+        "user-role-cards",
         "user-enable-row",
         "user-modal-footer",
     ]:
@@ -7768,10 +8035,9 @@ def test_user_edit_modal_matches_reference_layout_and_does_not_close_on_blank_ov
     assert "user-modal-icon" not in modal.group("body")
     assert '<input id="userRole" type="hidden" value="user" />' in modal.group("body")
     assert '<input id="userEnabled" type="hidden" value="true" />' in modal.group("body")
-    assert '<select id="userRole"' not in modal.group("body")
-    assert '<select id="userEnabled"' not in modal.group("body")
-    assert 'type="radio" name="userRoleChoice" value="admin"' in modal.group("body")
-    assert 'type="radio" name="userRoleChoice" value="user"' in modal.group("body")
+    assert '<select id="userRoleCards"' in modal.group("body")
+    assert 'class="filter-select user-role-cards"' in modal.group("body")
+    assert "function renderUserRoleCards()" in app_js
     assert "function syncUserRoleCards()" in app_js
     assert "function syncUserEnabledSwitch()" in app_js
     assert "function isDelegatedAdminSession()" in app_js
@@ -7883,7 +8149,7 @@ def test_run_history_displays_executor_and_recent_run_summary():
     history_head = html[html.index('id="historyBody"') - 600:html.index('id="historyBody"')]
     assert history_head.index("报告期") < history_head.index("执行时间")
     assert "执行人" in history_head
-    assert '<th class="admin-only">数据源</th>' in history_head
+    assert '<th class="history-source-only">数据源</th>' in history_head
     assert history_head.index("<th>总差异</th>") < history_head.index("<th>已解释</th>")
     assert history_head.index("<th>已解释</th>") < history_head.index("<th>新增差异</th>")
     assert history_head.index("<th>新增差异</th>") < history_head.index("<th>减少差异</th>")
@@ -7997,7 +8263,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "function historyColumnCount()" in app_js
     assert "const deleteAction = canManageHistory()" in app_js
     assert 'if (!canManageHistory()) {' in app_js
-    assert '<td class="admin-only">${escapeHtml(formatHistorySourceName(run))}</td>' in app_js
+    assert '<td>${escapeHtml(formatHistorySourceName(run))}</td>' in app_js
     history_result_table = re.search(r"function historyResultTable\(items\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert history_result_table is not None
     assert "<th>差异类型</th><th>状态</th>" in history_result_table.group("body")
@@ -8203,6 +8469,22 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "width: 0" in webkit_scrollbar.group("body")
     assert "height: 0" in webkit_scrollbar.group("body")
 
+    history_scroll = re.search(
+        r"(?m)^\.app-modal-shell\.modal-info--history-detail \.history-detail\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert history_scroll is not None
+    assert "scrollbar-width: thin" in history_scroll.group("body")
+    assert "scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent" in history_scroll.group("body")
+    assert "--ui-thin-scrollbar-size: 6px;" in css
+    assert "--ui-thin-scrollbar-thumb: #c5d0e0;" in css
+    assert (
+        ".app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar"
+        in css
+    )
+    assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
+
     modal_body = re.search(
         r"(?m)^\.app-modal-shell:not\(#pbcModal\):not\(#dbValidationModal\):not\(#flowModal\)"
         r" > \.app-modal-body\s*\{(?P<body>.*?)\}",
@@ -8211,6 +8493,115 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     )
     assert modal_body is not None
     assert "overflow: auto" in modal_body.group("body")
+
+
+def test_report_navigation_and_settings_show_thin_main_content_scrollbar():
+    css = _read(STYLES_CSS)
+    html = _read(INDEX_HTML)
+
+    page_scroll = re.search(
+        r"(?m)^:root\[data-page=\"report-navigation\"\]\[data-theme=\"space-tech\"\] \.main-content,\s*\n"
+        r":root\[data-page=\"settings\"\]\[data-theme=\"space-tech\"\] \.main-content\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert page_scroll is not None
+    body = page_scroll.group("body")
+    assert "scrollbar-width: thin" in body
+    assert "scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent" in body
+    assert "margin-top: 76px" not in body
+    assert "height: calc(100vh - 76px)" not in body
+    assert (
+        ':root[data-page="report-navigation"][data-theme="space-tech"] .main-content::-webkit-scrollbar'
+        in css
+    )
+    assert (
+        ':root[data-page="settings"][data-theme="space-tech"] .main-content::-webkit-scrollbar'
+        in css
+    )
+    assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
+    assert "background: var(--ui-thin-scrollbar-thumb, #c5d0e0);" in css
+    assert 'href="/styles.css?v=20260810u"' in html
+    assert 'src="/app.js?v=20260810u"' in html
+
+
+def test_space_tech_top_nav_is_edge_stuck_not_floating():
+    css = _read(STYLES_CSS)
+
+    space_top_nav = re.search(
+        r'\[data-theme="space-tech"\] \.top-nav\s*\{(?P<body>.*?)\}',
+        css,
+        re.S,
+    )
+    assert space_top_nav is not None
+    body = space_top_nav.group("body")
+    assert "position: relative" in body
+    assert "top: 0" in body
+    assert "left: 0" in body
+    assert "right: 0" in body
+    assert "width: 100%" in body
+    assert "border-radius: 0 !important" in body
+    assert "border-bottom: 1px solid rgba(148, 163, 184, 0.22)" in body
+    assert "box-shadow: none" in body
+    assert "background: var(--surface-container-lowest)" in body
+    assert "backdrop-filter: none" in body
+    assert "overflow: visible" in body
+    assert "z-index: 40" in body
+    assert "padding: 8px 32px;" in body
+    assert "flex: 0 0 auto" in body
+    assert '[data-theme="space-tech"] .top-nav,' not in css.split("User interface radius preference: start", 1)[1].split("User interface radius preference: end", 1)[0]
+    # Active tab keeps Logo gradient but never casts a blue glow under the nav.
+    assert "0 8px 18px rgba(59, 130, 246, 0.24)" not in css
+    assert "Keep Logo gradient fill; do not cast a blue glow under the active tab." in css
+    assert (
+        ".top-nav-item.active,\n.top-nav-group.active > .top-nav-group-toggle,\n.nav-item.active,"
+        not in css
+    )
+    assert (
+        ".nav-item.active,\n.nav-group.active > .nav-group-toggle,\n.btn-primary,"
+        in css
+    )
+    assert "box-shadow: 0 6px 16px var(--theme-focus-ring);" in css
+    glow_cleanup = re.search(
+        r"/\* Top nav glow cleanup:[\s\S]*?\*/\n(?P<sel>[^{]+)\{(?P<body>[^}]+)\}",
+        css,
+    )
+    assert glow_cleanup is not None
+    assert ".top-nav .top-nav-item.active" in glow_cleanup.group("sel")
+    assert "box-shadow: none !important;" in glow_cleanup.group("body")
+    assert "filter: none !important;" in glow_cleanup.group("body")
+    assert "top-nav-glow-off-20260810t" in css
+    assert "-webkit-box-shadow: none !important;" in css
+    assert "Clip Edge antialias fringe around the rounded gradient pill." in css
+    assert "background-image: var(--theme-accent-gradient) !important;" in css
+    assert "transition: color var(--transition-fast), background-color var(--transition-fast);" in css
+    assert "transition: all var(--transition-fast);" not in re.search(
+        r"(?m)^\.top-nav-item\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    ).group("body")
+
+    space_body = re.search(r'\[data-theme="space-tech"\] body\s*\{(?P<body>.*?)\}', css, re.S)
+    assert space_body is not None
+    assert "flex-direction: column" in space_body.group("body")
+    assert "height: 100vh" in space_body.group("body")
+    assert "overflow: hidden" in space_body.group("body")
+
+    main_content = re.search(
+        r"\[data-theme=\"space-tech\"\] \.main-content\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert main_content is not None
+    main_body = main_content.group("body")
+    assert "flex: 1 1 auto" in main_body
+    assert "margin: 0" in main_body
+    assert "padding: 12px 32px 32px" in main_body
+    assert "border-radius: 0" in main_body
+    assert "background: var(--surface-container-lowest)" in main_body
+    assert "height: calc(100vh - 12px)" not in main_body
+    assert "margin: 12px 32px 0" not in main_body
+    assert "padding: 64px 0 32px" not in main_body
 
 
 def test_history_list_shows_loading_animation_while_fetching():
@@ -8389,6 +8780,13 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "function openCustomDatePicker(input)",
         "function toggleCustomDatePicker(input)",
         "function enhanceCustomDateInput(input, shell)",
+        "function cleanupDetachedCustomDatePickers()",
+        "function cleanupDetachedCustomSelects()",
+        "cleanupDetachedCustomDatePickers();",
+        "cleanupDetachedCustomSelects();",
+        "dropdown._customControlOwner = input;",
+        "dropdown._customControlOwner = select;",
+        'dropdown.classList.add("rsp-compact-select-dropdown");',
         "const CUSTOM_INPUT_TYPES = new Set",
         "const customDateStates = new WeakMap();",
         "const CUSTOM_DATE_WEEKDAYS",
@@ -8425,6 +8823,14 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "initializeCustomSelects();",
     ]:
         assert text in app_js
+    click_close = re.search(
+        r'document\.addEventListener\("click", \(event\) => \{(?P<body>.*?)\n  \}, true\);',
+        app_js,
+        re.S,
+    )
+    assert click_close is not None
+    assert "closeOtherCustomSelects()" in click_close.group("body")
+    assert "closeOtherCustomDatePickers()" in click_close.group("body")
     assert 'input.addEventListener("focus", () => openCustomDatePicker(input));' not in app_js
 
     select_rule = re.search(r"(?m)^select\s*\{(?P<body>.*?)\}", css, re.S)
@@ -8839,8 +9245,8 @@ def test_space_tech_top_nav_aligns_with_content_padding():
 
     top_nav = re.search(r"(?m)^\.top-nav\s*\{(?P<body>.*?)\}", css, re.S)
     assert top_nav is not None
-    assert "left: 32px" in top_nav.group("body")
-    assert "right: 32px" in top_nav.group("body")
+    # Base rule may still describe the legacy floating shell; space-tech overrides to edge-stuck.
+    assert "position: fixed" in top_nav.group("body")
 
     space_top_nav = re.search(
         r'\[data-theme="space-tech"\] \.top-nav\s*\{(?P<body>.*?)\}',
@@ -8848,19 +9254,21 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert space_top_nav is not None
-    assert "backdrop-filter: blur(18px) saturate(1.1);" in space_top_nav.group("body")
-    assert "-webkit-backdrop-filter: blur(18px) saturate(1.1);" in space_top_nav.group("body")
+    assert "background: var(--surface-container-lowest);" in space_top_nav.group("body")
+    assert "backdrop-filter: none;" in space_top_nav.group("body")
+    assert "-webkit-backdrop-filter: none;" in space_top_nav.group("body")
+    assert "position: relative" in space_top_nav.group("body")
+    assert "left: 0" in space_top_nav.group("body")
+    assert "right: 0" in space_top_nav.group("body")
+    assert "border-radius: 0 !important" in space_top_nav.group("body")
 
     assert "const topNav = document.querySelector(\".top-nav\");" in app_js
     assert "const mainContent = document.querySelector(\".main-content\");" in app_js
     assert "function updateSpaceTopNavFrost()" in app_js
-    assert "mainContent?.scrollTop || 0" in app_js
-    assert "Array.from(pages).find" in app_js
-    assert "window.getComputedStyle(page).display !== \"none\"" in app_js
-    assert "getBoundingClientRect().bottom" in app_js
-    assert "getBoundingClientRect().top" in app_js
-    assert "scrollOffset > 1" in app_js
-    assert 'document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);' in app_js
+    # Edge-stuck opaque nav clears frost instead of toggling it on scroll.
+    assert 'document.documentElement.classList.remove("space-nav-over-content");' in app_js
+    assert 'document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);' not in app_js
+    assert "scrollOffset > 1" not in app_js
     assert 'window.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true });' in app_js
     assert 'mainContent?.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true });' in app_js
     assert "function handleMainContentScroll()" not in app_js
@@ -8892,16 +9300,18 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     )
     assert main_content is not None
     main_content_body = main_content.group("body")
-    assert "height: calc(100vh - 12px)" in main_content_body
-    assert "margin: 12px 32px 0" in main_content_body
-    assert "padding: 64px 0 32px" in main_content_body
-    assert "border: 0" in main_content_body
-    assert "border-radius: 12px 12px 0 0" in main_content_body
-    assert "background: transparent" in main_content_body
+    assert "flex: 1 1 auto" in main_content_body
+    assert "margin: 0" in main_content_body
+    assert "padding: 12px 32px 32px" in main_content_body
+    assert "border-radius: 0" in main_content_body
+    assert "background: var(--surface-container-lowest)" in main_content_body
     assert "overflow-x: hidden" in main_content_body
     assert "overflow-y: auto" in main_content_body
     assert "--space-scrollbar-top-offset" not in main_content_body
     assert "scrollbar-width: none" in main_content_body
+    assert "height: calc(100vh - 12px)" not in main_content_body
+    assert "margin: 12px 32px 0" not in main_content_body
+    assert "padding: 64px 0 32px" not in main_content_body
 
     hidden_scrollbar = re.search(
         r"\[data-theme=\"space-tech\"\] \.main-content::-webkit-scrollbar\s*\{(?P<body>.*?)\}",
@@ -8948,8 +9358,10 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert mobile_top_nav is not None
-    assert "left: 14px" in mobile_top_nav.group("body")
-    assert "right: 14px" in mobile_top_nav.group("body")
+    assert "left: 0" in mobile_top_nav.group("body")
+    assert "right: 0" in mobile_top_nav.group("body")
+    assert "width: 100%" in mobile_top_nav.group("body")
+    assert "border-radius: 0" in mobile_top_nav.group("body")
 
     mobile_main_content = re.search(
         r"\[data-theme=\"space-tech\"\] \.main-content\s*\{(?P<body>.*?)\}",
@@ -8958,10 +9370,13 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     )
     assert mobile_main_content is not None
     mobile_main_content_body = mobile_main_content.group("body")
-    assert "height: calc(100vh - 8px)" in mobile_main_content_body
-    assert "margin: 8px 14px 0" in mobile_main_content_body
-    assert "padding: 78px 0 18px" in mobile_main_content_body
+    assert "height: auto" in mobile_main_content_body
+    assert "margin: 0" in mobile_main_content_body
+    assert "padding: 12px 14px 18px" in mobile_main_content_body
     assert "--space-scrollbar-top-offset" not in mobile_main_content_body
+    assert "height: calc(100vh - 8px)" not in mobile_main_content_body
+    assert "margin: 8px 14px 0" not in mobile_main_content_body
+    assert "padding: 78px 0 18px" not in mobile_main_content_body
 
     compact_css = css[css.index("@media (max-width: 640px)") :]
     compact_top_nav = re.search(
@@ -8970,7 +9385,11 @@ def test_space_tech_top_nav_aligns_with_content_padding():
         re.S,
     )
     assert compact_top_nav is not None
-    assert "max-width: calc(100vw - 20px)" in compact_top_nav.group("body")
+    assert "left: 0" in compact_top_nav.group("body")
+    assert "right: 0" in compact_top_nav.group("body")
+    assert "width: 100%" in compact_top_nav.group("body")
+    assert "max-width: none" in compact_top_nav.group("body")
+    assert "max-width: calc(100vw - 20px)" not in compact_top_nav.group("body")
     compact_tabs = re.search(
         r"\[data-theme=\"space-tech\"\] \.top-nav-tabs\s*\{(?P<body>.*?)\}",
         compact_css,
@@ -9237,3 +9656,14 @@ def test_flow_cancel_uses_job_id_and_disables_button_while_stopping():
     assert "if (flowCancelBtn?.disabled) return;" in body
     assert "flowCancelBtn.disabled = true" in body
     assert "停止中" in body
+
+
+def test_provider_managed_report_card_retires_manual_entry_and_never_fakes_zero():
+    app_js = _read(APP_JS)
+
+    assert "function reportNavigationCardMaintainable(cardCode)" in app_js
+    assert "maintenance.editable !== false" in app_js
+    assert "const unavailable = card.source === \"provider\" && card.available === false;" in app_js
+    assert "统计暂不可用" in app_js
+    assert "result.provider_issues || []" in app_js
+    assert "renderReportNavigationProviderIssues" in app_js

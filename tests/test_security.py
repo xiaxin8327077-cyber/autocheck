@@ -162,6 +162,84 @@ def test_auth_manager_persists_users_to_mysql_across_instances(tmp_path, shared_
     assert not config_path.exists()
 
 
+def test_normalize_role_accepts_system_roles_and_remaps_removed_builtins():
+    from auto_check.app.security import _normalize_role
+
+    assert _normalize_role("admin") == "admin"
+    assert _normalize_role("user") == "user"
+    for role in ("governance", "regulatory_report", "data_middle", "fund_custody"):
+        assert _normalize_role(role) == "user"
+
+
+def test_normalize_role_rejects_unknown_role():
+    from auto_check.app.security import _normalize_role
+
+    for invalid in ("superuser", "guest", "operator"):
+        with pytest.raises(ValueError, match="role"):
+            _normalize_role(invalid)
+
+
+def test_normalize_role_accepts_custom_prefix_role():
+    from auto_check.app.security import _normalize_role
+
+    assert _normalize_role("custom_auditor") == "custom_auditor"
+    assert _normalize_role("custom_1") == "custom_1"
+
+
+def test_normalize_role_rejects_malformed_custom_role():
+    from auto_check.app.security import _normalize_role
+
+    for invalid in ("custom_", "custom_Audit", "custom_a-b", "custom_" + "x" * 40, "Custom_1", "custom中文"):
+        with pytest.raises(ValueError, match="role"):
+            _normalize_role(invalid)
+
+
+def test_create_user_remaps_removed_builtin_roles_to_user(tmp_path, shared_application_database):
+    auth = AuthManager(tmp_path / "config.json")
+    auth.set_admin_password("Admin123")
+    for role in ("governance", "regulatory_report", "data_middle", "fund_custody"):
+        user = auth.create_user(username=f"u_{role}", password="User123a", role=role)
+        assert user["role"] == "user"
+
+
+def test_login_remaps_removed_builtin_role_to_user(tmp_path, shared_application_database):
+    auth = AuthManager(tmp_path / "config.json")
+    auth.set_admin_password("Admin123")
+    auth.create_user(username="gov", password="Gov123a", role="governance", display_name="治理")
+    session = auth.login("gov", "Gov123a")
+    assert session is not None
+    assert session.role == "user"
+
+
+def test_create_user_rejects_unknown_role(tmp_path, shared_application_database):
+    auth = AuthManager(tmp_path / "config.json")
+    auth.set_admin_password("Admin123")
+    with pytest.raises(ValueError, match="role"):
+        auth.create_user(username="ghost", password="Ghost12a", role="ghost")
+
+
+def test_create_user_rejects_custom_role_not_in_definitions(tmp_path, shared_application_database):
+    auth = AuthManager(tmp_path / "config.json")
+    auth.set_admin_password("Admin123")
+    # custom_ 前缀但未在 role_definitions 建表
+    with pytest.raises(ValueError, match="unknown role"):
+        auth.create_user(username="cghost", password="Ghost12a", role="custom_ghost")
+
+
+def test_create_user_accepts_existing_custom_role(tmp_path, shared_application_database):
+    auth = AuthManager(tmp_path / "config.json")
+    auth.set_admin_password("Admin123")
+    with auth.database.transaction() as connection:
+        from auto_check.app.storage_role_definitions import create_role_definition
+
+        created = create_role_definition(connection, display_name="审计员", updated_by="admin")
+    user = auth.create_user(username="auditor", password="Audit123a", role=created["role_code"])
+    assert user["role"] == created["role_code"]
+    session = auth.login("auditor", "Audit123a")
+    assert session is not None
+    assert session.role == created["role_code"]
+
+
 def test_auth_manager_persists_native_mysql_user_fields(tmp_path, shared_application_database):
     manager = AuthManager(tmp_path / "config.json")
     manager.set_admin_password("Admin123")
@@ -207,7 +285,8 @@ def test_deleting_user_prunes_interface_preferences_in_same_user_transaction(
     transaction_count = shared_application_database.transaction_count
     manager.delete_user(operator["id"], current_user_id=admin["id"])
 
-    assert shared_application_database.transaction_count == transaction_count + 1
+    # _users() 读取路径会先开事务做已下线角色迁移；真正写用户+剪枝仍在同一事务
+    assert shared_application_database.transaction_count == transaction_count + 2
     rows = shared_application_database.connection.tables["user_interface_preferences"]
     assert [(row["user_id"], row["radius_px"]) for row in rows] == [(admin["id"], 4)]
 

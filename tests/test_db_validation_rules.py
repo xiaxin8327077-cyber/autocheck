@@ -1262,6 +1262,37 @@ def test_zg13_public_info_contract_end_date_rule_matches_legacy_no_output():
     assert not any(row.mark.endswith("Zg13_Rule9") for row in rows)
 
 
+def test_zg13_inner_code_prefers_pin_mpactid_over_innercode():
+    rows = run_basic_rules(
+        "ZG13",
+        date(2026, 5, 31),
+        [
+            {
+                "projcode": "P1",
+                "qycode": "Q1",
+                "qyname": "目标企业",
+                "pin_mpactid": "PIN1",
+                "innercode": "INNER1",
+                "predate": "2028-01-01",
+            }
+        ],
+        [
+            {
+                "projcode": "P1",
+                "qycode": "Q1",
+                "qyname": "目标企业",
+                "pin_mpactid": "PIN1",
+                "innercode": "INNER1",
+                "predate": "2027-01-01",
+            }
+        ],
+    )
+    rule4_rows = [row for row in rows if row.mark.endswith("Zg13_Rule4")]
+    assert len(rule4_rows) == 1
+    assert "PIN1" in rule4_rows[0].detail
+    assert "INNER1" not in rule4_rows[0].detail
+
+
 def test_zg13_legacy_rules_are_triggerable_from_database_rows():
     current_rows = [
         _zg13_row("P1", "Q1", "I1", areacode="320100"),

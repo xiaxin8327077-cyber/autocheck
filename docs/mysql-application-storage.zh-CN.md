@@ -4,7 +4,7 @@
 
 ## 一、当前架构
 
-当前版本使用 MySQL 应用库 `auto_check` 保存系统自身配置、用户、认证数据、执行历史、报送导航配置/快照和界面偏好。DWS 数据源和报表数据源仍由页面配置维护，继续支持 PostgreSQL 或 MySQL，不属于本应用库。完整应用结构为 39 张表，`app_schema_version` 仍为 `1`。
+当前版本使用 MySQL 应用库 `auto_check` 保存系统自身配置、用户、认证数据、执行历史、报送导航配置/快照、界面偏好和模块宿主状态。DWS 数据源和报表数据源仍由页面配置维护，继续支持 PostgreSQL 或 MySQL，不属于本应用库。完整应用结构为 45 张表，`app_schema_version` 仍为 `1`。
 
 运行时只读取现有 `config.json` 中的 `app_database` 启动连接信息。动态配置、用户、自动对数历史、人行逐笔校验历史和流程链执行历史不再写回 JSON 或 SQLite。
 
@@ -24,24 +24,26 @@
 2. 执行 `sql/app_storage/mysql/001_init_schema.sql` 创建 20 张应用存储表。
 3. 如需迁移旧数据，停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读导出旧 SQLite 数据 SQL 和迁移报告。
 4. 由运维人员人工检查并执行数据 SQL，不在应用启动时自动迁移。
-5. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 17 张报送导航表。
+5. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 18 张报送导航表。
 6. 执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入报送导航种子配置。
 7. 执行 `sql/app_storage/mysql/004_user_interface_preferences.sql` 新增第 36 张 `user_interface_preferences` 表。
 8. 执行 `sql/app_storage/mysql/005_user_appearance_preferences.sql`，为用户偏好表增加折线图风格、两个可空个人主题色及检查约束。
-9. 执行 `sql/app_storage/mysql/006_system_interface_preferences.sql` 新增第 39 张 `system_interface_preferences` 表。
+9. 执行 `sql/app_storage/mysql/006_system_interface_preferences.sql` 新增第 39 张 `system_interface_preferences` 表；这是模块系统第 012 个升级脚本执行前的历史表数量。
 10. 执行 `sql/app_storage/mysql/007_report_navigation_schedule_owner.sql`，为月度报送日程补充负责人字段。
 11. 执行 `sql/app_storage/mysql/008_report_navigation_work_calendar.sql`，创建或更新法定节假日与调休工作日日历。
 12. 执行 `sql/app_storage/mysql/009_report_navigation_manual_step_permissions.sql`，规范报送步骤人工确认开关。
 13. 执行 `sql/app_storage/mysql/010_pbc_template_step_seven_display_only.sql`，将资管产品模板、逐笔报送第七步调整为仅展示，并由第六步归档记录提供节点完成时间。
 14. 执行 `sql/app_storage/mysql/011_report_navigation_completion_time_sources.sql`，将归档类报送完成时间统一改为仅取 `create_date`，并配置人行大集中完成时间数据源。
-15. 配置 `config.json` 的 `app_database` 节点。
-16. 启动应用并确认连接、结构版本和关键表数据。
+15. 生产升级必须先完成 MySQL 全库备份，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 `app_modules`、`app_module_schema_versions` 和 `app_module_migration_history` 三张模块平台表。
+16. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`。再执行 `sql/app_storage/mysql/014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照）。再执行 `sql/app_storage/mysql/015_role_definitions.sql` 新增角色定义表（自定义角色）。再执行 `sql/app_storage/mysql/016_remove_reserved_builtin_roles.sql`，将历史预留角色（`governance` / `regulatory_report` / `data_middle` / `fund_custody`）账号迁移为普通用户，并清理 `role_definitions` 中对应残留行；不修改 `app_schema_version`，矩阵中的旧角色键由应用运行时合并逻辑自动忽略。
+17. 配置 `config.json` 的 `app_database` 节点。
+18. 启动应用并确认连接、45 张表、全局结构版本和关键表数据。
 
-建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产凭据或业务数据。`004`、`006` 和 `008` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 与 `007` 通过 `information_schema` 判断字段或约束是否存在后再升级。升级脚本可按顺序重复执行；`008` 会幂等写入年度法定节假日和调休工作日配置，`009` 规范历史人工确认范围，`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，并配置人行大集中从 `currency_report_24.currency_report_duration` 按报告期取最大 `create_date`。如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
+建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产凭据或业务数据。`004`、`006`、`008`、`012_module_system.sql` 和 `013_report_navigation_provider_states.sql` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 与 `007` 通过 `information_schema` 判断字段或约束是否存在后再升级。升级脚本可按顺序重复执行；`008` 会幂等写入年度法定节假日和调休工作日配置，`009` 规范历史人工确认范围，`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，`012` 创建模块平台表，`013` 创建报送导航统计提供方状态表，二者均不修改 `app_schema_version`。如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
 
 `user_interface_preferences` 不设置外键；用户删除后，孤儿偏好由应用在用户数据变更事务中清理。`006` 只创建表，不预插入 `id=1` 记录；当前前端不依赖该记录，后端兼容接口在记录不存在时使用代码默认色，并在显式调用保存接口时原子 upsert 唯一记录。
 
-从已完成 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`，再部署新程序。本文仅说明初始化和升级步骤，不代表已在任何线上环境执行。
+从已完成 `001`、`002`、`003` 的版本升级时，应先停机和备份，在升级应用前依次执行随发布提供的 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`；执行 `011` 后先备份并确认备份可用，再由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`，再部署新程序。`012`、`013` 只创建平台表，不修改 `app_schema_version` 或已有业务数据；模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由模块自身迁移的版本和 checksum 管理。本文仅说明初始化和升级步骤，不代表已在任何线上环境执行。
 
 ## 三、界面偏好完整规范 DDL
 
@@ -124,14 +126,14 @@ python scripts\export_sqlite_to_mysql.py `
   --report-output "D:\output\auto_check_mysql_migration_report.json"
 ```
 
-导出器只读打开 SQLite，不连接 MySQL。数据 SQL 会包含加密后的数据源密码和用户密码哈希，应按敏感生产数据处理；控制台只输出汇总，不输出行内容。导出后的升级顺序仍为 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`。
+导出器只读打开 SQLite，不连接 MySQL。数据 SQL 会包含加密后的数据源密码和用户密码哈希，应按敏感生产数据处理；控制台只输出汇总，不输出行内容。导出 SQL 建立原 20 张基础表后，按顺序执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql`、`011_report_navigation_completion_time_sources.sql`；随后确认备份可恢复，再由运维人员人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`。其中 `010`、`011` 依赖已由 `002_report_navigation.sql` 和 `003_report_navigation_seed.sql` 创建并初始化的报送导航表，因此完整空库流程必须先执行 `002`、`003`，不得只执行导出 SQL 后的 `004`–`013`。
 
 ## 五、验收口径
 
 上线连接 MySQL 后，需要分别确认旧数据迁移结果和当前完整表结构。至少确认：
 
 - `app_schema_version` 当前版本为 `1`。
-- 当前完整 39 张应用存储表结构齐全，且已按顺序应用 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`。
+- 当前完整 45 张应用存储表结构齐全，已按顺序应用至 `011_report_navigation_completion_time_sources.sql`，并在备份后由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`；模块业务表不属于全局 `EXPECTED_APP_SCHEMA`。
 - `user_interface_preferences` 包含圆角、折线图风格和两个可空个人主题色；主键、默认值、范围/枚举/HEX 检查约束符合本节完整 DDL，现有行数在结构升级前后保持一致。
 - `system_interface_preferences` 包含唯一行约束、两个兼容色默认值/HEX 约束、最后修改人和更新时间；允许零行，不应出现 `id<>1` 或多余记录。
 - 界面设置中不存在自定义主题色或渐变开关；兼容主题色也不写入 `app_settings`。

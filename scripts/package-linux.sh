@@ -63,6 +63,8 @@ PYINSTALLER_ARGS=(
   "--paths" "$SRC_PATH"
   "--add-data" "$WEB_PATH:auto_check/web"
   "--add-data" "$RESOURCES_PATH:auto_check/resources"
+  "--collect-submodules" "auto_check.modules"
+  "--collect-data" "auto_check.modules"
   "--hidden-import" "py7zr"
   "--hidden-import" "rarfile"
   "--hidden-import" "psycopg"

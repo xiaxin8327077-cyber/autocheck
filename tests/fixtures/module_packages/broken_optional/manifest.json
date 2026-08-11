@@ -1,0 +1,15 @@
+{
+  "id": "broken_optional",
+  "name": "Broken optional",
+  "version": "1.0.0",
+  "platform_api": 1,
+  "required": false,
+  "backend_entry": "module_packages.broken_optional.module:create_module",
+  "api_prefix": "/api/modules/broken-optional",
+  "frontend_entry": "/module-assets/broken_optional/index.js",
+  "frontend_style": "/module-assets/broken_optional/styles.css",
+  "navigation": [],
+  "permissions": ["broken_optional.view"],
+  "dependencies": [],
+  "schema_version": 0
+}

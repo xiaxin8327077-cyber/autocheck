@@ -45,6 +45,19 @@ def load_users(connection: Connection) -> list[dict[str, Any]]:
     ]
 
 
+def migrate_removed_builtin_roles(connection: Connection) -> int:
+    """将已下线内建预留角色账号改写为普通用户；返回受影响行数。"""
+    from auto_check.app.capabilities import REMOVED_BUILTIN_ROLES
+    from auto_check.app.time_utils import beijing_now
+
+    result = connection.execute(
+        USERS.update()
+        .where(USERS.c.role.in_(tuple(REMOVED_BUILTIN_ROLES)))
+        .values(role="user", updated_at=beijing_now().replace(tzinfo=None))
+    )
+    return int(result.rowcount or 0)
+
+
 def replace_users(connection: Connection, users: list[dict[str, Any]]) -> None:
     connection.execute(delete(USERS))
     if not users:

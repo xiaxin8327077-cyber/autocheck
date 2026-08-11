@@ -70,7 +70,19 @@ def test_dashboard_route_passes_selected_period_and_current_user(tmp_path):
 
     assert status == 200
     assert payload["period"] == "quarter"
-    assert service.calls == [("dashboard", "quarter", _user())]
+    assert len(service.calls) == 1
+    call = service.calls[0]
+    assert call[0] == "dashboard"
+    assert call[1] == "quarter"
+    # dashboard 注入能力键；比较时忽略内部键
+    passed_user = {
+        k: v
+        for k, v in call[2].items()
+        if k not in ("_report_nav_edit_schedule", "_report_nav_edit_stats")
+    }
+    assert passed_user == _user()
+    assert call[2].get("_report_nav_edit_schedule") is False
+    assert call[2].get("_report_nav_edit_stats") is False
 
 
 def test_manual_complete_and_cancel_require_admin_and_delegate_exact_action(tmp_path):
@@ -169,6 +181,29 @@ def test_governance_card_values_require_admin_and_pass_all_four_periods(tmp_path
     assert allowed == 200
     assert payload == {"ok": True, "card_code": "data_governance"}
     assert service.calls == [("card-values", "data_governance", values, _admin())]
+
+
+def test_provider_managed_governance_card_values_return_conflict(tmp_path):
+    from auto_check.app.report_navigation_platform import ProviderManagedCardError
+
+    router, service = _router(tmp_path)
+    service.update_card_manual_values = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        ProviderManagedCardError("card statistics are managed by a provider")
+    )
+    values = {
+        period: {"completed_count": 1, "incomplete_count": 2}
+        for period in ("week", "month", "quarter", "year")
+    }
+
+    status, payload = router.handle(
+        "POST",
+        "/api/report-navigation/cards/special_governance",
+        {"values": values},
+        current_user=_admin(),
+    )
+
+    assert status == 409
+    assert payload == {"error": "card statistics are managed by a provider"}
 
 
 def test_manual_refresh_route_maps_success_cooldown_busy_and_failure_statuses(tmp_path):

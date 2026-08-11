@@ -31,6 +31,8 @@ const reportNavFishbone = document.getElementById("reportNavFishbone");
 const reportNavFishboneSpine = document.getElementById("reportNavFishboneSpine");
 const reportNavScheduleCard = document.getElementById("reportNavScheduleCard");
 const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");
+const reportNavTodoList = document.getElementById("reportNavTodoList");
+const reportNavTodoCount = document.getElementById("reportNavTodoCount");
 const reportNavScheduleRange = document.getElementById("reportNavScheduleRange");
 const reportNavScheduleTable = document.getElementById("reportNavScheduleTable");
 const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
@@ -42,7 +44,7 @@ const reportNavCardMaintenanceClose = document.getElementById("reportNavCardMain
 const reportNavCardMaintenanceCancel = document.getElementById("reportNavCardMaintenanceCancel");
 const reportNavCardMaintenanceSave = document.getElementById("reportNavCardMaintenanceSave");
 
-const DEFAULT_VERSION = "v2.1";
+const DEFAULT_VERSION = "v2.3";
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
 const USER_AVATAR_GRADIENTS = [
   ["#6366f1", "#4338ca"],
@@ -481,7 +483,12 @@ function revealAuthenticatedApp() {
     document.documentElement.classList.add("main-entry-animate");
     window.setTimeout(() => {
       document.documentElement.classList.remove("main-entry-animate");
+      refreshReportNavigationScheduleLayout();
     }, 720);
+  } else {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(refreshReportNavigationScheduleLayout);
+    });
   }
   document.documentElement.classList.remove("auth-pending");
 }
@@ -1123,15 +1130,10 @@ saveInterfaceSettingsBtn?.addEventListener("click", saveInterfaceRadiusPreferenc
 
 function updateSpaceTopNavFrost() {
   if (!topNav) return;
-  const scrollOffset = Math.max(window.scrollY, mainContent?.scrollTop || 0);
-  const activePage = Array.from(pages).find(
-    (page) => window.getComputedStyle(page).display !== "none"
-  );
-  const navBottom = topNav.getBoundingClientRect().bottom;
-  const contentTop = activePage?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY;
-  // Only frost the nav once scrolled content actually reaches the nav edge.
-  const shouldFrost = scrollOffset > 1 && contentTop < navBottom;
-  document.documentElement.classList.toggle("space-nav-over-content", shouldFrost);
+  // Edge-stuck opaque top nav no longer overlays scrolling content, so the old
+  // frost class only causes Edge to re-layer and clip the active-tab glow.
+  // Keep the class cleared to avoid scroll-triggered glow断层.
+  document.documentElement.classList.remove("space-nav-over-content");
 }
 
 function syncThemeBootCache() {
@@ -1231,6 +1233,7 @@ function applyVisualEffectsSetting() {
 
 /* ===== Navigation ===== */
 const smartReconcilePages = new Set(["home", "auto-check", "history"]);
+const systemMgmtPages = new Set(["settings", "role-permissions", "users"]);
 
 function setNavGroupOpen(group, open) {
   if (!group) return;
@@ -1244,6 +1247,18 @@ function syncNavGroupState(name) {
     group.classList.toggle("active", active);
     group.querySelector("[data-nav-group-toggle]")?.classList.toggle("active", active);
   });
+  const systemActive = systemMgmtPages.has(name);
+  document.querySelectorAll('[data-nav-group="system-management"]').forEach((group) => {
+    group.classList.toggle("active", systemActive);
+    group.querySelector("[data-nav-group-toggle]")?.classList.toggle("active", systemActive);
+  });
+  // 模块页面由 module_host 独立管理模块导航；清理遗留的平台分组 active，避免同时亮起
+  if (String(name || "").startsWith("module-")) {
+    document.querySelectorAll('[data-nav-group="smart-reconcile"], [data-nav-group="system-management"]').forEach((group) => {
+      group.classList.remove("active");
+      group.querySelector("[data-nav-group-toggle]")?.classList.remove("active");
+    });
+  }
 }
 
 function syncNavState(name) {
@@ -1253,23 +1268,46 @@ function syncNavState(name) {
   syncNavGroupState(name);
 }
 
+function hasCapability(code) {
+  return (authState.user?.capabilities || []).includes(code);
+}
+
+function applyCapabilityAccess() {
+  document.querySelectorAll(".admin-only, [data-capability]").forEach((el) => {
+    const code = el.dataset.capability || "sys.settings.admin";
+    el.hidden = !hasCapability(code);
+  });
+  document.querySelectorAll("[data-nav-group]").forEach((group) => {
+    const subitems = group.querySelectorAll("[data-capability]");
+    if (subitems.length === 0) return;
+    const anyVisible = Array.from(subitems).some((el) => !el.hidden);
+    const toggle = group.querySelector("[data-nav-group-toggle]");
+    if (toggle) toggle.hidden = !anyVisible;
+  });
+}
+
 function applySettingsRoleAccess() {
-  const isAdmin = authState.user?.role === "admin";
+  const canManage = hasCapability("sys.settings.admin");
   document.querySelectorAll(".admin-action").forEach((button) => {
-    button.disabled = !isAdmin;
-    button.title = isAdmin ? "" : "普通用户不可执行该操作";
+    button.disabled = !canManage;
+    button.title = canManage ? "" : "无权限执行该操作";
   });
 }
 
 function applyRoleAccess() {
   const isAdmin = authState.user?.role === "admin";
   document.documentElement.dataset.role = isAdmin ? "admin" : "user";
-  document.querySelectorAll(".admin-only").forEach((item) => {
-    item.hidden = !isAdmin;
-  });
+  document.documentElement.dataset.capabilities = (authState.user?.capabilities || []).join(" ");
   applySettingsRoleAccess();
+  applyCapabilityAccess();
+  document.querySelectorAll(".history-source-only").forEach((el) => {
+    el.hidden = !canSeeHistorySource();
+  });
   const currentPageName = document.documentElement.getAttribute("data-page") || location.hash.slice(1);
-  if (!isAdmin && currentPageName === "users") {
+  if (!hasCapability("sys.users") && currentPageName === "users") {
+    switchPage("report-navigation");
+  }
+  if (!hasCapability("sys.role_permissions") && currentPageName === "role-permissions") {
     switchPage("report-navigation");
   }
 }
@@ -1301,6 +1339,7 @@ async function loadSettingsPageData() {
     loadPageSection("业务字段配置", loadReconcileSchemaSettings),
   ]);
   applySettingsRoleAccess();
+  applyCapabilityAccess();
 }
 
 [...navItems, ...topNavItems].forEach((item) => {
@@ -1323,6 +1362,11 @@ navGroupToggles.forEach((toggle) => {
       return;
     }
     if (group.classList.contains("top-nav-group")) {
+      const groupName = group.dataset.navGroup;
+      if (groupName === "system-management") {
+        setNavGroupOpen(group, !group.classList.contains("open"));
+        return;
+      }
       document.querySelectorAll(".top-nav-group.open").forEach((item) => setNavGroupOpen(item, false));
       switchPage("home");
       if (event.detail > 0) toggle.blur();
@@ -1348,9 +1392,29 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function switchPage(name, options = {}) {
+  await window.AutoCheckModuleHost?.deactivate();
   const previousPage = document.documentElement.getAttribute("data-page") || "";
-  if (name === "users" && authState.user?.role !== "admin") {
-    showToast("普通用户无权访问用户管理", "error");
+  if (name === "users" && !hasCapability("sys.users")) {
+    showToast("无权访问用户管理", "error");
+    name = "report-navigation";
+  }
+  if (name === "role-permissions" && !hasCapability("sys.role_permissions")) {
+    showToast("无权访问角色权限", "error");
+    name = "report-navigation";
+  }
+  if (name === "settings" && !hasCapability("sys.settings")) {
+    showToast("无权访问系统设置", "error");
+    name = "report-navigation";
+  }
+  const pageMenuCapability = {
+    "report-navigation": "menu.report_navigation",
+    home: "menu.home",
+    "auto-check": "menu.auto_check",
+    history: "menu.history",
+    tools: "menu.tools",
+  }[name];
+  if (pageMenuCapability && !hasCapability(pageMenuCapability)) {
+    showToast("无权访问该页面", "error");
     name = "report-navigation";
   }
   if (previousPage === "settings" && name !== "settings") {
@@ -1363,6 +1427,7 @@ async function switchPage(name, options = {}) {
   if (name === "history") loadHistoryList(true);
   if (name === "tools") loadToolsPageData();
   if (name === "settings") loadSettingsPageData();
+  if (name === "role-permissions") await loadRolePermissions();
   if (name === "users") await loadUsers();
   if (name === "report-navigation") await loadReportNavigation();
   if (name === "home") {
@@ -1489,6 +1554,12 @@ function reportNavigationCountText(value) {
   return Number(value || 0).toLocaleString("zh-CN");
 }
 
+function reportNavigationCardMaintainable(cardCode) {
+  if (!hasCapability("report_navigation.edit_stats") || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)) return false;
+  const maintenance = reportNavigationPayload?.card_maintenance?.[cardCode];
+  return Boolean(maintenance) && maintenance.editable !== false;
+}
+
 function reportNavigationTimingSummary(processes = []) {
   return processes.reduce((summary, process) => {
     const reportDate = String(process.report_date || "").slice(0, 10);
@@ -1530,9 +1601,39 @@ function reportNavigationCompletionTimeText(process = {}) {
     : "";
 }
 
+// Report navigation process ordering start
+function reportNavigationProcessDateSortKey(value) {
+  const candidate = String(value || "").slice(0, 10);
+  const match = candidate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return "\uffff";
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(year, month - 1, day);
+  return parsed.getFullYear() === year
+    && parsed.getMonth() === month - 1
+    && parsed.getDate() === day
+    ? candidate
+    : "\uffff";
+}
+
+function sortReportNavigationProcessesByDate(processes = []) {
+  return [...processes]
+    .map((process, index) => {
+      return {
+        process,
+        index,
+        dateKey: reportNavigationProcessDateSortKey(process?.report_date),
+      };
+    })
+    .sort((left, right) => left.dateKey.localeCompare(right.dateKey) || left.index - right.index)
+    .map((item) => item.process);
+}
+// Report navigation process ordering end
+
 function reportNavigationDisplayProcesses(payload = {}) {
   const month = Number(String(payload.report_month || "").slice(5, 7));
-  return (payload.processes || [])
+  const processes = (payload.processes || [])
     .filter((process) => {
       if (process.process_code === "five_articles") return [1, 4, 7, 10].includes(month);
       return true;
@@ -1547,6 +1648,8 @@ function reportNavigationDisplayProcesses(payload = {}) {
         }))
         : process.steps,
     }));
+
+  return sortReportNavigationProcessesByDate(processes);
 }
 
 function reportNavigationSpineProgress(processes = []) {
@@ -1651,6 +1754,38 @@ function reportNavigationScheduleRangeText(dates = []) {
   return `（${first.getMonth() + 1}月${first.getDate()}日–${last.getMonth() + 1}月${last.getDate()}日）`;
 }
 
+function captureReportNavigationSortPositions(container) {
+  const positions = new Map();
+  container?.querySelectorAll("[data-report-nav-sort-key]").forEach((element) => {
+    const key = String(element.dataset.reportNavSortKey || "");
+    if (key) positions.set(key, element.getBoundingClientRect());
+  });
+  return positions;
+}
+
+function animateReportNavigationSort(container, previousPositions) {
+  if (!container || !previousPositions?.size) return;
+  if (!visualEffectsEnabled()) return;
+  const reduceMotion = typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion) return;
+  container.querySelectorAll("[data-report-nav-sort-key]").forEach((element) => {
+    const previous = previousPositions.get(String(element.dataset.reportNavSortKey || ""));
+    if (!previous || typeof element.animate !== "function") return;
+    const current = element.getBoundingClientRect();
+    const deltaX = previous.left - current.left;
+    const deltaY = previous.top - current.top;
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return;
+    element.animate(
+      [
+        { translate: `${deltaX}px ${deltaY}px` },
+        { translate: "0 0" },
+      ],
+      { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
+  });
+}
+
 function animateReportNavigationScheduleCardHeight(startHeight) {
   if (!reportNavScheduleCard || typeof reportNavScheduleCard.animate !== "function" || !startHeight) return;
   const endHeight = reportNavScheduleCard.getBoundingClientRect().height;
@@ -1679,6 +1814,28 @@ function syncReportNavigationTodoCardHeight() {
   ).reduce((total, detail) => total + detail.getBoundingClientRect().height, 0);
   const collapsedHeight = Math.max(0, Math.round(scheduleHeight - detailHeight));
   if (collapsedHeight) reportNavTodoCard.style.height = `${collapsedHeight}px`;
+}
+
+function reportNavigationScheduleMinWidth(dates = []) {
+  const dayCount = Array.isArray(dates) ? dates.length : 0;
+  if (!dayCount) return null;
+  return 172 + (dayCount * 38) + 64;
+}
+
+function refreshReportNavigationScheduleLayout() {
+  if (!reportNavScheduleCard) return;
+  const payload = reportNavigationPayload || {};
+  const processes = reportNavigationDisplayProcesses(payload);
+  const dates = reportNavigationScheduleDates(payload.report_month, processes);
+  const scheduleMinWidth = reportNavigationScheduleMinWidth(dates);
+  if (scheduleMinWidth) {
+    reportNavScheduleCard.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);
+  } else {
+    reportNavScheduleCard.style.removeProperty("--report-nav-schedule-min-width");
+  }
+  // Force flex re-wrap after login/entry animation or late size changes.
+  void reportNavScheduleCard.offsetWidth;
+  syncReportNavigationTodoCardHeight();
 }
 
 function reportNavigationScheduleStepItems(process = {}) {
@@ -1820,6 +1977,7 @@ function flushDeferredReportNavigationScheduleRender() {
 
 function renderReportNavigationSchedule(payload = {}) {
   if (!reportNavScheduleTable) return;
+  const previousPositions = captureReportNavigationSortPositions(reportNavScheduleTable);
   window.clearTimeout(reportNavigationScheduleStepsShowTimer);
   window.clearTimeout(reportNavigationScheduleStepsHideTimer);
   if (activeReportNavigationScheduleStepsPreview) {
@@ -1840,13 +1998,15 @@ function renderReportNavigationSchedule(payload = {}) {
   if (reportNavScheduleRange) reportNavScheduleRange.textContent = reportNavigationScheduleRangeText(dates);
   if (!dates.length || !processes.length) {
     selectedReportNavigationScheduleProcessCode = "";
+    reportNavScheduleCard?.style.removeProperty("--report-nav-schedule-min-width");
     reportNavScheduleTable.innerHTML = '<div class="report-nav-process-empty">暂无报送日程</div>';
+    syncReportNavigationTodoCardHeight();
     return;
   }
   if (!processes.some((process) => process.process_code === selectedReportNavigationScheduleProcessCode)) {
     selectedReportNavigationScheduleProcessCode = "";
   }
-  const scheduleMinWidth = 172 + (dates.length * 38) + 64;
+  const scheduleMinWidth = reportNavigationScheduleMinWidth(dates);
   reportNavScheduleCard?.style.setProperty("--report-nav-schedule-min-width", `${scheduleMinWidth}px`);
   reportNavScheduleTable.style.setProperty("--report-nav-schedule-day-count", String(dates.length));
   const dateKeys = dates.map(reportNavigationDateKey);
@@ -1953,7 +2113,8 @@ function renderReportNavigationSchedule(payload = {}) {
       : (state.overdueDays > 0
       ? (state.code === "overdue-completed" ? `逾期${state.overdueDays}天完成` : `逾期 ${state.overdueDays} 天`)
       : "");
-    const detail = selected ? `<div class="report-nav-schedule-detail ${state.code}" data-report-nav-schedule-detail="${processCode}">
+    const detailReordering = previousPositions.has(`schedule-detail:${processCode}`);
+    const detail = selected ? `<div class="report-nav-schedule-detail ${state.code}${detailReordering ? " reordering" : ""}" data-report-nav-schedule-detail="${processCode}" data-report-nav-sort-key="schedule-detail:${processCode}">
       <div class="report-nav-schedule-detail-spacer" aria-hidden="true"></div>
       <div class="report-nav-schedule-detail-status"><span>状态</span><strong>${escapeHtml(state.label)}</strong>${timingText ? `<small>${escapeHtml(timingText)}</small>` : ""}</div>
       <div class="report-nav-schedule-detail-progress"><span>完成进度</span><i><b style="width:${percent}%"></b></i><strong>${percent}%（${Number(process.completed_steps || 0)}/${Number(process.total_steps || 0)}）</strong></div>
@@ -1967,7 +2128,7 @@ function renderReportNavigationSchedule(payload = {}) {
         </div>
       </div>
     </div>` : "";
-    return `<div class="report-nav-schedule-row ${state.code}${selected ? " selected" : ""}" data-report-nav-schedule-process="${processCode}" role="button" tabindex="0" aria-expanded="${selected ? "true" : "false"}">
+    return `<div class="report-nav-schedule-row ${state.code}${selected ? " selected" : ""}" data-report-nav-schedule-process="${processCode}" data-report-nav-sort-key="schedule:${processCode}" role="button" tabindex="0" aria-expanded="${selected ? "true" : "false"}">
       <div class="report-nav-schedule-summary"><strong>${escapeHtml(process.process_name || "")}</strong><span>${percent}%</span></div>
       <div class="report-nav-schedule-track" style="--report-nav-schedule-endpoint:${endpointPosition}%;--report-nav-schedule-fill:${fillPosition}%;--report-nav-schedule-overdue-stop:${overdueStopPosition}%">
         <i class="report-nav-schedule-baseline"></i><i class="report-nav-schedule-fill"></i>
@@ -1978,8 +2139,12 @@ function renderReportNavigationSchedule(payload = {}) {
     </div>${detail}`;
   }).join("");
   reportNavScheduleTable.innerHTML = header + rows;
+  animateReportNavigationSort(reportNavScheduleTable, previousPositions);
   reportNavScheduleCard?.classList.toggle("has-selection", Boolean(selectedReportNavigationScheduleProcessCode));
   syncReportNavigationTodoCardHeight();
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(refreshReportNavigationScheduleLayout);
+  });
 }
 
 function selectReportNavigationScheduleProcess(processCode) {
@@ -2152,20 +2317,26 @@ function renderReportNavigationStatCard(card, processes = [], period = "month") 
   if (!card) return "";
   const style = REPORT_NAV_CARD_STYLES[card.card_code] || REPORT_NAV_CARD_STYLES.report_forms;
   const rate = reportNavigationRate(card);
-  const maintainable = authState.user?.role === "admin" && REPORT_NAV_MAINTAINABLE_CARDS.has(card.card_code);
+  const unavailable = card.source === "provider" && card.available === false;
+  const maintainable = reportNavigationCardMaintainable(card.card_code);
   const interaction = maintainable
     ? ` data-maintenance-card="${escapeHtml(card.card_code || "")}" role="button" tabindex="0"`
     : "";
+  const countMarkup = unavailable ? "--" : reportNavigationCountText(card.total_count);
+  const rateMarkup = unavailable ? "--" : `${rate.toFixed(rate % 1 ? 1 : 0)}%`;
+  const tagsMarkup = unavailable
+    ? '<div class="report-nav-stat-tags"><span class="warn"><b>--</b> 统计暂不可用</span></div>'
+    : `<div class="report-nav-stat-tags"><span class="up"><b>${reportNavigationCountText(card.completed_count)}</b> 已完成</span><span class="warn"><b>${reportNavigationCountText(card.incomplete_count)}</b> 未完成</span>${card.stale ? '<span class="warn"><b>!</b> 数据已过期</span>' : ""}</div>`;
   return `
-    <article class="report-nav-stat-card ${style.color}${card.card_code === "report_forms" ? " overview" : ""}${maintainable ? " maintainable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
+    <article class="report-nav-stat-card ${style.color}${card.card_code === "report_forms" ? " overview" : ""}${maintainable ? " maintainable" : ""}${unavailable ? " unavailable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
       <div class="report-nav-stat-icon" aria-hidden="true">${style.icon}</div>
       <div class="report-nav-stat-body">
         <div class="report-nav-stat-heading">
           <span>${escapeHtml(style.label || card.name || "")}</span>
-          <strong>${reportNavigationCountText(card.total_count)}<small>${style.unit}</small></strong>
+          <strong>${countMarkup}<small>${unavailable ? "" : style.unit}</small></strong>
         </div>
-        <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${rate}%"></b></i><em>${rate.toFixed(rate % 1 ? 1 : 0)}%</em></div>
-        <div class="report-nav-stat-tags"><span class="up"><b>${reportNavigationCountText(card.completed_count)}</b> 已完成</span><span class="warn"><b>${reportNavigationCountText(card.incomplete_count)}</b> 未完成</span></div>
+        <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${unavailable ? 0 : rate}%"></b></i><em>${rateMarkup}</em></div>
+        ${tagsMarkup}
         ${renderReportNavigationStatFooter(card, processes, period)}
       </div>
     </article>`;
@@ -2192,8 +2363,7 @@ function closeReportNavigationCardMaintenance() {
 
 function openReportNavigationCardMaintenance(cardCode) {
   if (
-    authState.user?.role !== "admin"
-    || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)
+    !reportNavigationCardMaintainable(cardCode)
     || !reportNavCardMaintenanceModal
     || !reportNavCardMaintenanceGrid
   ) return;
@@ -2223,7 +2393,7 @@ reportNavCardMaintenanceModal?.addEventListener("click", (event) => {
 
 reportNavCardMaintenanceSave?.addEventListener("click", async () => {
   const cardCode = reportNavCardMaintenanceModal?.dataset.cardCode || "";
-  if (!REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode) || reportNavCardMaintenanceSave.disabled) return;
+  if (!reportNavigationCardMaintainable(cardCode) || reportNavCardMaintenanceSave.disabled) return;
   const values = {};
   for (const [period] of REPORT_NAV_MAINTENANCE_PERIODS) {
     const completedInput = reportNavCardMaintenanceGrid.querySelector(`[data-maintenance-period="${period}"][data-maintenance-count="completed_count"]`);
@@ -2307,6 +2477,18 @@ function renderReportNavigationRefreshIssues(issues = []) {
   }).join("");
   return `<div class="report-nav-refresh-issues">
     <p>本次刷新有 ${issues.length} 个步骤统计异常，请根据以下信息检查数据源、表和字段配置。</p>
+    <ul class="report-nav-refresh-issue-list">${rows}</ul>
+  </div>`;
+}
+
+function renderReportNavigationProviderIssues(issues = []) {
+  const rows = issues.map((issue) => {
+    const card = REPORT_NAV_CARD_STYLES[issue.card_code];
+    const label = card?.label || "模块统计";
+    return `<li><strong>${escapeHtml(label)}</strong><span>模块统计暂时不可用，已保留最近一次成功数据。</span></li>`;
+  }).join("");
+  return `<div class="report-nav-refresh-issues">
+    <p>本次刷新有 ${issues.length} 个模块统计异常。</p>
     <ul class="report-nav-refresh-issue-list">${rows}</ul>
   </div>`;
 }
@@ -2448,6 +2630,7 @@ async function editReportNavigationSchedule(processCode) {
 
 function renderReportNavigationProcesses(payload) {
   if (!reportNavBranches) return;
+  const previousPositions = captureReportNavigationSortPositions(reportNavBranches);
   const processes = reportNavigationDisplayProcesses(payload);
   reportNavigationVisibleProcesses = processes;
   const allProcessesCompleted = processes.length > 0
@@ -2478,7 +2661,7 @@ function renderReportNavigationProcesses(payload) {
       : "";
     return `<div class="report-nav-branch ${side} ${shift}${done ? " done" : " running"}">
       <div class="report-nav-branch-line"></div><div class="report-nav-branch-node"></div>
-      <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
+      <article class="report-nav-process-card${selected ? " selected" : ""}" data-report-nav-sort-key="flow:${escapeHtml(process.process_code || "")}" data-report-nav-process="${escapeHtml(process.process_code || "")}" role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}">
         <div class="report-nav-process-title"><span class="report-nav-process-state-icon" aria-hidden="true">${done ? REPORT_NAV_CHECK_ICON : ""}</span><strong>${escapeHtml(fishboneProcessName)}</strong><b>${completedSteps}/${totalSteps}</b></div>
         <div class="report-nav-process-meta report-nav-process-deadline"><span>截止日期</span><time${dateInteraction}>${escapeHtml(reportNavigationDateText(process.report_date))}</time></div>
         <div class="report-nav-process-meta completion"><span>${done ? "完成于" : "状态"}</span><time>${completionText}</time></div>
@@ -2487,6 +2670,81 @@ function renderReportNavigationProcesses(payload) {
   }).join("");
   const selectedProcess = processes.find((process) => process.process_code === selectedReportNavigationProcessCode);
   renderReportNavigationProcessDetails(selectedProcess || null);
+  animateReportNavigationSort(reportNavBranches, previousPositions);
+}
+
+function escapeReportNavHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildReportNavTodoHash(action = {}) {
+  const route = String(action.route || "").replace(/^#/, "").trim();
+  if (!route) return "";
+  const query = action.query && typeof action.query === "object" ? action.query : {};
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === "" || value === null || value === undefined) return;
+    params.set(String(key), String(value));
+  });
+  const encoded = params.toString();
+  return encoded ? `#${route}?${encoded}` : `#${route}`;
+}
+
+async function handleReportNavTodoAction(action = {}) {
+  if (String(action.type || "") !== "navigate") return;
+  const nextHash = buildReportNavTodoHash(action);
+  if (!nextHash) return;
+  const routeWithQuery = nextHash.replace(/^#/, "");
+  if (typeof window.AutoCheckModuleHost?.activate === "function") {
+    const handled = await window.AutoCheckModuleHost.activate(routeWithQuery);
+    if (handled) {
+      if (location.hash !== nextHash) location.hash = nextHash;
+      return;
+    }
+  }
+  if (location.hash !== nextHash) location.hash = nextHash;
+}
+
+function renderReportNavTodos(todos = []) {
+  const items = Array.isArray(todos) ? todos : [];
+  if (reportNavTodoCount) reportNavTodoCount.textContent = `（${items.length}）`;
+  if (!reportNavTodoList) return;
+  if (!items.length) {
+    reportNavTodoList.innerHTML = '<p class="report-nav-todo-empty">暂无待办</p>';
+    syncReportNavigationTodoCardHeight();
+    return;
+  }
+  reportNavTodoList.innerHTML = items.map((item, index) => {
+    const title = escapeReportNavHtml(item.title || "待办");
+    const summary = escapeReportNavHtml(item.summary || "");
+    const createdAt = String(item.created_at || "").trim();
+    const midClass = index % 2 === 1 ? " mid" : "";
+    const deadline = createdAt
+      ? `<p class="report-nav-todo-deadline">发起时间：<time datetime="${escapeReportNavHtml(createdAt)}">${escapeReportNavHtml(createdAt)}</time></p>`
+      : "";
+    return `<article class="report-nav-todo${midClass}" data-todo-id="${escapeReportNavHtml(item.id || "")}">
+      <i aria-hidden="true"></i>
+      <div class="report-nav-todo-main">
+        <div class="report-nav-todo-primary">
+          <h3>${title}</h3>
+          <button type="button" class="report-nav-todo-action" data-todo-action="handle" aria-label="处理${title}">处理</button>
+        </div>
+        ${summary ? `<p class="report-nav-todo-summary">${summary}</p>` : ""}
+        ${deadline}
+      </div>
+    </article>`;
+  }).join("");
+  reportNavTodoList.querySelectorAll("[data-todo-action='handle']").forEach((button, index) => {
+    button.addEventListener("click", () => {
+      void handleReportNavTodoAction(items[index]?.action || {});
+    });
+  });
+  syncReportNavigationTodoCardHeight();
 }
 
 function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
@@ -2502,6 +2760,7 @@ function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
   );
   renderReportNavigationProcesses(payload);
   if (!preserveSchedule) renderReportNavigationSchedule(payload);
+  renderReportNavTodos(payload.todos || []);
   const refreshState = payload.manual_refresh || {};
   reportNavigationRefreshRemoteRunning = Boolean(refreshState.running);
   setReportNavigationRefreshCooldown(Number(refreshState.retry_after_seconds || 0));
@@ -2519,6 +2778,8 @@ function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
 
 function setReportNavigationLoadingState(state) {
   if (!reportNavPage) return;
+  const previous = String(reportNavPage.dataset.loadingState || "");
+  const wasHidden = previous === "initial-loading" || previous === "error-empty";
   const loading = state === "initial-loading" || state === "refreshing-with-cache";
   reportNavPage.dataset.loadingState = state;
   reportNavPage.setAttribute("aria-busy", loading ? "true" : "false");
@@ -2527,6 +2788,13 @@ function setReportNavigationLoadingState(state) {
   if (reportNavInitialLoadingText) reportNavInitialLoadingText.textContent = "正在读取最新统计结果…";
   reportNavInitialLoading?.classList.remove("error");
   reportNavRefreshButton?.classList.toggle("refreshing", state === "refreshing-with-cache");
+  const isHidden = state === "initial-loading" || state === "error-empty";
+  if (wasHidden && !isHidden) {
+    // Content was rendered while display:none; reflow after reveal.
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(refreshReportNavigationScheduleLayout);
+    });
+  }
 }
 
 function showReportNavigationEmptyLoadError() {
@@ -2609,10 +2877,14 @@ reportNavRefreshButton?.addEventListener("click", async () => {
     await loadReportNavigation();
     if (result.status === "partial") {
       const issues = result.issues || [];
-      if (issues.length) {
-        showInfo("报送导航统计异常", renderReportNavigationRefreshIssues(issues), { closeOnBackdrop: false });
+      const providerIssues = result.provider_issues || [];
+      if (issues.length || providerIssues.length) {
+        showInfo("报送导航统计异常",
+          `${issues.length ? renderReportNavigationRefreshIssues(issues) : ""}${providerIssues.length ? renderReportNavigationProviderIssues(providerIssues) : ""}`,
+          { closeOnBackdrop: false },
+        );
       } else {
-        showToast(result.error_message || "刷新完成，但部分步骤统计异常", "error");
+        showToast(result.error_message || "刷新完成，但部分统计暂不可用", "error");
       }
     } else {
       showToast("报送导航统计已刷新", "success");
@@ -2800,8 +3072,17 @@ function currentUserAvatarGradient() {
   return USER_AVATAR_GRADIENTS[index] || USER_AVATAR_GRADIENTS[0];
 }
 
+let rolePermissionsRoleDefs = [];
+
+const ROLE_DISPLAY_NAMES = {
+  admin: "管理员",
+  user: "普通用户",
+};
+
 function userDisplayRole(role) {
-  return role === "admin" ? "管理员" : "普通用户";
+  if (ROLE_DISPLAY_NAMES[role]) return ROLE_DISPLAY_NAMES[role];
+  const def = (rolePermissionsRoleDefs || []).find((d) => d.role_code === role);
+  return def?.display_name || "普通用户";
 }
 
 function userDisplayStatus(user) {
@@ -2922,6 +3203,7 @@ function renderUsers() {
     const displayName = userDisplayName(user);
     const initials = String(displayName || user.username || "?").slice(0, 2).toUpperCase();
     const roleIcon = role === "admin" ? "🛡️" : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>';
+    const roleTone = role === "admin" ? "admin" : "user";
     const adminLockedTitle = "委派管理员不可操作管理员用户";
     return `<tr>
       <td>
@@ -2939,7 +3221,7 @@ function renderUsers() {
           </div>
         </div>
       </td>
-      <td><span class="role-badge role-badge--${escapeHtml(role)}"><span class="role-badge-icon">${roleIcon}</span>${escapeHtml(userDisplayRole(role))}</span></td>
+      <td><span class="role-badge role-badge--${roleTone}"><span class="role-badge-icon">${roleIcon}</span>${escapeHtml(userDisplayRole(role))}</span></td>
       <td><span class="user-status-badge ${enabled ? "enabled" : "disabled"}">${escapeHtml(userDisplayStatus(user))}</span></td>
       <td>${escapeHtml(formatDisplayTime(user.created_at || ""))}</td>
       <td>${escapeHtml(user.last_login_at ? formatDisplayTime(user.last_login_at) : "-")}</td>
@@ -2972,24 +3254,34 @@ function renderUsersLoading() {
   userTableBody.innerHTML = rows.join("");
 }
 
+function renderUserRoleCards() {
+  const select = document.getElementById("userRoleCards");
+  if (!select) return;
+  const adminChoiceDisabled = isDelegatedAdminSession();
+  const builtinRoles = Object.keys(ROLE_DISPLAY_NAMES);
+  const customRoles = (rolePermissionsRoleDefs || [])
+    .filter((d) => !d.is_system)
+    .map((d) => d.role_code);
+  const allRoles = [...builtinRoles, ...customRoles];
+  select.innerHTML = allRoles.map((role) => {
+    const disabled = role === "admin" && adminChoiceDisabled;
+    return `<option value="${escapeHtml(role)}" ${disabled ? "disabled" : ""}${disabled ? ' title="委派管理员不可创建或设置管理员"' : ""}>${escapeHtml(userDisplayRole(role))}</option>`;
+  }).join("");
+}
+
 function syncUserRoleCards() {
-  const currentRole = userRole?.value || "user";
+  const select = document.getElementById("userRoleCards");
+  if (!select) return;
   const editingUser = editingUserFromModal();
   const roleLocked = isInitialAdminAccount(editingUser);
-  const adminChoiceDisabled = roleLocked || isDelegatedAdminSession();
-  document.querySelectorAll("[data-user-role-card]").forEach((card) => {
-    const selected = card.dataset.userRoleCard === currentRole;
-    const disabled = card.dataset.userRoleCard === "admin" ? adminChoiceDisabled : roleLocked;
-    card.classList.toggle("selected", selected);
-    card.classList.toggle("disabled", disabled);
-    card.setAttribute("aria-disabled", disabled ? "true" : "false");
-    card.title = disabled ? (roleLocked ? "初始管理员角色不可修改" : "委派管理员不可创建或设置管理员") : "";
-    const input = card.querySelector('input[name="userRoleChoice"]');
-    if (input) {
-      input.checked = selected;
-      input.disabled = disabled;
-    }
-  });
+  if (roleLocked) {
+    renderUserRoleCards();
+    if (userRole) userRole.value = "admin";
+  }
+  select.value = userRole?.value || "user";
+  select.disabled = roleLocked;
+  select.title = roleLocked ? "初始管理员角色不可修改" : "";
+  if (typeof syncCustomSelect === "function") syncCustomSelect(select);
 }
 
 function syncUserEnabledSwitch() {
@@ -3005,7 +3297,7 @@ function syncUserEnabledSwitch() {
 }
 
 async function loadUsers({ force = false } = {}) {
-  if (authState.user?.role !== "admin" || !userTableBody) return;
+  if (!hasCapability("sys.users") || !userTableBody) return;
   if (usersLoading) return;
   if (!usersLoaded || force) {
     renderUsersLoading();
@@ -3022,6 +3314,14 @@ async function loadUsers({ force = false } = {}) {
     userTableBody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(error.message)}</td></tr>`;
   } finally {
     usersLoading = false;
+  }
+  if (!rolePermissionsRoleDefs || rolePermissionsRoleDefs.length === 0) {
+    try {
+      const rolesPayload = await api("/api/role-capabilities");
+      rolePermissionsRoleDefs = rolesPayload.role_definitions || [];
+    } catch (error) {
+      /* 自定义角色数据拉取失败时，用户管理角色下拉回退为系统角色 */
+    }
   }
 }
 
@@ -3046,6 +3346,7 @@ function openUserModal(user = null) {
   userPassword.placeholder = isEdit ? "留空则不修改密码" : "请输入至少 6 位且包含字母的密码";
   userModalTitle.textContent = isEdit ? "编辑用户" : "新建用户";
   userModalStatus.textContent = "";
+  renderUserRoleCards();
   syncUserRoleCards();
   syncUserEnabledSwitch();
   userModal.hidden = false;
@@ -3231,12 +3532,9 @@ document.querySelectorAll("[data-export-users-btn]").forEach((button) => {
 userModalClose?.addEventListener("click", closeUserModal);
 userModalCancel?.addEventListener("click", closeUserModal);
 userModalSave?.addEventListener("click", () => saveUser().catch((error) => { userModalStatus.textContent = userFriendlyError(error.message); }));
-document.querySelectorAll('input[name="userRoleChoice"]').forEach((input) => {
-  input.addEventListener("change", () => {
-    if (!userRole || input.disabled) return;
-    userRole.value = input.value;
-    syncUserRoleCards();
-  });
+document.getElementById("userRoleCards")?.addEventListener("change", (event) => {
+  if (!userRole || event.target.disabled) return;
+  userRole.value = event.target.value;
 });
 userEnabledSwitch?.addEventListener("click", () => {
   if (!userEnabled || userEnabledSwitch.disabled) return;
@@ -3575,9 +3873,28 @@ function closeCustomSelect(select) {
   state.dropdown.hidden = true;
 }
 
+function destroyCustomSelect(select) {
+  const state = customSelectStates.get(select);
+  if (!state) return;
+  state.shell?.classList?.remove("custom-select-open");
+  state.trigger?.setAttribute?.("aria-expanded", "false");
+  state.dropdown.remove();
+  customSelectStates.delete(select);
+}
+
 function closeOtherCustomSelects(currentSelect = null) {
   document.querySelectorAll("select.custom-select-native").forEach((select) => {
     if (select !== currentSelect) closeCustomSelect(select);
+  });
+}
+
+function cleanupDetachedCustomSelects() {
+  document.querySelectorAll(".custom-select-dropdown").forEach((dropdown) => {
+    const select = dropdown._customControlOwner;
+    const state = select ? customSelectStates.get(select) : null;
+    if (select && select.isConnected && state?.shell?.isConnected) return;
+    dropdown.remove();
+    if (select) customSelectStates.delete(select);
   });
 }
 
@@ -3606,9 +3923,27 @@ function closeCustomDatePicker(input) {
   state.dropdown.hidden = true;
 }
 
+function destroyCustomDatePicker(input) {
+  const state = customDateStates.get(input);
+  if (!state) return;
+  state.shell?.classList?.remove("custom-date-open");
+  state.dropdown.remove();
+  customDateStates.delete(input);
+}
+
 function closeOtherCustomDatePickers(currentInput = null) {
   document.querySelectorAll("input.custom-date-input").forEach((input) => {
     if (input !== currentInput) closeCustomDatePicker(input);
+  });
+}
+
+function cleanupDetachedCustomDatePickers() {
+  document.querySelectorAll(".custom-date-dropdown").forEach((dropdown) => {
+    const input = dropdown._customControlOwner;
+    const state = input ? customDateStates.get(input) : null;
+    if (input && input.isConnected && state?.shell?.isConnected) return;
+    dropdown.remove();
+    if (input) customDateStates.delete(input);
   });
 }
 
@@ -3648,11 +3983,15 @@ function positionCustomSelectDropdown(select) {
   const rect = state.shell.getBoundingClientRect();
   const viewportGap = 16;
   const dropdownGap = 8;
-  const dropdownWidth = Math.min(Math.max(rect.width + 24, rect.width), window.innerWidth - viewportGap * 2);
+  const compactRoleSelect = select.classList.contains("user-role-cards") || select.id === "userRoleCards";
+  const dropdownWidth = compactRoleSelect
+    ? Math.min(rect.width, window.innerWidth - viewportGap * 2)
+    : Math.min(Math.max(rect.width + 24, rect.width), window.innerWidth - viewportGap * 2);
   const availableBelow = window.innerHeight - rect.bottom - viewportGap - dropdownGap;
   const availableAbove = rect.top - viewportGap - dropdownGap;
   const openAbove = availableBelow < 160 && availableAbove > availableBelow;
-  const maxHeight = Math.max(120, Math.min(320, openAbove ? availableAbove : availableBelow));
+  const heightCap = compactRoleSelect ? 148 : 320;
+  const maxHeight = Math.max(compactRoleSelect ? 100 : 120, Math.min(heightCap, openAbove ? availableAbove : availableBelow));
   const left = Math.min(Math.max(viewportGap, rect.left), Math.max(viewportGap, window.innerWidth - viewportGap - dropdownWidth));
   const top = openAbove
     ? Math.max(viewportGap, rect.top - dropdownGap - maxHeight)
@@ -3702,10 +4041,16 @@ function enhanceCustomSelect(select) {
 
   const dropdown = document.createElement("div");
   dropdown.className = "custom-select-dropdown";
+  if (select.classList.contains("rsp-compact-select")) {
+    dropdown.classList.add("rsp-compact-select-dropdown");
+  }
+  if (select.classList.contains("user-role-cards") || select.id === "userRoleCards") {
+    dropdown.classList.add("user-role-cards-dropdown");
+  }
   dropdown.setAttribute("role", "listbox");
   dropdown.hidden = true;
   document.body.appendChild(dropdown);
-
+  dropdown._customControlOwner = select;
   customSelectStates.set(select, { shell, trigger, dropdown });
   syncCustomSelect(select);
 
@@ -3825,6 +4170,7 @@ function enhanceCustomDateInput(input, shell) {
   dropdown.className = "custom-date-dropdown";
   dropdown.hidden = true;
   document.body.appendChild(dropdown);
+  dropdown._customControlOwner = input;
   customDateStates.set(input, { shell, dropdown, viewYear: null, viewMonth: null });
 
   input.addEventListener("click", () => toggleCustomDatePicker(input));
@@ -3904,9 +4250,13 @@ function enhanceCustomControls(root = document) {
 }
 
 function scheduleCustomSelectEnhancement() {
+  cleanupDetachedCustomDatePickers();
+  cleanupDetachedCustomSelects();
   if (customSelectRaf) return;
   customSelectRaf = requestAnimationFrame(() => {
     customSelectRaf = 0;
+    cleanupDetachedCustomDatePickers();
+    cleanupDetachedCustomSelects();
     enhanceCustomControls();
   });
 }
@@ -3918,13 +4268,15 @@ function initializeCustomSelects() {
     customSelectObserver.observe(document.body, { childList: true, subtree: true });
   }
   document.addEventListener("click", (event) => {
-    if (!event.target.closest(".custom-select-shell") && !event.target.closest(".custom-select-dropdown")) {
+    const target = event.target;
+    if (!(target && typeof target.closest === "function")) return;
+    if (!target.closest(".custom-select-shell") && !target.closest(".custom-select-dropdown")) {
       closeOtherCustomSelects();
     }
-    if (!event.target.closest(".custom-date-shell") && !event.target.closest(".custom-date-dropdown")) {
+    if (!target.closest(".custom-date-shell") && !target.closest(".custom-date-dropdown")) {
       closeOtherCustomDatePickers();
     }
-  });
+  }, true);
   window.addEventListener("resize", () => { closeOtherCustomSelects(); closeOtherCustomDatePickers(); });
   window.addEventListener("scroll", (event) => {
     const target = event.target;
@@ -4972,8 +5324,628 @@ function formatHistorySourceName(run) {
 }
 
 function canManageHistory() {
-  return authState.user?.role === "admin";
+  return hasCapability("history.delete");
 }
+
+const ROLE_PERMISSIONS_PAGE_SIZE = 10;
+
+let rolePermissionsMatrix = {};
+let rolePermissionsCapabilities = {};
+let rolePermissionsRequired = [];
+let rolePermissionsAdminOnly = [];
+let rolePermissionsRemarks = {};
+let rolePermissionsRoles = {};
+let rolePermissionsLockedRoles = new Set();
+let rolePermissionsCurrentPage = 1;
+let rolePermissionsEditingRole = "";
+let rolePermissionsTree = null;
+
+const CAPABILITY_MENU_TREE = [
+  {
+    label: "报送导航",
+    type: "group",
+    children: [
+      { code: "menu.report_navigation", label: "页面查看", type: "menu" },
+      { code: "report_navigation.edit_schedule", label: "编辑报送日期", type: "function" },
+      { code: "report_navigation.edit_stats", label: "编辑数据治理统计", type: "function" },
+    ],
+  },
+  {
+    label: "智能核数",
+    type: "group",
+    children: [
+      { code: "menu.home", label: "对数总览", type: "menu" },
+      { code: "menu.auto_check", label: "对数执行", type: "menu" },
+      {
+        label: "对数历史",
+        type: "group",
+        children: [
+          { code: "menu.history", label: "页面查看", type: "menu" },
+          { code: "history.delete", label: "删除对数历史记录", type: "function" },
+        ],
+      },
+    ],
+  },
+  { code: "menu.tools", label: "工具", type: "menu" },
+  {
+    label: "数据录入",
+    type: "group",
+    children: [
+      {
+        label: "报表特殊处理",
+        type: "group",
+        children: [
+          { code: "rsp.view", label: "页面查看", type: "menu" },
+          { code: "rsp.detail", label: "查看详情", type: "function" },
+          { code: "rsp.create", label: "新增", type: "function" },
+          { code: "rsp.edit", label: "编辑", type: "function" },
+          { code: "rsp.confirm", label: "确认", type: "function" },
+          { code: "rsp.reopen", label: "重开", type: "function" },
+          { code: "rsp.void", label: "作废", type: "function" },
+          { code: "rsp.delete", label: "删除", type: "function" },
+        ],
+      },
+    ],
+  },
+  {
+    label: "系统管理",
+    type: "group",
+    children: [
+      {
+        label: "系统设置",
+        type: "group",
+        children: [
+          { code: "sys.settings", label: "页面查看", type: "menu" },
+          { code: "sys.settings.admin", label: "系统设置页管理员专属配置", type: "function" },
+        ],
+      },
+      { code: "sys.role_permissions", label: "角色权限", type: "menu" },
+      { code: "sys.users", label: "用户管理", type: "menu" },
+    ],
+  },
+];
+
+function isSystemRole(role) {
+  return Object.prototype.hasOwnProperty.call(ROLE_DISPLAY_NAMES, role);
+}
+
+async function loadRolePermissions() {
+  try {
+    const payload = await api("/api/role-capabilities", { method: "GET" });
+    rolePermissionsRoleDefs = payload.role_definitions || [];
+    rolePermissionsMatrix = payload.matrix || {};
+    rolePermissionsCapabilities = payload.capabilities || {};
+    rolePermissionsRequired = payload.required_capabilities || [];
+    rolePermissionsAdminOnly = payload.admin_only_capabilities || [];
+    rolePermissionsRemarks = payload.remarks || {};
+    rolePermissionsRoles = payload.roles || {};
+    rolePermissionsLockedRoles = new Set(payload.locked_roles || []);
+    rolePermissionsCurrentPage = 1;
+    renderRolePermissionsList();
+  } catch (e) {
+    const body = document.getElementById("rolePermissionsTableBody");
+    if (body) body.innerHTML = `<tr><td colspan="5" class="empty">加载角色权限失败：${escapeHtml(e.message || "")}</td></tr>`;
+  }
+}
+
+function getRolePermissionsEntries() {
+  const keyword = (document.getElementById("rolePermissionsSearch")?.value || "").trim().toLowerCase();
+  let entries = Object.entries(rolePermissionsRoles || {});
+  if (keyword) {
+    entries = entries.filter(([code, label]) => {
+      const remark = rolePermissionsRemarks?.[code] || "";
+      return String(label).toLowerCase().includes(keyword)
+        || code.toLowerCase().includes(keyword)
+        || String(remark).toLowerCase().includes(keyword);
+    });
+  }
+  const rank = (code) => (code === "admin" ? 0 : code === "user" ? 1 : 2);
+  entries.sort((a, b) => {
+    const diff = rank(a[0]) - rank(b[0]);
+    if (diff !== 0) return diff;
+    return String(a[1]).localeCompare(String(b[1]), "zh-CN") || String(a[0]).localeCompare(String(b[0]));
+  });
+  return entries;
+}
+
+function renderRolePermissionsList() {
+  const body = document.getElementById("rolePermissionsTableBody");
+  if (!body) return;
+  const entries = getRolePermissionsEntries();
+  const total = entries.length;
+  const pageCount = Math.max(1, Math.ceil(total / ROLE_PERMISSIONS_PAGE_SIZE));
+  if (rolePermissionsCurrentPage > pageCount) rolePermissionsCurrentPage = pageCount;
+  const pageItems = entries.slice(
+    (rolePermissionsCurrentPage - 1) * ROLE_PERMISSIONS_PAGE_SIZE,
+    rolePermissionsCurrentPage * ROLE_PERMISSIONS_PAGE_SIZE,
+  );
+  if (!pageItems.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">暂无数据</td></tr>';
+  } else {
+    body.innerHTML = pageItems.map(([code, label]) => {
+      const remark = rolePermissionsRemarks?.[code] || "";
+      const isSystem = isSystemRole(code);
+      return `<tr>
+        <td class="role-name-cell">${escapeHtml(label)}</td>
+        <td><code class="role-code-text">${escapeHtml(code)}</code></td>
+        <td class="role-remark-cell">${escapeHtml(remark) || "-"}</td>
+        <td><span class="user-status-badge enabled">可用</span></td>
+        <td class="user-actions-cell">
+          <div class="user-actions">
+            <button class="btn-outline btn-xs role-perm-view" data-action-tone="primary" data-action-variant="weak" data-role="${escapeHtml(code)}">查看权限</button>
+            <button class="btn-outline btn-xs role-perm-edit" data-action-tone="primary" data-action-variant="weak" data-role="${escapeHtml(code)}">角色授权</button>
+            <button class="btn-outline btn-xs role-perm-modify" data-action-tone="primary" data-action-variant="weak" data-role="${escapeHtml(code)}">修改</button>
+            <button class="btn-outline btn-xs role-perm-delete" data-action-tone="danger" data-action-variant="weak" data-role="${escapeHtml(code)}" ${isSystem ? "disabled" : ""} title="${isSystem ? "系统内建角色不可删除" : "删除角色"}">删除</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join("");
+  }
+  updateRolePermissionsPagination(total);
+}
+
+function updateRolePermissionsPagination(total) {
+  const pageCount = Math.max(1, Math.ceil(total / ROLE_PERMISSIONS_PAGE_SIZE));
+  const info = document.getElementById("rolePermissionsPageInfo");
+  const current = document.getElementById("rolePermissionsPageCurrent");
+  const prev = document.getElementById("rolePermissionsPrevPage");
+  const next = document.getElementById("rolePermissionsNextPage");
+  if (info) info.textContent = total ? `共 ${total} 条，第 ${rolePermissionsCurrentPage} / ${pageCount} 页` : "暂无数据";
+  if (current) current.textContent = total ? String(rolePermissionsCurrentPage) : "-";
+  if (prev) prev.disabled = rolePermissionsCurrentPage <= 1 || !total;
+  if (next) next.disabled = rolePermissionsCurrentPage >= pageCount || !total;
+}
+
+function createCapabilityTree(container, options = {}) {
+  /* 平台共享 UI 服务：原生 checkbox 能力树（勾选/禁用/展开收起/父子半选）。
+   * 供角色权限弹窗使用，也经 ModuleHost 暴露给业务模块（context.uiTree）。
+   * options: { nodes, matrix, required, adminOnly, lockedRoles, role, readOnly }
+   * 返回: { getMatrix(): {code: bool}, destroy() }
+   */
+  const {
+    nodes = [],
+    matrix = {},
+    required = [],
+    adminOnly = [],
+    lockedRoles = [],
+    role = "user",
+    readOnly = false,
+  } = options;
+  if (!container) return null;
+
+  const roleLocked = lockedRoles.includes(role);
+  const isAdminRole = role === "admin";
+  const requiredSet = new Set(required || []);
+  const adminOnlySet = new Set(adminOnly || []);
+
+  function nodeDisabled(code) {
+    if (readOnly || roleLocked) return true;
+    if (!code) return false;
+    if (requiredSet.has(code)) return true;
+    if (adminOnlySet.has(code) && !isAdminRole) return true;
+    return false;
+  }
+
+  function nodeTitle(code) {
+    if (!code) {
+      if (roleLocked) return "管理员列锁定，不可修改";
+      if (readOnly) return "只读模式";
+      return "勾选后将同步子项（已锁定项除外）";
+    }
+    if (requiredSet.has(code)) return "必选能力，不可取消";
+    if (adminOnlySet.has(code) && !isAdminRole) return "管理员专属能力，不可授予";
+    if (roleLocked) return "管理员列锁定，不可修改";
+    if (readOnly) return "只读模式";
+    return "";
+  }
+
+  function descendantCodeInputs(nodeEl) {
+    return Array.from(nodeEl.querySelectorAll(":scope > .capability-tree-children input[data-code]"));
+  }
+
+  function syncAncestors(fromNodeEl) {
+    let parent = fromNodeEl.parentElement?.closest(".capability-tree-node") || null;
+    while (parent) {
+      const parentInput = parent.querySelector(":scope > .capability-tree-row input[type='checkbox']");
+      const codes = descendantCodeInputs(parent);
+      if (parentInput) {
+        // 半选/全选按全部子能力勾选态计算（含必选禁用项），避免必选已勾、可选项未勾时父级空白
+        const checkedCount = codes.filter((input) => input.checked).length;
+        const allChecked = codes.length > 0 && checkedCount === codes.length;
+        const partial = checkedCount > 0 && checkedCount < codes.length;
+        if (parentInput.dataset.code && parentInput.disabled) {
+          // 必选/锁定能力保持自身勾选值，不被子项半选覆盖
+          parentInput.indeterminate = false;
+        } else {
+          parentInput.checked = allChecked;
+          parentInput.indeterminate = partial;
+        }
+      }
+      parent = parent.parentElement?.closest(".capability-tree-node") || null;
+    }
+  }
+
+  function applyCascade(nodeEl, checked) {
+    descendantCodeInputs(nodeEl).forEach((input) => {
+      if (input.disabled) return;
+      input.checked = checked;
+      input.indeterminate = false;
+    });
+    nodeEl.querySelectorAll(":scope > .capability-tree-children .capability-tree-row input[type='checkbox']").forEach((input) => {
+      if (input.disabled || input.dataset.code) return;
+      input.checked = checked;
+      input.indeterminate = false;
+    });
+  }
+
+  function buildNode(node) {
+    const children = Array.isArray(node.children) ? node.children : [];
+    const hasChildren = children.length > 0;
+    const code = node.code ? String(node.code) : "";
+    const disabled = nodeDisabled(code) || (readOnly || roleLocked);
+    const item = document.createElement("li");
+    item.className = "capability-tree-node" + (hasChildren ? " is-branch" : " is-leaf");
+
+    const row = document.createElement("div");
+    row.className = "capability-tree-row" + (disabled ? " is-disabled" : "");
+
+    if (hasChildren) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "capability-tree-toggle";
+      toggle.setAttribute("aria-label", "展开或收起");
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const collapsed = item.classList.toggle("is-collapsed");
+        toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      });
+      row.appendChild(toggle);
+    } else {
+      const spacer = document.createElement("span");
+      spacer.className = "capability-tree-toggle-spacer";
+      spacer.setAttribute("aria-hidden", "true");
+      row.appendChild(spacer);
+    }
+
+    const label = document.createElement("label");
+    label.className = "capability-tree-label";
+    const title = nodeTitle(code);
+    if (title) label.title = title;
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "capability-tree-checkbox";
+    if (code) {
+      input.dataset.code = code;
+      input.checked = Boolean(matrix[code]);
+    } else {
+      input.dataset.group = "1";
+    }
+    input.disabled = disabled;
+    input.addEventListener("change", () => {
+      if (hasChildren) applyCascade(item, input.checked);
+      input.indeterminate = false;
+      syncAncestors(item);
+    });
+
+    const textWrap = document.createElement("span");
+    textWrap.className = "capability-tree-text";
+    if (!code) {
+      const groupLabel = document.createElement("span");
+      groupLabel.className = "role-perm-group-label";
+      groupLabel.textContent = node.label || "";
+      textWrap.appendChild(groupLabel);
+    } else {
+      const name = document.createElement("span");
+      name.className = "role-perm-label";
+      name.textContent = node.label || code;
+      if (requiredSet.has(code)) {
+        const star = document.createElement("span");
+        star.className = "required-star";
+        star.title = "必选";
+        star.textContent = "★";
+        name.appendChild(document.createTextNode(" "));
+        name.appendChild(star);
+      }
+      if (adminOnlySet.has(code)) {
+        const lock = document.createElement("span");
+        lock.className = "admin-only-lock";
+        lock.title = "管理员专属";
+        lock.textContent = "🔒";
+        name.appendChild(document.createTextNode(" "));
+        name.appendChild(lock);
+      }
+      const codeEl = document.createElement("small");
+      codeEl.className = "role-perm-code";
+      codeEl.textContent = code;
+      textWrap.appendChild(name);
+      textWrap.appendChild(codeEl);
+    }
+
+    label.appendChild(input);
+    label.appendChild(textWrap);
+    row.appendChild(label);
+    item.appendChild(row);
+
+    if (hasChildren) {
+      const childList = document.createElement("ul");
+      childList.className = "capability-tree-children";
+      children.forEach((child) => childList.appendChild(buildNode(child)));
+      item.appendChild(childList);
+    }
+    return item;
+  }
+
+  container.replaceChildren();
+  const root = document.createElement("ul");
+  root.className = "capability-tree";
+  root.setAttribute("role", "tree");
+  (nodes || []).forEach((node) => root.appendChild(buildNode(node)));
+  container.appendChild(root);
+
+  // 子项全部锁定时，分组勾选一并禁用
+  root.querySelectorAll(".capability-tree-node.is-branch").forEach((nodeEl) => {
+    const input = nodeEl.querySelector(":scope > .capability-tree-row input[type='checkbox']");
+    const row = nodeEl.querySelector(":scope > .capability-tree-row");
+    if (!input || !row || input.disabled) return;
+    const codes = descendantCodeInputs(nodeEl);
+    if (codes.length && codes.every((item) => item.disabled)) {
+      input.disabled = true;
+      row.classList.add("is-disabled");
+    }
+  });
+
+  // 初始化父级半选状态
+  Array.from(root.querySelectorAll(".capability-tree-node.is-leaf")).forEach((leaf) => {
+    syncAncestors(leaf);
+  });
+
+  return {
+    getMatrix() {
+      const result = {};
+      container.querySelectorAll("input[data-code]").forEach((input) => {
+        result[input.dataset.code] = Boolean(input.checked);
+      });
+      return result;
+    },
+    destroy() {
+      container.replaceChildren();
+    },
+  };
+}
+
+function openRolePermissionsModal(role, { readOnly = false } = {}) {
+  const modal = document.getElementById("rolePermissionsModal");
+  const title = document.getElementById("rolePermissionsModalTitle");
+  const groups = document.getElementById("rolePermissionsGroups");
+  if (!modal || !groups) return;
+  if (rolePermissionsTree) {
+    rolePermissionsTree.destroy();
+    rolePermissionsTree = null;
+  }
+  if (title) title.textContent = `${readOnly ? "查看权限" : "角色授权"}：${rolePermissionsRoles?.[role] || role}`;
+  const status = document.getElementById("rolePermissionsModalStatus");
+  if (status) status.textContent = "";
+  rolePermissionsTree = createCapabilityTree(groups, {
+    nodes: CAPABILITY_MENU_TREE,
+    matrix: rolePermissionsMatrix?.[role] || {},
+    required: rolePermissionsRequired,
+    adminOnly: rolePermissionsAdminOnly,
+    lockedRoles: Array.from(rolePermissionsLockedRoles),
+    role,
+    readOnly,
+  });
+  rolePermissionsEditingRole = role;
+  modal.hidden = false;
+}
+
+function closeRolePermissionsModal() {
+  const modal = document.getElementById("rolePermissionsModal");
+  if (modal) modal.hidden = true;
+  if (rolePermissionsTree) {
+    rolePermissionsTree.destroy();
+    rolePermissionsTree = null;
+  }
+  rolePermissionsEditingRole = "";
+}
+
+async function saveRolePermissions() {
+  const groups = document.getElementById("rolePermissionsGroups");
+  const status = document.getElementById("rolePermissionsModalStatus");
+  if (!groups || !rolePermissionsEditingRole || !rolePermissionsTree) return;
+  const matrix = JSON.parse(JSON.stringify(rolePermissionsMatrix || {}));
+  matrix[rolePermissionsEditingRole] = rolePermissionsTree.getMatrix();
+  if (status) status.textContent = "保存中...";
+  try {
+    await api("/api/role-capabilities", { method: "PUT", body: JSON.stringify({ matrix }) });
+    rolePermissionsMatrix = matrix;
+    closeRolePermissionsModal();
+    showToast("角色权限已保存", "success");
+  } catch (e) {
+    if (status) status.textContent = e.message || "保存失败";
+  }
+}
+
+let roleDefinitionEditingCode = "";
+
+function peekNextCustomRoleCode() {
+  const used = new Set(
+    (rolePermissionsRoleDefs || [])
+      .filter((item) => !item.is_system)
+      .map((item) => String(item.role_code || "")),
+  );
+  let index = 1;
+  while (used.has(`custom_${index}`) || isSystemRole(`custom_${index}`)) index += 1;
+  return `custom_${index}`;
+}
+
+function closeRoleDefinitionModal() {
+  const modal = document.getElementById("roleDefinitionModal");
+  if (modal) modal.hidden = true;
+  roleDefinitionEditingCode = "";
+  const status = document.getElementById("roleDefinitionModalStatus");
+  if (status) status.textContent = "";
+}
+
+function openRoleDefinitionModal(role = null) {
+  const modal = document.getElementById("roleDefinitionModal");
+  const title = document.getElementById("roleDefinitionModalTitle");
+  const nameInput = document.getElementById("roleDefinitionDisplayName");
+  const codeInput = document.getElementById("roleDefinitionCode");
+  const remarkInput = document.getElementById("roleDefinitionRemark");
+  const enabledSwitch = document.getElementById("roleDefinitionEnabledSwitch");
+  const status = document.getElementById("roleDefinitionModalStatus");
+  if (!modal || !nameInput || !codeInput || !remarkInput) return;
+
+  const isCreate = !role;
+  const isSystem = Boolean(role && isSystemRole(role));
+  roleDefinitionEditingCode = role || "";
+
+  if (title) title.textContent = isCreate ? "新建角色" : "修改角色";
+  nameInput.value = isCreate ? "" : (rolePermissionsRoles?.[role] || role || "");
+  nameInput.readOnly = isSystem;
+  nameInput.disabled = isSystem;
+  nameInput.title = isSystem ? "系统内建角色名称不可修改" : "";
+  codeInput.value = isCreate ? peekNextCustomRoleCode() : role;
+  codeInput.readOnly = true;
+  codeInput.disabled = true;
+  remarkInput.value = isCreate ? "" : (rolePermissionsRemarks?.[role] || "");
+  if (enabledSwitch) {
+    enabledSwitch.classList.add("on");
+    enabledSwitch.setAttribute("aria-pressed", "true");
+    enabledSwitch.disabled = true;
+  }
+  if (status) status.textContent = "";
+  modal.hidden = false;
+  requestAnimationFrame(() => {
+    if (!isSystem) nameInput.focus();
+    else remarkInput.focus();
+  });
+}
+
+async function saveRoleDefinition() {
+  const nameInput = document.getElementById("roleDefinitionDisplayName");
+  const remarkInput = document.getElementById("roleDefinitionRemark");
+  const status = document.getElementById("roleDefinitionModalStatus");
+  const saveBtn = document.getElementById("roleDefinitionModalSave");
+  if (!nameInput || !remarkInput) return;
+
+  const isCreate = !roleDefinitionEditingCode;
+  const isSystem = Boolean(roleDefinitionEditingCode && isSystemRole(roleDefinitionEditingCode));
+  const displayName = String(nameInput.value || "").trim();
+  const remark = String(remarkInput.value || "").trim();
+  if (!isSystem && !displayName) {
+    if (status) status.textContent = "请填写角色名称";
+    nameInput.focus();
+    return;
+  }
+  if (!isSystem && displayName.length > 10) {
+    if (status) status.textContent = "角色名称不得超过 10 个字";
+    nameInput.focus();
+    return;
+  }
+  if (remark.length > 20) {
+    if (status) status.textContent = "角色备注不得超过 20 字";
+    remarkInput.focus();
+    return;
+  }
+
+  if (saveBtn) saveBtn.disabled = true;
+  if (status) status.textContent = "保存中...";
+  try {
+    if (isCreate) {
+      await api("/api/role-definitions", {
+        method: "POST",
+        body: JSON.stringify({ display_name: displayName, remark }),
+      });
+      showToast("角色已创建", "success");
+    } else if (isSystem) {
+      await api("/api/role-capabilities", {
+        method: "PUT",
+        body: JSON.stringify({ remarks: { [roleDefinitionEditingCode]: remark } }),
+      });
+      showToast("角色信息已更新", "success");
+    } else {
+      await api(`/api/role-definitions/${encodeURIComponent(roleDefinitionEditingCode)}`, {
+        method: "PUT",
+        body: JSON.stringify({ display_name: displayName, remark }),
+      });
+      showToast("角色信息已更新", "success");
+    }
+    closeRoleDefinitionModal();
+    await loadRolePermissions();
+  } catch (e) {
+    if (status) status.textContent = e.message || "保存失败";
+    showToast(`保存失败：${e.message || ""}`, "error");
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+function addRoleDefinition() {
+  openRoleDefinitionModal(null);
+}
+
+async function deleteRoleDefinition(role) {
+  const confirmed = await showConfirm(
+    "删除角色",
+    `确定删除自定义角色「${rolePermissionsRoles?.[role] || role}」吗？删除后不可恢复。`,
+    { tone: "danger" },
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/role-definitions/${encodeURIComponent(role)}`, { method: "DELETE" });
+    showToast("角色已删除", "success");
+    await loadRolePermissions();
+  } catch (e) {
+    showToast(`删除失败：${e.message || ""}`, "error");
+  }
+}
+
+document.getElementById("rolePermissionsSearch")?.addEventListener("input", () => {
+  rolePermissionsCurrentPage = 1;
+  renderRolePermissionsList();
+});
+document.getElementById("rolePermissionsPrevPage")?.addEventListener("click", () => {
+  if (rolePermissionsCurrentPage <= 1) return;
+  rolePermissionsCurrentPage -= 1;
+  renderRolePermissionsList();
+});
+document.getElementById("rolePermissionsNextPage")?.addEventListener("click", () => {
+  rolePermissionsCurrentPage += 1;
+  renderRolePermissionsList();
+});
+document.getElementById("rolePermissionsJumpPage")?.addEventListener("change", (event) => {
+  const target = Number(event.target.value);
+  if (Number.isFinite(target) && target >= 1) {
+    rolePermissionsCurrentPage = Math.floor(target);
+    renderRolePermissionsList();
+  }
+});
+document.getElementById("rolePermissionsAddBtn")?.addEventListener("click", () => {
+  addRoleDefinition();
+});
+document.getElementById("rolePermissionsModalClose")?.addEventListener("click", closeRolePermissionsModal);
+document.getElementById("rolePermissionsModalCancel")?.addEventListener("click", closeRolePermissionsModal);
+document.getElementById("rolePermissionsModalSave")?.addEventListener("click", () => {
+  saveRolePermissions().catch((e) => showToast(`保存失败：${e.message || ""}`, "error"));
+});
+document.getElementById("roleDefinitionModalClose")?.addEventListener("click", closeRoleDefinitionModal);
+document.getElementById("roleDefinitionModalCancel")?.addEventListener("click", closeRoleDefinitionModal);
+document.getElementById("roleDefinitionModalSave")?.addEventListener("click", () => {
+  saveRoleDefinition().catch((e) => showToast(`保存失败：${e.message || ""}`, "error"));
+});
+document.getElementById("rolePermissionsTableBody")?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-role]");
+  if (!button) return;
+  const role = button.dataset.role;
+  if (button.classList.contains("role-perm-view")) openRolePermissionsModal(role, { readOnly: true });
+  if (button.classList.contains("role-perm-edit")) openRolePermissionsModal(role);
+  if (button.classList.contains("role-perm-modify")) openRoleDefinitionModal(role);
+  if (button.classList.contains("role-perm-delete")) deleteRoleDefinition(role);
+});
 
 function canSeeHistorySource() {
   return authState.user?.role === "admin";
@@ -5016,7 +5988,7 @@ function renderHistoryList() {
   historyBody.innerHTML = pageItems.map((run) => {
     const explained = (run.status_counts || {})["已解释"] || 0;
     const sourceCell = canSeeHistorySource()
-      ? `<td class="admin-only">${escapeHtml(formatHistorySourceName(run))}</td>`
+      ? `<td>${escapeHtml(formatHistorySourceName(run))}</td>`
       : "";
     const deleteAction = canManageHistory()
       ? `<button class="btn-outline btn-xs btn-danger delete-history" data-action-tone="danger" data-action-variant="weak" data-id="${escapeHtml(run.id)}">删除</button>`
@@ -5213,7 +6185,7 @@ historyBody?.addEventListener("click", async (e) => {
       setStatus("已加载历史详情");
     } else if (button.classList.contains("delete-history")) {
       if (!canManageHistory()) {
-        setStatus("普通用户无权删除历史记录");
+        setStatus("无权删除历史记录");
         return;
       }
       const confirmed = await showConfirm("删除历史记录", "确定删除这条历史记录吗？", { tone: "danger" });
@@ -8626,12 +9598,23 @@ function showConfirm(title, message, options = {}) {
     const messageEl = document.getElementById("confirmMessage");
     const okBtn = document.getElementById("confirmOk");
     const cancelBtn = document.getElementById("confirmCancel");
+    let resolvedTitle = title;
+    let resolvedMessage = message;
+    let resolvedOptions = options;
+    if (typeof resolvedMessage === "object" && resolvedMessage !== null && !Array.isArray(resolvedMessage)) {
+      resolvedOptions = resolvedMessage;
+      resolvedMessage = resolvedTitle;
+      resolvedTitle = "确认操作";
+    } else if (resolvedMessage == null || resolvedMessage === "") {
+      resolvedMessage = resolvedTitle || "确定要执行此操作吗？";
+      resolvedTitle = "确认操作";
+    }
     const allowedTones = new Set(["primary", "danger", "warning", "success"]);
-    const requestedTone = allowedTones.has(options.tone) ? options.tone : "primary";
+    const requestedTone = allowedTones.has(resolvedOptions.tone) ? resolvedOptions.tone : "primary";
     const tone = requestedTone === "danger" ? "danger" : "primary";
 
-    titleEl.textContent = title;
-    messageEl.textContent = message;
+    titleEl.textContent = resolvedTitle;
+    messageEl.textContent = resolvedMessage;
     okBtn.dataset.actionTone = tone;
     okBtn.dataset.actionVariant = "solid";
     modal.hidden = false;
@@ -8676,24 +9659,43 @@ function showPrompt(title, message, options = {}) {
 
     titleEl.textContent = title;
     messageEl.textContent = message;
+    messageEl.classList.remove("prompt-required-hint");
     inputControlEl.hidden = isDate;
     dateControlEl.hidden = !isDate;
     if (isDate) {
       dateInputEl.value = options.defaultValue || "";
       dateInputEl.placeholder = options.placeholder || "";
+      dateInputEl.removeAttribute("aria-invalid");
     } else {
       inputEl.type = options.type || "text";
       inputEl.value = options.defaultValue || "";
       inputEl.placeholder = options.placeholder || "";
       inputEl.autocomplete = options.autocomplete || "off";
+      inputEl.removeAttribute("aria-invalid");
+      if (options.maxlength != null && Number(options.maxlength) > 0) {
+        inputEl.maxLength = Number(options.maxlength);
+      } else {
+        inputEl.removeAttribute("maxLength");
+      }
     }
     modal.hidden = false;
     setTimeout(() => focusTargetEl?.focus(), 0);
+
+    const clearRequiredHint = () => {
+      if (!messageEl.classList.contains("prompt-required-hint")) return;
+      messageEl.classList.remove("prompt-required-hint");
+      messageEl.textContent = message;
+      activeInputEl.removeAttribute("aria-invalid");
+    };
+    activeInputEl.oninput = clearRequiredHint;
 
     const cleanup = (value) => {
       okBtn.onclick = null;
       cancelBtn.onclick = null;
       activeInputEl.onkeydown = null;
+      activeInputEl.oninput = null;
+      activeInputEl.removeAttribute("aria-invalid");
+      messageEl.classList.remove("prompt-required-hint");
       closeCustomDatePicker(dateInputEl);
       modal.classList.add("closing");
       setTimeout(() => {
@@ -8701,6 +9703,7 @@ function showPrompt(title, message, options = {}) {
         modal.classList.remove("closing");
         inputEl.value = "";
         inputEl.type = "text";
+        inputEl.removeAttribute("maxLength");
         dateInputEl.value = "";
         inputControlEl.hidden = false;
         dateControlEl.hidden = true;
@@ -8708,12 +9711,26 @@ function showPrompt(title, message, options = {}) {
       resolve(value);
     };
 
-    okBtn.onclick = () => cleanup(activeInputEl.value);
+    const submit = () => {
+      const raw = activeInputEl.value;
+      if (!isDate && options.required && !String(raw || "").trim()) {
+        const msg = options.requiredMessage || "请输入内容";
+        if (typeof options.onInvalid === "function") options.onInvalid(msg);
+        activeInputEl.setAttribute("aria-invalid", "true");
+        messageEl.textContent = msg;
+        messageEl.classList.add("prompt-required-hint");
+        activeInputEl.focus();
+        return;
+      }
+      cleanup(raw);
+    };
+
+    okBtn.onclick = () => submit();
     cancelBtn.onclick = () => cleanup(null);
     activeInputEl.onkeydown = (event) => {
       if (event.key === "Enter" && !isDate) {
         event.preventDefault();
-        cleanup(activeInputEl.value);
+        submit();
       }
       if (event.key === "Escape") {
         event.preventDefault();
@@ -8795,8 +9812,8 @@ function setSystemInfoFeedback(type, message) {
 
 async function runSystemInfoAction(button, pendingText, successText) {
   if (!button) return;
-  if (authState.user?.role !== "admin") {
-    setSystemInfoFeedback("error", "普通用户不可执行该操作");
+  if (!hasCapability("sys.settings.admin")) {
+    setSystemInfoFeedback("error", "无权限执行该操作");
     return;
   }
   const originalText = button.dataset.originalText || button.textContent;
@@ -11523,20 +12540,70 @@ document.getElementById("aboutHelp")?.addEventListener("click", (e) => {
   `);
 });
 
+function renderModuleReleaseNotes(releaseNotes) {
+  if (!Array.isArray(releaseNotes) || releaseNotes.length === 0) return "";
+  const entries = releaseNotes
+    .filter((note) => note && Array.isArray(note.items) && note.items.length > 0)
+    .map((note) => `
+      <div class="changelog-item module-release-note">
+        <div>
+          <span class="changelog-version">${escapeHtml(note.module_name)}</span>
+          <span class="changelog-date">v${escapeHtml(note.version)}</span>
+        </div>
+        <ul>${note.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </div>
+    `);
+  if (entries.length === 0) return "";
+  return `<div class="module-release-notes"><h4>模块更新</h4>${entries.join("")}</div>`;
+}
+
 document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   e.preventDefault();
+  const moduleReleaseNotes = typeof window.AutoCheckModuleHost?.releaseNotes === "function"
+    ? renderModuleReleaseNotes(window.AutoCheckModuleHost.releaseNotes())
+    : "";
   showInfo("更新日志", `
+    ${moduleReleaseNotes}
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v2.3</span>
+        <span class="changelog-date">2026-08-10</span>
+      </div>
+      <ul>
+        <li>报表特殊处理字段与待确认待办。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v2.2</span>
+        <span class="changelog-date">2026-08-07</span>
+      </div>
+      <ul>
+        <li>新增角色权限配置页，支持按角色×能力矩阵管理功能权限。</li>
+        <li>新增系统管理导航分组，整合系统设置、角色权限与用户管理。</li>
+        <li>角色权限支持菜单/功能权限细分与树形授权界面。</li>
+        <li>系统内建角色仅保留管理员与普通用户；其余通过新增角色创建，原预留角色下线并自动迁移为普通用户。</li>
+        <li>有功能子项的末级菜单增加「页面查看」权限项，取消功能不再连带取消进页权限。</li>
+        <li>对数历史删除改为基于能力码可配置。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v2.1</span>
         <span class="changelog-date">2026-07-18</span>
       </div>
               <ul>
+        <li>报表特殊处理支持按筛选结果导出 Excel。</li>
         <li>新增报送导航状态定时统计、鱼骨进度、当期逾期跟踪和治理统计四周期维护。</li>
         <li>新增报送日程、月度负责人维护和鱼骨步骤定位。</li>
         <li>新增报送步骤浮窗人工确认和撤销确认。</li>
         <li>报送导航支持手工刷新统计、普通用户 5 分钟可见倒计时、管理员免冷却和步骤异常详情。</li>
         <li>新增智能核数多级菜单，整合对数总览、对数执行和对数历史。</li>
+        <li>新增模块发布说明聚合能力。</li>
         <li>新增界面圆角个性化设置。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
@@ -11750,7 +12817,7 @@ mainContent?.addEventListener("scroll", updateSpaceTopNavFrost, { passive: true 
 window.addEventListener("resize", updateSpaceTopNavFrost);
 window.addEventListener("resize", fitHomeReportPeriodValue);
 window.addEventListener("resize", scheduleHomeChartsResize);
-window.addEventListener("resize", syncReportNavigationTodoCardHeight);
+window.addEventListener("resize", refreshReportNavigationScheduleLayout);
 
 // Initial load
 (async () => {
@@ -11770,12 +12837,23 @@ window.addEventListener("resize", syncReportNavigationTodoCardHeight);
     loadSettings();
   }
   loadTheme();
-  const savedPage = location.hash.slice(1);
-  if (savedPage && document.getElementById("page-" + savedPage)) {
-    await switchPage(savedPage, { forceHomeRefresh: savedPage === "home" });
-  } else {
-    // 默认显示报送导航
-    await switchPage("report-navigation");
+  const moduleHandled = await window.AutoCheckModuleHost.initialize({
+    api,
+    user: () => ({ ...authState.user }),
+    notify: showToast,
+    confirm: showConfirm,
+    prompt: showPrompt,
+    uiTree: createCapabilityTree,
+    legacyNavigate: switchPage,
+  });
+  if (!moduleHandled) {
+    const savedPage = location.hash.slice(1);
+    if (savedPage && document.getElementById("page-" + savedPage)) {
+      await switchPage(savedPage, { forceHomeRefresh: savedPage === "home" });
+    } else {
+      // 默认显示报送导航
+      await switchPage("report-navigation");
+    }
   }
   try { const d = await api("/api/config"); if (!runDate.value) runDate.value = d.default_run_date || settingsPayload?.api_default_run_date || ""; } catch (_) { if (!runDate.value) runDate.value = settingsPayload?.api_default_run_date || ""; }
   restoreLatestResultsSnapshot();

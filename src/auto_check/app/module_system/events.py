@@ -1,0 +1,274 @@
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from threading import Condition, RLock, get_ident
+from typing import Callable
+
+
+_MODULE_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
+_EVENT_NAME_PATTERN = re.compile(r"(system|[a-z][a-z0-9_]*):[a-z][a-z0-9_]*")
+
+
+def _validate_module_id(owner: str) -> None:
+    if not isinstance(owner, str) or not _MODULE_ID_PATTERN.fullmatch(owner):
+        raise ValueError("owner must be a valid module namespace")
+
+
+def _validate_event_name(event_name: str) -> str:
+    if not isinstance(event_name, str):
+        raise ValueError("event name must use a namespace")
+    match = _EVENT_NAME_PATTERN.fullmatch(event_name)
+    if match is None:
+        raise ValueError("event name must use a namespace")
+    return match.group(1)
+
+
+@dataclass(frozen=True)
+class EventDeliveryError:
+    owner: str
+    message: str
+
+
+@dataclass(frozen=True)
+class EventDeliveryReport:
+    delivered: int
+    failed: int
+    errors: tuple[EventDeliveryError, ...]
+
+
+@dataclass
+class _Subscriber:
+    owner: str
+    handler: Callable[[object], None]
+    active: bool = True
+    inflight: int = 0
+    delivery_threads: dict[int, int] = field(default_factory=dict)
+
+
+class Subscription:
+    """A closeable event subscription."""
+
+    __slots__ = ("_close", "_closed", "_lock")
+
+    def __init__(self, close: Callable[[], None]) -> None:
+        self._close = close
+        self._closed = False
+        self._lock = RLock()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+        self._close()
+
+
+class EventBus:
+    """In-process namespace event notifications with subscriber isolation."""
+
+    def __init__(self) -> None:
+        self._subscribers: dict[str, list[_Subscriber]] = {}
+        self._lock = RLock()
+        self._condition = Condition(self._lock)
+
+    def subscribe(
+        self, event_name: str, handler: Callable[[object], None], owner: str
+    ) -> Subscription:
+        _validate_event_name(event_name)
+        _validate_module_id(owner)
+        if not callable(handler):
+            raise ValueError("event handler must be callable")
+        subscriber = _Subscriber(owner=owner, handler=handler)
+        with self._lock:
+            subscribers = self._subscribers.setdefault(event_name, [])
+            subscribers.append(subscriber)
+
+        def close() -> None:
+            closer = get_ident()
+            with self._condition:
+                if subscriber.active:
+                    subscriber.active = False
+                    if subscriber in subscribers:
+                        subscribers.remove(subscriber)
+                    if not subscribers:
+                        self._subscribers.pop(event_name, None)
+                if subscriber.delivery_threads.get(closer, 0):
+                    return
+                while subscriber.inflight:
+                    self._condition.wait()
+
+        return Subscription(close)
+
+    def publish(self, event_name: str, payload: object) -> EventDeliveryReport:
+        _validate_event_name(event_name)
+        try:
+            json.dumps(payload)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("event payload must be JSON serializable") from exc
+
+        delivered = 0
+        errors: list[EventDeliveryError] = []
+        with self._lock:
+            subscribers = tuple(self._subscribers.get(event_name, ()))
+        for subscriber in subscribers:
+            delivery_thread = get_ident()
+            with self._condition:
+                if not subscriber.active:
+                    continue
+                subscriber.inflight += 1
+                subscriber.delivery_threads[delivery_thread] = (
+                    subscriber.delivery_threads.get(delivery_thread, 0) + 1
+                )
+            try:
+                subscriber.handler(payload)
+            except Exception:
+                errors.append(
+                    EventDeliveryError(
+                        owner=subscriber.owner,
+                        message="event handler failed",
+                    )
+                )
+            else:
+                delivered += 1
+            finally:
+                with self._condition:
+                    subscriber.inflight -= 1
+                    remaining = subscriber.delivery_threads[delivery_thread] - 1
+                    if remaining:
+                        subscriber.delivery_threads[delivery_thread] = remaining
+                    else:
+                        subscriber.delivery_threads.pop(delivery_thread, None)
+                    self._condition.notify_all()
+        return EventDeliveryReport(delivered=delivered, failed=len(errors), errors=tuple(errors))
+
+    def for_module(self, owner: str) -> ModuleEvents:
+        _validate_module_id(owner)
+        if owner == "system":
+            raise ValueError("system is reserved for platform events")
+
+        def publish_for_owner(event_name: str, payload: object) -> EventDeliveryReport:
+            namespace = _validate_event_name(event_name)
+            if namespace != owner:
+                raise ValueError("module event view can only publish its own namespace")
+            return self.publish(event_name, payload)
+
+        def subscribe_for_owner(
+            event_name: str, handler: Callable[[object], None]
+        ) -> Subscription:
+            return self.subscribe(event_name, handler, owner)
+
+        return ModuleEvents(subscribe=subscribe_for_owner, publish=publish_for_owner)
+
+
+class ModuleEvents:
+    """Module-scoped event view that tracks owned subscriptions."""
+
+    __slots__ = (
+        "_publish",
+        "_subscribe",
+        "_subscriptions",
+        "_closed",
+        "_lock",
+        "_condition",
+        "_inflight_publishes",
+        "_publishing_threads",
+        "_handling_threads",
+        "_subscriptions_closed",
+    )
+
+    def __init__(
+        self,
+        *,
+        subscribe: Callable[[str, Callable[[object], None]], Subscription],
+        publish: Callable[[str, object], EventDeliveryReport],
+    ) -> None:
+        self._subscribe = subscribe
+        self._publish = publish
+        self._subscriptions: list[Subscription] = []
+        self._closed = False
+        self._lock = RLock()
+        self._condition = Condition(self._lock)
+        self._inflight_publishes = 0
+        self._publishing_threads: dict[int, int] = {}
+        self._handling_threads: dict[int, int] = {}
+        self._subscriptions_closed = False
+
+    def publish(self, event_name: str, payload: object) -> EventDeliveryReport:
+        publisher = get_ident()
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("module event view is closed")
+            self._inflight_publishes += 1
+            self._publishing_threads[publisher] = (
+                self._publishing_threads.get(publisher, 0) + 1
+            )
+        try:
+            return self._publish(event_name, payload)
+        finally:
+            with self._condition:
+                self._inflight_publishes -= 1
+                remaining = self._publishing_threads[publisher] - 1
+                if remaining:
+                    self._publishing_threads[publisher] = remaining
+                else:
+                    self._publishing_threads.pop(publisher, None)
+                self._condition.notify_all()
+
+    def subscribe(self, event_name: str, handler: Callable[[object], None]) -> Subscription:
+        if not callable(handler):
+            raise ValueError("event handler must be callable")
+
+        def tracked_handler(payload: object) -> None:
+            handling_thread = get_ident()
+            with self._lock:
+                self._handling_threads[handling_thread] = (
+                    self._handling_threads.get(handling_thread, 0) + 1
+                )
+            try:
+                handler(payload)
+            finally:
+                with self._condition:
+                    remaining = self._handling_threads[handling_thread] - 1
+                    if remaining:
+                        self._handling_threads[handling_thread] = remaining
+                    else:
+                        self._handling_threads.pop(handling_thread, None)
+                    self._condition.notify_all()
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("module event view is closed")
+            subscription = self._subscribe(event_name, tracked_handler)
+            self._subscriptions.append(subscription)
+        return subscription
+
+    def close(self) -> None:
+        closer = get_ident()
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                subscriptions = tuple(self._subscriptions)
+                self._subscriptions.clear()
+            else:
+                subscriptions = None
+                if self._handling_threads.get(closer, 0) or self._publishing_threads.get(
+                    closer, 0
+                ):
+                    return
+        if subscriptions is not None:
+            try:
+                for subscription in subscriptions:
+                    subscription.close()
+            finally:
+                with self._condition:
+                    self._subscriptions_closed = True
+                    self._condition.notify_all()
+        with self._condition:
+            while not self._subscriptions_closed:
+                self._condition.wait()
+            own_publishes = self._publishing_threads.get(closer, 0)
+            while self._inflight_publishes > own_publishes:
+                self._condition.wait()
+            own_handlers = self._handling_threads.get(closer, 0)
+            while sum(self._handling_threads.values()) > own_handlers:
+                self._condition.wait()

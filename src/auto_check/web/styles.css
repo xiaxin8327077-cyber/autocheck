@@ -44,6 +44,8 @@
   --theme-focus-ring: rgba(52, 102, 217, 0.28);
   --theme-page-background: #EEF4F8;
   --ui-radius: 4px;
+  --ui-thin-scrollbar-size: 6px;
+  --ui-thin-scrollbar-thumb: #c5d0e0;
   background: var(--theme-page-background);
   font-size: 14px;
   line-height: 1.5;
@@ -187,6 +189,10 @@
 
 [data-theme="space-tech"] body {
   background: var(--theme-page-background);
+  flex-direction: column;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
 }
 
 [data-theme="space-tech"] .sidebar {
@@ -196,26 +202,47 @@
 [data-theme="space-tech"] .top-nav {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  backdrop-filter: blur(18px) saturate(1.1);
-  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  position: relative;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  max-width: none;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 32px;
+  /* Edge-stuck shell ignores --ui-radius so corners stay flush with the viewport. */
+  border-radius: 0 !important;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+  background: var(--surface-container-lowest);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: visible;
+  z-index: 40;
 }
 
 [data-theme="space-tech"].space-nav-over-content .top-nav {
   background: var(--surface-container-lowest);
-  border-color: var(--outline-variant);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
+  border-bottom-color: rgba(148, 163, 184, 0.28);
+  box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 [data-theme="space-tech"] .main-content {
-  height: calc(100vh - 12px);
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
-  margin: 12px 32px 0;
-  padding: 64px 0 32px;
+  height: auto;
+  margin: 0;
+  padding: 12px 32px 32px;
   border: 0;
-  border-radius: 12px 12px 0 0;
-  background: transparent;
+  border-radius: 0;
+  /* Opaque white: transparent main-content showed #EEF4F8 as a blue band under the nav. */
+  background: var(--surface-container-lowest);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -226,6 +253,31 @@
   display: none;
   width: 0;
   height: 0;
+}
+
+/* Report navigation / settings: RSP-aligned thin scrollbar below the edge-stuck nav */
+:root[data-page="report-navigation"][data-theme="space-tech"] .main-content,
+:root[data-page="settings"][data-theme="space-tech"] .main-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent;
+}
+
+:root[data-page="report-navigation"][data-theme="space-tech"] .main-content::-webkit-scrollbar,
+:root[data-page="settings"][data-theme="space-tech"] .main-content::-webkit-scrollbar {
+  display: block;
+  width: var(--ui-thin-scrollbar-size, 6px);
+  height: var(--ui-thin-scrollbar-size, 6px);
+}
+
+:root[data-page="report-navigation"][data-theme="space-tech"] .main-content::-webkit-scrollbar-thumb,
+:root[data-page="settings"][data-theme="space-tech"] .main-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--ui-thin-scrollbar-thumb, #c5d0e0);
+}
+
+:root[data-page="report-navigation"][data-theme="space-tech"] .main-content::-webkit-scrollbar-track,
+:root[data-page="settings"][data-theme="space-tech"] .main-content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 [data-theme="space-tech"] .page-header,
@@ -437,6 +489,7 @@
 :root[data-page="settings"] #page-settings { display: flex !important; }
 :root[data-page="users"] #page-users { display: flex !important; }
 :root[data-page="local-storage"] #page-local-storage { display: flex !important; }
+:root[data-page="role-permissions"] #page-role-permissions { display: flex !important; }
 
 :root[data-page="home"] .nav-item[data-page="home"],
 :root:not([data-page]) .nav-item[data-page="home"],
@@ -1267,7 +1320,7 @@ h1, h2, h3, p { margin: 0; }
   min-width: 0;
 }
 
-.top-nav-group[data-nav-group="smart-reconcile"] {
+.top-nav-group {
   position: relative;
   display: inline-flex;
 }
@@ -1344,7 +1397,10 @@ h1, h2, h3, p { margin: 0; }
   font-size: 13px;
   font-weight: 600;
   text-decoration: none;
-  transition: all var(--transition-fast);
+  /* Avoid transition:all — Edge can interpolate shadow/filter into a lasting blue fringe. */
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .top-nav-item:hover {
@@ -1364,13 +1420,13 @@ h1, h2, h3, p { margin: 0; }
 :root[data-page="local-storage"] .top-nav-item[data-page="local-storage"] {
   color: var(--theme-on-accent);
   background: var(--theme-accent);
-  box-shadow: 0 8px 18px rgba(59, 130, 246, 0.24);
+  box-shadow: none;
 }
 
 .top-nav-group.active > .top-nav-group-toggle {
   color: var(--theme-on-accent);
   background: var(--theme-accent);
-  box-shadow: 0 8px 18px rgba(59, 130, 246, 0.24);
+  box-shadow: none;
 }
 
 /* ===== Main Content ===== */
@@ -1405,6 +1461,7 @@ h1, h2, h3, p { margin: 0; }
 }
 #page-auto-check { height: 100%; }
 #page-history { height: 100%; }
+#page-role-permissions { height: 100%; }
 
 /* ===== Report Navigation ===== */
 #page-report-navigation {
@@ -2518,11 +2575,11 @@ h1, h2, h3, p { margin: 0; }
 }
 
 :root[data-page="home"][data-theme="space-tech"] .main-content,
-:root:not([data-page])[data-theme="space-tech"] .main-content {
-  padding-bottom: 18px;
-}
-
+:root:not([data-page])[data-theme="space-tech"] .main-content,
 :root[data-page="local-storage"][data-theme="space-tech"] .main-content {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
   padding-bottom: 18px;
 }
 
@@ -5447,11 +5504,21 @@ input:focus, select:focus {
   width: 400px;
 }
 
+.modal-confirm:not(.modal-prompt) {
+  max-height: none;
+}
+
+.modal-confirm:not(.modal-prompt) .modal-body {
+  flex: 0 0 auto;
+  padding: 20px 20px 8px;
+}
+
 .modal-confirm .modal-body {
   padding: 24px 20px;
 }
 
 .modal-confirm .modal-body p {
+  margin: 0;
   font-size: 14px;
   color: var(--on-surface);
   line-height: 1.6;
@@ -5479,6 +5546,14 @@ input:focus, select:focus {
 .prompt-input:focus {
   border-color: var(--secondary);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
+}
+
+.modal-prompt #promptMessage.prompt-required-hint {
+  color: var(--error, #dc2626);
+}
+
+.prompt-input[aria-invalid="true"] {
+  border-color: var(--error, #dc2626);
 }
 
 .prompt-date-control {
@@ -8304,14 +8379,17 @@ input:focus, select:focus {
   }
 
   [data-theme="space-tech"] .top-nav {
-    top: 8px;
-    left: 14px;
-    right: 14px;
+    top: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto auto;
     min-height: 64px;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 8px 14px;
+    border-radius: 0;
   }
 
   [data-theme="space-tech"] .top-nav-brand {
@@ -8348,9 +8426,17 @@ input:focus, select:focus {
   }
 
   [data-theme="space-tech"] .main-content {
-    height: calc(100vh - 8px);
-    margin: 8px 14px 0;
-    padding: 78px 0 18px;
+    height: auto;
+    margin: 0;
+    padding: 12px 14px 18px;
+  }
+
+  :root[data-page="report-navigation"][data-theme="space-tech"] .main-content,
+  :root[data-page="settings"][data-theme="space-tech"] .main-content {
+    /* keep thin scrollbar only; layout comes from edge-stuck nav shell */
+    margin-top: 0;
+    height: auto;
+    padding-top: 12px;
   }
 
   .ds-grid, .config-grid, .field-grid, .history-summary-grid {
@@ -10405,9 +10491,71 @@ input:focus, select:focus {
 }
 
 .user-role-cards {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  width: 100%;
+  max-width: 280px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.user-modal .custom-select-shell.user-role-cards {
+  width: 100%;
+  max-width: 280px;
+  height: 36px;
+}
+
+.user-modal .custom-select-shell.user-role-cards .custom-select-trigger {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0 32px 0 12px;
+}
+
+.user-role-cards-dropdown {
+  max-height: 148px !important;
+  border-radius: var(--ui-radius);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.10);
+}
+
+.user-role-cards-dropdown .custom-select-option {
+  min-height: 30px;
+  padding: 6px 28px 6px 10px;
+  font-size: 12px;
+  line-height: 1.3;
+  border-bottom-color: color-mix(in srgb, var(--outline-variant) 70%, transparent);
+}
+
+.user-role-cards-dropdown .custom-select-option-text {
+  -webkit-line-clamp: 1;
+  word-break: normal;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: block;
+  overflow: hidden;
+}
+
+.user-role-cards-dropdown .custom-select-option:hover,
+.user-role-cards-dropdown .custom-select-option:focus {
+  padding-left: 10px;
+}
+
+.user-role-cards-dropdown .custom-select-option.active::after {
+  right: 10px;
+  font-size: 12px;
+}
+
+.user-role-cards:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 1px;
+}
+
+.user-role-cards:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 
 .user-role-card {
@@ -12180,11 +12328,15 @@ input.custom-input-native:disabled {
 
 @media (max-width: 640px) {
   [data-theme="space-tech"] .top-nav {
-    left: 10px;
-    right: 10px;
-    max-width: calc(100vw - 20px);
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: none;
     align-items: flex-start;
-    overflow: hidden;
+    /* Keep horizontal clip for cramped tabs, but never clip the active-tab glow vertically. */
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 8px 10px;
   }
 
   [data-theme="space-tech"] .top-nav-brand {
@@ -12222,7 +12374,16 @@ input.custom-input-native:disabled {
   }
 
   [data-theme="space-tech"] .main-content {
-    padding: 96px 10px 16px;
+    padding: 12px 10px 16px;
+  }
+
+  :root[data-page="report-navigation"][data-theme="space-tech"] .main-content,
+  :root[data-page="settings"][data-theme="space-tech"] .main-content {
+    margin-top: 0;
+    height: auto;
+    padding-top: 12px;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 
   #page-local-storage .local-storage-health,
@@ -12361,6 +12522,28 @@ input.custom-input-native:disabled {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* History detail modal: show RSP-modal-aligned thin scrollbar only on body scroll area */
+.app-modal-shell.modal-info--history-detail .history-detail {
+  -ms-overflow-style: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent;
+}
+
+.app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar {
+  display: block;
+  width: var(--ui-thin-scrollbar-size, 6px);
+  height: var(--ui-thin-scrollbar-size, 6px);
+}
+
+.app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--ui-thin-scrollbar-thumb, #c5d0e0);
+}
+
+.app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .app-modal-header {
@@ -12546,7 +12729,6 @@ input.custom-input-native:disabled {
 .nav-item,
 .nav-group-toggle,
 .nav-submenu,
-[data-theme="space-tech"] .top-nav,
 [data-theme="space-tech"] .top-nav-item,
 [data-theme="space-tech"] .top-nav-group-toggle,
 [data-theme="space-tech"] .top-nav-submenu,
@@ -13230,6 +13412,20 @@ input.custom-input-native:disabled {
 
 .top-nav-item.active,
 .top-nav-group.active > .top-nav-group-toggle,
+:root[data-page="report-navigation"] .top-nav-item[data-page="report-navigation"],
+:root[data-page="home"] .top-nav-item[data-page="home"],
+:root:not([data-page]) .top-nav-item[data-page="report-navigation"],
+:root[data-page="auto-check"] .top-nav-item[data-page="auto-check"],
+:root[data-page="history"] .top-nav-item[data-page="history"],
+:root[data-page="tools"] .top-nav-item[data-page="tools"],
+:root[data-page="settings"] .top-nav-item[data-page="settings"],
+:root[data-page="users"] .top-nav-item[data-page="users"],
+:root[data-page="local-storage"] .top-nav-item[data-page="local-storage"] {
+  /* Keep Logo gradient fill; do not cast a blue glow under the active tab. */
+  box-shadow: none !important;
+  filter: none !important;
+}
+
 .nav-item.active,
 .nav-group.active > .nav-group-toggle,
 .btn-primary,
@@ -15302,6 +15498,10 @@ input.custom-input-native:disabled {
   transform-origin: top;
 }
 
+#page-report-navigation .report-nav-schedule-detail.reordering {
+  animation: none;
+}
+
 @keyframes report-nav-schedule-detail-expand {
   from {
     opacity: 0.35;
@@ -15720,6 +15920,14 @@ input.custom-input-native:disabled {
   gap: 0;
 }
 
+#page-report-navigation .report-nav-todo-empty {
+  margin: 18px 0 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 #page-report-navigation .report-nav-todo {
   display: grid;
   grid-template-columns: 5px minmax(0, 1fr);
@@ -15805,6 +16013,12 @@ input.custom-input-native:disabled {
   color: var(--on-surface-variant);
   font-size: 10.5px;
   line-height: 1.4;
+}
+
+#page-report-navigation .report-nav-todo-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #page-report-navigation .report-nav-todo-deadline {
@@ -16042,4 +16256,263 @@ input.custom-input-native:disabled {
   border-color: color-mix(in srgb, var(--theme-accent) 36%, var(--outline-variant)) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56) !important;
   transform: translateY(-2px) !important;
+}
+
+
+/* 角色权限页 */
+.role-permissions { padding: 24px; max-width: 1200px; margin: 0 auto; }
+.role-permissions-card {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.role-permissions-table-wrap { overflow-x: auto; }
+.role-permissions-table { width: 100%; font-size: 13px; }
+.role-permissions-table .role-name-col { width: 16%; }
+.role-permissions-table .role-code-col { width: 16%; }
+.role-permissions-table .role-remark-col { width: 26%; }
+.role-permissions-table .role-enabled-col { width: 8%; }
+.role-permissions-table .role-actions-col { width: 26%; }
+.role-permissions-table .user-actions { gap: 4px; justify-content: center; }
+.role-permissions-table td.user-actions-cell { text-align: center; }
+.role-permissions-table .user-actions .btn-xs { padding: 3px 8px; }
+.role-permissions-table td.role-name-cell {
+  color: var(--on-surface);
+  font-weight: 500;
+}
+.role-permissions-table td.role-remark-cell { color: var(--on-surface-variant); }
+.role-permissions-table .role-code-text {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+.role-permissions-hint { margin: 12px 0 0; font-size: 12px; color: var(--on-surface-variant); }
+
+.role-definition-modal {
+  width: min(520px, calc(100vw - 32px));
+}
+.role-definition-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.role-definition-form .user-form-control[readonly],
+.role-definition-form .user-form-control:disabled,
+.role-definition-form .user-form-control.is-readonly,
+#roleDefinitionCode {
+  background: #e8eaef !important;
+  color: var(--on-surface-variant) !important;
+  border-color: #d0d4dc !important;
+  cursor: not-allowed !important;
+  opacity: 1;
+}
+.role-definition-enable-row.disabled,
+.role-definition-enable-row {
+  opacity: 1;
+}
+.role-definition-enable-row .user-enable-switch[disabled] {
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
+/* ===== 原生能力树（平台共享组件，角色授权/模块 uiTree） ===== */
+.capability-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--on-surface);
+}
+.capability-tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+.capability-tree-node.is-collapsed > .capability-tree-children {
+  display: none;
+}
+.capability-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: var(--ui-radius);
+}
+.capability-tree-row:hover {
+  background: var(--surface-container-low);
+}
+.capability-tree-row.is-disabled:hover {
+  background: transparent;
+}
+.capability-tree-toggle,
+.capability-tree-toggle-spacer {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.capability-tree-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  border-radius: var(--ui-radius);
+  position: relative;
+}
+.capability-tree-toggle::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 5px;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent currentColor;
+  transform: rotate(90deg);
+  transform-origin: 3px 4px;
+  transition: transform 120ms ease;
+}
+.capability-tree-node.is-collapsed > .capability-tree-row > .capability-tree-toggle::before {
+  transform: rotate(0deg);
+}
+.capability-tree-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.capability-tree-row.is-disabled .capability-tree-label {
+  cursor: not-allowed;
+  color: var(--on-surface-variant);
+}
+.capability-tree-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: 0 0 16px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: #fff;
+  display: inline-grid;
+  place-content: center;
+  cursor: pointer;
+  color: #fff;
+  vertical-align: middle;
+}
+.capability-tree-checkbox:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--theme-accent) 45%, transparent);
+  outline-offset: 1px;
+}
+.capability-tree-checkbox:checked,
+.capability-tree-checkbox:indeterminate {
+  border-color: var(--theme-accent);
+  background: var(--theme-accent);
+}
+.capability-tree-checkbox:checked::before {
+  content: "✓";
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.capability-tree-checkbox:indeterminate::before {
+  content: "−";
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.capability-tree-checkbox:disabled {
+  cursor: not-allowed;
+  border-color: #c5cad3 !important;
+  background: #e8eaef !important;
+  color: #8b919c !important;
+}
+.capability-tree-checkbox:disabled:checked,
+.capability-tree-checkbox:disabled:indeterminate {
+  border-color: #b0b6c2 !important;
+  background: #d5d9e1 !important;
+}
+.role-permissions-modal #rolePermissionsGroups {
+  min-height: 120px;
+}
+
+.capability-tree-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.role-perm-label,
+.role-perm-code {
+  white-space: nowrap;
+}
+.role-perm-label { color: inherit; }
+.role-perm-code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+.role-perm-group-label {
+  font-weight: 600;
+  color: var(--on-surface);
+}
+.required-star {
+  color: var(--theme-accent-readable);
+  margin-left: 2px;
+}
+.admin-only-lock {
+  margin-left: 2px;
+  font-size: 12px;
+}
+
+/* Top nav glow cleanup: keep gradient fill, never cast blue glow under tabs.
+   Version marker: top-nav-glow-off-20260810t */
+.top-nav .top-nav-item,
+.top-nav .top-nav-group-toggle,
+.top-nav .top-nav-item:hover,
+.top-nav .top-nav-item:focus,
+.top-nav .top-nav-item:focus-visible,
+.top-nav .top-nav-item:active,
+.top-nav .top-nav-item.active,
+.top-nav .top-nav-group.active > .top-nav-group-toggle,
+:root[data-page="report-navigation"] .top-nav .top-nav-item[data-page="report-navigation"],
+:root[data-page="home"] .top-nav .top-nav-item[data-page="home"],
+:root:not([data-page]) .top-nav .top-nav-item[data-page="report-navigation"],
+:root[data-page="auto-check"] .top-nav .top-nav-item[data-page="auto-check"],
+:root[data-page="history"] .top-nav .top-nav-item[data-page="history"],
+:root[data-page="tools"] .top-nav .top-nav-item[data-page="tools"],
+:root[data-page="settings"] .top-nav .top-nav-item[data-page="settings"],
+:root[data-page="users"] .top-nav .top-nav-item[data-page="users"],
+:root[data-page="local-storage"] .top-nav .top-nav-item[data-page="local-storage"],
+.top-nav .top-nav-item::before,
+.top-nav .top-nav-item::after {
+  box-shadow: none !important;
+  -webkit-box-shadow: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+  outline: none !important;
+  outline-offset: 0 !important;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.top-nav .top-nav-item.active,
+.top-nav .top-nav-group.active > .top-nav-group-toggle,
+:root[data-page="report-navigation"] .top-nav .top-nav-item[data-page="report-navigation"],
+:root[data-page="home"] .top-nav .top-nav-item[data-page="home"],
+:root:not([data-page]) .top-nav .top-nav-item[data-page="report-navigation"],
+:root[data-page="auto-check"] .top-nav .top-nav-item[data-page="auto-check"],
+:root[data-page="history"] .top-nav .top-nav-item[data-page="history"],
+:root[data-page="tools"] .top-nav .top-nav-item[data-page="tools"],
+:root[data-page="settings"] .top-nav .top-nav-item[data-page="settings"],
+:root[data-page="users"] .top-nav .top-nav-item[data-page="users"],
+:root[data-page="local-storage"] .top-nav .top-nav-item[data-page="local-storage"] {
+  /* Clip Edge antialias fringe around the rounded gradient pill. */
+  overflow: hidden;
 }

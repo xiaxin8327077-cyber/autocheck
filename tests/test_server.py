@@ -487,15 +487,30 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         def serve_forever(self):
             events.append("serve_forever")
 
-    def build_http_server(_address, _handler):
+        def server_close(self):
+            events.append("server_close")
+
+    handler_types = []
+
+    def build_http_server(_address, handler):
         events.append("http_server")
+        handler_types.append(handler)
         return FakeServer()
 
     report_navigation_service = object()
+    user_directory_spec = object()
+    report_navigation_spec = object()
 
     class FakeRouter:
-        def __init__(self, *, config_path, application_database, **_kwargs):
-            events.append(("router", application_database))
+        def __init__(
+            self,
+            *,
+            config_path,
+            application_database,
+            report_navigation_service,
+            **_kwargs,
+        ):
+            events.append(("router", application_database, report_navigation_service))
             self.config_path = Path(config_path)
             self.report_navigation = report_navigation_service
 
@@ -513,9 +528,54 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         def __init__(self, path, *, database):
             events.append(("auth", Path(path), database))
 
+    class FakeModuleRuntime:
+        def start(self):
+            events.append("module_start")
+
+        def stop(self):
+            events.append("module_stop")
+
+    def create_user_directory_service(auth_manager):
+        events.append(("user_directory", auth_manager))
+        return user_directory_spec
+
+    def create_report_navigation_service(service):
+        events.append(("report_navigation_platform", service))
+        return report_navigation_spec
+
+    def build_module_runtime(context, *, platform_services):
+        events.append(
+            (
+                "module_build",
+                context.application_database,
+                context.config_path,
+                platform_services,
+            )
+        )
+        return FakeModuleRuntime()
+
     monkeypatch.setattr(server_module, "ThreadingHTTPServer", build_http_server)
     monkeypatch.setattr(server_module, "ApiRouter", FakeRouter)
     monkeypatch.setattr(server_module, "AuthManager", FakeAuthManager)
+    monkeypatch.setattr(
+        server_module,
+        "create_user_directory_service",
+        create_user_directory_service,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_report_navigation_service",
+        create_report_navigation_service,
+    )
+    monkeypatch.setattr(server_module.ModuleRuntime, "build", staticmethod(build_module_runtime))
+    monkeypatch.setattr(
+        server_module,
+        "ReportNavigationService",
+        lambda database, *, config_path: (
+            events.append(("report_navigation", database, Path(config_path)))
+            or report_navigation_service
+        ),
+    )
     monkeypatch.setattr(server_module, "ReportNavigationScheduler", FakeReportNavigationScheduler)
     monkeypatch.setattr(server_module, "_is_tcp_port_active", lambda _host, _port: False)
     monkeypatch.setattr(
@@ -532,19 +592,114 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
     )
 
     assert server is not None
+    assert handler_types[0].auth_manager is not None
     assert events == [
         ("from_config_path", config_path),
         "test_connection",
         "validate_schema",
-        "http_server",
-        ("router", application_database),
         ("auth", config_path, application_database),
+        ("report_navigation", application_database, config_path),
+        "http_server",
+        ("user_directory", handler_types[0].auth_manager),
+        ("report_navigation_platform", report_navigation_service),
+        (
+            "module_build",
+            application_database,
+            config_path,
+            (user_directory_spec, report_navigation_spec),
+        ),
+        "module_start",
+        ("router", application_database, report_navigation_service),
         ("scheduler", report_navigation_service),
         "scheduler_start",
         "serve_forever",
         "scheduler_stop",
+        "module_stop",
+        "server_close",
         "close",
     ]
+
+
+def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path):
+    events = []
+
+    class FakeApplicationDatabase:
+        def test_connection(self):
+            events.append("test_connection")
+
+        def validate_schema(self):
+            events.append("validate_schema")
+
+        def close(self):
+            events.append("database_close")
+            raise RuntimeError("database cleanup failed")
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 8765)
+
+        def serve_forever(self):
+            events.append("serve_forever")
+
+        def server_close(self):
+            events.append("server_close")
+            raise RuntimeError("server cleanup failed")
+
+    class FakeRouter:
+        config_path = tmp_path / "config.json"
+        report_navigation = object()
+
+        def __init__(self, **_kwargs):
+            events.append("router")
+
+    class FakeRuntime:
+        def start(self):
+            events.append("runtime_start")
+
+        def stop(self):
+            events.append("runtime_stop")
+            raise RuntimeError("runtime cleanup failed")
+
+    class FakeScheduler:
+        def __init__(self, _service):
+            events.append("scheduler")
+
+        def start(self):
+            events.append("scheduler_start")
+
+        def stop(self):
+            events.append("scheduler_stop")
+            raise RuntimeError("scheduler cleanup failed")
+
+    monkeypatch.setattr(
+        server_module.ApplicationDatabase,
+        "from_config_path",
+        staticmethod(lambda _path: FakeApplicationDatabase()),
+    )
+    monkeypatch.setattr(server_module, "ThreadingHTTPServer", lambda *_args: FakeServer())
+    monkeypatch.setattr(server_module, "ApiRouter", FakeRouter)
+    monkeypatch.setattr(server_module, "AuthManager", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        server_module,
+        "create_user_directory_service",
+        lambda _auth_manager: object(),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "ReportNavigationService",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(server_module, "ReportNavigationScheduler", FakeScheduler)
+    monkeypatch.setattr(
+        server_module.ModuleRuntime,
+        "build",
+        staticmethod(lambda _context, **_kwargs: FakeRuntime()),
+    )
+    monkeypatch.setattr(server_module, "_is_tcp_port_active", lambda _host, _port: False)
+
+    with pytest.raises(RuntimeError, match="scheduler cleanup failed"):
+        server_module.run_server(open_browser=False, config_path=tmp_path / "config.json")
+
+    assert events[-4:] == ["scheduler_stop", "runtime_stop", "server_close", "database_close"]
 
 
 def test_previous_month_end_uses_beijing_today(monkeypatch):

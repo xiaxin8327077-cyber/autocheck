@@ -46,6 +46,8 @@ class MySqlContractConnection:
             "users": [],
             "user_interface_preferences": [],
             "system_interface_preferences": [],
+            "role_capability_settings": [],
+            "role_definitions": [],
             "run_headers": [],
             "reconcile_runs": [],
             "reconcile_run_counts": [],
@@ -77,6 +79,7 @@ class MySqlContractConnection:
             "report_nav_work_calendar": [],
             "report_nav_stat_runs": [],
             "report_nav_scheduler_state": [],
+            "report_nav_card_provider_states": [],
         }
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> MemoryResult:
@@ -135,7 +138,18 @@ class MySqlContractConnection:
                     [],
                 )
                 delete_ids = {str(value) for value in ids}
-                column = "result_id" if "result_id" in sql else "id"
+                normalized_sql = sql.upper()
+                column = next(
+                    (
+                        item.name
+                        for item in table.columns
+                        if f".{item.name.upper()} IN " in normalized_sql
+                        or f"{item.name.upper()} IN " in normalized_sql
+                    ),
+                    None,
+                )
+                if column is None:
+                    column = "result_id" if "result_id" in sql else "id"
                 self.tables[table_name] = [
                     row for row in self.tables[table_name] if str(row.get(column)) not in delete_ids
                 ]
@@ -160,6 +174,49 @@ class MySqlContractConnection:
                     row for row in self.tables[table_name] if not self._matches_filters(row, filters)
                 ]
             return MemoryResult(rowcount=before - len(self.tables[table_name]))
+        if getattr(statement, "is_update", False):
+            in_param_keys: set[str] = set()
+            if " IN " in sql.upper():
+                # UPDATE ... SET col=:col WHERE col IN (:col_1) 会把 SET 与 IN
+                # 都编进 params；不能把 SET 值当过滤条件，否则会误匹配全表。
+                in_items = [
+                    (key, value)
+                    for key, value in params.items()
+                    if isinstance(value, (list, tuple, set))
+                ]
+                if len(in_items) != 1:
+                    raise AssertionError(f"unsupported UPDATE IN statement: {sql}")
+                in_key, in_values = in_items[0]
+                column = in_key.rsplit("_", 1)[0] if "_" in in_key else in_key
+                filters = {column: in_values}
+                in_param_keys.add(in_key)
+            else:
+                filters = self._filters_from_params(
+                    params,
+                    (
+                        "kind",
+                        "id",
+                        "run_id",
+                        "result_id",
+                        "key",
+                        "report_month",
+                        "step_code",
+                        "process_code",
+                        "stat_period",
+                        "card_code",
+                        "user_id",
+                        "role_code",
+                        "role",
+                    ),
+                )
+            matched = [row for row in self.tables[table_name] if self._matches_filters(row, filters)]
+            for row in matched:
+                for key, value in params.items():
+                    if key in in_param_keys or isinstance(value, (list, tuple, set)):
+                        continue
+                    if key in row:
+                        row[key] = value
+            return MemoryResult(rowcount=len(matched))
         if getattr(statement, "is_insert", False):
             if isinstance(parameters, list):
                 for item in parameters:
@@ -221,6 +278,95 @@ class MySqlContractConnection:
 
     def _execute_text(self, sql: str, parameters: dict[str, Any]) -> MemoryResult:
         normalized = " ".join(sql.split()).lower()
+        if normalized.startswith("insert into report_nav_card_provider_states"):
+            rows = self.tables["report_nav_card_provider_states"]
+            current = next(
+                (
+                    row
+                    for row in rows
+                    if str(row.get("card_code") or "")
+                    == str(parameters["card_code"])
+                ),
+                None,
+            )
+            if current is None:
+                rows.append(
+                    {
+                        "card_code": parameters["card_code"],
+                        "owner": parameters["owner"],
+                        "registration_token": parameters["registration_token"],
+                        "semantics_version": parameters["semantics_version"],
+                        "provider_active": True,
+                        "stale": True,
+                        "last_attempt_at": None,
+                        "last_success_at": None,
+                        "last_success_period_key": None,
+                        "last_error": None,
+                        "updated_at": parameters["updated_at"],
+                    }
+                )
+                return MemoryResult(rowcount=1)
+            if str(current.get("owner") or "") != str(parameters["owner"]):
+                return MemoryResult(rowcount=0)
+            same_semantics = int(current.get("semantics_version") or 0) == int(
+                parameters["semantics_version"]
+            )
+            if not same_semantics:
+                current.update(
+                    stale=True,
+                    last_attempt_at=None,
+                    last_success_at=None,
+                    last_success_period_key=None,
+                    last_error=None,
+                )
+            current.update(
+                registration_token=parameters["registration_token"],
+                semantics_version=parameters["semantics_version"],
+                provider_active=True,
+                updated_at=parameters["updated_at"],
+            )
+            return MemoryResult(rowcount=1)
+        if normalized.startswith("update report_nav_card_provider_states"):
+            current = next(
+                (
+                    row
+                    for row in self.tables["report_nav_card_provider_states"]
+                    if str(row.get("card_code") or "") == str(parameters["card_code"])
+                    and str(row.get("owner") or "") == str(parameters["owner"])
+                    and str(row.get("registration_token") or "")
+                    == str(parameters["registration_token"])
+                ),
+                None,
+            )
+            if current is None:
+                return MemoryResult(rowcount=0)
+            if "set provider_active=0" in normalized:
+                current.update(
+                    provider_active=False,
+                    stale=True,
+                    updated_at=parameters["updated_at"],
+                )
+            elif "stale=0" in normalized:
+                current.update(
+                    semantics_version=parameters["semantics_version"],
+                    provider_active=True,
+                    stale=False,
+                    last_attempt_at=parameters["attempted_at"],
+                    last_success_at=parameters["attempted_at"],
+                    last_success_period_key=parameters["period_key"],
+                    last_error=None,
+                    updated_at=parameters["attempted_at"],
+                )
+            else:
+                current.update(
+                    semantics_version=parameters["semantics_version"],
+                    provider_active=True,
+                    stale=True,
+                    last_attempt_at=parameters["attempted_at"],
+                    last_error=parameters["last_error"],
+                    updated_at=parameters["attempted_at"],
+                )
+            return MemoryResult(rowcount=1)
         if normalized.startswith("update report_nav_scheduler_state"):
             row = next((item for item in self.tables["report_nav_scheduler_state"] if item.get("id") == 1), None)
             if row is None:
@@ -300,6 +446,7 @@ class MySqlContractConnection:
             "report_nav_card_manual_values": ("stat_period", "card_code"),
             "report_nav_card_manual_history": ("stat_period", "period_key", "card_code"),
             "report_nav_monthly_schedules": ("report_month", "process_code"),
+            "report_nav_card_provider_states": ("card_code",),
         }
         if table_name in composite_keys:
             return composite_keys[table_name]
@@ -313,6 +460,8 @@ class MySqlContractConnection:
             return ("process_code",)
         if table_name in {"report_nav_steps"}:
             return ("step_code",)
+        if table_name == "role_definitions":
+            return ("role_code",)
         return ("id",) if "id" in row else ()
 
     def _filters_from_params(self, params: dict[str, Any], names: tuple[str, ...]) -> dict[str, Any]:

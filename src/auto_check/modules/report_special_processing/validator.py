@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Any, Mapping
+from zoneinfo import ZoneInfo
+
+from .contracts import DIMENSIONS, PageQuery, RecordInput, RecordStatus, ValidationError
+
+
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+MAX_REPORTS = 50
+MAX_PROCESSES = 20
+MAX_SCRIPT_BYTES = 512 * 1024
+MAX_REQUEST_BYTES = 1024 * 1024
+SORTS = frozenset(
+    {"special_handling_at_desc", "updated_at_desc", "created_at_desc"}
+)
+_RECORD_FIELDS = frozenset(
+    {
+        "save_mode",
+        "report_process_code",
+        "report_process_codes",
+        "report_period",
+        "reports",
+        "summary",
+        "processing_content",
+        "processing_script",
+        "special_handling_at",
+        "handler_user_id",
+        "row_version",
+        "dimension",
+        "governance_owner_user_id",
+        "table_name",
+        "field_name",
+        "value_before",
+        "value_after",
+    }
+)
+
+
+def _error(field: str, message: str = "字段无效") -> ValidationError:
+    return ValidationError(fields={field: message})
+
+
+def _text(value: Any, field: str, maximum: int, *, required: bool) -> str:
+    if value is None:
+        if required:
+            raise _error(field, "不能为空")
+        return ""
+    if not isinstance(value, str):
+        raise _error(field)
+    normalized = value.strip()
+    if required and not normalized:
+        raise _error(field, "不能为空")
+    if len(normalized) > maximum:
+        raise _error(field, f"最多 {maximum} 个字符")
+    return normalized
+
+
+def _optional_date(value: Any, field: str, *, required: bool) -> date | None:
+    if value is None or value == "":
+        if required:
+            raise _error(field, "不能为空")
+        return None
+    if not isinstance(value, str):
+        raise _error(field)
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise _error(field, "日期格式无效") from None
+
+
+def _optional_datetime(value: Any, field: str, *, required: bool) -> datetime | None:
+    if value is None or value == "":
+        if required:
+            raise _error(field, "不能为空")
+        return None
+    if not isinstance(value, str):
+        raise _error(field)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise _error(field, "时间格式无效") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise _error(field, "时间必须包含时区")
+    return parsed.astimezone(SHANGHAI)
+
+
+def _process_codes(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    raw = payload.get("report_process_codes", None)
+    if raw is None and "report_process_code" in payload:
+        single = payload.get("report_process_code")
+        raw = [single] if single not in {None, ""} else []
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or len(raw) > MAX_PROCESSES:
+        raise _error("report_process_codes")
+    codes: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise _error("report_process_codes")
+        code = item.strip()
+        if not code or len(code) > 64:
+            raise _error("report_process_codes")
+        codes.append(code)
+    if not codes:
+        raise _error("report_process_codes", "至少选择一项")
+    if len(set(codes)) != len(codes):
+        raise _error("report_process_codes", "关联报送不能重复")
+    return tuple(codes)
+
+
+def _optional_dimension(value: Any, *, required: bool) -> str | None:
+    if value is None or value == "":
+        if required:
+            raise _error("dimension", "不能为空")
+        return None
+    if not isinstance(value, str) or value not in DIMENSIONS:
+        raise _error("dimension")
+    return value
+
+
+def _optional_text_field(
+    value: Any, field: str, maximum: int, *, required: bool
+) -> str | None:
+    text = _text(value, field, maximum, required=required)
+    return text or None
+
+
+def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
+    if not isinstance(payload, Mapping) or any(key not in _RECORD_FIELDS for key in payload):
+        raise ValidationError()
+    save_mode = payload.get("save_mode")
+    if save_mode not in {"draft", "record"}:
+        raise _error("save_mode")
+    formal = save_mode == "record"
+    process_codes = _process_codes(payload)
+    script = payload.get("processing_script")
+    if script is None or script == "":
+        script = None
+    elif not isinstance(script, str) or len(script.encode("utf-8")) > MAX_SCRIPT_BYTES:
+        raise _error("processing_script", "脚本最大 512 KiB")
+    handler = _text(payload.get("handler_user_id"), "handler_user_id", 64, required=formal) or None
+    row_version = payload.get("row_version")
+    if row_version is not None and (type(row_version) is not int or row_version < 1):
+        raise _error("row_version")
+    return RecordInput(
+        save_mode=save_mode,
+        report_process_codes=process_codes,
+        reports=(),
+        summary=_text(payload.get("summary"), "summary", 128, required=formal),
+        processing_content="",
+        processing_script=script,
+        report_period=_optional_date(payload.get("report_period"), "report_period", required=formal),
+        special_handling_at=_optional_datetime(
+            payload.get("special_handling_at"), "special_handling_at", required=formal
+        ),
+        handler_user_id=handler,
+        row_version=row_version,
+        dimension=_optional_dimension(payload.get("dimension"), required=formal),
+        governance_owner_user_id=_optional_text_field(
+            payload.get("governance_owner_user_id"),
+            "governance_owner_user_id",
+            64,
+            required=formal,
+        ),
+        table_name=_optional_text_field(payload.get("table_name"), "table_name", 128, required=True),
+        field_name=_optional_text_field(payload.get("field_name"), "field_name", 128, required=True),
+        value_before=_optional_text_field(
+            payload.get("value_before"), "value_before", 128, required=formal
+        ),
+        value_after=_optional_text_field(
+            payload.get("value_after"), "value_after", 128, required=formal
+        ),
+    )
+
+
+def validate_page_query(query: Mapping[str, str]) -> PageQuery:
+    try:
+        page = int(query.get("page", "1"))
+        page_size = int(query.get("page_size", "10"))
+    except (TypeError, ValueError):
+        raise ValidationError() from None
+    sort = str(query.get("sort", "special_handling_at_desc"))
+    if page < 1 or not 1 <= page_size <= 100 or sort not in SORTS:
+        raise ValidationError()
+    keyword = str(query.get("keyword", "")).strip()
+    if len(keyword) > 100:
+        raise _error("keyword")
+    filters = {
+        key: value
+        for key in (
+            "report_process_code",
+            "report_period",
+            "status",
+            "handler_user_id",
+            "keyword",
+            "special_handling_from",
+            "special_handling_to",
+        )
+        if (value := query.get(key)) not in {None, ""}
+    }
+    if "status" in filters and filters["status"] not in {item.value for item in RecordStatus}:
+        raise _error("status")
+    return PageQuery(page=page, page_size=page_size, sort=sort, filters=filters)
+
+
+def validate_action(
+    payload: Mapping[str, Any],
+    *,
+    require_reason: bool = False,
+    reason_max_length: int = 500,
+) -> tuple[int, str]:
+    if not isinstance(payload, Mapping):
+        raise ValidationError()
+    version = payload.get("row_version")
+    if type(version) is not int or version < 1:
+        raise _error("row_version")
+    maximum = max(1, int(reason_max_length))
+    reason = _text(payload.get("reason"), "reason", maximum, required=require_reason)
+    return version, reason

@@ -1,0 +1,23 @@
+{
+  "id": "report_demo",
+  "name": "Report demo",
+  "version": "1.0.0",
+  "platform_api": 1,
+  "required": false,
+  "backend_entry": "dropin_modules.report_demo.module:create_module",
+  "api_prefix": "/api/modules/report-demo",
+  "frontend_entry": "/module-assets/report_demo/index.js",
+  "frontend_style": "/module-assets/report_demo/styles.css",
+  "navigation": [
+    {
+      "id": "report-demo",
+      "label": "Report demo",
+      "route": "report-demo",
+      "order": 90,
+      "permission": "report_demo.view"
+    }
+  ],
+  "permissions": ["report_demo.view"],
+  "dependencies": [],
+  "schema_version": 1
+}

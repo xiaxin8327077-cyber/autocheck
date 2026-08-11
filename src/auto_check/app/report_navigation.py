@@ -13,6 +13,17 @@ import uuid
 from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.config import DataSourceEntry, load_store
 from auto_check.app.db import DatabaseClient, qualified_name, quote_identifier
+from auto_check.app.report_navigation_platform import (
+    CardProviderRegistry,
+    CardStatisticsRequest,
+    ProviderManagedCardError,
+    ReportProcess,
+    SHANGHAI_TZ,
+    TodoProviderRegistry,
+    collect_todo_payloads,
+    normalize_aware_datetime,
+    validate_statistics_result,
+)
 from auto_check.app.storage_report_navigation import (
     CardSnapshot,
     ProcessSnapshot,
@@ -71,6 +82,8 @@ class CollectionResult:
     failed_steps: int
     error_message: str = ""
     issues: tuple[dict[str, str], ...] = ()
+    failed_providers: int = 0
+    provider_issues: tuple[dict[str, str], ...] = ()
 
 
 class ConfiguredQueryExecutor:
@@ -612,6 +625,8 @@ class ReportNavigationService:
         self.store = store or ReportNavigationStore(database)
         self._query_executor_factory = query_executor_factory or self._default_query_executor
         self._evaluator = evaluator
+        self._card_providers = CardProviderRegistry(self.store)
+        self._todo_providers = TodoProviderRegistry()
 
     @property
     def interval_minutes(self) -> int:
@@ -620,6 +635,39 @@ class ReportNavigationService:
     def _default_query_executor(self) -> QueryExecutor:
         config_store = load_store(self.config_path, database=self.database)
         return ConfiguredQueryExecutor(config_store.data_sources)
+
+    def list_report_processes(self) -> tuple[ReportProcess, ...]:
+        return tuple(
+            ReportProcess(item.process_code, item.process_name, item.display_order, item.active)
+            for item in self.store.load_report_processes()
+        )
+
+    def register_card_provider(self, **kwargs: Any):
+        return self._card_providers.register(**kwargs)
+
+    def register_todo_provider(self, **kwargs: Any):
+        return self._todo_providers.register(**kwargs)
+
+    def refresh_card_provider(
+        self,
+        *,
+        owner: str,
+        card_code: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Refresh one owned provider card without running full collect_once."""
+        current = now or beijing_now()
+        registration = self._card_providers.get_owned_registration(
+            owner=owner, card_code=card_code
+        )
+        if registration is None:
+            return {"ok": False, "refreshed": False, "reason": "not_registered"}
+        issue = self._collect_one_card_provider(
+            registration, current=current, run_id=None
+        )
+        if issue is None:
+            return {"ok": True, "refreshed": True}
+        return {"ok": False, "refreshed": False, "reason": "provider_failed"}
 
     def collect_once(
         self, *, trigger_type: str = "scheduled", now: datetime | None = None
@@ -756,7 +804,11 @@ class ReportNavigationService:
                 current=current,
                 run_id=run_id,
             )
-            release_status = "partial" if failed_steps else "completed"
+            provider_issues = self._collect_card_providers(
+                current=current, run_id=run_id
+            )
+            failed_providers = len(provider_issues)
+            release_status = "partial" if failed_steps or failed_providers else "completed"
             finished_at = current if now is not None else beijing_now()
             self.store.finish_run(
                 run_id,
@@ -764,6 +816,7 @@ class ReportNavigationService:
                 status=release_status,
                 completed_processes=completed_processes,
                 failed_steps=failed_steps,
+                failed_providers=failed_providers,
             )
             return CollectionResult(
                 release_status,
@@ -772,6 +825,8 @@ class ReportNavigationService:
                 completed_processes,
                 failed_steps,
                 issues=tuple(issues),
+                failed_providers=failed_providers,
+                provider_issues=tuple(provider_issues),
             )
         except Exception as exc:
             release_error = str(exc)
@@ -783,6 +838,7 @@ class ReportNavigationService:
                     status="failed",
                     completed_processes=0,
                     failed_steps=0,
+                    failed_providers=0,
                     error_message=release_error,
                 )
             return CollectionResult("failed", report_month, run_id, 0, 0, release_error)
@@ -881,7 +937,15 @@ class ReportNavigationService:
         refreshed_state = self.manual_refresh_state(current_user=current_user, now=now)
         error_message = result.error_message
         if result.status == "partial" and not error_message:
-            error_message = f"刷新完成，但有 {result.failed_steps} 个步骤统计异常，请查看具体问题"
+            if result.failed_steps and result.failed_providers:
+                error_message = (
+                    f"刷新完成，但有 {result.failed_steps} 个步骤统计异常、"
+                    f"{result.failed_providers} 个模块统计异常，请查看具体问题"
+                )
+            elif result.failed_steps:
+                error_message = f"刷新完成，但有 {result.failed_steps} 个步骤统计异常，请查看具体问题"
+            else:
+                error_message = f"刷新完成，但有 {result.failed_providers} 个模块统计异常，请查看具体问题"
         return {
             "status": result.status,
             "run_id": result.run_id,
@@ -889,6 +953,8 @@ class ReportNavigationService:
             "failed_steps": result.failed_steps,
             "error_message": error_message,
             "issues": [dict(issue) for issue in result.issues],
+            "failed_providers": result.failed_providers,
+            "provider_issues": [dict(issue) for issue in result.provider_issues],
             "cooldown_seconds": (
                 0
                 if str((current_user or {}).get("role") or "") == "admin"
@@ -909,6 +975,7 @@ class ReportNavigationService:
         if period not in PERIODS:
             raise ValueError("period must be week, month, quarter or year")
         current = now or beijing_now()
+        self._refresh_dashboard_providers(current=current)
         report_month = current.strftime("%Y-%m")
         processes = self.store.load_configuration(report_month)
         process_snapshots = self.store.load_process_snapshots(report_month)
@@ -916,6 +983,7 @@ class ReportNavigationService:
         overrides = self.store.load_overrides(report_month)
         schedules = self.store.load_schedules(report_month)
         cards = self.store.load_card_snapshots(period)
+        provider_states = self.store.load_card_provider_states()
         is_admin = str((current_user or {}).get("role") or "") == "admin"
         last_run = self.store.load_latest_run()
         card_order = (
@@ -927,9 +995,10 @@ class ReportNavigationService:
         card_payload = []
         for card_code, name in card_order:
             snapshot = cards.get(card_code)
+            provider_state = provider_states.get(card_code)
             manual_history = (
                 self.store.load_manual_card_history(card_code)
-                if card_code in GOVERNANCE_CARD_CODES
+                if card_code in GOVERNANCE_CARD_CODES and provider_state is None
                 else {}
             )
             current_period_key = period_storage_key(period, current.date())
@@ -937,7 +1006,14 @@ class ReportNavigationService:
             previous_period_key = period_storage_key(period, previous_period_start.date())
             manual_value = manual_history.get((period, current_period_key))
             previous_manual_value = manual_history.get((period, previous_period_key))
-            if manual_value is not None:
+            if provider_state is not None:
+                available = snapshot is not None and provider_state.last_success_at is not None
+                total_count = snapshot.total_count if available else None
+                completed_count = snapshot.completed_count if available else None
+                incomplete_count = snapshot.incomplete_count if available else None
+                completion_rate = float(snapshot.completion_rate) if available else None
+                evaluated_at = _datetime_text(snapshot.evaluated_at) if available else ""
+            elif manual_value is not None:
                 completed_count = manual_value.completed_count
                 incomplete_count = manual_value.incomplete_count
                 total_count = completed_count + incomplete_count
@@ -953,8 +1029,7 @@ class ReportNavigationService:
                 incomplete_count = snapshot.incomplete_count if snapshot else 0
                 completion_rate = float(snapshot.completion_rate) if snapshot else 0.0
                 evaluated_at = _datetime_text(snapshot.evaluated_at) if snapshot else ""
-            card_payload.append(
-                {
+            card = {
                     "card_code": card_code,
                     "name": name,
                     "total_count": total_count,
@@ -964,6 +1039,9 @@ class ReportNavigationService:
                     "evaluated_at": evaluated_at,
                     "comparison_delta": (
                         snapshot.comparison_delta
+                        if provider_state is not None and snapshot is not None and available
+                        else (
+                        snapshot.comparison_delta
                         if card_code == "supplement_tasks" and snapshot is not None
                         else (
                             completed_count - previous_manual_value.completed_count
@@ -972,12 +1050,34 @@ class ReportNavigationService:
                             and previous_manual_value is not None
                             else None
                         )
+                        )
                     ),
                 }
-            )
+            if provider_state is not None:
+                card.update(
+                    source="provider",
+                    available=available,
+                    stale=provider_state.stale,
+                    provider_active=provider_state.provider_active,
+                    snapshot_period_key=(
+                        period_storage_key(period, snapshot.evaluated_at.date())
+                        if available and snapshot is not None
+                        else ""
+                    ),
+                    semantics_version=provider_state.semantics_version,
+                )
+            card_payload.append(card)
         card_maintenance = {}
         if is_admin:
             for card_code in GOVERNANCE_CARD_CODES:
+                provider_state = provider_states.get(card_code)
+                if provider_state is not None:
+                    card_maintenance[card_code] = {
+                        "editable": False,
+                        "source": "provider",
+                        "provider_active": provider_state.provider_active,
+                    }
+                    continue
                 saved_values = self.store.load_manual_card_history(card_code)
                 card_maintenance[card_code] = {
                     stat_period: {
@@ -1047,6 +1147,16 @@ class ReportNavigationService:
             )
         business_report_date = report_navigation_business_report_date(current)
         work_calendar = self.store.load_work_calendar(current.year)
+        aware_now = (
+            current.replace(tzinfo=SHANGHAI_TZ)
+            if current.tzinfo is None or current.utcoffset() is None
+            else normalize_aware_datetime(current)
+        )
+        todos = collect_todo_payloads(
+            self._todo_providers,
+            current_user=current_user,
+            now=aware_now,
+        )
         return {
             "period": period,
             "report_month": report_month,
@@ -1055,6 +1165,7 @@ class ReportNavigationService:
             "card_maintenance": card_maintenance,
             "processes": process_payload,
             "work_calendar": work_calendar,
+            "todos": todos,
             "last_run": _run_payload(last_run),
             "manual_refresh": self.manual_refresh_state(
                 current_user=current_user,
@@ -1074,6 +1185,8 @@ class ReportNavigationService:
             raise ValueError("仅管理员可以维护治理统计")
         if card_code not in GOVERNANCE_CARD_CODES:
             raise ValueError("仅支持维护数据治理流程和报表特殊治理")
+        if self.store.load_card_provider_state(card_code) is not None:
+            raise ProviderManagedCardError("card statistics are managed by a provider")
         if not isinstance(values, Mapping) or set(values) != set(PERIODS):
             raise ValueError("必须同时提供本周、本月、本季度和本年数据")
         normalized: dict[str, dict[str, int]] = {}
@@ -1390,10 +1503,104 @@ class ReportNavigationService:
                     run_id,
                 )
             )
-            for card_code in ("data_governance", "special_governance"):
-                self.store.save_card_snapshot(
-                    _card_snapshot(period, card_code, 0, 0, 0, current, run_id)
+
+    def _collect_card_providers(
+        self, *, current: datetime, run_id: int | None
+    ) -> list[dict[str, str]]:
+        issues: list[dict[str, str]] = []
+        for registration in self._card_providers.active_registrations():
+            if not getattr(registration, "include_in_collect", True):
+                continue
+            issue = self._collect_one_card_provider(
+                registration, current=current, run_id=run_id
+            )
+            if issue is not None:
+                issues.append(issue)
+        return issues
+
+    def _refresh_dashboard_providers(self, *, current: datetime) -> None:
+        """Best-effort live refresh for providers opted into dashboard reads."""
+        for registration in self._card_providers.active_registrations():
+            if not getattr(registration, "refresh_on_dashboard", False):
+                continue
+            self._collect_one_card_provider(
+                registration, current=current, run_id=None
+            )
+
+    def _collect_one_card_provider(
+        self,
+        registration: Any,
+        *,
+        current: datetime,
+        run_id: int | None,
+    ) -> dict[str, str] | None:
+        as_of = (
+            current.replace(tzinfo=SHANGHAI_TZ)
+            if current.tzinfo is None or current.utcoffset() is None
+            else normalize_aware_datetime(current)
+        )
+        try:
+            snapshots: list[CardSnapshot] = []
+            for period in PERIODS:
+                start, end = period_bounds(period, current.date())
+                previous_start, previous_end = previous_period_bounds(
+                    period, current.date()
                 )
+                request = CardStatisticsRequest(
+                    card_code=registration.card_code,
+                    period_kind=period,
+                    period_start=start.replace(tzinfo=SHANGHAI_TZ),
+                    period_end_exclusive=end.replace(tzinfo=SHANGHAI_TZ),
+                    previous_period_start=previous_start.replace(tzinfo=SHANGHAI_TZ),
+                    previous_period_end_exclusive=previous_end.replace(tzinfo=SHANGHAI_TZ),
+                    as_of=as_of,
+                )
+                result = validate_statistics_result(
+                    registration.provider(request),
+                    semantics_version=registration.semantics_version,
+                )
+                snapshots.append(
+                    _card_snapshot(
+                        period,
+                        registration.card_code,
+                        result.total,
+                        result.completed,
+                        result.incomplete,
+                        result.generated_at.replace(tzinfo=None),
+                        run_id,
+                        comparison_delta=result.completed - result.previous_completed,
+                    )
+                )
+            self._card_providers.apply_if_current(
+                registration,
+                lambda: self.store.save_card_provider_success(
+                    registration.card_code,
+                    registration.owner,
+                    registration.token,
+                    registration.semantics_version,
+                    snapshots,
+                    attempted_at=current,
+                    period_key=period_storage_key("month", current.date()),
+                ),
+            )
+            return None
+        except Exception:
+            issue = {
+                "card_code": registration.card_code,
+                "error_message": "provider statistics failed",
+            }
+            recorded = self._card_providers.apply_if_current(
+                registration,
+                lambda: self.store.mark_card_provider_failure(
+                    registration.card_code,
+                    registration.owner,
+                    registration.token,
+                    registration.semantics_version,
+                    attempted_at=current,
+                    error_message="provider statistics failed",
+                ),
+            )
+            return issue if recorded else None
 
 
 class ReportNavigationScheduler:
@@ -1477,6 +1684,7 @@ def _run_payload(row: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "status": str(row.get("status") or ""),
         "completed_processes": int(row.get("completed_processes") or 0),
         "failed_steps": int(row.get("failed_steps") or 0),
+        "failed_providers": int(row.get("failed_providers") or 0),
         "error_message": str(row.get("error_message") or ""),
     }
 
@@ -1488,7 +1696,7 @@ def _card_snapshot(
     completed: int,
     incomplete: int,
     evaluated_at: datetime,
-    run_id: int,
+    run_id: int | None,
     *,
     comparison_delta: int | None = None,
 ) -> CardSnapshot:
