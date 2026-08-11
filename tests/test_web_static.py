@@ -4501,12 +4501,12 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
 
     assert "<title>监管智核</title>" in html
     assert "<title>监管智核</title>" in login_html
-    assert 'href="/assets/favicon-64x64.svg?v=2.0.8-regulatory-intelligence-core"' in html
-    assert 'href="/assets/favicon-64x64.svg?v=2.0.8-regulatory-intelligence-core"' in login_html
+    assert 'href="/assets/favicon-64x64.svg?v=1.2.12-regulatory-intelligence-core"' in html
+    assert 'href="/assets/favicon-64x64.svg?v=1.2.12-regulatory-intelligence-core"' in login_html
     assert 'class="brand-wordmark-main">监管智核</span>' in html
     assert 'class="brand-wordmark-sub">监管报送核验平台</span>' in html
-    assert 'src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
-    assert '"/assets/logo-login-dark.svg?v=2.0.8-regulatory-intelligence-core-horizontal"' not in login_html
+    assert 'src="/assets/logo-login.svg?v=1.2.12-regulatory-intelligence-core-horizontal" alt="监管智核"' in login_html
+    assert '"/assets/logo-login-dark.svg?v=1.2.12-regulatory-intelligence-core-horizontal"' not in login_html
     assert 'alt="监管智核 Logo"' in html
     assert "准星" not in html
     assert "准星" not in login_html
@@ -7583,7 +7583,7 @@ def test_login_page_uses_fixed_light_centered_layout_with_login_only_background(
     assert 'class="left-panel"' not in login_html
     assert 'class="right-panel"' in login_html
     assert 'class="light-brand"' in login_html
-    assert '<img class="login-brand-logo" src="/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal" alt="监管智核" />' in login_html
+    assert '<img class="login-brand-logo" src="/assets/logo-login.svg?v=1.2.12-regulatory-intelligence-core-horizontal" alt="监管智核" />' in login_html
     assert "开启您的智能工作台" not in login_html
     assert '<h1>欢迎登录</h1>' not in login_html
     assert "<p>开启您的智能工作台</p>" not in login_html
@@ -7649,7 +7649,7 @@ def test_login_page_brand_restores_animated_blue_and_orange_bubbles():
     assert "lightBrandBubbleWarmth" in light_brand_warm_circle.group("body")
     assert login_logo is not None
     assert "z-index: 1;" in login_logo.group("body")
-    assert 'loginBrandLogo.src = "/assets/logo-login.svg?v=2.0.8-regulatory-intelligence-core-horizontal";' in login_html
+    assert 'loginBrandLogo.src = "/assets/logo-login.svg?v=1.2.12-regulatory-intelligence-core-horizontal";' in login_html
 
 
 def test_login_page_light_default_password_copy_and_eye_toggle_are_stable():
@@ -7693,7 +7693,7 @@ def test_login_page_uses_same_favicon_as_main_app():
     assert favicon is not None
     assert login_favicon is not None
     assert login_favicon.group("href") == favicon.group("href")
-    assert favicon.group("href") == "/assets/favicon-64x64.svg?v=2.0.8-regulatory-intelligence-core"
+    assert favicon.group("href") == "/assets/favicon-64x64.svg?v=1.2.12-regulatory-intelligence-core"
     assert logo.exists()
     assert favicon_asset.exists()
 
