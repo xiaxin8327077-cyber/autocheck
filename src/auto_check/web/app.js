@@ -33,6 +33,34 @@ const reportNavScheduleCard = document.getElementById("reportNavScheduleCard");
 const reportNavTodoCard = document.querySelector("#page-report-navigation .report-nav-attention-card");
 const reportNavTodoList = document.getElementById("reportNavTodoList");
 const reportNavTodoCount = document.getElementById("reportNavTodoCount");
+const reportNavTodoAllBtn = document.getElementById("reportNavTodoAllBtn");
+const reportNavTodoAllModal = document.getElementById("reportNavTodoAllModal");
+const reportNavTodoAllModalCount = document.getElementById("reportNavTodoAllModalCount");
+const reportNavTodoAllList = document.getElementById("reportNavTodoAllList");
+const reportNavTodoAllModalClose = document.getElementById("reportNavTodoAllModalClose");
+const reportNavTodoAllPagination = document.getElementById("reportNavTodoAllPagination");
+const reportNavTodoAllPrev = document.getElementById("reportNavTodoAllPrev");
+const reportNavTodoAllNext = document.getElementById("reportNavTodoAllNext");
+const reportNavTodoAllPageInfo = document.getElementById("reportNavTodoAllPageInfo");
+const reportNavHistoryBtn = document.getElementById("reportNavHistoryBtn");
+const reportNavHistoryModal = document.getElementById("reportNavHistoryModal");
+const reportNavHistoryModalCount = document.getElementById("reportNavHistoryModalCount");
+const reportNavHistoryList = document.getElementById("reportNavHistoryList");
+const reportNavHistoryModalClose = document.getElementById("reportNavHistoryModalClose");
+const reportNavHistoryPagination = document.getElementById("reportNavHistoryPagination");
+const reportNavHistoryPrev = document.getElementById("reportNavHistoryPrev");
+const reportNavHistoryNext = document.getElementById("reportNavHistoryNext");
+const reportNavHistoryPageInfo = document.getElementById("reportNavHistoryPageInfo");
+const REPORT_NAV_TODO_PREVIEW_LIMIT = 5;
+const REPORT_NAV_TODO_PAGE_SIZE = 10;
+let reportNavTodosCache = [];
+let reportNavTodoAllPage = 1;
+let reportNavHistoryPage = 1;
+let reportNavHistoryTotal = 0;
+let reportNavHistoryLoading = false;
+let reportNavHistoryCache = [];
+const REPORT_NAV_HISTORY_EMPTY_MESSAGE = "暂无处理记录";
+const REPORT_NAV_HISTORY_ERROR_MESSAGE = "处理记录加载失败";
 const reportNavScheduleRange = document.getElementById("reportNavScheduleRange");
 const reportNavScheduleTable = document.getElementById("reportNavScheduleTable");
 const reportNavRefreshButton = document.getElementById("reportNavRefreshButton");
@@ -456,6 +484,8 @@ let reportNavigationVisibleProcesses = [];
 let reportNavigationFlowCardAnimation = null;
 let selectedReportNavigationScheduleProcessCode = "";
 let reportNavigationScheduleCardAnimation = null;
+/** 与收起态报送日程卡对齐后锁定；展开/收起日程详情都不得改动该高度。 */
+let reportNavTodoLockedHeightPx = null;
 const REPORT_NAV_SCHEDULE_STEPS_SHOW_DELAY = 120;
 const REPORT_NAV_SCHEDULE_STEPS_HIDE_DELAY = 140;
 let reportNavigationScheduleStepsShowTimer = null;
@@ -1798,22 +1828,37 @@ function animateReportNavigationScheduleCardHeight(startHeight) {
     ],
     { duration: 180, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
   );
+  // 动画只作用报送日程卡；待办高度保持锁定，不在 onfinish 里重算。
+  reportNavigationScheduleCardAnimation.onfinish = () => {
+    reportNavigationScheduleCardAnimation = null;
+  };
+  reportNavigationScheduleCardAnimation.oncancel = () => {
+    reportNavigationScheduleCardAnimation = null;
+  };
 }
 
 function syncReportNavigationTodoCardHeight() {
   if (!reportNavScheduleCard || !reportNavScheduleTable || !reportNavTodoCard) return;
-  const scheduleRect = reportNavScheduleCard.getBoundingClientRect();
-  const scheduleHeight = scheduleRect.height;
   const sameRow = Math.abs(reportNavScheduleCard.offsetTop - reportNavTodoCard.offsetTop) < 2;
   if (!sameRow) {
     reportNavTodoCard.style.removeProperty("height");
+    reportNavTodoLockedHeightPx = null;
     return;
   }
-  const detailHeight = Array.from(
-    reportNavScheduleTable.querySelectorAll(".report-nav-schedule-detail"),
-  ).reduce((total, detail) => total + detail.getBoundingClientRect().height, 0);
-  const collapsedHeight = Math.max(0, Math.round(scheduleHeight - detailHeight));
-  if (collapsedHeight) reportNavTodoCard.style.height = `${collapsedHeight}px`;
+  const detailOpen = !!reportNavScheduleTable.querySelector(".report-nav-schedule-detail");
+  const animating = reportNavigationScheduleCardAnimation?.playState === "running";
+  // 展开或日程卡高度动画中：待办只回写锁定高度，绝不跟随日程总高变化。
+  if (detailOpen || animating) {
+    if (reportNavTodoLockedHeightPx) {
+      reportNavTodoCard.style.height = `${reportNavTodoLockedHeightPx}px`;
+    }
+    return;
+  }
+  // 收起态：与报送日程卡当前高度对齐（窗口缩放/数据刷新时仍保持并排平齐）。
+  const scheduleHeight = Math.max(0, Math.round(reportNavScheduleCard.getBoundingClientRect().height));
+  if (!scheduleHeight) return;
+  reportNavTodoLockedHeightPx = scheduleHeight;
+  reportNavTodoCard.style.height = `${scheduleHeight}px`;
 }
 
 function reportNavigationScheduleMinWidth(dates = []) {
@@ -2151,6 +2196,11 @@ function selectReportNavigationScheduleProcess(processCode) {
   const nextCode = selectedReportNavigationScheduleProcessCode === processCode ? "" : processCode;
   reportNavigationScheduleCardAnimation?.cancel();
   const startHeight = reportNavScheduleCard?.getBoundingClientRect().height || 0;
+  // 首次展开前锁死待办高度；之后展开/收起都只动报送日程卡。
+  if (nextCode && !selectedReportNavigationScheduleProcessCode && startHeight) {
+    reportNavTodoLockedHeightPx = Math.round(startHeight);
+    reportNavTodoCard.style.height = `${reportNavTodoLockedHeightPx}px`;
+  }
   selectedReportNavigationScheduleProcessCode = nextCode;
   renderReportNavigationSchedule(reportNavigationPayload || {});
   animateReportNavigationScheduleCardHeight(startHeight);
@@ -2695,8 +2745,36 @@ function buildReportNavTodoHash(action = {}) {
   return encoded ? `#${route}?${encoded}` : `#${route}`;
 }
 
+function isReportNavModuleOverlayOpen() {
+  return Boolean(
+    document.querySelector(
+      ".auto-check-module.rsp-todo-confirm-host:not([hidden]), .rsp-record-modal-overlay",
+    ),
+  );
+}
+
 async function handleReportNavTodoAction(action = {}) {
   if (String(action.type || "") !== "navigate") return;
+  const query = action.query && typeof action.query === "object" ? action.query : {};
+  const openMode = String(query.open || "");
+  if (openMode === "detail") {
+    if (typeof window.AutoCheckModuleHost?.openDetailOverlay === "function") {
+      const opened = await window.AutoCheckModuleHost.openDetailOverlay(action.route, query);
+      if (opened) return;
+    }
+    showToast("详情弹窗打开失败", "error");
+    return;
+  }
+  if (openMode === "confirm") {
+    if (typeof window.AutoCheckModuleHost?.openConfirmOverlay === "function") {
+      const opened = await window.AutoCheckModuleHost.openConfirmOverlay(action.route, query);
+      if (opened) return;
+    }
+    if (isReportNavHistoryModalOpen() || isReportNavTodoAllModalOpen()) {
+      showToast("确认弹窗打开失败", "error");
+      return;
+    }
+  }
   const nextHash = buildReportNavTodoHash(action);
   if (!nextHash) return;
   const routeWithQuery = nextHash.replace(/^#/, "");
@@ -2710,24 +2788,25 @@ async function handleReportNavTodoAction(action = {}) {
   if (location.hash !== nextHash) location.hash = nextHash;
 }
 
-function renderReportNavTodos(todos = []) {
-  const items = Array.isArray(todos) ? todos : [];
-  if (reportNavTodoCount) reportNavTodoCount.textContent = `（${items.length}）`;
-  if (!reportNavTodoList) return;
-  if (!items.length) {
-    reportNavTodoList.innerHTML = '<p class="report-nav-todo-empty">暂无待办</p>';
-    syncReportNavigationTodoCardHeight();
-    return;
+function buildReportNavInitiatorSuffix(initiator) {
+  const value = String(initiator || "").trim();
+  if (!value) return "";
+  return `　发起人：<span class="report-nav-todo-initiator">${escapeReportNavHtml(value)}</span>`;
+}
+
+function buildReportNavTodoItemHtml(item, index, { includeInitiator = false } = {}) {
+  const title = escapeReportNavHtml(item.title || "待办");
+  const summary = escapeReportNavHtml(item.summary || "");
+  const createdAt = String(item.created_at || "").trim();
+  const initiatorSuffix = includeInitiator ? buildReportNavInitiatorSuffix(item.initiator) : "";
+  const midClass = index % 2 === 1 ? " mid" : "";
+  let deadline = "";
+  if (createdAt) {
+    deadline = `<p class="report-nav-todo-deadline">发起时间：<time datetime="${escapeReportNavHtml(createdAt)}">${escapeReportNavHtml(createdAt)}</time>${initiatorSuffix}</p>`;
+  } else if (initiatorSuffix) {
+    deadline = `<p class="report-nav-todo-deadline">${initiatorSuffix.trimStart()}</p>`;
   }
-  reportNavTodoList.innerHTML = items.map((item, index) => {
-    const title = escapeReportNavHtml(item.title || "待办");
-    const summary = escapeReportNavHtml(item.summary || "");
-    const createdAt = String(item.created_at || "").trim();
-    const midClass = index % 2 === 1 ? " mid" : "";
-    const deadline = createdAt
-      ? `<p class="report-nav-todo-deadline">发起时间：<time datetime="${escapeReportNavHtml(createdAt)}">${escapeReportNavHtml(createdAt)}</time></p>`
-      : "";
-    return `<article class="report-nav-todo${midClass}" data-todo-id="${escapeReportNavHtml(item.id || "")}">
+  return `<article class="report-nav-todo${midClass}" data-todo-id="${escapeReportNavHtml(item.id || "")}">
       <i aria-hidden="true"></i>
       <div class="report-nav-todo-main">
         <div class="report-nav-todo-primary">
@@ -2738,13 +2817,218 @@ function renderReportNavTodos(todos = []) {
         ${deadline}
       </div>
     </article>`;
-  }).join("");
-  reportNavTodoList.querySelectorAll("[data-todo-action='handle']").forEach((button, index) => {
+}
+
+function buildReportNavHistoryItemHtml(item, index) {
+  const title = escapeReportNavHtml(item.title || "处理记录");
+  const summary = escapeReportNavHtml(item.summary || "");
+  const processedAt = String(item.processed_at || "").trim();
+  const initiatorSuffix = buildReportNavInitiatorSuffix(item.initiator);
+  const midClass = index % 2 === 1 ? " mid" : "";
+  let meta = "";
+  if (processedAt) {
+    meta = `<p class="report-nav-todo-deadline">处理时间：<time datetime="${escapeReportNavHtml(processedAt)}">${escapeReportNavHtml(processedAt)}</time>${initiatorSuffix}</p>`;
+  } else if (initiatorSuffix) {
+    meta = `<p class="report-nav-todo-deadline">${initiatorSuffix.trimStart()}</p>`;
+  }
+  return `<article class="report-nav-todo${midClass}" data-history-id="${escapeReportNavHtml(item.id || "")}">
+      <i aria-hidden="true"></i>
+      <div class="report-nav-todo-main">
+        <div class="report-nav-todo-primary">
+          <h3>${title}</h3>
+          <button type="button" class="report-nav-todo-action" data-history-action="view" aria-label="查看${title}">查看</button>
+        </div>
+        ${summary ? `<p class="report-nav-todo-summary">${summary}</p>` : ""}
+        ${meta}
+      </div>
+    </article>`;
+}
+
+function bindReportNavTodoActions(container, items) {
+  if (!container) return;
+  container.querySelectorAll("[data-todo-action='handle']").forEach((button, index) => {
     button.addEventListener("click", () => {
       void handleReportNavTodoAction(items[index]?.action || {});
     });
   });
+}
+
+function bindReportNavHistoryActions(container, items) {
+  if (!container) return;
+  container.querySelectorAll("[data-history-action='view']").forEach((button, index) => {
+    button.addEventListener("click", () => {
+      void handleReportNavTodoAction(items[index]?.action || {});
+    });
+  });
+}
+
+function reportNavTotalPages(total, pageSize = REPORT_NAV_TODO_PAGE_SIZE) {
+  const size = Math.max(1, Number(pageSize) || REPORT_NAV_TODO_PAGE_SIZE);
+  const count = Math.max(0, Number(total) || 0);
+  return Math.max(1, Math.ceil(count / size) || 1);
+}
+
+function updateReportNavModalPagination({
+  paginationEl,
+  prevBtn,
+  nextBtn,
+  infoEl,
+  page,
+  total,
+  pageSize = REPORT_NAV_TODO_PAGE_SIZE,
+}) {
+  const totalPages = reportNavTotalPages(total, pageSize);
+  const current = Math.min(Math.max(1, Number(page) || 1), totalPages);
+  const show = total > pageSize;
+  if (paginationEl) paginationEl.hidden = !show;
+  if (infoEl) infoEl.textContent = `第 ${current}/${totalPages} 页`;
+  if (prevBtn) prevBtn.disabled = current <= 1;
+  if (nextBtn) nextBtn.disabled = current >= totalPages;
+  return current;
+}
+
+function isReportNavTodoAllModalOpen() {
+  return Boolean(reportNavTodoAllModal && !reportNavTodoAllModal.hidden);
+}
+
+function isReportNavHistoryModalOpen() {
+  return Boolean(reportNavHistoryModal && !reportNavHistoryModal.hidden);
+}
+
+function renderReportNavTodoAllModalList(todos = reportNavTodosCache) {
+  const items = Array.isArray(todos) ? todos : [];
+  if (reportNavTodoAllModalCount) reportNavTodoAllModalCount.textContent = `（${items.length}）`;
+  if (!reportNavTodoAllList) return;
+  if (!items.length) {
+    reportNavTodoAllPage = 1;
+    reportNavTodoAllList.innerHTML = '<p class="report-nav-todo-empty">暂无待办</p>';
+    updateReportNavModalPagination({
+      paginationEl: reportNavTodoAllPagination,
+      prevBtn: reportNavTodoAllPrev,
+      nextBtn: reportNavTodoAllNext,
+      infoEl: reportNavTodoAllPageInfo,
+      page: 1,
+      total: 0,
+    });
+    return;
+  }
+  const totalPages = reportNavTotalPages(items.length);
+  if (reportNavTodoAllPage > totalPages) reportNavTodoAllPage = totalPages;
+  if (reportNavTodoAllPage < 1) reportNavTodoAllPage = 1;
+  reportNavTodoAllPage = updateReportNavModalPagination({
+    paginationEl: reportNavTodoAllPagination,
+    prevBtn: reportNavTodoAllPrev,
+    nextBtn: reportNavTodoAllNext,
+    infoEl: reportNavTodoAllPageInfo,
+    page: reportNavTodoAllPage,
+    total: items.length,
+  });
+  const start = (reportNavTodoAllPage - 1) * REPORT_NAV_TODO_PAGE_SIZE;
+  const pageItems = items.slice(start, start + REPORT_NAV_TODO_PAGE_SIZE);
+  reportNavTodoAllList.innerHTML = pageItems.map((item, index) => buildReportNavTodoItemHtml(item, index, { includeInitiator: true })).join("");
+  bindReportNavTodoActions(reportNavTodoAllList, pageItems);
+}
+
+function openReportNavTodoAllModal() {
+  if (!reportNavTodoAllModal) return;
+  reportNavTodoAllPage = 1;
+  renderReportNavTodoAllModalList(reportNavTodosCache);
+  reportNavTodoAllModal.hidden = false;
+  reportNavTodoAllBtn?.setAttribute("aria-expanded", "true");
+  reportNavTodoAllModalClose?.focus?.();
+}
+
+function closeReportNavTodoAllModal() {
+  if (!reportNavTodoAllModal || reportNavTodoAllModal.hidden) return;
+  closeReportNavHistoryModal();
+  reportNavTodoAllModal.hidden = true;
+  reportNavTodoAllBtn?.setAttribute("aria-expanded", "false");
+  reportNavTodoAllBtn?.focus?.();
+}
+
+function renderReportNavHistoryList(items = [], options = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const emptyMessage = options.emptyMessage || REPORT_NAV_HISTORY_EMPTY_MESSAGE;
+  if (reportNavHistoryModalCount) {
+    reportNavHistoryModalCount.textContent = `（${reportNavHistoryTotal}）`;
+  }
+  if (!reportNavHistoryList) return;
+  if (!list.length) {
+    reportNavHistoryList.innerHTML = `<p class="report-nav-todo-empty">${emptyMessage}</p>`;
+  } else {
+    reportNavHistoryList.innerHTML = list.map((item, index) => buildReportNavHistoryItemHtml(item, index)).join("");
+    bindReportNavHistoryActions(reportNavHistoryList, list);
+  }
+  reportNavHistoryPage = updateReportNavModalPagination({
+    paginationEl: reportNavHistoryPagination,
+    prevBtn: reportNavHistoryPrev,
+    nextBtn: reportNavHistoryNext,
+    infoEl: reportNavHistoryPageInfo,
+    page: reportNavHistoryPage,
+    total: reportNavHistoryTotal,
+  });
+}
+
+async function loadReportNavHistory(page = reportNavHistoryPage) {
+  const targetPage = Math.max(1, Number(page) || 1);
+  reportNavHistoryPage = targetPage;
+  if (reportNavHistoryLoading) return null;
+  reportNavHistoryLoading = true;
+  try {
+    const payload = await api(
+      `/api/report-navigation/processing-history?page=${encodeURIComponent(String(targetPage))}&page_size=${REPORT_NAV_TODO_PAGE_SIZE}`,
+    );
+    reportNavHistoryTotal = Number(payload?.total || 0);
+    reportNavHistoryPage = Math.max(1, Number(payload?.page || targetPage) || targetPage);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    reportNavHistoryCache = items;
+    renderReportNavHistoryList(items);
+    return payload;
+  } catch (error) {
+    if (reportNavHistoryCache.length) {
+      renderReportNavHistoryList(reportNavHistoryCache);
+    } else {
+      renderReportNavHistoryList([], { emptyMessage: REPORT_NAV_HISTORY_ERROR_MESSAGE });
+    }
+    showToast(`处理记录加载失败：${error.message}`, "error");
+    return null;
+  } finally {
+    reportNavHistoryLoading = false;
+  }
+}
+
+function openReportNavHistoryModal() {
+  if (!reportNavHistoryModal) return;
+  reportNavHistoryModal.hidden = false;
+  reportNavHistoryBtn?.setAttribute("aria-expanded", "true");
+  reportNavHistoryPage = 1;
+  void loadReportNavHistory(1);
+  reportNavHistoryModalClose?.focus?.();
+}
+
+function closeReportNavHistoryModal() {
+  if (!reportNavHistoryModal || reportNavHistoryModal.hidden) return;
+  reportNavHistoryModal.hidden = true;
+  reportNavHistoryBtn?.setAttribute("aria-expanded", "false");
+  reportNavHistoryBtn?.focus?.();
+}
+
+function renderReportNavTodos(todos = []) {
+  const items = Array.isArray(todos) ? todos : [];
+  reportNavTodosCache = items;
+  if (reportNavTodoCount) reportNavTodoCount.textContent = `（${items.length}）`;
+  if (!reportNavTodoList) return;
+  if (!items.length) {
+    reportNavTodoList.innerHTML = '<p class="report-nav-todo-empty">暂无待办</p>';
+    syncReportNavigationTodoCardHeight();
+    if (isReportNavTodoAllModalOpen()) renderReportNavTodoAllModalList(items);
+    return;
+  }
+  const previewItems = items.slice(0, REPORT_NAV_TODO_PREVIEW_LIMIT);
+  reportNavTodoList.innerHTML = previewItems.map((item, index) => buildReportNavTodoItemHtml(item, index)).join("");
+  bindReportNavTodoActions(reportNavTodoList, previewItems);
   syncReportNavigationTodoCardHeight();
+  if (isReportNavTodoAllModalOpen()) renderReportNavTodoAllModalList(items);
 }
 
 function renderReportNavigation(payload, { preserveSchedule = false } = {}) {
@@ -2849,6 +3133,64 @@ function syncReportNavigationPeriodTabs() {
 reportNavPeriodSelect?.addEventListener("change", () => {
   syncReportNavigationPeriodTabs();
   loadReportNavigation();
+});
+
+reportNavTodoAllBtn?.addEventListener("click", () => {
+  openReportNavTodoAllModal();
+});
+reportNavTodoAllModalClose?.addEventListener("click", () => {
+  closeReportNavTodoAllModal();
+});
+reportNavTodoAllModal?.addEventListener("click", (event) => {
+  if (event.target === reportNavTodoAllModal) closeReportNavTodoAllModal();
+});
+reportNavTodoAllPrev?.addEventListener("click", () => {
+  if (reportNavTodoAllPage <= 1) return;
+  reportNavTodoAllPage -= 1;
+  renderReportNavTodoAllModalList(reportNavTodosCache);
+});
+reportNavTodoAllNext?.addEventListener("click", () => {
+  const totalPages = reportNavTotalPages(reportNavTodosCache.length);
+  if (reportNavTodoAllPage >= totalPages) return;
+  reportNavTodoAllPage += 1;
+  renderReportNavTodoAllModalList(reportNavTodosCache);
+});
+reportNavHistoryBtn?.addEventListener("click", () => {
+  openReportNavHistoryModal();
+});
+reportNavHistoryModalClose?.addEventListener("click", () => {
+  closeReportNavHistoryModal();
+});
+reportNavHistoryModal?.addEventListener("click", (event) => {
+  if (event.target === reportNavHistoryModal) closeReportNavHistoryModal();
+});
+reportNavHistoryPrev?.addEventListener("click", () => {
+  if (reportNavHistoryPage <= 1 || reportNavHistoryLoading) return;
+  void loadReportNavHistory(reportNavHistoryPage - 1);
+});
+reportNavHistoryNext?.addEventListener("click", () => {
+  const totalPages = reportNavTotalPages(reportNavHistoryTotal);
+  if (reportNavHistoryPage >= totalPages || reportNavHistoryLoading) return;
+  void loadReportNavHistory(reportNavHistoryPage + 1);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  // Detail/confirm overlay sits above history/todo-all; leave those modals open.
+  if (isReportNavModuleOverlayOpen()) return;
+  if (isReportNavHistoryModalOpen()) {
+    event.preventDefault();
+    closeReportNavHistoryModal();
+    return;
+  }
+  if (isReportNavTodoAllModalOpen()) {
+    event.preventDefault();
+    closeReportNavTodoAllModal();
+  }
+});
+window.addEventListener("auto-check:report-navigation-refresh", () => {
+  void loadReportNavigation({ preserveSchedule: true }).then(() => {
+    if (isReportNavHistoryModalOpen()) void loadReportNavHistory(reportNavHistoryPage);
+  });
 });
 
 reportNavPeriodButtons.forEach((button) => {
@@ -12571,6 +12913,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       </div>
       <ul>
         <li>报表特殊处理字段与待确认待办。</li>
+        <li>我的待办发起人与处理记录。</li>
+        <li>我的待办预览与全部弹窗。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
     </div>

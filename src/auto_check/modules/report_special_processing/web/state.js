@@ -16,6 +16,8 @@ export function createState() {
     restoreFocus: null,
     locateRecordId: "",
     locateHighlight: false,
+    locateOpenConfirm: false,
+    todoConfirmHost: false,
   };
 }
 

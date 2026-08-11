@@ -50,6 +50,11 @@ class ReportFacade:
         self.todo_handle = Handle()
         return self.todo_handle
 
+    def register_history_provider(self, **kwargs):
+        self.history_registration = kwargs
+        self.history_handle = Handle()
+        return self.history_handle
+
     def refresh_card_provider(self, *, card_code):
         self.refresh_calls.append(card_code)
         return {"ok": True, "refreshed": True}
@@ -83,4 +88,6 @@ def test_module_binds_owner_scoped_directories_and_closes_report_provider(monkey
     module.stop()
     assert context.services.report.handle.closed
     assert context.services.report.todo_handle.closed
+    assert context.services.report.history_handle.closed
     assert context.services.report.todo_registration["provider_id"] == "rsp_pending_confirm"
+    assert context.services.report.history_registration["provider_id"] == "rsp_confirmed_history"

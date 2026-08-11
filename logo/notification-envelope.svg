@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="nenv-title nenv-desc">
+  <title id="nenv-title">通知 · 无未读</title>
+  <desc id="nenv-desc">信封图标，无未读消息标记。</desc>
+  <rect x="2" y="4" width="20" height="16" rx="2" fill="none" stroke="#6aa4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="22 6 12 13 2 6" fill="none" stroke="#6aa4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

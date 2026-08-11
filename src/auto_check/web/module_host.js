@@ -880,7 +880,50 @@
       return initialize(platform);
     }
 
-    return Object.freeze({ initialize, activate, deactivate, reload, unmount, releaseNotes });
+    async function openConfirmOverlay(route, query = {}) {
+      const parsedRoute = splitModuleRoute(route);
+      const routeName = parsedRoute.name;
+      const moduleId = state.routes.get(routeName);
+      if (!moduleId) return false;
+      const record = state.instances.get(moduleId);
+      const opener = record?.instance?.openConfirmOverlay;
+      if (typeof opener !== "function") return false;
+      const recordId = query?.record_id || query?.recordId || parsedRoute.query?.record_id || "";
+      try {
+        return Boolean(await enqueue(() => opener.call(record.instance, recordId)));
+      } catch (_) {
+        recordModuleIssue(moduleId, "待办确认弹窗打开失败");
+        return false;
+      }
+    }
+
+    async function openDetailOverlay(route, query = {}) {
+      const parsedRoute = splitModuleRoute(route);
+      const routeName = parsedRoute.name;
+      const moduleId = state.routes.get(routeName);
+      if (!moduleId) return false;
+      const record = state.instances.get(moduleId);
+      const opener = record?.instance?.openDetailOverlay;
+      if (typeof opener !== "function") return false;
+      const recordId = query?.record_id || query?.recordId || parsedRoute.query?.record_id || "";
+      try {
+        return Boolean(await enqueue(() => opener.call(record.instance, recordId)));
+      } catch (_) {
+        recordModuleIssue(moduleId, "详情弹窗打开失败");
+        return false;
+      }
+    }
+
+    return Object.freeze({
+      initialize,
+      activate,
+      deactivate,
+      reload,
+      unmount,
+      releaseNotes,
+      openConfirmOverlay,
+      openDetailOverlay,
+    });
   }
 
   if (typeof window !== "undefined") window.AutoCheckModuleHost = createModuleHost();

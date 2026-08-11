@@ -41,6 +41,12 @@ class PendingConfirmTodoProvider:
         created_at = record.get("special_handling_at") or record.get("created_at")
         if created_at is not None and not isinstance(created_at, datetime):
             created_at = None
+        initiator = str(
+            record.get("handler_display_name_snapshot")
+            or record.get("handler_username_snapshot")
+            or record.get("creator_username_snapshot")
+            or ""
+        ).strip()
         return TodoItem(
             id=f"rsp-pending-{record_id}",
             title=TODO_TITLE,
@@ -51,6 +57,7 @@ class PendingConfirmTodoProvider:
             action=TodoAction(
                 type="navigate",
                 route="report-special-processing",
-                query={"record_id": str(record_id), "highlight": "1"},
+                query={"record_id": str(record_id), "highlight": "1", "open": "confirm"},
             ),
+            initiator=initiator,
         )

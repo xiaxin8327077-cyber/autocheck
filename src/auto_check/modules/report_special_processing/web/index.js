@@ -44,3 +44,13 @@ export function unmount() {
   instance = null;
 }
 
+export function openConfirmOverlay(recordId) {
+  if (!instance) throw new Error("报表特殊处理模块尚未挂载");
+  return instance.page.openConfirmOverlay(recordId);
+}
+
+export function openDetailOverlay(recordId) {
+  if (!instance) throw new Error("报表特殊处理模块尚未挂载");
+  return instance.page.openDetailOverlay(recordId);
+}
+

@@ -1945,7 +1945,16 @@ def test_report_navigation_page_uses_readonly_panorama_details_and_compact_todo_
     assert "我的待办" in body
     assert 'id="reportNavTodoCount"' in body
     assert 'class="report-nav-todo-all"' in body
-    assert '<span class="report-nav-todo-all">全部 <b aria-hidden="true">&gt;</b></span>' in body
+    assert 'id="reportNavTodoAllBtn"' in body
+    assert 'id="reportNavTodoAllModal"' in _read(INDEX_HTML)
+    assert 'id="reportNavTodoAllList"' in _read(INDEX_HTML)
+    assert 'id="reportNavHistoryModal"' in _read(INDEX_HTML)
+    assert 'id="reportNavHistoryList"' in _read(INDEX_HTML)
+    assert 'id="reportNavHistoryBtn"' in _read(INDEX_HTML)
+    assert ">处理记录</button>" in _read(INDEX_HTML)
+    assert 'id="reportNavTodoAllPagination"' in _read(INDEX_HTML)
+    assert 'id="reportNavHistoryPagination"' in _read(INDEX_HTML)
+    assert '<button type="button" class="report-nav-todo-all" id="reportNavTodoAllBtn"' in body
     assert "注意事项" not in body
     assert 'class="report-nav-filter-chips"' not in body
     for title in ["数据治理流程", "报表特殊治理", "源系统输出确认"]:
@@ -2018,9 +2027,29 @@ def test_report_navigation_frontend_preserves_snapshot_period_refresh_and_card_m
     assert 'function renderReportNavigationProcesses' in app_js
     assert 'function renderReportNavTodos' in app_js
     assert 'renderReportNavTodos(payload.todos || [])' in app_js
+    assert "REPORT_NAV_TODO_PREVIEW_LIMIT = 5" in app_js
+    assert "REPORT_NAV_TODO_PAGE_SIZE = 10" in app_js
+    assert "items.slice(0, REPORT_NAV_TODO_PREVIEW_LIMIT)" in app_js
+    assert "openReportNavTodoAllModal" in app_js
+    assert "closeReportNavTodoAllModal" in app_js
+    assert "openReportNavHistoryModal" in app_js
+    assert "loadReportNavHistory" in app_js
+    assert "processing-history" in app_js
+    assert "发起人：" in app_js
+    assert "includeInitiator: true" in app_js
+    assert "includeInitiator = false" in app_js
+    assert "处理时间：" in app_js
+    assert "AutoCheckModuleHost?.openDetailOverlay" in app_js
+    assert 'openMode === "detail"' in app_js
+    assert "auto-check:report-navigation-refresh" in app_js
     assert "暂无待办" in app_js
+    assert "暂无处理记录" in app_js
     assert "buildReportNavTodoHash" in app_js
     assert "handleReportNavTodoAction" in app_js
+    assert "AutoCheckModuleHost?.openConfirmOverlay" in app_js
+    assert 'openMode === "confirm"' in app_js
+    assert "openConfirmOverlay" in _read(MODULE_HOST_JS)
+    assert "openDetailOverlay" in _read(MODULE_HOST_JS)
     assert 'if (name === "report-navigation") await loadReportNavigation();' in app_js
     assert 'reportNavPeriodSelect?.addEventListener("change"' in app_js
     assert 'process.process_code === "five_articles"' in app_js
@@ -2031,6 +2060,84 @@ def test_report_navigation_frontend_preserves_snapshot_period_refresh_and_card_m
     assert 'id="reportNavCardMaintenanceModal"' in _read(INDEX_HTML)
     assert 'id="reportNavCardMaintenanceSave"' in _read(INDEX_HTML)
     assert "本周" in app_js and "本月" in app_js and "本季度" in app_js and "本年" in app_js
+
+
+def test_report_nav_todo_initiator_and_processing_history_modal():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    assert 'id="reportNavHistoryModal"' in html
+    assert ">处理记录</button>" in html
+    assert "我的处理记录" in html
+    assert "REPORT_NAV_TODO_PAGE_SIZE = 10" in app_js
+    assert "processing-history" in app_js
+    assert "openDetailOverlay" in app_js
+    assert "发起人：" in app_js
+    assert "includeInitiator: true" in app_js
+    assert "includeInitiator = false" in app_js
+    assert "处理时间：" in app_js
+    assert "发起时间：" in app_js
+    assert "openReportNavHistoryModal" in app_js
+    assert "buildReportNavHistoryItemHtml" in app_js
+    assert re.search(r"#reportNavHistoryModal\s*\{\s*z-index:\s*3100;", css)
+    assert re.search(r"#reportNavTodoAllModal\s*\{\s*z-index:\s*3000;", css)
+    assert "我的待办发起人与处理记录。" in app_js
+    assert "function isReportNavModuleOverlayOpen()" in app_js
+    assert "if (isReportNavModuleOverlayOpen()) return;" in app_js
+    action_body = app_js.split("async function handleReportNavTodoAction", 1)[1].split(
+        "function buildReportNavInitiatorSuffix", 1
+    )[0]
+    assert 'if (openMode === "detail")' in action_body
+    assert 'showToast("详情弹窗打开失败", "error");' in action_body
+    detail_block = action_body.split('if (openMode === "detail")', 1)[1].split(
+        'if (openMode === "confirm")', 1
+    )[0]
+    assert "return;" in detail_block
+    assert "buildReportNavTodoHash" not in detail_block
+    assert "activate(" not in detail_block
+    assert 'if (isReportNavHistoryModalOpen() || isReportNavTodoAllModalOpen())' in action_body
+    assert 'showToast("确认弹窗打开失败", "error");' in action_body
+    drawer_js = _read(
+        ROOT
+        / "src"
+        / "auto_check"
+        / "modules"
+        / "report_special_processing"
+        / "web"
+        / "components"
+        / "record_drawer.js"
+    )
+    assert "event.stopPropagation();" in drawer_js
+
+
+def test_report_nav_processing_history_load_distinguishes_error_from_empty():
+    app_js = _read(APP_JS)
+    load_history = re.search(
+        r"async function loadReportNavHistory\(page = reportNavHistoryPage\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert load_history is not None
+    body = load_history.group("body")
+    assert "REPORT_NAV_HISTORY_EMPTY_MESSAGE" in app_js
+    assert "REPORT_NAV_HISTORY_ERROR_MESSAGE" in app_js
+    assert "reportNavHistoryCache" in body
+    assert "renderReportNavHistoryList(items)" in body
+    assert "renderReportNavHistoryList([], { emptyMessage: REPORT_NAV_HISTORY_ERROR_MESSAGE })" in body
+    assert "renderReportNavHistoryList(reportNavHistoryCache)" in body
+    assert 'showToast(`处理记录加载失败：${error.message}`, "error")' in body
+    assert "renderReportNavHistoryList([]);" not in body.split("} catch (error) {", 1)[1].split("} finally {", 1)[0]
+
+    render_history = re.search(
+        r"function renderReportNavHistoryList\(items = \[\], options = \{\}\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert render_history is not None
+    assert "options.emptyMessage || REPORT_NAV_HISTORY_EMPTY_MESSAGE" in render_history.group("body")
+    assert "暂无处理记录" in app_js
+    assert "处理记录加载失败" in app_js
 
 
 def test_report_navigation_schedule_save_updates_locally_before_background_refresh():
@@ -2889,10 +2996,11 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert "function syncReportNavigationTodoCardHeight()" in app_js
     assert "Math.abs(reportNavScheduleCard.offsetTop - reportNavTodoCard.offsetTop) < 2" in app_js
     assert "Math.abs(scheduleRect.top - todoRect.top) < 2" not in app_js
-    assert 'reportNavScheduleTable.querySelectorAll(".report-nav-schedule-detail")' in app_js
-    assert "scheduleHeight - detailHeight" in app_js
+    assert "reportNavTodoLockedHeightPx" in app_js
+    assert "scheduleHeight - detailHeight" not in app_js
     assert 'reportNavTodoCard.style.removeProperty("height");' in app_js
     assert "syncReportNavigationTodoCardHeight();" in app_js
+    assert "首次展开前锁死待办高度" in app_js or "reportNavTodoLockedHeightPx = Math.round(startHeight)" in app_js
     assert 'class="report-nav-todo-summary"' in app_js
     assert "#page-report-navigation .report-nav-todo-summary" in css
     assert "text-overflow: ellipsis" in css
@@ -2904,6 +3012,36 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
     assert todo_summary is not None
     assert "overflow: hidden" in todo_summary.group("body")
     assert "white-space: nowrap" in todo_summary.group("body")
+    assert "grid-column: 1" in todo_summary.group("body")
+    assert 'class="report-nav-todo-initiator"' in app_js
+    assert "#page-report-navigation .report-nav-todo-initiator" in css
+    assert "#reportNavTodoAllModal .report-nav-todo-initiator" in css
+    # Card + modal share the same timestamp/initiator blue.
+    assert (
+        "#page-report-navigation .report-nav-todo time,\n"
+        "#page-report-navigation .report-nav-todo-initiator,\n"
+        "#reportNavTodoAllModal .report-nav-todo time,\n"
+        "#reportNavTodoAllModal .report-nav-todo-initiator,\n"
+        "#reportNavHistoryModal .report-nav-todo time,\n"
+        "#reportNavHistoryModal .report-nav-todo-initiator"
+    ) in css
+    shared_time = re.search(
+        r"#page-report-navigation \.report-nav-todo time,\s*\n"
+        r"#page-report-navigation \.report-nav-todo-initiator,\s*\n"
+        r"#reportNavTodoAllModal \.report-nav-todo time,\s*\n"
+        r"#reportNavTodoAllModal \.report-nav-todo-initiator,\s*\n"
+        r"#reportNavHistoryModal \.report-nav-todo time,\s*\n"
+        r"#reportNavHistoryModal \.report-nav-todo-initiator\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_time is not None
+    assert "color: var(--theme-accent-readable)" in shared_time.group("body")
+    assert "-webkit-text-fill-color: var(--theme-accent-readable)" in shared_time.group("body")
+    assert "font-family: var(--report-nav-font-mono)" in shared_time.group("body")
+    assert "#reportNavTodoAllModal,\n#reportNavHistoryModal" in css
+    assert '--report-nav-font-sans: "PingFang SC"' in css
+    assert 'font-family: var(--report-nav-font-sans);' in css
     assert 'window.addEventListener("resize", refreshReportNavigationScheduleLayout);' in app_js
     reveal_fn = re.search(
         r"function revealAuthenticatedApp\(\) \{(?P<body>.*?)\n\}",
@@ -3662,6 +3800,7 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     )
     assert home_content_surface is not None
     assert "background: var(--surface-container-lowest) !important;" in home_content_surface.group("body")
+    assert "border: 1px solid var(--outline-variant) !important;" in home_content_surface.group("body")
     assert ':root[data-page="home"] body' in css
     assert "grid-template-columns: repeat(6, minmax(0, 1fr))" in css
     page_home_rule = re.search(r"(?m)^#page-home\s*\{(?P<body>.*?)\}", css, re.S)
@@ -4528,7 +4667,7 @@ def test_home_chart_date_select_keeps_scrollable_wider_dropdown():
     assert "min-width: 150px" in chart_select_rule.group("body")
 
     assert 'target.closest(".custom-select-dropdown")' in app_js
-    assert "const dropdownWidth = Math.min(Math.max(rect.width + 24, rect.width)" in app_js
+    assert "const dropdownWidth = compactRoleSelect" in app_js
     assert "const openAbove = availableBelow < 160 && availableAbove > availableBelow;" in app_js
 
 
@@ -5332,7 +5471,8 @@ def test_pbc_close_uses_shared_radius_instead_of_diamond():
     assert close_rule is not None
     close_body = close_rule.group("body")
     assert "clip-path" not in close_body
-    assert "rotate(90deg)" not in css
+    assert "rotate(90deg)" not in close_body
+    assert "rotate(45deg)" not in close_body
 
     override = css.split("/* User interface radius preference: start */", 1)[1].split(
         "/* User interface radius preference: end */",
@@ -5355,10 +5495,13 @@ def test_all_system_modals_use_balanced_shared_shell():
         "confirmModal",
         "promptModal",
         "infoModal",
+        "reportNavTodoAllModal",
+        "reportNavHistoryModal",
         "reportNavCardMaintenanceModal",
         "userModal",
         "configModal",
         "rolePermissionsModal",
+        "roleDefinitionModal",
     )
     for overlay_id in overlay_ids:
         opening = re.search(
@@ -8470,7 +8613,8 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "height: 0" in webkit_scrollbar.group("body")
 
     history_scroll = re.search(
-        r"(?m)^\.app-modal-shell\.modal-info--history-detail \.history-detail\s*\{(?P<body>.*?)\}",
+        r"(?m)^\.app-modal-shell\.modal-info--history-detail \.history-detail,\s*\n"
+        r"\.app-modal-shell\.modal-info--history-detail \.history-section--scroll \.history-section-table\s*\{(?P<body>.*?)\}",
         css,
         re.S,
     )
@@ -8480,7 +8624,8 @@ def test_shared_modal_shell_hides_scrollbars_without_changing_scroll_behavior():
     assert "--ui-thin-scrollbar-size: 6px;" in css
     assert "--ui-thin-scrollbar-thumb: #c5d0e0;" in css
     assert (
-        ".app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar"
+        ".app-modal-shell.modal-info--history-detail .history-detail::-webkit-scrollbar,\n"
+        ".app-modal-shell.modal-info--history-detail .history-section--scroll .history-section-table::-webkit-scrollbar"
         in css
     )
     assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
@@ -8541,7 +8686,7 @@ def test_space_tech_top_nav_is_edge_stuck_not_floating():
     assert "right: 0" in body
     assert "width: 100%" in body
     assert "border-radius: 0 !important" in body
-    assert "border-bottom: 1px solid rgba(148, 163, 184, 0.22)" in body
+    assert "border-bottom: 1px solid var(--outline-variant)" in body
     assert "box-shadow: none" in body
     assert "background: var(--surface-container-lowest)" in body
     assert "backdrop-filter: none" in body
@@ -8598,7 +8743,8 @@ def test_space_tech_top_nav_is_edge_stuck_not_floating():
     assert "margin: 0" in main_body
     assert "padding: 12px 32px 32px" in main_body
     assert "border-radius: 0" in main_body
-    assert "background: var(--surface-container-lowest)" in main_body
+    assert "background: transparent" in main_body
+    assert "background: var(--surface-container-lowest)" not in main_body
     assert "height: calc(100vh - 12px)" not in main_body
     assert "margin: 12px 32px 0" not in main_body
     assert "padding: 64px 0 32px" not in main_body
@@ -8817,11 +8963,11 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "setCustomDateValue(input, day.dataset.date || \"\")",
         "CUSTOM_INPUT_TYPES.has(type) && !input.hidden",
         "select.dispatchEvent(new Event(\"change\", { bubbles: true }))",
-        "target.closest(\".custom-select-dropdown\")",
-        "const dropdownWidth = Math.min(Math.max(rect.width + 24, rect.width)",
-        "enhanceCustomControls();",
-        "initializeCustomSelects();",
-    ]:
+            "target.closest(\".custom-select-dropdown\")",
+            "const dropdownWidth = compactRoleSelect",
+            "enhanceCustomControls();",
+            "initializeCustomSelects();",
+        ]:
         assert text in app_js
     click_close = re.search(
         r'document\.addEventListener\("click", \(event\) => \{(?P<body>.*?)\n  \}, true\);',
@@ -9283,6 +9429,7 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     assert frosted_nav is not None
     frosted_nav_body = frosted_nav.group("body")
     assert "background: var(--surface-container-lowest);" in frosted_nav_body
+    assert "border-bottom-color: var(--outline-variant);" in frosted_nav_body
     assert "linear-gradient" not in frosted_nav_body
     assert "backdrop-filter: none;" in frosted_nav_body
     assert "-webkit-backdrop-filter: none;" in frosted_nav_body
@@ -9304,7 +9451,8 @@ def test_space_tech_top_nav_aligns_with_content_padding():
     assert "margin: 0" in main_content_body
     assert "padding: 12px 32px 32px" in main_content_body
     assert "border-radius: 0" in main_content_body
-    assert "background: var(--surface-container-lowest)" in main_content_body
+    assert "background: transparent" in main_content_body
+    assert "background: var(--surface-container-lowest)" not in main_content_body
     assert "overflow-x: hidden" in main_content_body
     assert "overflow-y: auto" in main_content_body
     assert "--space-scrollbar-top-offset" not in main_content_body

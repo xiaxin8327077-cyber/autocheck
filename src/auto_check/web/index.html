@@ -215,7 +215,7 @@
           <aside class="report-nav-card report-nav-attention-card" aria-labelledby="reportNavTodoTitle">
             <div class="report-nav-card-head">
               <h2 id="reportNavTodoTitle"><span></span>我的待办<small id="reportNavTodoCount">（0）</small></h2>
-              <span class="report-nav-todo-all">全部 <b aria-hidden="true">&gt;</b></span>
+              <button type="button" class="report-nav-todo-all" id="reportNavTodoAllBtn" aria-haspopup="dialog" aria-controls="reportNavTodoAllModal">全部 <b aria-hidden="true">&gt;</b></button>
             </div>
             <div class="report-nav-todo-list" id="reportNavTodoList"></div>
           </aside>
@@ -1670,6 +1670,45 @@
           <div class="app-modal-body modal-body" id="infoBody">
           </div>
           <div class="app-modal-footer history-detail-footer" id="infoFooter" hidden></div>
+        </div>
+      </div>
+
+      <!-- 报送导航我的待办全部弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="reportNavTodoAllModal" hidden>
+        <div class="app-modal-shell modal report-nav-todo-all-modal" role="dialog" aria-modal="true" aria-labelledby="reportNavTodoAllModalTitle">
+          <div class="app-modal-header modal-header">
+            <h3 id="reportNavTodoAllModalTitle">我的待办<small id="reportNavTodoAllModalCount">（0）</small></h3>
+            <div class="report-nav-todo-all-header-actions">
+              <button type="button" class="report-nav-history-entry" id="reportNavHistoryBtn" aria-haspopup="dialog" aria-controls="reportNavHistoryModal">处理记录</button>
+              <button class="app-modal-close btn-close" id="reportNavTodoAllModalClose" type="button" aria-label="关闭">&times;</button>
+            </div>
+          </div>
+          <div class="app-modal-body modal-body">
+            <div class="report-nav-todo-all-list" id="reportNavTodoAllList"></div>
+            <nav class="report-nav-modal-pagination" id="reportNavTodoAllPagination" aria-label="全部待办分页" hidden>
+              <button type="button" class="page-btn" id="reportNavTodoAllPrev" aria-label="上一页">‹</button>
+              <span class="page-current" id="reportNavTodoAllPageInfo">第 1/1 页</span>
+              <button type="button" class="page-btn" id="reportNavTodoAllNext" aria-label="下一页">›</button>
+            </nav>
+          </div>
+        </div>
+      </div>
+
+      <!-- 报送导航我的处理记录弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="reportNavHistoryModal" hidden>
+        <div class="app-modal-shell modal report-nav-history-modal" role="dialog" aria-modal="true" aria-labelledby="reportNavHistoryModalTitle">
+          <div class="app-modal-header modal-header">
+            <h3 id="reportNavHistoryModalTitle">我的处理记录<small id="reportNavHistoryModalCount">（0）</small></h3>
+            <button class="app-modal-close btn-close" id="reportNavHistoryModalClose" type="button" aria-label="关闭">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body">
+            <div class="report-nav-history-list" id="reportNavHistoryList"></div>
+            <nav class="report-nav-modal-pagination" id="reportNavHistoryPagination" aria-label="处理记录分页" hidden>
+              <button type="button" class="page-btn" id="reportNavHistoryPrev" aria-label="上一页">‹</button>
+              <span class="page-current" id="reportNavHistoryPageInfo">第 1/1 页</span>
+              <button type="button" class="page-btn" id="reportNavHistoryNext" aria-label="下一页">›</button>
+            </nav>
+          </div>
         </div>
       </div>
 

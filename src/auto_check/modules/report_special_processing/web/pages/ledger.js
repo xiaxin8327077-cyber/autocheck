@@ -7,6 +7,10 @@ import { createRecordDrawer } from "../components/record_drawer.js";
 const ALL_PROCESS_CODE = "";
 const ALL_PROCESS_TAB = Object.freeze({ code: ALL_PROCESS_CODE, name: "全部" });
 
+function readOpenConfirm(value) {
+  return value === true || value === "1" || value === 1 || value === "confirm";
+}
+
 function readLocateQuery(route, documentRef) {
   const fromRoute = (() => {
     if (!route || typeof route !== "object") return {};
@@ -14,6 +18,7 @@ function readLocateQuery(route, documentRef) {
     return {
       recordId: query.record_id || query.recordId || "",
       highlight: query.highlight === true || query.highlight === "1" || query.highlight === 1,
+      openConfirm: readOpenConfirm(query.open),
     };
   })();
   if (fromRoute.recordId) return fromRoute;
@@ -21,13 +26,14 @@ function readLocateQuery(route, documentRef) {
   const locationRef = documentRef?.defaultView?.location;
   const hash = String(locationRef?.hash || "");
   const queryText = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : String(locationRef?.search || "").replace(/^\?/, "");
-  if (!queryText) return { recordId: "", highlight: false };
+  if (!queryText) return { recordId: "", highlight: false, openConfirm: false };
   const params = new URLSearchParams(queryText);
   const recordId = params.get("record_id") || params.get("recordId") || "";
   const highlightRaw = params.get("highlight");
   return {
     recordId,
     highlight: highlightRaw === "1" || highlightRaw === "true",
+    openConfirm: readOpenConfirm(params.get("open")),
   };
 }
 
@@ -161,16 +167,131 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
   async function refreshRecord(recordId) {
     const response = await api.getRecord(recordId);
     state.drawer = { mode: state.drawer?.mode || "detail", record: dataOf(response, response) };
+    if (state.todoConfirmHost) {
+      renderTodoConfirmHost();
+      return;
+    }
     render();
   }
 
   function closeDrawer() {
     const restore = state.restoreFocus;
     state.drawer = null;
+    if (state.todoConfirmHost) {
+      closeTodoConfirmHost();
+      return;
+    }
     render();
     if (restore?.kind === "create") root.querySelector?.(".rsp-button-primary")?.focus?.();
     if (restore?.kind === "record") root.querySelector?.(`[data-record-id="${restore.id}"]`)?.focus?.();
     state.restoreFocus = null;
+  }
+
+  function closeTodoConfirmHost() {
+    state.todoConfirmHost = false;
+    state.drawer = null;
+    state.restoreFocus = null;
+    root.classList.remove("rsp-todo-confirm-host");
+    root.replaceChildren();
+    root.hidden = true;
+    const host = root.parentElement;
+    if (host && ![...host.children].some((child) => !child.hidden)) {
+      host.hidden = true;
+    }
+  }
+
+  function renderTodoConfirmHost() {
+    if (!state.drawer?.record) {
+      closeTodoConfirmHost();
+      return;
+    }
+    const overlayMode = state.drawer.mode === "confirm" ? "confirm" : "detail";
+    const modal = createRecordDrawer(documentRef, {
+      catalog: state.catalog,
+      catalogAvailable: state.catalogAvailable,
+      record: state.drawer.record,
+      mode: overlayMode,
+      user,
+      reportPeriod: state.reportPeriod,
+      activeProcessCode: state.activeProcessCode,
+      actions: api,
+      notify,
+      confirm,
+      onClose: closeDrawer,
+      onSaved: async () => {
+        closeDrawer();
+        documentRef.defaultView?.dispatchEvent?.(
+          new CustomEvent("auto-check:report-navigation-refresh"),
+        );
+      },
+      onConflict: async () => {
+        if (!state.drawer?.record?.id) return;
+        try {
+          const response = await api.getRecord(state.drawer.record.id);
+          state.drawer = {
+            mode: state.drawer.mode === "confirm" ? "confirm" : "detail",
+            record: dataOf(response, response),
+          };
+          renderTodoConfirmHost();
+        } catch (error) {
+          if (error?.name !== "AbortError") notify(error?.message || "记录刷新失败", "error");
+        }
+      },
+    });
+    root.classList.add("rsp-todo-confirm-host");
+    root.hidden = false;
+    const host = root.parentElement;
+    if (host) host.hidden = false;
+    root.replaceChildren(modal);
+    root.querySelector?.(".rsp-record-modal button")?.focus?.();
+  }
+
+  async function openRecordOverlay(recordId, mode = "detail") {
+    const id = String(recordId || "").trim();
+    if (!id) return false;
+    const overlayMode = mode === "confirm" ? "confirm" : "detail";
+    const unavailableMessage = overlayMode === "confirm"
+      ? "目录不可用，暂时无法打开确认弹窗"
+      : "目录不可用，暂时无法打开详情弹窗";
+    const missingMessage = overlayMode === "confirm"
+      ? "待办记录不存在或已处理"
+      : "处理记录不存在或已删除";
+    const failureMessage = overlayMode === "confirm"
+      ? "待办确认弹窗打开失败"
+      : "详情弹窗打开失败";
+    try {
+      await loadCatalog();
+      if (!state.catalogAvailable) {
+        notify(unavailableMessage, "warning");
+        return false;
+      }
+      const response = await api.getRecord(id);
+      const record = dataOf(response, null);
+      if (!record?.id) {
+        notify(missingMessage, "warning");
+        return false;
+      }
+      state.active = true;
+      state.todoConfirmHost = true;
+      state.drawer = { mode: overlayMode, record };
+      state.restoreFocus = null;
+      renderTodoConfirmHost();
+      return true;
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        notify(error?.message || failureMessage, "error");
+      }
+      closeTodoConfirmHost();
+      return false;
+    }
+  }
+
+  async function openConfirmOverlay(recordId) {
+    return openRecordOverlay(recordId, "confirm");
+  }
+
+  async function openDetailOverlay(recordId) {
+    return openRecordOverlay(recordId, "detail");
   }
 
   async function openRecord(record, trigger, mode = "detail") {
@@ -433,6 +554,9 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
         onSaved: async () => {
           closeDrawer();
           await loadLedger();
+          documentRef.defaultView?.dispatchEvent?.(
+            new CustomEvent("auto-check:report-navigation-refresh"),
+          );
         },
         onConflict: async () => {
           if (state.drawer?.record?.id) await refreshRecord(state.drawer.record.id);
@@ -444,31 +568,51 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
 
   return Object.freeze({
     async activate(route) {
+      if (state.todoConfirmHost) closeTodoConfirmHost();
       state.active = true;
       state.reportPeriod ||= defaultPeriod();
       const locate = readLocateQuery(route, documentRef);
       state.locateRecordId = locate.recordId ? String(locate.recordId) : "";
       state.locateHighlight = Boolean(locate.recordId && locate.highlight);
+      state.locateOpenConfirm = Boolean(locate.recordId && locate.openConfirm);
       render();
       await loadCatalog();
       if (state.locateRecordId) await applyLocateContext(state.locateRecordId);
       await loadLedger();
+      if (state.locateOpenConfirm && state.locateRecordId) {
+        try {
+          const response = await api.getRecord(state.locateRecordId);
+          const record = dataOf(response, null);
+          if (record?.id) await openRecord(record, null, "confirm");
+        } catch (error) {
+          if (error?.name !== "AbortError") {
+            notify("待办确认弹窗打开失败，请在台账中手动确认", "warning");
+          }
+        } finally {
+          state.locateOpenConfirm = false;
+        }
+      }
       return route;
     },
     deactivate() {
+      if (state.todoConfirmHost) closeTodoConfirmHost();
       state.active = false;
       state.drawer = null;
       state.restoreFocus = null;
       state.locateRecordId = "";
       state.locateHighlight = false;
+      state.locateOpenConfirm = false;
       api.cancelAll();
       root.replaceChildren();
     },
     destroy() {
+      if (state.todoConfirmHost) closeTodoConfirmHost();
       state.active = false;
       api.cancelAll();
       root.replaceChildren();
     },
+    openConfirmOverlay,
+    openDetailOverlay,
     navigate,
   });
 }

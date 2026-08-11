@@ -31,6 +31,10 @@ def test_module_host_has_stable_lifecycle_contract():
         "instance.deactivate()",
         "instance.unmount()",
         "prompt: state.platform.prompt",
+        "async function openConfirmOverlay",
+        "openConfirmOverlay,",
+        "async function openDetailOverlay",
+        "openDetailOverlay,",
     ]:
         assert fragment in script
 

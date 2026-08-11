@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-labelledby="neu-title neu-desc">
+  <title id="neu-title">通知 · 有未读</title>
+  <desc id="neu-desc">信封图标，右上角金色圆点表示有未读消息。</desc>
+  <rect x="2" y="4" width="20" height="16" rx="2" fill="none" stroke="#6aa4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <polyline points="22 6 12 13 2 6" fill="none" stroke="#6aa4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="21" cy="3" r="3.5" fill="#f0a12b"/>
+</svg>

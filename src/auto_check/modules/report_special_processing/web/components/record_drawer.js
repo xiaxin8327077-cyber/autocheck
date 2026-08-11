@@ -493,6 +493,7 @@ export function createRecordDrawer(documentRef, options) {
   shell.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       onClose();
     }
   });

@@ -297,6 +297,54 @@ class SpecialProcessingStorage:
             self._attach_processes(connection, items)
         return items
 
+    def list_confirmed_history_for_operator(self, user_id: str) -> list[dict[str, Any]]:
+        operator = str(user_id or "").strip()
+        if not operator:
+            return []
+        latest_confirm = (
+            select(
+                AUDITS.c.record_id.label("record_id"),
+                func.max(AUDITS.c.occurred_at).label("confirmed_at"),
+            )
+            .where(
+                and_(
+                    AUDITS.c.operator_user_id == operator,
+                    AUDITS.c.to_status == "completed",
+                )
+            )
+            .group_by(AUDITS.c.record_id)
+            .subquery()
+        )
+        statement = (
+            select(
+                RECORDS.c.id,
+                RECORDS.c.dimension,
+                RECORDS.c.field_name,
+                RECORDS.c.creator_user_id,
+                RECORDS.c.creator_username_snapshot,
+                RECORDS.c.handler_username_snapshot,
+                RECORDS.c.handler_display_name_snapshot,
+                latest_confirm.c.confirmed_at,
+            )
+            .select_from(
+                RECORDS.join(
+                    latest_confirm,
+                    RECORDS.c.id == latest_confirm.c.record_id,
+                )
+            )
+            .where(RECORDS.c.status == "completed")
+            .order_by(latest_confirm.c.confirmed_at.desc(), RECORDS.c.id.desc())
+        )
+        with self.database.connect() as connection:
+            items = []
+            for row in _rows(connection.execute(statement)):
+                item = dict(row)
+                confirmed_at = item.get("confirmed_at")
+                if isinstance(confirmed_at, datetime):
+                    item["confirmed_at"] = _aware(confirmed_at)
+                items.append(item)
+        return items
+
     def list(self, query: PageQuery) -> dict[str, Any]:
         conditions = self._conditions(query.filters)
         statement = select(RECORDS)

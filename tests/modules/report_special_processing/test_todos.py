@@ -64,7 +64,7 @@ def test_provider_returns_only_current_owner_pending_records():
     assert item.created_at == datetime(2026, 8, 10, 9, 30, tzinfo=TZ)
     assert item.action.type == "navigate"
     assert item.action.route == "report-special-processing"
-    assert item.action.query == {"record_id": "1", "highlight": "1"}
+    assert item.action.query == {"record_id": "1", "highlight": "1", "open": "confirm"}
 
 
 def test_provider_omits_record_after_confirm_status_change():
@@ -80,6 +80,51 @@ def test_provider_omits_record_after_confirm_status_change():
     assert provider.list_todos(request) == []
 
 
+def test_todo_provider_sets_initiator_from_handler_snapshot():
+    storage = FakeStorage([_record(
+        handler_display_name_snapshot="王五",
+        handler_username_snapshot="wangwu",
+        creator_username_snapshot="creator_u",
+    )])
+    items = PendingConfirmTodoProvider(storage).list_todos(
+        TodoListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 12, 0, tzinfo=TZ),
+        )
+    )
+    assert items[0].initiator == "王五"
+
+
+def test_todo_provider_initiator_falls_back_to_handler_username_snapshot():
+    storage = FakeStorage([_record(
+        handler_display_name_snapshot="",
+        handler_username_snapshot="wangwu",
+        creator_username_snapshot="creator_u",
+    )])
+    items = PendingConfirmTodoProvider(storage).list_todos(
+        TodoListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 12, 0, tzinfo=TZ),
+        )
+    )
+    assert items[0].initiator == "wangwu"
+
+
+def test_todo_provider_initiator_falls_back_to_creator_username_snapshot():
+    storage = FakeStorage([_record(
+        handler_display_name_snapshot="",
+        handler_username_snapshot="",
+        creator_username_snapshot="creator_u",
+    )])
+    items = PendingConfirmTodoProvider(storage).list_todos(
+        TodoListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 12, 0, tzinfo=TZ),
+        )
+    )
+    assert items[0].initiator == "creator_u"
+
+
 class Handle:
     def __init__(self):
         self.closed = False
@@ -92,7 +137,9 @@ class ReportFacade:
     def __init__(self):
         self.card_handle = Handle()
         self.todo_handle = Handle()
+        self.history_handle = Handle()
         self.todo_registration = None
+        self.history_registration = None
 
     def list_report_processes(self):
         return ()
@@ -103,6 +150,10 @@ class ReportFacade:
     def register_todo_provider(self, **kwargs):
         self.todo_registration = kwargs
         return self.todo_handle
+
+    def register_history_provider(self, **kwargs):
+        self.history_registration = kwargs
+        return self.history_handle
 
     def refresh_card_provider(self, *, card_code):
         return {"ok": True}
@@ -152,4 +203,5 @@ def test_module_registers_and_closes_todo_provider(monkeypatch):
 
     module.stop()
     assert context.services.report.todo_handle.closed
+    assert context.services.report.history_handle.closed
     assert context.services.report.card_handle.closed

@@ -194,6 +194,20 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
 
     assert "record_id" in ledger
     assert "highlight" in ledger
+    assert "openConfirm" in ledger
+    assert 'openRecord(record, null, "confirm")' in ledger
+    assert "async function openConfirmOverlay(recordId)" in ledger
+    assert "async function openDetailOverlay(recordId)" in ledger
+    assert "async function openRecordOverlay(recordId, mode" in ledger
+    assert 'openRecordOverlay(recordId, "confirm")' in ledger
+    assert 'openRecordOverlay(recordId, "detail")' in ledger
+    assert "todoConfirmHost" in ledger
+    assert "rsp-todo-confirm-host" in ledger
+    assert "rsp-todo-confirm-host" in read("styles.css")
+    assert "export function openConfirmOverlay(recordId)" in read("index.js")
+    assert "export function openDetailOverlay(recordId)" in read("index.js")
+    assert "auto-check:report-navigation-refresh" in ledger
+    assert "locateOpenConfirm" in ledger
     assert "applyLocateContext" in ledger
     assert "api.getRecord(recordId)" in ledger or "api.getRecord(recordId)" in ledger
     assert 'keyword: String(record.record_no' in ledger
@@ -450,6 +464,8 @@ def test_module_css_is_scoped_light_only_and_keeps_centered_modal():
         assert forbidden not in css
     assert "position: fixed" in css
     assert "rsp-record-modal-overlay" in css
+    assert "z-index: 3200" in css
+    assert "z-index: 100;" not in css.split("rsp-record-modal-overlay", 1)[-1].split("}", 1)[0]
     assert "rsp-record-modal" in css
     assert "width: clamp(720px, 70vw, 860px)" in css
     assert "inset: 0" in css

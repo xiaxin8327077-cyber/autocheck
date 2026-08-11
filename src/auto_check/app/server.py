@@ -665,6 +665,19 @@ class ApiRouter:
                     current_user=dash_user,
                 )
 
+            if method == "GET" and path == "/api/report-navigation/processing-history":
+                query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
+                try:
+                    page = int(str(query.get("page", "1") or "1"))
+                    page_size = int(str(query.get("page_size", "10") or "10"))
+                except ValueError as exc:
+                    raise ValueError("page and page_size must be integers") from exc
+                return 200, self.report_navigation.processing_history(
+                    current_user=current_user,
+                    page=page,
+                    page_size=page_size,
+                )
+
             if method == "POST" and path == "/api/report-navigation/refresh":
                 payload = self.report_navigation.manual_refresh(current_user=current_user)
                 status = str(payload.get("status") or "")

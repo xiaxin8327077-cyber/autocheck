@@ -8,6 +8,11 @@ from typing import Any
 from auto_check.app.module_system.contracts import ModuleHealth, ModuleManifest
 
 from .api import register_routes
+from .history import (
+    HISTORY_PROVIDER_ID,
+    HISTORY_SEMANTICS_VERSION,
+    ConfirmedHistoryProvider,
+)
 from .service import SpecialProcessingService
 from .statistics import SEMANTICS_VERSION, SpecialHandlingStatistics
 from .storage import SpecialProcessingStorage
@@ -30,6 +35,7 @@ class ReportSpecialProcessingModule:
     _service: SpecialProcessingService | None = field(default=None, init=False, repr=False)
     _provider_handle: Any = field(default=None, init=False, repr=False)
     _todo_provider_handle: Any = field(default=None, init=False, repr=False)
+    _history_provider_handle: Any = field(default=None, init=False, repr=False)
 
     def register_routes(self, router: Any) -> None:
         register_routes(router, self._require_service)
@@ -112,13 +118,22 @@ class ReportSpecialProcessingModule:
             provider=PendingConfirmTodoProvider(storage),
             semantics_version=TODO_SEMANTICS_VERSION,
         )
+        self._history_provider_handle = report_navigation.register_history_provider(
+            provider_id=HISTORY_PROVIDER_ID,
+            provider=ConfirmedHistoryProvider(storage),
+            semantics_version=HISTORY_SEMANTICS_VERSION,
+        )
 
     def stop(self) -> None:
+        history_handle = self._history_provider_handle
         todo_handle = self._todo_provider_handle
         handle = self._provider_handle
+        self._history_provider_handle = None
         self._todo_provider_handle = None
         self._provider_handle = None
         self._service = None
+        if history_handle is not None:
+            history_handle.close()
         if todo_handle is not None:
             todo_handle.close()
         if handle is not None:

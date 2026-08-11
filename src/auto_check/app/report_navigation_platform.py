@@ -66,6 +66,10 @@ class TodoProviderConflictError(RuntimeError):
     pass
 
 
+class HistoryProviderConflictError(RuntimeError):
+    pass
+
+
 class ProviderManagedCardError(ValueError):
     pass
 
@@ -86,6 +90,7 @@ class TodoItem:
     module_id: str
     created_at: datetime | None
     action: TodoAction
+    initiator: str = ""
 
 
 @dataclass(frozen=True)
@@ -96,6 +101,28 @@ class TodoListRequest:
 
 class TodoProvider(Protocol):
     def list_todos(self, request: TodoListRequest) -> Sequence[TodoItem]: ...
+
+
+@dataclass(frozen=True)
+class HistoryItem:
+    id: str
+    title: str
+    summary: str
+    actor_user_id: str
+    module_id: str
+    processed_at: datetime
+    initiator: str
+    action: TodoAction
+
+
+@dataclass(frozen=True)
+class HistoryListRequest:
+    current_user: Mapping[str, Any]
+    now: datetime
+
+
+class HistoryProvider(Protocol):
+    def list_history(self, request: HistoryListRequest) -> Sequence[HistoryItem]: ...
 
 
 @dataclass(frozen=True)
@@ -115,6 +142,15 @@ class _TodoRegistration:
     owner: str
     token: str
     provider: TodoProvider
+    semantics_version: int
+
+
+@dataclass(frozen=True)
+class _HistoryRegistration:
+    provider_id: str
+    owner: str
+    token: str
+    provider: HistoryProvider
     semantics_version: int
 
 
@@ -173,6 +209,58 @@ class TodoProviderRegistry:
         )
 
     def active_registrations(self) -> tuple[_TodoRegistration, ...]:
+        with self._lock:
+            return tuple(self._registrations.values())
+
+    def _unregister(self, provider_id: str, owner: str, token: str) -> None:
+        with self._lock:
+            current = self._registrations.get(provider_id)
+            if current is None or current.token != token:
+                return
+            del self._registrations[provider_id]
+
+
+class HistoryProviderRegistry:
+    """In-memory history provider registry scoped to the process lifetime."""
+
+    def __init__(self) -> None:
+        self._registrations: dict[str, _HistoryRegistration] = {}
+        self._lock = RLock()
+
+    def register(
+        self,
+        *,
+        owner: str,
+        provider_id: str,
+        provider: HistoryProvider,
+        semantics_version: int,
+    ) -> _ProviderHandle:
+        validated_provider_id = validate_provider_id(provider_id)
+        validated_version = validate_semantics_version(semantics_version)
+        if not hasattr(provider, "list_history") or not callable(provider.list_history):
+            raise ValueError("history provider must implement list_history")
+        with self._lock:
+            current = self._registrations.get(validated_provider_id)
+            if current is not None:
+                raise HistoryProviderConflictError(
+                    "history provider is already claimed"
+                    if current.owner != owner
+                    else "history provider is already active"
+                )
+            token = uuid.uuid4().hex
+            registration = _HistoryRegistration(
+                validated_provider_id,
+                owner,
+                token,
+                provider,
+                validated_version,
+            )
+            self._registrations[validated_provider_id] = registration
+        return _ProviderHandle(
+            lambda: self._unregister(validated_provider_id, owner, token)
+        )
+
+    def active_registrations(self) -> tuple[_HistoryRegistration, ...]:
         with self._lock:
             return tuple(self._registrations.values())
 
@@ -337,6 +425,24 @@ class _ReportNavigationFacade:
             self._handles.append(handle)
             return handle
 
+    def register_history_provider(
+        self,
+        *,
+        provider_id: str,
+        provider: HistoryProvider,
+        semantics_version: int,
+    ) -> _ProviderHandle:
+        with self._lock:
+            self._require_open()
+            handle = self._service.register_history_provider(
+                owner=self._owner,
+                provider_id=provider_id,
+                provider=provider,
+                semantics_version=semantics_version,
+            )
+            self._handles.append(handle)
+            return handle
+
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError(_CLOSED_FACADE_ERROR)
@@ -370,6 +476,19 @@ def validate_semantics_version(value: Any) -> int:
     return value
 
 
+def validate_todo_action(action: Any, *, label: str = "todo") -> TodoAction:
+    if not isinstance(action, TodoAction):
+        raise ValueError(f"{label} action is invalid")
+    if action.type != "navigate":
+        raise ValueError(f"{label} action type is invalid")
+    if not isinstance(action.route, str) or not action.route.strip():
+        raise ValueError(f"{label} action route is invalid")
+    if not isinstance(action.query, Mapping):
+        raise ValueError(f"{label} action query is invalid")
+    query = {str(key): item for key, item in action.query.items()}
+    return TodoAction("navigate", action.route.strip(), query)
+
+
 def validate_todo_item(value: Any) -> TodoItem:
     if not isinstance(value, TodoItem):
         raise ValueError("todo item is invalid")
@@ -383,19 +502,12 @@ def validate_todo_item(value: Any) -> TodoItem:
         raise ValueError("todo assignee is invalid")
     if not isinstance(value.module_id, str) or not value.module_id.strip():
         raise ValueError("todo module id is invalid")
+    if not isinstance(value.initiator, str):
+        raise ValueError("todo initiator is invalid")
     created_at = value.created_at
     if created_at is not None:
         created_at = normalize_aware_datetime(created_at)
-    action = value.action
-    if not isinstance(action, TodoAction):
-        raise ValueError("todo action is invalid")
-    if action.type != "navigate":
-        raise ValueError("todo action type is invalid")
-    if not isinstance(action.route, str) or not action.route.strip():
-        raise ValueError("todo action route is invalid")
-    if not isinstance(action.query, Mapping):
-        raise ValueError("todo action query is invalid")
-    query = {str(key): item for key, item in action.query.items()}
+    action = validate_todo_action(value.action, label="todo")
     return TodoItem(
         value.id.strip(),
         value.title.strip(),
@@ -403,7 +515,37 @@ def validate_todo_item(value: Any) -> TodoItem:
         value.assignee_user_id.strip(),
         value.module_id.strip(),
         created_at,
-        TodoAction("navigate", action.route.strip(), query),
+        action,
+        value.initiator,
+    )
+
+
+def validate_history_item(value: Any) -> HistoryItem:
+    if not isinstance(value, HistoryItem):
+        raise ValueError("history item is invalid")
+    if not isinstance(value.id, str) or not value.id.strip():
+        raise ValueError("history id is invalid")
+    if not isinstance(value.title, str) or not value.title.strip():
+        raise ValueError("history title is invalid")
+    if not isinstance(value.summary, str):
+        raise ValueError("history summary is invalid")
+    if not isinstance(value.actor_user_id, str) or not value.actor_user_id.strip():
+        raise ValueError("history actor is invalid")
+    if not isinstance(value.module_id, str) or not value.module_id.strip():
+        raise ValueError("history module id is invalid")
+    if not isinstance(value.initiator, str):
+        raise ValueError("history initiator is invalid")
+    processed_at = normalize_aware_datetime(value.processed_at)
+    action = validate_todo_action(value.action, label="history")
+    return HistoryItem(
+        value.id.strip(),
+        value.title.strip(),
+        value.summary,
+        value.actor_user_id.strip(),
+        value.module_id.strip(),
+        processed_at,
+        value.initiator,
+        action,
     )
 
 
@@ -450,11 +592,84 @@ def todo_item_payload(item: TodoItem) -> dict[str, Any]:
         "summary": item.summary,
         "module_id": item.module_id,
         "created_at": created_at,
+        "initiator": item.initiator,
         "action": {
             "type": item.action.type,
             "route": item.action.route,
             "query": dict(item.action.query),
         },
+    }
+
+
+def history_item_payload(item: HistoryItem) -> dict[str, Any]:
+    processed_at = item.processed_at.astimezone(SHANGHAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "id": item.id,
+        "title": item.title,
+        "summary": item.summary,
+        "module_id": item.module_id,
+        "processed_at": processed_at,
+        "initiator": item.initiator,
+        "action": {
+            "type": item.action.type,
+            "route": item.action.route,
+            "query": dict(item.action.query),
+        },
+    }
+
+
+def collect_history_payloads(
+    registry: HistoryProviderRegistry,
+    *,
+    current_user: Mapping[str, Any] | None,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    user_id = str((current_user or {}).get("id") or "").strip()
+    request = HistoryListRequest(current_user=dict(current_user or {}), now=now)
+    items: list[HistoryItem] = []
+    for registration in registry.active_registrations():
+        try:
+            raw_items = registration.provider.list_history(request)
+            if raw_items is None:
+                continue
+            if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+                raise ValueError("history provider result must be a sequence")
+            for raw in raw_items:
+                item = validate_history_item(raw)
+                if item.actor_user_id == user_id:
+                    items.append(item)
+        except Exception:
+            _LOGGER.exception(
+                "history provider failed: provider_id=%s owner=%s",
+                registration.provider_id,
+                registration.owner,
+            )
+    items.sort(key=lambda item: item.processed_at, reverse=True)
+    return [history_item_payload(item) for item in items]
+
+
+def paginate_items(
+    items: Sequence[Any],
+    *,
+    page: int,
+    page_size: int,
+) -> dict[str, Any]:
+    if isinstance(page_size, bool) or not isinstance(page_size, int) or page_size != 10:
+        raise ValueError("page_size must be 10")
+    if isinstance(page, bool) or not isinstance(page, int):
+        raise ValueError("page must be an integer")
+    requested_page = 1 if page < 1 else page
+    total = len(items)
+    start = (requested_page - 1) * page_size
+    if start >= total:
+        page_items: list[Any] = []
+    else:
+        page_items = list(items[start : start + page_size])
+    return {
+        "items": page_items,
+        "total": total,
+        "page": requested_page,
+        "page_size": page_size,
     }
 
 

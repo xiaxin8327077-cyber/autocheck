@@ -16,12 +16,15 @@ from auto_check.app.db import DatabaseClient, qualified_name, quote_identifier
 from auto_check.app.report_navigation_platform import (
     CardProviderRegistry,
     CardStatisticsRequest,
+    HistoryProviderRegistry,
     ProviderManagedCardError,
     ReportProcess,
     SHANGHAI_TZ,
     TodoProviderRegistry,
+    collect_history_payloads,
     collect_todo_payloads,
     normalize_aware_datetime,
+    paginate_items,
     validate_statistics_result,
 )
 from auto_check.app.storage_report_navigation import (
@@ -627,6 +630,7 @@ class ReportNavigationService:
         self._evaluator = evaluator
         self._card_providers = CardProviderRegistry(self.store)
         self._todo_providers = TodoProviderRegistry()
+        self._history_providers = HistoryProviderRegistry()
 
     @property
     def interval_minutes(self) -> int:
@@ -647,6 +651,30 @@ class ReportNavigationService:
 
     def register_todo_provider(self, **kwargs: Any):
         return self._todo_providers.register(**kwargs)
+
+    def register_history_provider(self, **kwargs: Any):
+        return self._history_providers.register(**kwargs)
+
+    def processing_history(
+        self,
+        *,
+        current_user: Mapping[str, Any] | None,
+        page: int = 1,
+        page_size: int = 10,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        current = now or beijing_now()
+        aware_now = (
+            current.replace(tzinfo=SHANGHAI_TZ)
+            if current.tzinfo is None or current.utcoffset() is None
+            else normalize_aware_datetime(current)
+        )
+        items = collect_history_payloads(
+            self._history_providers,
+            current_user=current_user,
+            now=aware_now,
+        )
+        return paginate_items(items, page=page, page_size=page_size)
 
     def refresh_card_provider(
         self,

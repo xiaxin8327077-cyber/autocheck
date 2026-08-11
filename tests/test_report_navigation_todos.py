@@ -92,6 +92,7 @@ def test_register_todo_provider_and_dashboard_filters_by_assignee():
         "summary": "维度 A2",
         "module_id": "report_special_processing",
         "created_at": "2026-08-10 11:00:00",
+        "initiator": "",
         "action": {
             "type": "navigate",
             "route": "report-special-processing",

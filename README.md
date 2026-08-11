@@ -10,7 +10,7 @@
 - 运行方式：本地 Web 服务，默认固定端口 `8765`；Windows 可打包为单个 exe，Linux 可通过 Python 服务部署
 - 使用范围：系统面向桌面端浏览器使用，建议在常规电脑屏幕或浏览器窗口宽度不低于 `900px` 的环境下操作；移动端、390px 等极窄屏不纳入本版本交付验收范围
 - 数据访问原则：报表库全程只执行查询；`sql/` 目录脚本仅用于本地测试库造数
-- 应用存储：系统自身配置、用户、历史记录、报送导航配置/快照、界面偏好和模块宿主状态保存到 MySQL `auto_check` 应用库；`config.json` 仅保留 `app_database` 启动连接信息和少量启动参数，动态配置、用户、自动对数历史、人行逐笔校验历史和流程链执行历史不再写回 JSON 或 SQLite；上线需依次执行 `001_init_schema.sql` 至 `014_role_capability_settings.sql` 中适用的迁移。`012_module_system.sql` 新增 3 张模块平台表，`013_report_navigation_provider_states.sql` 新增带持久注册 token 的报送导航统计提供方状态表，并为统计运行记录补充提供方失败数，`014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照），完整应用结构为 44 张表，`app_schema_version` 仍为 `1`；旧 SQLite 数据仍可由 `scripts/export_sqlite_to_mysql.py` 只读导出，删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+- 应用存储：系统自身配置、用户、历史记录、报送导航配置/快照、界面偏好和模块宿主状态保存到 MySQL `auto_check` 应用库；`config.json` 仅保留 `app_database` 启动连接信息和少量启动参数，动态配置、用户、自动对数历史、人行逐笔校验历史和流程链执行历史不再写回 JSON 或 SQLite；上线需依次执行 `001_init_schema.sql` 至 `014_role_capability_settings.sql` 中适用的迁移。`012_module_system.sql` 新增 3 张模块平台表，`013_report_navigation_provider_states.sql` 新增带持久注册 token 的报送导航统计提供方状态表，并为统计运行记录补充提供方失败数，`014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照），完整应用结构为 45 张表，`app_schema_version` 仍为 `1`；旧 SQLite 数据仍可由 `scripts/export_sqlite_to_mysql.py` 只读导出，删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
 - 应用存储增量升级：已有应用库在停机备份后，按发布顺序人工执行 `007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`；执行 `011` 后再次确认备份可恢复，再由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 和 `014_role_capability_settings.sql`。`010` 将第七步调整为仅展示，`011` 将归档类完成时间统一改为仅取 `create_date`，`012` 建立模块注册和迁移状态表，`013` 建立报送导航统计提供方 token 状态表并补充运行失败提供方计数，`014` 建立角色能力矩阵配置表（单行 JSON 快照）。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由模块自己的迁移和独立 `schema_version` 管理；以后每年只需在同一日历脚本中补录当年例外日期并重新执行，不改变 `app_schema_version=1`。
 
 ## 当前功能
@@ -23,7 +23,7 @@
 - 日程逾期文案：轴线上未完成节点只显示“已逾期X天”；逾期完成节点显示“逾期X天完成”，原截止日感叹号不显示文字。正常进行中、提前完成和逾期完成的截止日节点均不显示“截止X月X日”。日程节点复合文案统一使用中文逗号，不使用间隔号。逾期未完成的截止节点和逾期完成的原截止警告点均使用与红色空心截止圈相同的 14px 尺寸，并保留红色实心感叹号样式。节点说明位于第一个日期圆点时向右展开并左对齐圆点，位于最后一个日期圆点时向左展开并右对齐圆点；位于第二个或倒数第二个日期圆点时只向内偏移 14px，既避免边界截断又保持靠近节点。虚线基线从实线终点开始绘制，不再隐藏于已连接实线下方，展开后的选中行未着色虚线继续使用原浅灰色，日程表左右留白保持一致。
 - 报送概览标题：标题前增加与“报送流程进度”等模块一致的主题渐变竖线，并保持相同的 22px 左侧留白。
 - 内容区悬浮：外层内容模块悬浮统一使用对数总览的 1px 浅主题描边；范围覆盖对数总览、报送概览、报送流程进度、报送日程、我的待办、对数执行、对数历史、系统设置和用户管理，统一轻微上移 2px，不使用主题光晕或外投影，也不以纯主题色粗描边强化用户管理模块。默认和悬浮状态都只保留卡片内部的极轻高光，内容模块之间的缝隙不显示外投影。
-- 我的待办：与报送日程并排时，初始高度与收起状态的日程卡平齐；日程详情展开后仅日程卡向下增长，待办卡保持初始高度不变，卡片悬浮位移不影响该高度同步。标题左侧竖线、标题间距、16px 字号和 600 字重与“报送日程”一致，数量说明沿用日程范围文字的较小中性色样式；右上角“全部 >”使用灰色。待办由平台 Todo Provider 动态聚合，不再使用静态占位；报表特殊处理将当前用户作为数据治理负责人的待确认记录注入列表，摘要含所属维度与修改字段名，「处理」跳转台账并定位该条。待办记录保持紧凑展示；每条记录将截止日期放在负责人下方，原标题右侧日期位置显示空心主题色“处理”按钮；任务标题使用 13px、600 字重，略大且略粗于负责人和截止日期信息。
+- 我的待办：与报送日程并排时，初始高度与收起状态的日程卡平齐；日程详情展开后仅日程卡向下增长，待办卡保持初始高度不变，卡片悬浮位移不影响该高度同步。标题左侧竖线、标题间距、16px 字号和 600 字重与“报送日程”一致，数量说明沿用日程范围文字的较小中性色样式；右上角“全部 >”使用灰色并可点击。待办由平台 Todo Provider 动态聚合，不再使用静态占位；报表特殊处理将当前用户作为数据治理负责人的待确认记录注入列表，摘要含所属维度与修改字段名；卡片预览最多展示 5 条，超出项通过“全部”弹窗查看，弹窗内每页 10 条分页；全部弹窗标题区提供「处理记录」入口，叠层打开「我的处理记录」弹窗（不关闭全部待办），列出本人已确认完成的记录，每页 10 条；「处理」在当前报送导航页直接打开确认弹窗，「查看」打开只读详情，均不跳转报表特殊处理录入界面。待办记录保持紧凑展示；每条记录将发起时间放在摘要下方；「发起人」仅在全部待办弹窗中展示；处理记录时间行为「处理时间」与「发起人」；标题右侧显示空心主题色操作按钮；任务标题使用 13px、600 字重，略大且略粗于摘要和发起时间。
 - 报送名称：报送日程和展开步骤标题使用“资管产品模板、逐笔报送”，鱼骨图卡片单独显示“资管产品模板、逐笔”；“全要素报送”和“EAST5.0报送”在鱼骨图、报送日程和展开步骤中保持一致。前端兼容应用库中尚未更新的旧流程名称。
 - 智能核数：采用多级菜单统一承载“对数总览”“对数执行”“对数历史”；当前唯一启用的浅色主题中，悬浮父菜单显示二级菜单，点击父菜单进入“对数总览”，鼠标离开菜单区域后自动收起；系统默认进入“报送导航”。
 - 对数总览内容区：统计卡、趋势图和下方分析模块统一使用与报送导航一致的白色内容面底色。
@@ -52,7 +52,7 @@
 1. 在 MySQL 中手工创建空库 `auto_check`，并为应用账号授予必要读写权限。
 2. 执行 `sql/app_storage/mysql/001_init_schema.sql`，创建 20 张应用存储表；脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE` 和生产数据。
 3. 如需迁移旧 `auto-check.db`，在停机备份后运行 `scripts/export_sqlite_to_mysql.py` 只读生成 schema SQL、data SQL 和迁移报告，再由运维人员人工执行数据 SQL。
-4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 18 张不设置数据库外键约束的报送导航表（保留主键、唯一索引、普通索引以及中文表/字段注释），再执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入数据源、表、字段、固定判断参数和月度报送日期配置；随后依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`。最后必须先备份生产库，再由运维人工执行 `sql/app_storage/mysql/012_module_system.sql`、`sql/app_storage/mysql/013_report_navigation_provider_states.sql` 和 `sql/app_storage/mysql/014_role_capability_settings.sql`，分别新增模块宿主 3 张平台表、报送导航统计提供方状态表和角色能力矩阵配置表（单行 JSON 快照）。完整应用结构共 44 张表，`app_schema_version` 仍为 `1`；模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由各模块独立迁移管理。正式模块目录不得携带 demo，模块只能作为可信内置扩展发布。
+4. 执行 `sql/app_storage/mysql/002_report_navigation.sql` 新增 18 张不设置数据库外键约束的报送导航表（保留主键、唯一索引、普通索引以及中文表/字段注释），再执行 `sql/app_storage/mysql/003_report_navigation_seed.sql` 写入数据源、表、字段、固定判断参数和月度报送日期配置；随后依次执行 `004_user_interface_preferences.sql`、`005_user_appearance_preferences.sql`、`006_system_interface_preferences.sql`、`007_report_navigation_schedule_owner.sql`、`008_report_navigation_work_calendar.sql`、`009_report_navigation_manual_step_permissions.sql`、`010_pbc_template_step_seven_display_only.sql` 和 `011_report_navigation_completion_time_sources.sql`。最后必须先备份生产库，再由运维人工执行 `sql/app_storage/mysql/012_module_system.sql`、`sql/app_storage/mysql/013_report_navigation_provider_states.sql` 和 `sql/app_storage/mysql/014_role_capability_settings.sql`，分别新增模块宿主 3 张平台表、报送导航统计提供方状态表和角色能力矩阵配置表（单行 JSON 快照）。完整应用结构共 45 张表，`app_schema_version` 仍为 `1`；模块业务表不加入全局 `EXPECTED_APP_SCHEMA`，由各模块独立迁移管理。正式模块目录不得携带 demo，模块只能作为可信内置扩展发布。
 5. 在现有 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再承载动态配置、用户、历史数据或报送导航规则配置。
 6. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，否则旧数据源加密密码可能无法解密。
 7. 导入后核对迁移报告中的原 20 张迁移目标表、导出行数、SQLite 完整性和外键异常数，并确认 18 张报送导航表、种子配置、年度法定工作日数据及用户/系统界面偏好表已就绪；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
@@ -331,7 +331,10 @@ config/                   本地测试配置样例
 
 - 报表特殊处理录入改造弹窗字段：去掉涉及报表与处理说明；新增所属维度（项目端/资金端/资产端/财务端）、数据治理负责人（按维度从「数据治理_项目资产」「数据治理_资金财务」角色联动启用用户候选人）、处理表名、处理字段名、修改前、修改后；处理摘要与上述字段均限制最多 128 字。
 - 报表特殊处理台账列表调整为 8 列（修改字段名、修改前、修改后、关联报送、状态、处理人、处理时间、操作）；正式保存后状态 `pending` 界面文案改为「待确认」；确认必须打开弹窗完成，主按钮文案为「源系统已确认」；确认权限为同时具备 `rsp.confirm` 且当前用户为该条数据治理负责人（管理员例外可确认任意条）。
-- 平台 `platform.report_navigation` 扩展 Todo Provider 协议；报表特殊处理将待确认且治理负责人为当前用户的记录注入报送导航「我的待办」，摘要含所属维度与修改字段名；点击「处理」跳转台账并定位该条记录，确认完成或作废后待办自动消失。
+- 平台 `platform.report_navigation` 扩展 Todo Provider 协议；报表特殊处理将待确认且治理负责人为当前用户的记录注入报送导航「我的待办」，摘要含所属维度与修改字段名；卡片预览最多 5 条，点击「全部」查看全量（弹窗内每页 10 条）；待办卡片展示发起时间，发起人仅在全部弹窗展示；全部弹窗可叠层打开「处理记录」（本人确认完成记录，每页 10 条），「查看」打开只读详情、「处理」打开确认弹窗，均不跳转录入页；确认完成或作废后待办自动消失，处理记录随刷新可见。
+- 修复 space-tech 主题主内容区被不透明白底覆盖导致页面背景色 `#EEF4F8` 不可见的问题，恢复透明主内容以露出页面底色。
+- 顶栏下描边与内容卡片对齐为 `1px solid var(--outline-variant)`。
+- 对数历史详情弹窗中，超过 10 条的分区列表（完整结果/新增/减少）显示与弹窗外层一致的细滚动条。
 - 报表特殊处理模块新增迁移 `003_dimension_governance_fields.sql`，`schema_version` 升级为 `3`。
 - 系统顶栏改为上/左/右贴边（取消悬浮圆角卡片，且不跟随「系统圆角」设定）；报送导航、系统设置主内容在顶栏下方滚动并显示细滚动条（6px / `#c5d0e0`）；对数历史详情弹窗内容区同样显示细滚动条；其它页面与弹窗仍隐藏滚动条。
 - 系统优化及BUG修复。
@@ -345,7 +348,7 @@ config/                   本地测试配置样例
 - 对数历史删除改为基于 `history.delete` 能力码判断（默认仅管理员，行为与现网一致）。
 - 用户管理支持为账号分配系统角色或自定义角色；登录与会话下发当前角色能力列表。
 - 报表特殊处理运行时按 `rsp.view/create/edit/confirm/void/reopen/delete` 能力码鉴权，并遵循“谁创建谁处理”。
-- 新增应用库表 `role_capability_settings`（单行 JSON 快照），完整应用结构为 44 张表，`app_schema_version` 仍为 `1`。
+- 新增应用库表 `role_capability_settings`（单行 JSON 快照），完整应用结构为 45 张表，`app_schema_version` 仍为 `1`。
 - 系统优化及BUG修复。
 
 `v2.1` (2026-07-18) 主要变化：
@@ -402,7 +405,7 @@ config/                   本地测试配置样例
 - 新增通用建表脚本 `sql/app_storage/mysql/001_init_schema.sql`，包含 20 张应用存储表、索引、外键和中文注释，不包含生产数据、建库、删库或清表语句。
 - 新增离线只读导出脚本 `scripts/export_sqlite_to_mysql.py`，用于从旧 SQLite 生成 MySQL 数据 SQL 和迁移报告；生产数据 SQL、真实数据库文件和凭据不得提交 Git。
 - 本地数据查询页面及入口已隐藏，SQLite 查询、导出、备份和旧历史迁移接口停用，不提供新的 MySQL 管理查询页面。
-- 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行；上线核验需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 44 张应用存储表结构与配置升级（完成备份并由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`）齐全。
+- 删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行；上线核验需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 45 张应用存储表结构与配置升级（完成备份并由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`）齐全。
 - 重复启动本地服务时检测默认端口占用，端口已被现有实例使用时打开已有服务地址并避免继续初始化数据库。
 - 本地 SQLite 旧库结构迁移前自动生成 `backup-before-storage-v2-*` 备份目录，降低生产库迁移风险。
 - 结构化历史迁移支持旧 SQLite 与同目录旧历史 JSON 同时导入并按记录 ID 去重；旧 `history.json` 或 `db-validation-history.json` 损坏时写入失败迁移记录，不再静默标记为完成。

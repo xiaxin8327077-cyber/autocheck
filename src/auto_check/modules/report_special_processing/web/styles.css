@@ -18,6 +18,39 @@
   background: transparent;
 }
 
+/* 待办确认：仅浮层，不切换模块页、不挤占报送导航布局 */
+.auto-check-module-host:has(> .auto-check-module[data-module="report_special_processing"].rsp-todo-confirm-host:not([hidden])) {
+  position: fixed;
+  inset: 0;
+  z-index: 3200;
+  display: block !important;
+  flex: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  pointer-events: none;
+  background: transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"].rsp-todo-confirm-host {
+  position: fixed;
+  inset: 0;
+  z-index: 3200;
+  display: block !important;
+  flex: none !important;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  background: transparent;
+  pointer-events: none;
+}
+
+.auto-check-module[data-module="report_special_processing"].rsp-todo-confirm-host .rsp-record-modal-overlay {
+  pointer-events: auto;
+}
+
 .auto-check-module[data-module="report_special_processing"] * {
   box-sizing: border-box;
 }
@@ -766,7 +799,8 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-record-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* Above report-nav "全部" todo modal (z-index 3000) so confirm can stack on top. */
+  z-index: 3200;
   display: flex;
   align-items: center;
   justify-content: center;
