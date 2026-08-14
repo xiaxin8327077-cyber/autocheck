@@ -201,7 +201,7 @@ def test_module_system_core_tables_are_part_of_expected_schema():
         "finished_at",
         "error_message",
     }
-    assert len(EXPECTED_APP_SCHEMA) == 45
+    assert len(EXPECTED_APP_SCHEMA) == 51
 
 
 def test_module_system_sql_is_repeatable_and_does_not_change_core_version():

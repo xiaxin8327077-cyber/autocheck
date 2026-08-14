@@ -48,7 +48,7 @@ from auto_check.app.config import (
     save_store,
 )
 from auto_check.app.app_database import ApplicationDatabase
-from auto_check.app.db import DatabaseClient
+from auto_check.app.db import DatabaseClient, quote_identifier
 from auto_check.app.history import (
     DatabaseHistoryStore,
     HistoryStore,
@@ -138,10 +138,11 @@ from auto_check.app.reconcile_schema import (
 )
 from auto_check.db_validation.engine import DbValidationEngine
 from auto_check.db_validation.field_mapping_cache import FieldMappingCache
+from auto_check.db_validation.mapping_service import DbValidationMappingService
 from auto_check.db_validation.metadata import FieldMetadataLoader, TableFieldCatalog
 from auto_check.db_validation.models import DbValidationRunResult
 from auto_check.db_validation.rules_document import build_rules_document
-from auto_check.db_validation.tables import ZG_TABLES
+from auto_check.db_validation.tables import ZG_CODES
 from auto_check.engine.models import ReconcileResult
 from auto_check.engine.reconcile import NoSourceReportData, ReconcileEngine, RunCancelled
 
@@ -411,6 +412,7 @@ class ApiRouter:
         self.pbc_import_executor = pbc_import_executor or execute_pbc_import
         self.pbc_table_column_loader = pbc_table_column_loader or load_pbc_table_columns
         self.db_validation_executor = db_validation_executor or execute_db_validation
+        self._uses_custom_db_validation_field_mapping_loader = db_validation_field_mapping_loader is not None
         self.db_validation_field_mapping_loader = db_validation_field_mapping_loader or load_db_validation_field_mapping
         self.flow_chain_executor = flow_chain_executor or execute_flow_chain
         self.report_navigation = report_navigation_service or ReportNavigationService(
@@ -418,6 +420,7 @@ class ApiRouter:
             config_path=self.config_path,
         )
         self._db_validation_field_mapping_cache = FieldMappingCache()
+        self._db_validation_mapping_service = DbValidationMappingService(self.application_database)
         self._field_mapping_auto_refresh_stop = threading.Event()
         self._field_mapping_auto_refresh_thread: threading.Thread | None = None
         self.transport_password_decryptor: PasswordDecryptor | None = None
@@ -999,8 +1002,12 @@ class ApiRouter:
                     "settings": db_validation_settings_to_dict(store.db_validation),
                     "data_sources": [_public_data_source_entry(entry) for entry in store.data_sources],
                     "default_report_date": previous_month_end(),
-                    "tables": [{"code": code, "table_name": table} for code, table in ZG_TABLES.items()],
-                    "field_mapping": self._db_validation_field_mapping_cache.status_payload(),
+                    "tables": [
+                        {"code": item["logical_code"], "table_name": item["effective_table_name"]}
+                        for item in self._db_validation_mapping_service.tables_payload()
+                        if item["relation_type"] == "detail"
+                    ],
+                    "field_mapping": self._db_validation_mapping_service.status_payload(),
                 }
             if method == "POST" and path == "/api/tools/db-validation/settings":
                 store = load_store(self.config_path, database=self.application_database)
@@ -1011,10 +1018,22 @@ class ApiRouter:
                 self._db_validation_field_mapping_cache.invalidate()
                 return 200, {
                     "settings": db_validation_settings_to_dict(store.db_validation),
-                    "field_mapping": self._db_validation_field_mapping_cache.status_payload(),
+                    "field_mapping": self._db_validation_mapping_service.status_payload(),
                 }
             if method == "POST" and path == "/api/tools/db-validation/field-mapping/refresh":
                 return 200, {"field_mapping": self._refresh_db_validation_field_mapping(source="manual")}
+            if method == "GET" and path == "/api/tools/db-validation/field-mapping":
+                return 200, self._db_validation_mapping_service.detail_payload()
+            if method == "POST" and path == "/api/tools/db-validation/field-mapping/override":
+                if str((current_user or {}).get("role") or "") != "admin":
+                    return 403, {"error": "admin role required"}
+                values = _db_validation_mapping_override_values(body or {}, current_user)
+                return 200, self._db_validation_mapping_service.save_override(**values)
+            if method == "POST" and path == "/api/tools/db-validation/field-mapping/restore":
+                if str((current_user or {}).get("role") or "") != "admin":
+                    return 403, {"error": "admin role required"}
+                values = _db_validation_mapping_restore_values(body or {}, current_user)
+                return 200, self._db_validation_mapping_service.restore_override(**values)
             if method == "POST" and path == "/api/tools/db-validation/start":
                 job = self._start_db_validation_job(body or {}, current_user=current_user)
                 return 200, {"job_id": job.id}
@@ -1430,20 +1449,52 @@ class ApiRouter:
                 field_info_table=settings.field_info_table,
                 sys_manage_id=settings.detail.sys_manage_id,
                 classification_id=settings.detail.classification_id,
+                public_info_sys_manage_id=settings.public_info.sys_manage_id,
+                public_info_classification_id=settings.public_info.classification_id,
                 source=source,
             )
-        except Exception:
+        except Exception as exc:
             if source != "manual":
                 raise
-        return self._db_validation_field_mapping_cache.status_payload()
+            error_message = _db_validation_mapping_refresh_error(exc)
+            try:
+                signature = _db_validation_field_mapping_signature(
+                    metadata_source=metadata_source,
+                    baseinfo_table=settings.baseinfo_table,
+                    field_info_table=settings.field_info_table,
+                    sys_manage_id=settings.detail.sys_manage_id,
+                    classification_id=settings.detail.classification_id,
+                    public_info_sys_manage_id=settings.public_info.sys_manage_id,
+                    public_info_classification_id=settings.public_info.classification_id,
+                )
+                status = self._db_validation_mapping_service.record_failed_refresh(
+                    signature=signature,
+                    source=source,
+                    error_message=error_message,
+                )
+            except Exception:
+                status = self._db_validation_mapping_service.status_payload()
+            status = dict(status or {})
+            status["last_error"] = error_message
+            if not status.get("last_failed_at"):
+                status["last_failed_at"] = beijing_timestamp()
+            return status
+        if self._uses_custom_db_validation_field_mapping_loader:
+            return self._db_validation_field_mapping_cache.status_payload()
+        return self._db_validation_mapping_service.status_payload()
 
     def _get_or_refresh_db_validation_field_mapping_for_job(self, job: "DbValidationJob") -> TableFieldCatalog:
+        persisted = self._db_validation_mapping_service.current_catalog()
+        if persisted is not None:
+            return persisted
         signature = _db_validation_field_mapping_signature(
             metadata_source=job.metadata_source,
             baseinfo_table=job.baseinfo_table,
             field_info_table=job.field_info_table,
             sys_manage_id=job.detail_sys_manage_id,
             classification_id=job.detail_classification_id,
+            public_info_sys_manage_id=job.public_info_sys_manage_id,
+            public_info_classification_id=job.public_info_classification_id,
         )
         return self._db_validation_field_mapping_cache.get_or_refresh(
             signature,
@@ -1465,6 +1516,8 @@ class ApiRouter:
         field_info_table: str,
         sys_manage_id: str,
         classification_id: str,
+        public_info_sys_manage_id: str,
+        public_info_classification_id: str,
         source: str,
     ) -> TableFieldCatalog:
         signature = _db_validation_field_mapping_signature(
@@ -1473,16 +1526,47 @@ class ApiRouter:
             field_info_table=field_info_table,
             sys_manage_id=sys_manage_id,
             classification_id=classification_id,
+            public_info_sys_manage_id=public_info_sys_manage_id,
+            public_info_classification_id=public_info_classification_id,
+        )
+        if self._uses_custom_db_validation_field_mapping_loader:
+            return self._db_validation_field_mapping_cache.refresh(
+                signature,
+                lambda: self.db_validation_field_mapping_loader(
+                    metadata_source=metadata_source,
+                    baseinfo_table=baseinfo_table,
+                    field_info_table=field_info_table,
+                    sys_manage_id=sys_manage_id,
+                    classification_id=classification_id,
+                ),
+                source=source,
+            )
+        store = load_store(self.config_path, database=self.application_database)
+        settings = store.db_validation
+        detail_source = resolve_data_source(store, settings.detail.source_id)
+        template_source = resolve_data_source(store, settings.template.source_id or settings.detail.source_id)
+        public_source = resolve_data_source(store, settings.public_info.source_id or settings.detail.source_id)
+        catalog = self._db_validation_mapping_service.refresh(
+            metadata_client=DatabaseClient(metadata_source, connect_timeout_seconds=5),
+            data_clients={
+                "detail": DatabaseClient(detail_source, connect_timeout_seconds=5),
+                "template": DatabaseClient(template_source, connect_timeout_seconds=5),
+                "public_info": DatabaseClient(public_source, connect_timeout_seconds=5),
+            },
+            baseinfo_table=baseinfo_table,
+            field_info_table=field_info_table,
+            sys_manage_id=sys_manage_id,
+            classification_id=classification_id,
+            public_info_sys_manage_id=public_info_sys_manage_id,
+            public_info_classification_id=public_info_classification_id,
+            signature=signature,
+            source=source,
+            required_chinese_fields_by_scope=_db_validation_required_chinese_fields_by_scope(),
+            optional_chinese_fields_by_scope=_db_validation_optional_chinese_fields_by_scope(),
         )
         return self._db_validation_field_mapping_cache.refresh(
             signature,
-            lambda: self.db_validation_field_mapping_loader(
-                metadata_source=metadata_source,
-                baseinfo_table=baseinfo_table,
-                field_info_table=field_info_table,
-                sys_manage_id=sys_manage_id,
-                classification_id=classification_id,
-            ),
+            lambda: catalog,
             source=source,
         )
 
@@ -1546,7 +1630,6 @@ class ApiRouter:
             template_source=template_source,
             baseinfo_table=settings.baseinfo_table,
             field_info_table=settings.field_info_table,
-            public_info_table=settings.public_info_table,
             detail_sys_manage_id=settings.detail.sys_manage_id,
             detail_classification_id=settings.detail.classification_id,
             public_info_sys_manage_id=settings.public_info.sys_manage_id,
@@ -1578,6 +1661,17 @@ class ApiRouter:
             self.db_validation_output_dir.mkdir(parents=True, exist_ok=True)
             job.log("初始化逐笔字段映射", 8, "字段映射")
             field_catalog = self._get_or_refresh_db_validation_field_mapping_for_job(job)
+            if not self._uses_custom_db_validation_field_mapping_loader:
+                status = self._db_validation_mapping_service.status_payload()
+                if not status.get("initialized"):
+                    raise RuntimeError("字段映射尚未初始化，请先点击“刷新字段映射”")
+                missing = self._db_validation_mapping_service.required_missing_for_run(
+                    selected_tables=job.selected_tables,
+                    include_template=bool(job.enable_template_check),
+                    include_public_info=bool(job.enable_public_info_check),
+                )
+                if missing:
+                    raise RuntimeError(_format_db_validation_required_missing(missing))
             result = self.db_validation_executor(
                 data_source=job.data_source,
                 metadata_source=job.metadata_source,
@@ -1586,7 +1680,6 @@ class ApiRouter:
                 field_catalog=field_catalog,
                 baseinfo_table=job.baseinfo_table,
                 field_info_table=job.field_info_table,
-                public_info_table=job.public_info_table,
                 detail_sys_manage_id=job.detail_sys_manage_id,
                 detail_classification_id=job.detail_classification_id,
                 public_info_sys_manage_id=job.public_info_sys_manage_id,
@@ -2187,7 +2280,6 @@ class DbValidationJob:
         template_source: DataSourceConfig,
         baseinfo_table: str,
         field_info_table: str,
-        public_info_table: str,
         detail_sys_manage_id: str,
         detail_classification_id: str,
         public_info_sys_manage_id: str,
@@ -2215,7 +2307,6 @@ class DbValidationJob:
         self.template_source = template_source
         self.baseinfo_table = baseinfo_table
         self.field_info_table = field_info_table
-        self.public_info_table = public_info_table
         self.detail_sys_manage_id = detail_sys_manage_id
         self.detail_classification_id = detail_classification_id
         self.public_info_sys_manage_id = public_info_sys_manage_id
@@ -2296,7 +2387,6 @@ class DbValidationJob:
                 "template_source": self.template_source_name,
                 "baseinfo_table": self.baseinfo_table,
                 "field_info_table": self.field_info_table,
-                "public_info_table": self.public_info_table,
                 "detail_sys_manage_id": self.detail_sys_manage_id,
                 "detail_classification_id": self.detail_classification_id,
                 "public_info_sys_manage_id": self.public_info_sys_manage_id,
@@ -2756,7 +2846,6 @@ def execute_db_validation(
     field_catalog: TableFieldCatalog,
     baseinfo_table: str,
     field_info_table: str,
-    public_info_table: str,
     detail_sys_manage_id: str,
     detail_classification_id: str,
     public_info_sys_manage_id: str,
@@ -2779,7 +2868,6 @@ def execute_db_validation(
         field_catalog=field_catalog,
         baseinfo_table=baseinfo_table,
         field_info_table=field_info_table,
-        public_info_table=public_info_table,
         detail_sys_manage_id=detail_sys_manage_id,
         detail_classification_id=detail_classification_id,
         template_sys_manage_id=template_sys_manage_id,
@@ -3007,6 +3095,8 @@ def _db_validation_field_mapping_signature(
     field_info_table: str,
     sys_manage_id: str,
     classification_id: str,
+    public_info_sys_manage_id: str = "",
+    public_info_classification_id: str = "",
 ) -> tuple[Any, ...]:
     return (
         metadata_source.db_type,
@@ -3020,6 +3110,8 @@ def _db_validation_field_mapping_signature(
         field_info_table,
         sys_manage_id,
         classification_id,
+        public_info_sys_manage_id,
+        public_info_classification_id,
     )
 
 
@@ -3035,7 +3127,7 @@ def _coerce_max_combination_rows(value: Any) -> int:
 
 def _coerce_db_validation_tables(value: Any) -> list[str]:
     if value in (None, "", []):
-        return list(ZG_TABLES)
+        return list(ZG_CODES)
     if not isinstance(value, list):
         raise ValueError("selected_tables must be a list")
     selected: list[str] = []
@@ -3044,12 +3136,12 @@ def _coerce_db_validation_tables(value: Any) -> list[str]:
         code = str(item or "").strip().upper()
         if not code:
             continue
-        if code not in ZG_TABLES:
+        if code not in ZG_CODES:
             raise ValueError(f"unknown db validation table: {code}")
         if code not in seen:
             seen.add(code)
             selected.append(code)
-    return selected or list(ZG_TABLES)
+    return selected or list(ZG_CODES)
 
 
 def _coerce_request_bool(value: Any, *, default: bool = False) -> bool:
@@ -3106,6 +3198,116 @@ def _no_source_report_payload(run_date: str) -> dict[str, Any]:
         "no_source_data": True,
         "message": _no_source_report_message(run_date),
     }
+
+
+def _db_validation_mapping_target_values(
+    body: dict[str, Any], current_user: dict[str, Any] | None
+) -> dict[str, str]:
+    mapping_kind = str(body.get("mapping_kind") or "").strip()
+    relation_type = str(body.get("relation_type") or "").strip()
+    logical_code = str(body.get("logical_code") or "").strip().upper()
+    scope_code = str(body.get("scope_code") or "").strip()
+    chinese_name = str(body.get("chinese_name") or "").strip()
+    if mapping_kind not in {"table", "field", "cross_table"}:
+        raise ValueError("映射类型不合法")
+    if relation_type not in {"detail", "template", "public_info", "cross_table"}:
+        raise ValueError("关系类型不合法")
+    if not logical_code:
+        raise ValueError("逻辑表不能为空")
+    if mapping_kind in {"field", "cross_table"} and not chinese_name:
+        raise ValueError("中文名称不能为空")
+    return {
+        "mapping_kind": mapping_kind, "relation_type": relation_type,
+        "logical_code": logical_code, "scope_code": scope_code,
+        "chinese_name": chinese_name,
+        "operator_user_id": str((current_user or {}).get("id") or ""),
+    }
+
+
+def _db_validation_mapping_override_values(
+    body: dict[str, Any], current_user: dict[str, Any] | None
+) -> dict[str, str]:
+    values = _db_validation_mapping_target_values(body, current_user)
+    values["reason"] = "人工修改"
+    override_value = str(body.get("override_value") or "").strip()
+    if not override_value:
+        raise ValueError("映射值不能为空")
+    if values["mapping_kind"] == "cross_table":
+        try:
+            cross_value = json.loads(override_value)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("跨表映射值格式不合法") from exc
+        if not isinstance(cross_value, dict):
+            raise ValueError("跨表映射值格式不合法")
+        for key in ("template_table", "template_field"):
+            quote_identifier("mysql", str(cross_value.get(key) or "").strip())
+    else:
+        quote_identifier("mysql", override_value)
+    values["override_value"] = override_value
+    return values
+
+
+def _db_validation_mapping_restore_values(
+    body: dict[str, Any], current_user: dict[str, Any] | None
+) -> dict[str, str]:
+    values = _db_validation_mapping_target_values(body, current_user)
+    values["reason"] = "恢复"
+    return values
+
+
+def _db_validation_required_chinese_fields() -> frozenset[str]:
+    try:
+        from auto_check.db_validation.rules.basic import REQUIRED_CHINESE_FIELDS
+        return REQUIRED_CHINESE_FIELDS
+    except Exception:
+        return frozenset()
+
+
+def _db_validation_required_chinese_fields_by_scope() -> dict[str, frozenset[str]]:
+    try:
+        from auto_check.db_validation.rules.basic import REQUIRED_CHINESE_FIELDS_BY_SCOPE
+        return dict(REQUIRED_CHINESE_FIELDS_BY_SCOPE)
+    except Exception:
+        return {}
+
+
+def _db_validation_optional_chinese_fields_by_scope() -> dict[str, frozenset[str]]:
+    try:
+        from auto_check.db_validation.rules.basic import OPTIONAL_CHINESE_FIELDS_BY_SCOPE
+        return dict(OPTIONAL_CHINESE_FIELDS_BY_SCOPE)
+    except Exception:
+        return {}
+
+
+def _format_db_validation_required_missing(missing: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in missing:
+        relation = str(item.get("relation_type") or "")
+        logical = str(item.get("logical_code") or "")
+        chinese = str(item.get("chinese_name") or "")
+        table_name = str(item.get("effective_table_name") or "")
+        key = (relation, logical, chinese)
+        if key in seen:
+            continue
+        seen.add(key)
+        scope = f"{logical or relation}"
+        if table_name:
+            scope = f"{scope}/{table_name}"
+        message = str(item.get("status_message") or "").strip()
+        suffix = f"（{message}）" if message else ""
+        lines.append(f"- {scope}：{chinese or '（未命名字段）'}{suffix}")
+    joined = "\n".join(lines[:50])
+    more = "" if len(lines) <= 50 else f"\n……另有 {len(lines) - 50} 项"
+    return (
+        "字段映射缺少本次校验必需的中文字段，已整单阻断。请先完成映射刷新或人工覆盖后再执行：\n"
+        f"{joined}{more}"
+    )
+
+
+def _db_validation_mapping_refresh_error(exc: Exception) -> str:
+    message = _runtime_error_message(str(exc))
+    return f"字段映射刷新失败：{message or '无法连接数据库或读取映射元数据'}"
 
 
 def _runtime_error_message(message: Any) -> str:

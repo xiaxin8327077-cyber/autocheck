@@ -4,21 +4,7 @@ from calendar import monthrange
 from datetime import date
 
 
-ZG_TABLES: dict[str, str] = {
-    "ZG01": "zgxgzh_baseinfo_zg01_26",
-    "ZG02": "zgxgzh_begraiseinfo_zg02_26",
-    "ZG03": "zgxgzh_projendinfo_zg03_26",
-    "ZG04": "zgxgzh_projholdinfo_zg04",
-    "ZG05": "zgxgzh_projdebt_zg05_2024",
-    "ZG06": "zgxgzh_beneficial_zg06",
-    "ZG07": "zgxgzh_ioudetail_zg07",
-    "ZG08": "zgxgzh_spvdetail_zg08",
-    "ZG09": "zgxgzh_debtordate_zg09",
-    "ZG10": "zgxgzh_surecinfo_zg10",
-    "ZG11": "zgxgzh_industinfo_zg11",
-    "ZG12": "zgzgzh_zg12",
-    "ZG13": "zgzgzh_zg13",
-}
+ZG_CODES: tuple[str, ...] = tuple(f"ZG{index:02d}" for index in range(1, 14))
 
 def month_end(year: int, month: int) -> date:
     return date(year, month, monthrange(year, month)[1])

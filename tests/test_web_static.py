@@ -5140,7 +5140,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     assert '<span class="setting-label">classification_id</span>' not in settings_html
     assert 'id="dbValidationBaseinfoTable" type="hidden"' in settings_html
     assert 'id="dbValidationFieldInfoTable" type="hidden"' in settings_html
-    assert 'id="dbValidationPublicInfoTable" type="hidden"' in settings_html
+    assert 'id="dbValidationPublicInfoTable"' not in settings_html
     assert '<span class="setting-label">公开信息表</span>' not in settings_html
     assert "minmax(240px, 320px)" in css
     assert "minmax(260px, 1fr)" in css
@@ -5512,6 +5512,8 @@ def test_all_system_modals_use_balanced_shared_shell():
         "pbcModalOverlay",
         "dbValidationModalOverlay",
         "dbValidationHistoryOverlay",
+        "dbValidationMappingOverlay",
+        "crossTableMappingPromptModal",
         "flowModalOverlay",
         "flowHistoryOverlay",
         "flowChainEditorOverlay",
@@ -8752,8 +8754,8 @@ def test_report_navigation_and_settings_show_thin_main_content_scrollbar():
     )
     assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
     assert "background: var(--ui-thin-scrollbar-thumb, #c5d0e0);" in css
-    assert 'href="/styles.css?v=20260810u"' in html
-    assert 'src="/app.js?v=20260810u"' in html
+    assert 'href="/styles.css?v=20260813l"' in html
+    assert 'src="/app.js?v=20260813o"' in html
 
 
 def test_space_tech_top_nav_is_edge_stuck_not_floating():
@@ -8901,12 +8903,12 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
         'id="dbValidationMetadataSource"',
         'id="dbValidationBaseinfoTable"',
         'id="dbValidationFieldInfoTable"',
-        'id="dbValidationPublicInfoTable"',
         'id="dbValidationRefreshFieldMappingBtn"',
     ]:
         assert item_id in html
 
     assert 'id="dbValidationDataSource"' not in html
+    assert 'id="dbValidationPublicInfoTable"' not in html
     assert 'class="db-validation-date-field"' in html
     assert 'id="dbValidationTemplateCheck"' in html
     assert 'id="dbValidationTemplateCheck" disabled' not in html
@@ -8934,7 +8936,6 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
         "enable_template_check",
         "field_mapping_source_id",
         "unmapped_field_count",
-        "public_info_table",
     ]:
         assert text in app_js
 
@@ -8949,7 +8950,8 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
     refresh_start = app_js.index("async function refreshDbValidationFieldMapping")
     refresh_end = app_js.index("function appendDbValidationLog", refresh_start)
     refresh_body = app_js[refresh_start:refresh_end]
-    assert "await saveDbValidationSettings({ quiet: true, refreshMapping: false });" in refresh_body
+    assert "saveDbValidationSettings(" not in refresh_body
+    assert 'api("/api/tools/db-validation/field-mapping/refresh", { method: "POST" })' in refresh_body
 
     assert ".tool-card-db-validation" in css
     assert ".db-validation-grid" in css
@@ -8965,7 +8967,7 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
     assert ".db-validation-history-modal" in css
     history_wrap = re.search(r"(?m)^\.db-validation-history-table-wrap\s*\{(?P<body>.*?)\}", css, re.S)
     assert history_wrap is not None
-    assert "overflow-x: hidden;" in history_wrap.group("body")
+    assert "overflow-x: auto;" in history_wrap.group("body")
     assert ".db-validation-history-table {\n  table-layout: fixed;" in css
     assert ".db-validation-history-count-link" in css
 
@@ -9901,3 +9903,115 @@ def test_provider_managed_report_card_retires_manual_entry_and_never_fakes_zero(
     assert "统计暂不可用" in app_js
     assert "result.provider_issues || []" in app_js
     assert "renderReportNavigationProviderIssues" in app_js
+
+
+def test_db_validation_mapping_modal_has_three_filtered_fixed_views():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+
+    for button_id, label in (
+        ("dbValidationViewTableMappingBtn", "查看表映射"),
+        ("dbValidationViewFieldMappingBtn", "查看字段映射"),
+        ("dbValidationViewCrossTableMappingBtn", "查看跨表映射"),
+    ):
+        assert f'id="{button_id}"' in html
+        assert label in html
+    assert '>刷新映射</button>' in html
+    assert '刷新逐笔字段映射' not in html
+    assert 'id="dbValidationMappingFilter"' in html
+    assert 'id="dbValidationMappingFilterCount"' in html
+    assert 'id="dbValidationMappingQuickFilters"' in html
+    assert 'id="promptTemplateTableInput"' in html
+    assert 'id="promptTemplateFieldInput"' in html
+    assert "#crossTableMappingPromptModal" in css
+    assert re.search(r"#crossTableMappingPromptModal\s*\{[^}]*z-index:\s*3000", css, re.S)
+    assert "openDbValidationMappingView" in app_js
+    assert "toggleDbValidationMappingView" not in app_js
+    assert '["表类型", "逻辑表", "物理表", "修改"]' in app_js
+    assert '["逻辑表", "中文名", "映射字段", "修改"]' in app_js
+    assert '["逐笔表", "逐笔字段", "模板表", "模板字段", "修改"]' in app_js
+    assert 'data-kind="cross_table"' in app_js
+    assert '"请输入逐笔字段"' not in app_js
+    assert "showCrossTableMappingPrompt" in app_js
+    assert "dbValidationMappingSummaryText" in app_js
+    assert "dbValidationMappingQuickFilterOptions" in app_js
+    assert "dbValidationMappingMatchesQuickFilter" in app_js
+    assert 'function dbValidationMappingIsUnmapped(item)' in app_js
+    assert 'String(item.mapping_status || "mapped") !== "mapped"' in app_js
+    assert 'const unmapped = rows.filter(dbValidationMappingIsUnmapped).length;' in app_js
+    assert 'if (filter === "unmapped") return dbValidationMappingIsUnmapped(item);' in app_js
+    assert "const totalFieldCount = fieldCount + requiredMissingCount + missingPhysicalCount;" in app_js
+    assert "const totalUnmappedCount = unmappedCount + requiredMissingCount + missingPhysicalCount;" in app_js
+    assert "async function loadDbValidationMappingPayload()" in app_js
+    load_settings = re.search(
+        r"async function loadDbValidationSettings\(\)\s*\{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert load_settings is not None
+    assert "await loadDbValidationMappingPayload()" in load_settings.group("body")
+    for filter_label in ("全部", "已映射", "未映射", "人工修改", "与自动映射不同"):
+        assert filter_label in app_js
+    assert '["required_missing", "必需缺失"]' in app_js
+    assert '["semantic", "语义匹配"]' in app_js
+    assert 'function dbValidationMappingIsSemantic(item)' in app_js
+    assert 'if (filter === "semantic") return dbValidationMappingIsSemantic(item);' in app_js
+    assert "mapping-semantic-badge" in app_js
+    assert ".mapping-semantic-badge" in css
+    assert 'if (view === "field")' in app_js
+    assert 'await showPrompt("修改跨表映射", "请输入模板表"' not in app_js
+    assert 'await showPrompt("修改跨表映射", "请输入模板字段"' not in app_js
+    assert 'JSON.stringify({ template_table: templateTable, template_field: templateField })' in app_js
+    assert '请输入人工修改原因' not in app_js
+    assert '请输入恢复自动映射的原因' not in app_js
+    assert '>恢复自动</button>' not in app_js
+    assert '>恢复</button>' in app_js
+    assert "mapping-has-difference" in app_js
+    assert "当前条数" not in app_js  # 使用紧凑的 当前/总数 数字形式
+    assert "overflow-x: hidden" in css
+    assert "table-layout: fixed" in css
+    assert "white-space: nowrap" in css
+    assert "text-overflow: ellipsis" in css
+    assert ".db-validation-mapping-entry.mapping-has-difference::after" in css
+    filterbar = re.search(r"(?m)^\.db-validation-mapping-filterbar\s*\{(?P<body>.*?)\}", css, re.S)
+    assert filterbar is not None
+    assert "flex: 0 0 auto" in filterbar.group("body")
+    assert "min-height: 40px" in filterbar.group("body")
+    filter_input = re.search(r"(?m)^\.db-validation-mapping-filterbar input\s*\{(?P<body>.*?)\}", css, re.S)
+    assert filter_input is not None
+    assert "height: 40px" in filter_input.group("body")
+    assert "min-height: 40px" in filter_input.group("body")
+    assert "padding: 0 14px" in filter_input.group("body")
+    filter_shell = re.search(r"(?m)^\.db-validation-mapping-filterbar \.custom-input-shell\s*\{(?P<body>.*?)\}", css, re.S)
+    assert filter_shell is not None
+    assert "height: 40px" in filter_shell.group("body")
+    assert "min-height: 40px" in filter_shell.group("body")
+    assert ".db-validation-mapping-table.mapping-view-cross_table th:nth-child(1) { width: 8%; }" in css
+    assert ".db-validation-mapping-table.mapping-view-cross_table th:nth-child(2) { width: 18%; }" in css
+    assert ".db-validation-mapping-table.mapping-view-cross_table th:nth-child(3) { width: 34%; }" in css
+    assert ".db-validation-mapping-table.mapping-view-cross_table th:nth-child(4) { width: 22%; }" in css
+    assert ".db-validation-mapping-table.mapping-view-cross_table th:nth-child(5) { width: 18%; }" in css
+    assert ".db-validation-mapping-table.mapping-view-table th:nth-child(3) { width: 52%; }" in css
+    assert ".db-validation-mapping-table tr.mapping-row-different td" in css
+    assert "background: #fff8e8" in css
+    assert "background: #f97316" in css
+    assert "function dbValidationMappingDifferenceBadge(item, view, differenceField)" in app_js
+    assert 'class="mapping-actions-cell"' not in app_js
+    assert 'dbValidationMappingValueCell(item.effective_template_table_name, item, "cross_table", "template_table")' in app_js
+    assert 'dbValidationMappingValueCell(item.effective_template_field_name, item, "cross_table", "template_field")' in app_js
+    value_cell = re.search(
+        r"function dbValidationMappingValueCell\(value, item, view, differenceField\)\s*\{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert value_cell is not None
+    assert "dbValidationMappingDifferenceBadge" in value_cell.group("body")
+    assert "mapping-value-wrap" in value_cell.group("body")
+    assert ".mapping-value-wrap .mapping-difference-badge" in css
+    assert "position: absolute" in css
+    value_wrap = re.search(r"(?m)^\.mapping-value-wrap\s*\{(?P<body>.*?)\}", css, re.S)
+    assert value_wrap is not None
+    assert "display: inline-block" in value_wrap.group("body")
+    assert "max-width: 100%" in value_wrap.group("body")
+    assert not re.search(r"(?m)^\s*width:\s*100%;", value_wrap.group("body"))

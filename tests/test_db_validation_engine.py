@@ -4,6 +4,22 @@ import auto_check.db_validation.engine as engine_module
 from auto_check.db_validation.engine import DbValidationEngine
 from auto_check.db_validation.metadata import TableFieldCatalog
 
+DETAIL_TABLE_MAPPINGS = {
+    ("detail", "ZG01", ""): "zgxgzh_baseinfo_zg01_26",
+    ("detail", "ZG02", ""): "zgxgzh_begraiseinfo_zg02_26",
+    ("detail", "ZG03", ""): "zgxgzh_projendinfo_zg03_26",
+    ("detail", "ZG04", ""): "zgxgzh_projholdinfo_zg04",
+    ("detail", "ZG05", ""): "zgxgzh_projdebt_zg05_2024",
+    ("detail", "ZG06", ""): "zgxgzh_beneficial_zg06",
+    ("detail", "ZG07", ""): "zgxgzh_ioudetail_zg07",
+    ("detail", "ZG08", ""): "zgxgzh_spvdetail_zg08",
+    ("detail", "ZG09", ""): "zgxgzh_debtordate_zg09",
+    ("detail", "ZG10", ""): "zgxgzh_surecinfo_zg10",
+    ("detail", "ZG11", ""): "zgxgzh_industinfo_zg11",
+    ("detail", "ZG12", ""): "zgzgzh_zg12",
+    ("detail", "ZG13", ""): "zgzgzh_zg13",
+}
+
 
 class FakeConfig:
     db_type = "postgresql"
@@ -45,6 +61,7 @@ def test_engine_generates_empty_excel_when_no_rows(tmp_path):
     engine = DbValidationEngine(
         data_client=client,
         metadata_client=client,
+        field_catalog=TableFieldCatalog({}, table_mappings=DETAIL_TABLE_MAPPINGS),
         output_dir=tmp_path,
     )
 
@@ -76,7 +93,8 @@ def test_engine_runs_zg01_product_name_rule(tmp_path):
                     "产品代码": "projcode",
                     "产品名称": "projname",
                 }
-            }
+            },
+            table_mappings=DETAIL_TABLE_MAPPINGS,
         ),
         output_dir=tmp_path,
     )
@@ -98,6 +116,7 @@ def test_engine_adds_legacy_chinese_field_aliases_from_metadata(tmp_path, monkey
         previous_rows,
         related_rows=None,
         enable_template_check=False,
+        **kwargs,
     ):
         captured["rows"] = current_rows
         return []
@@ -122,7 +141,8 @@ def test_engine_adds_legacy_chinese_field_aliases_from_metadata(tmp_path, monkey
                     "产品代码": "projcode",
                     "产品名称": "projname",
                 }
-            }
+            },
+            table_mappings=DETAIL_TABLE_MAPPINGS,
         ),
         output_dir=tmp_path,
     )
@@ -137,18 +157,37 @@ def test_engine_adds_legacy_chinese_field_aliases_from_metadata(tmp_path, monkey
 def test_engine_reuses_dependency_table_when_later_selected(tmp_path, monkeypatch):
     fetched_tables = []
 
-    def fake_fetch_table(self, table_name):
+    def fake_fetch_table(self, table_name, decrypt_column=""):
         fetched_tables.append(table_name)
         return []
 
     monkeypatch.setattr(engine_module.ValidationTableReader, "fetch_table", fake_fetch_table)
     monkeypatch.setattr(engine_module, "run_basic_rules", lambda *args, **kwargs: [])
 
-    engine = DbValidationEngine(data_client=FakeClient({}), output_dir=tmp_path)
+    engine = DbValidationEngine(data_client=FakeClient({}), field_catalog=TableFieldCatalog({}, table_mappings=DETAIL_TABLE_MAPPINGS), output_dir=tmp_path)
 
     engine.run(report_date=date(2026, 5, 31), selected_tables=["ZG04", "ZG05"])
 
     assert fetched_tables.count("zgxgzh_projdebt_zg05_2024") == 1
+
+
+def test_engine_requests_zg07_borrower_code_decryption_from_mapping(tmp_path):
+    client = FakeClient({"zg07_detail_new": []})
+    engine = DbValidationEngine(
+        data_client=client,
+        field_catalog=TableFieldCatalog(
+            {"zg07_detail_new": {"借款人代码": "jkrcode", "产品代码": "projcode"}},
+            table_mappings={("detail", "ZG07", ""): "zg07_detail_new"},
+        ),
+        output_dir=tmp_path,
+    )
+
+    engine.run(report_date=date(2026, 5, 31), selected_tables=["ZG07"])
+
+    decrypt_calls = [sql for sql, _ in client.calls if "public.decrypt" in sql]
+    assert len(decrypt_calls) == 2
+    assert all('decode(convert_from("jkrcode", \'UTF8\'), \'hex\')' in sql for sql in decrypt_calls)
+    assert any("zg07_detail_new_2026_04" in sql for sql in decrypt_calls)
 
 
 def test_engine_reads_db_template_tables_when_template_check_enabled(tmp_path, monkeypatch):
@@ -161,6 +200,7 @@ def test_engine_reads_db_template_tables_when_template_check_enabled(tmp_path, m
         previous_rows,
         related_rows=None,
         enable_template_check=False,
+        **kwargs,
     ):
         captured[zg_code] = {
             "related_rows": related_rows or {},
@@ -182,6 +222,13 @@ def test_engine_reads_db_template_tables_when_template_check_enabled(tmp_path, m
         data_client=data_client,
         metadata_client=metadata_client,
         template_client=template_client,
+        field_catalog=TableFieldCatalog(
+            {},
+            table_mappings={**DETAIL_TABLE_MAPPINGS,
+                ("detail", "ZG09", ""): "zgxgzh_debtordate_zg09",
+                ("template", "ZG09", "2"): "balance_sheet_info_zcglxt",
+            },
+        ),
         template_sys_manage_id="TEMPLATE_SYS",
         template_classification_id="TEMPLATE_CLASS",
         output_dir=tmp_path,
@@ -197,8 +244,5 @@ def test_engine_reads_db_template_tables_when_template_check_enabled(tmp_path, m
             "field_value": "20",
         }
     ]
-    metadata_sql, metadata_params = metadata_client.calls[0]
-    assert "sys_manage_id IN (%s)" in metadata_sql
-    assert "classification_id IN (%s)" in metadata_sql
-    assert metadata_params == ("TEMPLATE_SYS", "TEMPLATE_CLASS")
+    assert metadata_client.calls == []
     assert all("balance_sheet_info_zcglxt" in sql for sql, _ in template_client.calls)

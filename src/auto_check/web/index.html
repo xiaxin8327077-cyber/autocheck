@@ -16,7 +16,7 @@
         }
       })();
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260810u" />
+    <link rel="stylesheet" href="/styles.css?v=20260813l" />
     <link rel="stylesheet" href="/module_host.css" />
   </head>
   <body>
@@ -1447,7 +1447,6 @@
                       <span class="setting-label">分类编号</span>
                       <input id="dbValidationPublicInfoClassificationId" class="setting-input" placeholder="填写分类编号，多个用;分隔" />
                     </label>
-                    <input id="dbValidationPublicInfoTable" type="hidden" value="public_information_rh" />
                   </div>
                   <div class="db-validation-source-row">
                     <div class="db-validation-source-title">
@@ -1470,7 +1469,10 @@
                 </div>
                 <div class="settings-actions">
                   <button id="saveDbValidationSettingsBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">保存配置</button>
-                  <button id="dbValidationRefreshFieldMappingBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">刷新逐笔字段映射</button>
+                  <button id="dbValidationRefreshFieldMappingBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">刷新映射</button>
+                  <button id="dbValidationViewTableMappingBtn" type="button" class="btn-outline btn-sm db-validation-mapping-entry" data-mapping-view="table" data-action-tone="primary" data-action-variant="weak">查看表映射</button>
+                  <button id="dbValidationViewFieldMappingBtn" type="button" class="btn-outline btn-sm db-validation-mapping-entry" data-mapping-view="field" data-action-tone="primary" data-action-variant="weak">查看字段映射</button>
+                  <button id="dbValidationViewCrossTableMappingBtn" type="button" class="btn-outline btn-sm db-validation-mapping-entry" data-mapping-view="cross_table" data-action-tone="primary" data-action-variant="weak">查看跨表映射</button>
                   <span class="modal-status" id="dbValidationSettingsStatus"></span>
                 </div>
               </div>
@@ -1659,6 +1661,26 @@
         </div>
       </div>
 
+      <!-- 跨表映射编辑弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="crossTableMappingPromptModal" hidden>
+        <div class="app-modal-shell modal modal-confirm modal-prompt" tabindex="-1">
+          <div class="app-modal-header modal-header">
+            <h3>修改跨表映射</h3>
+          </div>
+          <div class="app-modal-body modal-body cross-table-mapping-prompt-body">
+            <label for="promptTemplateTableInput">模板表</label>
+            <input id="promptTemplateTableInput" class="prompt-input" autocomplete="off" placeholder="请输入模板表" />
+            <label for="promptTemplateFieldInput">模板字段</label>
+            <input id="promptTemplateFieldInput" class="prompt-input" autocomplete="off" placeholder="请输入模板字段" />
+            <p id="crossTableMappingPromptError" class="prompt-required-hint" hidden></p>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <button class="btn-outline" id="crossTableMappingPromptCancel" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="crossTableMappingPromptOk" class="btn-confirm-primary" data-action-tone="primary" data-action-variant="solid">确定</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 信息弹窗 -->
       <div class="app-modal-overlay modal-overlay" id="infoModal" hidden>
         <div class="app-modal-shell modal modal-info">
@@ -1824,6 +1846,37 @@
       <section id="modulePageHost" class="auto-check-module-host" hidden></section>
     </main>
 
+    <div class="app-modal-overlay pbc-modal-overlay db-validation-history-overlay" id="dbValidationMappingOverlay">
+      <div class="app-modal-shell pbc-modal db-validation-history-modal db-validation-mapping-modal">
+        <button class="app-modal-close pbc-modal-close" id="dbValidationMappingClose">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <div class="app-modal-header pbc-modal-header">
+          <div class="pbc-modal-header-left">
+            <div>
+              <h2 id="dbValidationMappingTitle">映射关系</h2>
+              <p id="dbValidationMappingSummary">加载中...</p>
+            </div>
+          </div>
+        </div>
+        <div class="app-modal-body pbc-modal-body">
+          <div class="db-validation-mapping-filterbar">
+            <input id="dbValidationMappingFilter" class="setting-input" type="search" placeholder="筛选逻辑表、表名、字段名或字段码" autocomplete="off" />
+            <div id="dbValidationMappingQuickFilters" class="db-validation-mapping-quick-filters" role="group" aria-label="映射状态快捷筛选"></div>
+            <span id="dbValidationMappingFilterCount">0 / 0</span>
+          </div>
+          <div class="db-validation-history-table-wrap db-validation-mapping-table-wrap">
+            <table class="result-table db-validation-history-table db-validation-mapping-table">
+              <thead id="dbValidationMappingHead"></thead>
+              <tbody id="dbValidationMappingTableBody">
+                <tr><td colspan="6" class="empty">暂无映射关系</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast container -->
     <div class="toast-container" id="toastContainer"></div>
     <div class="flow-toast-container" id="flowToastContainer"></div>
@@ -1831,6 +1884,6 @@
     <script src="/crypto_fallback.js"></script>
     <script src="/export_detail.js"></script>
     <script src="/module_host.js"></script>
-    <script src="/app.js?v=20260810u"></script>
+    <script src="/app.js?v=20260813o"></script>
   </body>
 </html>

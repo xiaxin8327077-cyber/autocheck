@@ -18,31 +18,31 @@ class FakeClient:
         return []
 
 
-def test_reader_decrypts_zg07_borrower_code_for_postgresql():
+def test_reader_decrypts_requested_column_for_postgresql():
     client = FakeClient("postgresql")
 
-    ValidationTableReader(client).fetch_table("zgxgzh_ioudetail_zg07")
+    ValidationTableReader(client).fetch_table("zg07_detail_new", decrypt_column="jkrcode")
 
     assert "public.decrypt" in client.sql
-    assert "decode(convert_from(\"debtorcode\", 'UTF8'), 'hex')" in client.sql
+    assert "decode(convert_from(\"jkrcode\", 'UTF8'), 'hex')" in client.sql
     assert "'JsxtConsole', 'aes'" in client.sql
-    assert "AS \"debtorcode\"" in client.sql
-    assert "FROM \"dws\".\"zgxgzh_ioudetail_zg07\"" in client.sql
+    assert "AS \"jkrcode\"" in client.sql
+    assert "FROM \"dws\".\"zg07_detail_new\"" in client.sql
 
 
-def test_reader_decrypts_zg07_previous_borrower_code_for_mysql():
+def test_reader_decrypts_requested_column_for_mysql():
     client = FakeClient("mysql")
 
-    ValidationTableReader(client).fetch_table("zgxgzh_ioudetail_zg07_2026_05")
+    ValidationTableReader(client).fetch_table("zg07_detail_new_2026_05", decrypt_column="jkrcode")
 
-    assert "AES_DECRYPT(UNHEX(`debtorcode`), 'JsxtConsole')" in client.sql
-    assert "AS `debtorcode`" in client.sql
-    assert "FROM `dws`.`zgxgzh_ioudetail_zg07_2026_05`" in client.sql
+    assert "AES_DECRYPT(UNHEX(`jkrcode`), 'JsxtConsole')" in client.sql
+    assert "AS `jkrcode`" in client.sql
+    assert "FROM `dws`.`zg07_detail_new_2026_05`" in client.sql
 
 
-def test_reader_leaves_other_tables_as_plain_select():
+def test_reader_leaves_tables_without_decrypt_column_as_plain_select():
     client = FakeClient("postgresql")
 
-    ValidationTableReader(client).fetch_table("zgxgzh_baseinfo_zg01_26")
+    ValidationTableReader(client).fetch_table("zg01_detail_new")
 
-    assert client.sql == "SELECT * FROM \"dws\".\"zgxgzh_baseinfo_zg01_26\""
+    assert client.sql == "SELECT * FROM \"dws\".\"zg01_detail_new\""

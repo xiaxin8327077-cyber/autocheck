@@ -40,7 +40,27 @@ from auto_check.app.server import (
     _runtime_error_message,
     build_display_details,
     previous_month_end,
+    _db_validation_mapping_override_values,
+    _db_validation_mapping_restore_values,
 )
+
+
+def test_db_validation_mapping_actions_supply_system_audit_reason():
+    target = {
+        "mapping_kind": "cross_table",
+        "relation_type": "cross_table",
+        "logical_code": "ZG09",
+        "scope_code": "1",
+        "chinese_name": "ZG09:1:fb00001",
+    }
+    override = _db_validation_mapping_override_values(
+        {**target, "override_value": '{"template_table":"template_1","template_field":"f1"}'},
+        {"id": "admin-1"},
+    )
+    restored = _db_validation_mapping_restore_values(target, {"id": "admin-1"})
+
+    assert override["reason"] == "人工修改"
+    assert restored["reason"] == "恢复"
 from auto_check.app.reconcile_schema import ReconcileSchemaSettings, ReconcileSourceRef, ReconcileTableSchema
 from auto_check.db_validation.metadata import TableFieldCatalog
 from auto_check.db_validation.models import DbValidationRunResult, ValidationResultRow

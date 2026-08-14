@@ -5,42 +5,34 @@ from typing import Any
 from auto_check.app.db import qualified_name
 
 
-ZG07_DETAIL_TABLE = "zgxgzh_ioudetail_zg07"
-ZG07_BORROWER_CODE_COLUMN = "debtorcode"
-
-
 class ValidationTableReader:
     def __init__(self, client: Any):
         self.client = client
 
-    def fetch_table(self, table_name: str) -> list[dict[str, Any]]:
+    def fetch_table(self, table_name: str, decrypt_column: str = "") -> list[dict[str, Any]]:
         quoted = qualified_name(self.client.config, table_name)
-        decrypt_expr = _zg07_borrower_code_decrypt_expr(self.client.config.db_type, table_name)
+        decrypt_expr = _decrypt_column_expr(self.client.config.db_type, decrypt_column)
         if decrypt_expr:
             return self.client.fetch_all(f"SELECT *, {decrypt_expr} FROM {quoted}")
         return self.client.fetch_all(f"SELECT * FROM {quoted}")
 
 
-def _zg07_borrower_code_decrypt_expr(db_type: str, table_name: str) -> str:
-    if not _is_zg07_detail_table(table_name):
+def _decrypt_column_expr(db_type: str, column: str) -> str:
+    # 解密列由引擎按字段映射解析后传入，读取层不持有任何业务表名或英文字段名。
+    if not column:
         return ""
-    column = _quote_identifier(db_type, ZG07_BORROWER_CODE_COLUMN)
+    quoted = _quote_identifier(db_type, column)
     if db_type == "postgresql":
         return (
-            f"convert_from(public.decrypt(decode(convert_from({column}, 'UTF8'), 'hex'), "
-            f"'JsxtConsole', 'aes'), 'UTF8') AS {column}"
+            f"convert_from(public.decrypt(decode(convert_from({quoted}, 'UTF8'), 'hex'), "
+            f"'JsxtConsole', 'aes'), 'UTF8') AS {quoted}"
         )
     if db_type == "mysql":
         return (
-            f"CONVERT(AES_DECRYPT(UNHEX({column}), 'JsxtConsole') "
-            f"USING utf8mb4) AS {column}"
+            f"CONVERT(AES_DECRYPT(UNHEX({quoted}), 'JsxtConsole') "
+            f"USING utf8mb4) AS {quoted}"
         )
     return ""
-
-
-def _is_zg07_detail_table(table_name: str) -> bool:
-    normalized = table_name.lower()
-    return normalized == ZG07_DETAIL_TABLE or normalized.startswith(f"{ZG07_DETAIL_TABLE}_")
 
 
 def _quote_identifier(db_type: str, identifier: str) -> str:

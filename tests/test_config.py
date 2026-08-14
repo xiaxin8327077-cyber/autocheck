@@ -243,7 +243,6 @@ def _sample_store() -> ConfigStore:
             field_mapping_source_id="source-dws",
             baseinfo_table="xt_reg_table_baseinfo_custom",
             field_info_table="xt_reg_table_field_info_custom",
-            public_info_table="public_information_rh_custom",
         ),
         flow_tool=FlowToolSettings(
             source_id="source-dws",
@@ -732,7 +731,6 @@ def test_store_persists_single_data_sources_and_validation_fields(app_database, 
             field_mapping_source_id="source-detail",
             baseinfo_table="xt_reg_table_baseinfo_custom",
             field_info_table="xt_reg_table_field_info_custom",
-            public_info_table="public_information_rh_custom",
         ),
     )
 

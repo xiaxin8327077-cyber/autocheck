@@ -5525,7 +5525,8 @@ input:focus, select:focus {
 }
 
 #confirmModal,
-#promptModal {
+#promptModal,
+#crossTableMappingPromptModal {
   z-index: 3000;
 }
 
@@ -5599,6 +5600,25 @@ input:focus, select:focus {
 
 .prompt-input[aria-invalid="true"] {
   border-color: var(--error, #dc2626);
+}
+
+.cross-table-mapping-prompt-body {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px 12px;
+}
+
+.cross-table-mapping-prompt-body label {
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cross-table-mapping-prompt-body .prompt-required-hint {
+  grid-column: 2;
+  margin: -4px 0 0;
+  color: var(--error, #dc2626);
 }
 
 .prompt-date-control {
@@ -6335,11 +6355,23 @@ input:focus, select:focus {
 }
 
 .db-validation-history-table-wrap {
-  max-height: min(520px, calc(100vh - 220px));
+  max-height: calc(100vh - 240px);
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   border: 1px solid var(--outline-variant);
   border-radius: 8px;
+  scrollbar-width: thin !important;
+  -ms-overflow-style: auto !important;
+}
+.app-modal-shell .db-validation-history-table-wrap::-webkit-scrollbar {
+  display: block !important;
+  width: 6px;
+  height: 6px;
+}
+.app-modal-shell .db-validation-history-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--ui-thin-scrollbar-thumb, #c5d0e0);
+  border-radius: 3px;
+}
 }
 
 .db-validation-history-table {
@@ -6379,6 +6411,183 @@ input:focus, select:focus {
 .db-validation-history-table th:nth-child(7),
 .db-validation-history-table td:nth-child(7) {
   width: 84px;
+}
+
+.db-validation-mapping-modal {
+  width: min(1180px, calc(100vw - 32px));
+  max-width: none;
+}
+
+.db-validation-mapping-filterbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 40px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.db-validation-mapping-filterbar input {
+  width: min(440px, 100%);
+  height: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  line-height: 40px;
+  flex: 0 1 440px;
+}
+
+.db-validation-mapping-filterbar .custom-input-shell {
+  flex: 0 1 440px;
+  width: min(440px, 100%);
+  height: 40px;
+  min-height: 40px;
+}
+
+.db-validation-mapping-filterbar .custom-input-shell input {
+  width: 100%;
+  height: 100%;
+}
+
+.db-validation-mapping-quick-filters {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.db-validation-mapping-filter-chip {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 999px;
+  color: var(--on-surface-variant);
+  background: var(--surface-container-lowest);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.db-validation-mapping-filter-chip:hover,
+.db-validation-mapping-filter-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+}
+
+.db-validation-mapping-filterbar span {
+  flex: 0 0 auto;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.db-validation-mapping-table-wrap {
+  overflow-x: hidden;
+}
+
+.db-validation-mapping-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.db-validation-mapping-table th,
+.db-validation-mapping-table td {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.db-validation-mapping-table th:last-child,
+.db-validation-mapping-table td:last-child {
+  width: 156px;
+}
+
+.db-validation-mapping-table.mapping-view-table th:nth-child(1) { width: 90px; }
+.db-validation-mapping-table.mapping-view-table th:nth-child(2) { width: 150px; }
+.db-validation-mapping-table.mapping-view-table th:nth-child(3) { width: 52%; }
+.db-validation-mapping-table.mapping-view-field th:nth-child(1) { width: 120px; }
+.db-validation-mapping-table.mapping-view-field th:nth-child(2) { width: 240px; }
+.db-validation-mapping-table.mapping-view-cross_table th:nth-child(1) { width: 8%; }
+.db-validation-mapping-table.mapping-view-cross_table th:nth-child(2) { width: 18%; }
+.db-validation-mapping-table.mapping-view-cross_table th:nth-child(3) { width: 34%; }
+.db-validation-mapping-table.mapping-view-cross_table th:nth-child(4) { width: 22%; }
+.db-validation-mapping-table.mapping-view-cross_table th:nth-child(5) { width: 18%; }
+
+.db-validation-mapping-table td:last-child .btn-sm {
+  white-space: nowrap;
+}
+
+.mapping-value-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.db-validation-mapping-table tr.mapping-row-different td {
+  background: #fff8e8;
+}
+
+.mapping-value {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mapping-value-wrap .mapping-difference-badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 999px;
+  background: #f97316;
+  border: 0;
+  pointer-events: none;
+}
+
+.mapping-value-wrap .mapping-difference-badge.is-missing {
+  background: #dc2626;
+}
+
+.mapping-semantic-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.mapping-semantic-badge {
+  position: absolute;
+  top: -4px;
+  right: -9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #2563eb;
+  pointer-events: none;
+}
+
+.db-validation-mapping-entry {
+  position: relative;
+}
+
+.db-validation-mapping-entry.mapping-has-difference::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--surface-container-lowest, #fff);
+  border-radius: 50%;
+  background: #f59e0b;
+  box-sizing: content-box;
 }
 
 .db-validation-history-count-link {

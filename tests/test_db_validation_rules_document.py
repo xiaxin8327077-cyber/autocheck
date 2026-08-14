@@ -52,11 +52,10 @@ def test_rules_document_describes_template_cpkj_table_mapping():
     detail_by_rule_id = {row[3]: row for row in rows[1:]}
     flat_text = "\n".join(str(value) for row in rows for value in row if value)
 
-    assert detail_by_rule_id["Zg09_Rule3"][9] == "\u542f\u7528"
-    assert detail_by_rule_id["Zg10_Rule1"][9] == "\u542f\u7528"
-    assert "cpkj=1 \u5bf9\u6bd4 balance_sheet_info" in flat_text
-    assert "cpkj=2 \u5bf9\u6bd4 balance_sheet_info_zcglxt" in flat_text
-    assert "cpkj=1 \u5bf9\u6bd4 balance_sheet_info2" in flat_text
-    assert "cpkj=2 \u5bf9\u6bd4 balance_sheet_info2_zcglxt" in flat_text
+    assert detail_by_rule_id["Zg09_Rule3"][9] == "启用"
+    assert detail_by_rule_id["Zg10_Rule1"][9] == "启用"
+    assert "信托产品类型口径=1 对比字段映射解析出的 ZG09 口径 1 模板物理表" in flat_text
+    assert "信托产品类型口径=1 对比字段映射解析出的 ZG10 口径 1 模板物理表" in flat_text
+    assert "口径=2 对比口径 2 模板物理表" in flat_text
 
     workbook.close()

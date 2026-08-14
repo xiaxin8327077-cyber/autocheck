@@ -5,6 +5,7 @@ from auto_check.app.config import (
     DbValidationDatasetSettings,
     DbValidationSettings,
     NamedConfig,
+    db_validation_settings_from_dict,
     load_store,
     save_store,
 )
@@ -45,7 +46,6 @@ def test_store_persists_db_validation_settings(tmp_path):
             field_mapping_source_id="metadata-source",
             baseinfo_table="xt_reg_table_baseinfo_custom",
             field_info_table="xt_reg_table_field_info_custom",
-            public_info_table="public_information_rh_custom",
         )
     )
 
@@ -65,7 +65,20 @@ def test_db_validation_settings_defaults_are_usable():
     assert settings.field_mapping_source_id == ""
     assert settings.baseinfo_table == "xt_reg_table_baseinfo"
     assert settings.field_info_table == "xt_reg_table_field_info"
-    assert settings.public_info_table == "public_information_rh"
+    assert settings.public_info_table == ""
+
+
+def test_db_validation_settings_drops_legacy_public_info_table(tmp_path):
+    settings = db_validation_settings_from_dict({"public_info_table": "legacy_public_table"})
+
+    assert settings.public_info_table == "legacy_public_table"
+
+    store = ConfigStore(db_validation=settings)
+    database = MemoryApplicationDatabase()
+    save_store(store, tmp_path / "config.json", database=database)
+    reloaded = load_store(tmp_path / "config.json", database=database)
+
+    assert reloaded.db_validation.public_info_table == ""
 
 
 def test_db_validation_settings_migrates_old_config_source_pair(tmp_path):

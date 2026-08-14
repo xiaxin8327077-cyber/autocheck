@@ -94,7 +94,8 @@ class DbValidationSettings:
     field_mapping_source: str = "dws"
     baseinfo_table: str = "xt_reg_table_baseinfo"
     field_info_table: str = "xt_reg_table_field_info"
-    public_info_table: str = "public_information_rh"
+    # 公开信息物理表改由字段映射关系统一解析；旧配置值仅兼容读取，不再写回和使用。
+    public_info_table: str = ""
 
 
 @dataclass(frozen=True)
@@ -531,7 +532,7 @@ def db_validation_settings_from_dict(payload: dict[str, Any]) -> DbValidationSet
         field_mapping_source=_coerce_source(payload.get("field_mapping_source", payload.get("metadata_source", "dws"))),
         baseinfo_table=str(payload.get("baseinfo_table", "xt_reg_table_baseinfo") or "xt_reg_table_baseinfo"),
         field_info_table=str(payload.get("field_info_table", "xt_reg_table_field_info") or "xt_reg_table_field_info"),
-        public_info_table=str(payload.get("public_info_table", "public_information_rh") or "public_information_rh"),
+        public_info_table=str(payload.get("public_info_table", "") or ""),
     )
 
 
@@ -543,7 +544,6 @@ def db_validation_settings_to_dict(settings: DbValidationSettings) -> dict[str, 
         "field_mapping_source_id": settings.field_mapping_source_id,
         "baseinfo_table": settings.baseinfo_table,
         "field_info_table": settings.field_info_table,
-        "public_info_table": settings.public_info_table,
     }
 
 

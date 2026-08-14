@@ -1,8 +1,26 @@
 from datetime import date
 import re
 
-from auto_check.db_validation.rules.basic import run_basic_rules
 from auto_check.db_validation.rules.common import area_not_county_level
+from tests.db_validation_rule_fixtures import run_basic_rules
+
+
+def test_zg12_rule8_detail_uses_zg12_start_date_not_zg06_transfer_start():
+    rows = run_basic_rules(
+        "ZG12",
+        date(2026, 5, 31),
+        [{
+            "projcode": "P1",
+            "incode": "D1",
+            "startdate": "2026-05-09",
+            "lsp": "10",
+            "industry": "C",
+        }],
+        [],
+    )
+
+    result = next(row for row in rows if row.mark.endswith("Zg12_Rule8"))
+    assert result.detail.endswith("_2026-05-09")
 
 
 def test_zg04_share_cross_period_uses_projshare_field():
@@ -112,6 +130,26 @@ def test_zg05_legacy_balance_rules_are_triggerable_from_database_rows():
         },
     )
     assert {"Zg05_Rule1", "Zg05_Rule2", "Zg05_Rule3", "Zg05_Rule4"}.issubset({_result_rule_id(row) for row in rows})
+
+
+def test_zg05_rule3_prefers_mapped_official_indicator_name():
+    rows = run_basic_rules(
+        "ZG05",
+        date(2026, 5, 31),
+        [{
+            "产品代码": "P2",
+            "币种": "BWB",
+            "数据类型": "3",
+            "A5100_除回购和拆借外贷款": "100",
+            "a5100": "0",
+        }],
+        [],
+        related_rows={
+            "ZG07": [{"产品代码": "P2", "贷款余额折人民币": "80"}],
+        },
+    )
+
+    assert any(_result_rule_id(row) == "Zg05_Rule3" for row in rows)
 
 
 def test_zg05_currency_rules_ignore_metadata_alias_columns():
@@ -227,6 +265,28 @@ def test_zg04_rule1_uses_legacy_principal_components_without_summary_or_cross_or
     details = [row.detail for row in rows if _result_rule_id(row) == "Zg04_Rule1"]
     assert not any("P1" in detail for detail in details)
     assert not any("P2" in detail for detail in details)
+
+
+def test_zg04_rule1_prefers_mapped_zg05_principal_indicator_names():
+    rows = run_basic_rules(
+        "ZG04",
+        date(2026, 5, 31),
+        [_zg04_row("P1", areacode="000000", clientkind="1", moneytype="BWB", projshare="100")],
+        [],
+        related_rows={
+            "ZG05": [{
+                "产品代码": "P1",
+                "币种": "BWB",
+                "数据类型": "3",
+                "C1110_住户": "60",
+                "C1210_住户": "40",
+                "c1110": "0",
+                "c1210": "0",
+            }],
+        },
+    )
+
+    assert not any(_result_rule_id(row) == "Zg04_Rule1" for row in rows)
 
 
 def test_zg04_share_cross_period_treats_missing_previous_as_zero():
@@ -468,11 +528,11 @@ def test_zg06_selected_rules_follow_legacy_conditions_and_output_format():
                 "issuername": "出让机构5",
                 "issuertype": "5",
                 "issuerindustry": "J",
-                "kjxgcybs202502271437111": "",
-                "lslybs202502271438481": "",
-                "phlybs202502271440121": "",
-                "ylcybs202502271441101": "",
-                "szjjhxcybs202502271442061": "",
+                "科技相关产业标识": "",
+                "绿色领域标识": "",
+                "普惠领域标识": "",
+                "养老产业标识": "",
+                "数字经济核心产业标识": "",
             },
         ],
         [],
@@ -482,9 +542,29 @@ def test_zg06_selected_rules_follow_legacy_conditions_and_output_format():
     assert marks == ["Zg06_Rule3", "Zg06_Rule3", "Zg06_Rule6", "Zg06_Rule9", "Zg06_Rule14"]
     assert rows[2].value1 == "利率水平:0.00000"
     assert rows[2].value2 == ""
+    assert "_B4_" in rows[3].detail
     assert rows[3].value2 == "转让展期到期日期:nan"
     assert rows[4].detail.endswith("_5_nan_nan_nan")
     assert rows[4].value1 == "养老产业标识:nan"
+
+
+def test_zg06_uses_official_asset_beneficial_rights_inner_code_name():
+    rows = run_basic_rules(
+        "ZG06",
+        date(2026, 5, 31),
+        [{
+            "产品代码": "P1",
+            "资产收益权内部编码": "B1",
+            "基础资产出让机构名称": "出让机构1",
+            "基础资产出让机构类型": "1",
+            "基础资产出让机构行业": "1",
+            "转让预计终止日期": "2099-12-31",
+        }],
+        [],
+    )
+
+    result = next(row for row in rows if _result_rule_id(row) == "Zg06_Rule9")
+    assert result.detail == "产品代码_资产收益权内部编码_基础资产出让机构名称:P1_B1_出让机构1"
 
 
 def test_zg06_remaining_legacy_rules_are_triggerable_from_database_rows():
@@ -497,7 +577,7 @@ def test_zg06_remaining_legacy_rules_are_triggerable_from_database_rows():
         _zg06_row("P8", "B8", transferamtcny="100"),
         _zg06_row("P10", "B10", issuercode="DUP", issuername="A"),
         _zg06_row("P10", "B11", issuercode="DUP", issuername="B"),
-        _zg06_row("P13", "B13", issuertype="1", kjxgcybs202502271437111="", lslybs202502271438481="", phlybs202502271440121="", ylcybs202502271441101="", szjjhxcybs202502271442061=""),
+        _zg06_row("P13", "B13", issuertype="1", 科技相关产业标识="", 绿色领域标识="", 普惠领域标识="", 养老产业标识="", 数字经济核心产业标识=""),
         _zg06_row("P15", "B15", taboutflg="1"),
         _zg06_row("P16", "B16", buybackflg="1"),
     ]
@@ -554,11 +634,11 @@ def _zg06_row(
     transferamtcny="100",
     taboutflg="2",
     buybackflg="2",
-    kjxgcybs202502271437111="1",
-    lslybs202502271438481="1",
-    phlybs202502271440121="1",
-    ylcybs202502271441101="1",
-    szjjhxcybs202502271442061="1",
+    科技相关产业标识="1",
+    绿色领域标识="1",
+    普惠领域标识="1",
+    养老产业标识="1",
+    数字经济核心产业标识="1",
 ):
     return {
         "projcode": productcode,
@@ -575,11 +655,11 @@ def _zg06_row(
         "transferamtcny": transferamtcny,
         "taboutflg": taboutflg,
         "buybackflg": buybackflg,
-        "kjxgcybs202502271437111": kjxgcybs202502271437111,
-        "lslybs202502271438481": lslybs202502271438481,
-        "phlybs202502271440121": phlybs202502271440121,
-        "ylcybs202502271441101": ylcybs202502271441101,
-        "szjjhxcybs202502271442061": szjjhxcybs202502271442061,
+        "科技相关产业标识": 科技相关产业标识,
+        "绿色领域标识": 绿色领域标识,
+        "普惠领域标识": 普惠领域标识,
+        "养老产业标识": 养老产业标识,
+        "数字经济核心产业标识": 数字经济核心产业标识,
     }
 
 
@@ -742,6 +822,22 @@ def test_zg07_legacy_detail_rules_are_triggerable_from_database_rows():
         "Zg07_Rule17",
         "Zg07_Rule18",
     }.issubset(rule_ids)
+
+
+def test_zg07_rule18_uses_original_issuer_field_in_presence_check():
+    rows = run_basic_rules(
+        "ZG07",
+        date(2026, 5, 31),
+        [{
+            "projcode": "P1",
+            "ioucode": "IOU1",
+            "loantype": "4",
+            "issuercode": "91320100123456789X",
+        }],
+        [],
+    )
+
+    assert any(_result_rule_id(row) == "Zg07_Rule18" for row in rows)
 
 
 def test_zg07_rule11_uses_legacy_fs02_extension_status_and_loan_type_exception():
@@ -1166,6 +1262,33 @@ def test_zg09_zg10_template_cross_checks_report_when_matching_template_table_dif
     assert [row.mark for row in zg10_rows] == ["20260531-ORG001-ZG10-Zg10_Rule1"]
 
 
+def test_zg09_uses_configured_template_indicator_for_balance_cross_check():
+    rows = run_basic_rules(
+        "ZG09",
+        date(2026, 5, 31),
+        [{
+            "issuercode": "ORG001",
+            "org_name": "Org One",
+            "manager_org": "Manager One",
+            "cpkj": "1",
+            "fb00001": "100000",
+        }],
+        [],
+        related_rows={
+            "TEMPLATE": [{
+                "template_table": "balance_sheet_info",
+                "field_name": "f1",
+                "field_value": "20",
+            }]
+        },
+        enable_template_check=True,
+    )
+
+    assert [row.mark for row in rows] == ["20260531-ORG001-ZG09-Zg09_Rule3"]
+    assert rows[0].value1.endswith(":20.0")
+    assert rows[0].value2.endswith(":10.0")
+
+
 def _zg08_row(
     productcode,
     debtproj,
@@ -1228,7 +1351,7 @@ def test_zg13_financial_institution_code_rules_use_legacy_name_exceptions():
     assert rows[0].value2 == "标的企业名称:光大证券股份有限公司"
 
 
-def test_zg13_public_info_contract_end_date_rule_matches_legacy_no_output():
+def test_zg13_public_info_contract_end_date_rule_matches_legacy_output():
     rows = run_basic_rules(
         "ZG13",
         date(2026, 5, 31),
@@ -1238,28 +1361,21 @@ def test_zg13_public_info_contract_end_date_rule_matches_legacy_no_output():
                 "qycode": "91310000100019382F",
                 "qyname": "目标企业",
                 "pin_mpactid": "EQ15",
-                "predate": "2028-01-01",
-                "cgbl": "10",
-            },
-            {
-                "projcode": "P16",
-                "qycode": "91310000100019382F",
-                "qyname": "目标企业",
-                "pin_mpactid": "EQ16",
-                "predate": "9999-12-31",
-                "cgbl": "10",
+                "predate": "2099-12-31",
+                "holdrate": "10",
             },
         ],
         [],
         related_rows={
             "PUBLIC_INFO": [
-                {"产品代码": "P15", "产品预计终止日期": "2027-12-31", "信息类型名称": "变更资管产品基本信息", "发行机构代码": "D1003732000014"},
-                {"产品代码": "P16", "产品预计终止日期": "2027-12-31", "信息类型名称": "变更资管产品基本信息", "发行机构代码": "D1003832000015"},
+                {"产品代码": "P15", "产品预计终止日期": "9999-12-31", "信息类型名称": "变更资管产品基本信息", "发行机构代码": "D1003632000013"},
             ]
         },
     )
 
-    assert not any(row.mark.endswith("Zg13_Rule9") for row in rows)
+    result = next(row for row in rows if row.mark.endswith("Zg13_Rule9"))
+    assert result.value1 == "合同预计终止日期:2099-12-31"
+    assert result.value2 == "产品预计终止日期:9999-12-31"
 
 
 def test_zg13_inner_code_prefers_pin_mpactid_over_innercode():
@@ -1390,6 +1506,28 @@ def test_zg13_balance_rules_use_legacy_zg05_equity_fields_and_zg13_amount_aliase
                 {"projcode": "P1", "moneytype": "BWB", "a7310": "100", "ad200": "999"},
                 {"projcode": "P2", "moneytype": "BWB", "a7320": "80", "ad200": "999"},
             ]
+        },
+    )
+
+    rule_ids = {_result_rule_id(row) for row in rows}
+    assert "Zg13_Rule10" not in rule_ids
+    assert "Zg13_Rule11" not in rule_ids
+
+
+def test_zg13_balance_rules_prefer_mapped_official_zg05_indicator_names():
+    rows = run_basic_rules(
+        "ZG13",
+        date(2026, 5, 31),
+        [
+            _zg13_row("P1", "Q1", "I1", debtproj="A7310", qymoneycny="100"),
+            _zg13_row("P2", "Q2", "I2", debtproj="A7320", qymoneycny="80"),
+        ],
+        [],
+        related_rows={
+            "ZG05": [
+                {"产品代码": "P1", "币种": "BWB", "A7310_非金融企业股权": "100", "a7310": "0"},
+                {"产品代码": "P2", "币种": "BWB", "A7320_金融机构股权": "80", "a7320": "0"},
+            ],
         },
     )
 

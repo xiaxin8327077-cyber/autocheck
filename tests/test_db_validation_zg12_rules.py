@@ -1,6 +1,6 @@
 from datetime import date
 
-from auto_check.db_validation.rules.basic import run_basic_rules
+from tests.db_validation_rule_fixtures import run_basic_rules
 
 
 def test_zg12_all_legacy_rules_are_triggerable_from_database_rows():
@@ -57,6 +57,28 @@ def test_zg12_all_legacy_rules_are_triggerable_from_database_rows():
         "Zg12_Rule17",
         "Zg12_Rule18",
     }.issubset(rule_ids)
+
+
+def test_zg12_rule16_prefers_mapped_official_zg05_indicator_name():
+    rows = run_basic_rules(
+        "ZG12",
+        date(2026, 5, 31),
+        [{
+            "产品代码": "P14",
+            "除资产收益权外其他债权余额折人民币": "100",
+        }],
+        [],
+        related_rows={
+            "ZG05": [{
+                "产品代码": "P14",
+                "币种": "BWB",
+                "AD200_除资产收益权外其他债权": "100",
+                "ad200": "0",
+            }],
+        },
+    )
+
+    assert not any(_result_rule_id(row) == "Zg12_Rule16" for row in rows)
 
 
 def _zg12_row(

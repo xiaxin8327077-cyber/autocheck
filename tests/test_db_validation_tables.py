@@ -1,7 +1,7 @@
 from datetime import date
 
 from auto_check.db_validation.tables import (
-    ZG_TABLES,
+    ZG_CODES,
     default_report_date,
     previous_period,
     previous_table_name,
@@ -9,10 +9,10 @@ from auto_check.db_validation.tables import (
 )
 
 
-def test_zg_table_mapping_contains_13_tables():
-    assert len(ZG_TABLES) == 13
-    assert ZG_TABLES["ZG01"] == "zgxgzh_baseinfo_zg01_26"
-    assert ZG_TABLES["ZG13"] == "zgzgzh_zg13"
+def test_zg_table_catalog_contains_13_logical_codes_without_physical_names():
+    assert len(ZG_CODES) == 13
+    assert ZG_CODES[0] == "ZG01"
+    assert ZG_CODES[-1] == "ZG13"
 
 
 def test_default_report_date_is_previous_month_end():

@@ -229,10 +229,24 @@ const dbValidationTemplateClassificationId = document.getElementById("dbValidati
 const dbValidationMetadataSource = document.getElementById("dbValidationMetadataSource");
 const dbValidationBaseinfoTable = document.getElementById("dbValidationBaseinfoTable");
 const dbValidationFieldInfoTable = document.getElementById("dbValidationFieldInfoTable");
-const dbValidationPublicInfoTable = document.getElementById("dbValidationPublicInfoTable");
 const dbValidationSettingsStatus = document.getElementById("dbValidationSettingsStatus");
 const saveDbValidationSettingsBtn = document.getElementById("saveDbValidationSettingsBtn");
 const dbValidationRefreshFieldMappingBtn = document.getElementById("dbValidationRefreshFieldMappingBtn");
+const dbValidationViewTableMappingBtn = document.getElementById("dbValidationViewTableMappingBtn");
+const dbValidationViewFieldMappingBtn = document.getElementById("dbValidationViewFieldMappingBtn");
+const dbValidationViewCrossTableMappingBtn = document.getElementById("dbValidationViewCrossTableMappingBtn");
+const dbValidationMappingOverlay = document.getElementById("dbValidationMappingOverlay");
+const dbValidationMappingClose = document.getElementById("dbValidationMappingClose");
+const dbValidationMappingSummary = document.getElementById("dbValidationMappingSummary");
+const dbValidationMappingHead = document.getElementById("dbValidationMappingHead");
+const dbValidationMappingTableBody = document.getElementById("dbValidationMappingTableBody");
+const dbValidationMappingTitle = document.getElementById("dbValidationMappingTitle");
+const dbValidationMappingFilter = document.getElementById("dbValidationMappingFilter");
+const dbValidationMappingFilterCount = document.getElementById("dbValidationMappingFilterCount");
+const dbValidationMappingQuickFilters = document.getElementById("dbValidationMappingQuickFilters");
+let dbValidationMappingPayload = { tables: [], fields: [], cross_tables: [] };
+let dbValidationMappingView = "table";
+let dbValidationMappingQuickFilter = "all";
 const flowModalOverlay = document.getElementById("flowModalOverlay");
 const flowModalClose = document.getElementById("flowModalClose");
 const flowProgressIcon = document.getElementById("flowProgressIcon");
@@ -10527,16 +10541,27 @@ function dbValidationFieldMappingStatusText(status = {}) {
     return `字段映射刷新失败：${status.last_error}`;
   }
   if (!status.initialized) {
-    return "字段映射未初始化";
+    return "字段映射未初始化，请先点击「刷新映射」";
   }
   const sourceText = status.refresh_source === "auto" ? "自动刷新" : "手动刷新";
-  const refreshedAt = status.refreshed_at ? `，${status.refreshed_at}` : "";
+  const refreshedAt = status.refreshed_at ? ` ${String(status.refreshed_at).replace(/\.\d+$/, "").replace("T", " ")}` : "";
   const tableCount = Number(status.table_count || 0);
+  const fieldCount = Number(status.field_count || 0);
+  const mappedCount = Number(status.mapped_field_count || 0);
+  const unmappedCount = Number(status.unmapped_field_count || 0);
+  const requiredMissingCount = Number(status.required_missing_count || 0);
+  const missingPhysicalCount = Number(status.missing_physical_count || 0);
+  const totalFieldCount = fieldCount + requiredMissingCount + missingPhysicalCount;
+  const totalUnmappedCount = unmappedCount + requiredMissingCount + missingPhysicalCount;
   const expectedTableCount = Array.isArray(dbValidationTables) ? dbValidationTables.length : 0;
-  const coverageHint = expectedTableCount && tableCount < expectedTableCount
-    ? `；少于系统内置表单 ${tableCount}/${expectedTableCount} 张，请检查字段映射数据源、baseinfo/field_info 或筛选条件`
-    : "";
-  return `字段映射已加载：${tableCount} 张表，${status.field_count || 0} 个字段，未映射 ${status.unmapped_field_count || 0} 个字段，${sourceText}${refreshedAt}${coverageHint}`;
+  const tableHint = expectedTableCount && tableCount < expectedTableCount
+    ? `（${tableCount}/${expectedTableCount} 张表，少于系统内置表单，请检查字段映射数据源、baseinfo/field_info 或筛选条件）`
+    : `（${tableCount} 张表）`;
+  const parts = [`已映射 ${mappedCount}`, `未映射 ${totalUnmappedCount}`];
+  if (requiredMissingCount > 0) parts.push(`必需缺失 ${requiredMissingCount}`);
+  if (missingPhysicalCount > 0) parts.push(`配置不存在 ${missingPhysicalCount}`);
+  const fieldHint = `${totalFieldCount} 个业务字段（${parts.join('，')}）`;
+  return `映射完成${tableHint}，${fieldHint}，${sourceText}${refreshedAt}`;
 }
 
 function renderDbValidationFieldMappingStatus(status = {}, prefix = "") {
@@ -10557,7 +10582,6 @@ function renderDbValidationSettings(settings = {}, dataSources = [], tables = []
   }
   if (dbValidationBaseinfoTable) dbValidationBaseinfoTable.value = settings.baseinfo_table || "xt_reg_table_baseinfo";
   if (dbValidationFieldInfoTable) dbValidationFieldInfoTable.value = settings.field_info_table || "xt_reg_table_field_info";
-  if (dbValidationPublicInfoTable) dbValidationPublicInfoTable.value = settings.public_info_table || "public_information_rh";
   renderDbValidationTables(tables);
   if (fieldMappingStatus) renderDbValidationFieldMappingStatus(fieldMappingStatus);
 }
@@ -10586,6 +10610,22 @@ function renderDbValidationSettingsError(message = "逐笔校验配置加载失�
   }
 }
 
+async function loadDbValidationMappingPayload() {
+  try {
+    const payload = await api("/api/tools/db-validation/field-mapping");
+    dbValidationMappingPayload = {
+      tables: payload.tables || [],
+      fields: payload.fields || [],
+      cross_tables: payload.cross_tables || [],
+    };
+    updateDbValidationMappingEntryDots();
+    return payload;
+  } catch (error) {
+    console.warn("映射关系状态加载失败", error);
+    return null;
+  }
+}
+
 async function loadDbValidationSettings() {
   if (!toolCardDbValidation && !dbValidationMetadataSource) return;
   renderDbValidationSettingsLoading();
@@ -10598,6 +10638,7 @@ async function loadDbValidationSettings() {
       payload.default_report_date || "",
       payload.field_mapping || {}
     );
+    await loadDbValidationMappingPayload();
     return payload;
   } catch (e) {
     console.error("数据库校验配置加载失败", e);
@@ -10635,7 +10676,6 @@ async function saveDbValidationSettings(options = {}) {
         field_mapping_source_id: dbValidationMetadataSource?.value || "",
         baseinfo_table: (dbValidationBaseinfoTable?.value || "").trim() || "xt_reg_table_baseinfo",
         field_info_table: (dbValidationFieldInfoTable?.value || "").trim() || "xt_reg_table_field_info",
-        public_info_table: (dbValidationPublicInfoTable?.value || "").trim() || "public_information_rh",
       }),
     });
     renderDbValidationSettings(
@@ -10643,10 +10683,10 @@ async function saveDbValidationSettings(options = {}) {
       dbValidationDataSources,
       dbValidationTables,
       dbValidationReportDate?.value || "",
-      payload.field_mapping || {}
+      refreshMapping ? (payload.field_mapping || {}) : null
     );
     if (refreshMapping) {
-      if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = quiet ? "配置已保存，正在刷新字段映射..." : "已保存，正在刷新字段映射...";
+      if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = "配置已保存，正在刷新字段映射，请稍候...";
       const refreshPayload = await api("/api/tools/db-validation/field-mapping/refresh", { method: "POST" });
       const status = refreshPayload.field_mapping || {};
       renderDbValidationFieldMappingStatus(status, status.last_error ? "" : "已保存并刷新。");
@@ -10657,7 +10697,7 @@ async function saveDbValidationSettings(options = {}) {
       }
       return { ...payload, field_mapping: status };
     }
-    renderDbValidationFieldMappingStatus(payload.field_mapping || {}, quiet ? "配置已保存。" : "已保存。");
+    if (!quiet) renderDbValidationFieldMappingStatus(payload.field_mapping || {}, "已保存。");
     if (!quiet) showToast("数据库校验配置已保存", "success");
     return payload;
   } catch (e) {
@@ -10672,12 +10712,20 @@ async function saveDbValidationSettings(options = {}) {
 
 async function refreshDbValidationFieldMapping() {
   if (!dbValidationMetadataSource) return;
-  if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = "保存配置并刷新字段映射...";
-  if (dbValidationRefreshFieldMappingBtn) dbValidationRefreshFieldMappingBtn.disabled = true;
+  if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = "正在刷新字段映射，请稍候...";
+  if (dbValidationRefreshFieldMappingBtn) {
+    dbValidationRefreshFieldMappingBtn.disabled = true;
+    dbValidationRefreshFieldMappingBtn.setAttribute("aria-busy", "true");
+  }
+  [dbValidationViewTableMappingBtn, dbValidationViewFieldMappingBtn, dbValidationViewCrossTableMappingBtn].forEach(button => { if (button) button.disabled = true; });
   try {
-    await saveDbValidationSettings({ quiet: true, refreshMapping: false });
     const payload = await api("/api/tools/db-validation/field-mapping/refresh", { method: "POST" });
     const status = payload.field_mapping || {};
+    const detail = await api("/api/tools/db-validation/field-mapping");
+    dbValidationMappingPayload = {
+      tables: detail.tables || [], fields: detail.fields || [], cross_tables: detail.cross_tables || [],
+    };
+    updateDbValidationMappingEntryDots();
     renderDbValidationFieldMappingStatus(status, status.last_error ? "" : "已刷新。");
     if (status.last_error) {
       showToast("逐笔字段映射刷新失败", "error");
@@ -10688,8 +10736,338 @@ async function refreshDbValidationFieldMapping() {
     if (dbValidationSettingsStatus) dbValidationSettingsStatus.textContent = e.message;
     showToast("刷新失败: " + e.message, "error");
   } finally {
-    if (dbValidationRefreshFieldMappingBtn) dbValidationRefreshFieldMappingBtn.disabled = false;
+    if (dbValidationRefreshFieldMappingBtn) {
+      dbValidationRefreshFieldMappingBtn.disabled = false;
+      dbValidationRefreshFieldMappingBtn.removeAttribute("aria-busy");
+    }
+    [dbValidationViewTableMappingBtn, dbValidationViewFieldMappingBtn, dbValidationViewCrossTableMappingBtn].forEach(button => { if (button) button.disabled = false; });
   }
+}
+
+async function openDbValidationMappingView(view = "table") {
+  if (!dbValidationMappingOverlay) return;
+  dbValidationMappingView = view;
+  dbValidationMappingQuickFilter = "all";
+  if (dbValidationMappingFilter) dbValidationMappingFilter.value = "";
+  try {
+    const payload = await api("/api/tools/db-validation/field-mapping");
+    const status = payload.field_mapping || {};
+    dbValidationMappingPayload = {
+      tables: payload.tables || [],
+      fields: payload.fields || [],
+      cross_tables: payload.cross_tables || [],
+    };
+    updateDbValidationMappingEntryDots();
+    renderDbValidationMappingRows();
+    dbValidationMappingOverlay.classList.add("active");
+  } catch (error) {
+    showToast("读取映射关系失败: " + error.message, "error");
+  }
+}
+
+function showCrossTableMappingPrompt(templateTableValue, templateFieldValue) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("crossTableMappingPromptModal");
+    const tableInput = document.getElementById("promptTemplateTableInput");
+    const fieldInput = document.getElementById("promptTemplateFieldInput");
+    const errorEl = document.getElementById("crossTableMappingPromptError");
+    const okBtn = document.getElementById("crossTableMappingPromptOk");
+    const cancelBtn = document.getElementById("crossTableMappingPromptCancel");
+    tableInput.value = templateTableValue || "";
+    fieldInput.value = templateFieldValue || "";
+    errorEl.hidden = true;
+    modal.hidden = false;
+    setTimeout(() => tableInput.focus(), 0);
+
+    const cleanup = (value) => {
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      tableInput.onkeydown = null;
+      fieldInput.onkeydown = null;
+      tableInput.oninput = null;
+      fieldInput.oninput = null;
+      modal.classList.add("closing");
+      setTimeout(() => {
+        modal.hidden = true;
+        modal.classList.remove("closing");
+      }, 200);
+      resolve(value);
+    };
+    const clearError = () => {
+      errorEl.hidden = true;
+      tableInput.removeAttribute("aria-invalid");
+      fieldInput.removeAttribute("aria-invalid");
+    };
+    const submit = () => {
+      const templateTable = tableInput.value.trim();
+      const templateField = fieldInput.value.trim();
+      if (!templateTable || !templateField) {
+        errorEl.textContent = "模板表和模板字段都不能为空";
+        errorEl.hidden = false;
+        if (!templateTable) tableInput.setAttribute("aria-invalid", "true");
+        if (!templateField) fieldInput.setAttribute("aria-invalid", "true");
+        (!templateTable ? tableInput : fieldInput).focus();
+        return;
+      }
+      cleanup({ templateTable, templateField });
+    };
+    const handleKeydown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        submit();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup(null);
+      }
+    };
+    tableInput.oninput = clearError;
+    fieldInput.oninput = clearError;
+    tableInput.onkeydown = handleKeydown;
+    fieldInput.onkeydown = handleKeydown;
+    okBtn.onclick = submit;
+    cancelBtn.onclick = () => cleanup(null);
+  });
+}
+
+function dbValidationMappingTargetKey(item) {
+  return `${item.relation_type}|${item.logical_code}|${item.scope_code || ""}`;
+}
+
+const _MAPPING_HEADERS = {
+  table: ["表类型", "逻辑表", "物理表", "修改"],
+  field: ["逻辑表", "中文名", "映射字段", "修改"],
+  cross_table: ["逐笔表", "逐笔字段", "模板表", "模板字段", "修改"],
+};
+
+function dbValidationMappingHasDifference(item, view) {
+  if (view === "table") return !!item.override_table_name && item.override_table_name !== item.automatic_table_name;
+  if (view === "field") return !!item.override_field_name && item.override_field_name !== item.automatic_field_name;
+  return (item.difference_fields || []).length > 0;
+}
+
+function dbValidationMappingHasOverride(item, view) {
+  if (view === "table") return !!item.override_table_name;
+  if (view === "field") return !!item.override_field_name;
+  return !!(item.override_template_table_name || item.override_template_field_name);
+}
+
+function dbValidationMappingIsMapped(item) {
+  return String(item.mapping_status || "mapped") === "mapped";
+}
+
+function dbValidationMappingIsUnmapped(item) {
+  return String(item.mapping_status || "mapped") !== "mapped";
+}
+
+function dbValidationMappingIsSemantic(item) {
+  return String(item.status_message || "").startsWith("语义匹配：");
+}
+
+function dbValidationMappingRowsForView(view = dbValidationMappingView) {
+  return view === "cross_table" ? dbValidationMappingPayload.cross_tables : dbValidationMappingPayload[`${view}s`];
+}
+
+function dbValidationMappingSummaryText(view, rows) {
+  const total = rows.length;
+  const mapped = rows.filter(dbValidationMappingIsMapped).length;
+  const unmapped = rows.filter(dbValidationMappingIsUnmapped).length;
+  const manual = rows.filter(item => dbValidationMappingHasOverride(item, view)).length;
+  if (view === "table") {
+    return `表 ${total} 个，已映射 ${mapped}，未映射 ${unmapped}，人工修改 ${manual}`;
+  }
+  if (view === "field") {
+    const requiredMissing = rows.filter(item => item.mapping_status === "required_missing").length;
+    const missingPhysical = rows.filter(item => item.mapping_status === "missing_physical").length;
+    return `字段 ${total} 个，已映射 ${mapped}，未映射 ${unmapped}，必需缺失 ${requiredMissing}，配置不存在 ${missingPhysical}，人工修改 ${manual}`;
+  }
+  const different = rows.filter(item => dbValidationMappingHasDifference(item, view)).length;
+  return `跨表映射 ${total} 个，已映射 ${mapped}，未映射 ${unmapped}，人工修改 ${manual}，与自动映射不同 ${different}`;
+}
+
+function dbValidationMappingQuickFilterOptions(view) {
+  const common = [
+    ["all", "全部"],
+    ["mapped", "已映射"],
+    ["unmapped", "未映射"],
+    ["manual", "人工修改"],
+    ["different", "与自动映射不同"],
+  ];
+  if (view === "field") common.splice(3, 0, ["required_missing", "必需缺失"]);
+  if (view === "field") common.splice(4, 0, ["semantic", "语义匹配"]);
+  return common;
+}
+
+function dbValidationMappingMatchesQuickFilter(item, view, filter) {
+  if (filter === "mapped") return dbValidationMappingIsMapped(item);
+  if (filter === "unmapped") return dbValidationMappingIsUnmapped(item);
+  if (filter === "required_missing") return item.mapping_status === "required_missing";
+  if (filter === "semantic") return dbValidationMappingIsSemantic(item);
+  if (filter === "manual") return dbValidationMappingHasOverride(item, view);
+  if (filter === "different") return dbValidationMappingHasDifference(item, view);
+  return true;
+}
+
+function renderDbValidationMappingQuickFilters() {
+  if (!dbValidationMappingQuickFilters) return;
+  dbValidationMappingQuickFilters.innerHTML = dbValidationMappingQuickFilterOptions(dbValidationMappingView).map(([value, label]) => (
+    `<button type="button" class="db-validation-mapping-filter-chip${dbValidationMappingQuickFilter === value ? " active" : ""}" data-mapping-filter="${value}" aria-pressed="${dbValidationMappingQuickFilter === value}">${label}</button>`
+  )).join("");
+}
+
+function updateDbValidationMappingEntryDots() {
+  const entries = [
+    [dbValidationViewTableMappingBtn, "table", dbValidationMappingPayload.tables],
+    [dbValidationViewFieldMappingBtn, "field", dbValidationMappingPayload.fields],
+    [dbValidationViewCrossTableMappingBtn, "cross_table", dbValidationMappingPayload.cross_tables],
+  ];
+  entries.forEach(([button, view, rows]) => {
+    if (!button) return;
+    const hasDifference = (rows || []).some(item => dbValidationMappingHasDifference(item, view));
+    button.classList.toggle("mapping-has-difference", hasDifference);
+    button.setAttribute("aria-label", `${button.textContent}${hasDifference ? "，存在刷新值与手工值不一致" : ""}`);
+  });
+}
+
+function dbValidationMappingSearchText(item, view) {
+  if (view === "table") return [item.relation_type, item.logical_code, item.effective_table_name].join(" ");
+  if (view === "field") return [item.logical_code, item.chinese_name, item.effective_field_name].join(" ");
+  return [item.logical_code, item.effective_detail_field_name, item.effective_template_table_name, item.effective_template_field_name].join(" ");
+}
+
+function dbValidationMappingDifferenceTitle(item, view) {
+  const refreshed = item.refreshed_at ? `；最后刷新：${item.refreshed_at}` : "";
+  if (view === "table") return `自动识别：${item.automatic_table_name || "缺失"}；当前使用：${item.effective_table_name || "缺失"}${refreshed}`;
+  if (view === "field") return `自动识别：${item.automatic_field_name || "缺失"}；当前使用：${item.effective_field_name || "缺失"}${refreshed}`;
+  return [
+    `逐笔字段 自动=${item.automatic_detail_field_name || "缺失"} 当前=${item.effective_detail_field_name || "缺失"}`,
+    `模板表 自动=${item.automatic_template_table_name || "缺失"} 当前=${item.effective_template_table_name || "缺失"}`,
+    `模板字段 自动=${item.automatic_template_field_name || "缺失"} 当前=${item.effective_template_field_name || "缺失"}`,
+    item.refreshed_at ? `最后刷新=${item.refreshed_at}` : "",
+  ].filter(Boolean).join("；");
+}
+
+function dbValidationMappingDifferenceBadge(item, view, differenceField) {
+  if (!dbValidationMappingHasDifference(item, view)) return "";
+  if (view === "cross_table" && !(item.difference_fields || []).includes(differenceField)) return "";
+  const missing = item.difference_status === "automatic_missing";
+  const label = missing ? "自动映射缺失" : "与自动映射不同";
+  return `<span class="mapping-difference-badge ${missing ? "is-missing" : ""}" title="${escapeHtml(dbValidationMappingDifferenceTitle(item, view))}" aria-label="${label}"></span>`;
+}
+
+function dbValidationMappingValueCell(value, item, view, differenceField) {
+  const safe = escapeHtml(value || "-");
+  const badge = dbValidationMappingDifferenceBadge(item, view, differenceField);
+  if (!badge) return `<code class="mapping-value" title="${safe}">${safe}</code>`;
+  return `<span class="mapping-value-wrap"><code class="mapping-value" title="${safe}">${safe}</code>${badge}</span>`;
+}
+
+function dbValidationMappingSemanticBadge(item) {
+  if (!dbValidationMappingIsSemantic(item)) return "";
+  return `<span class="mapping-semantic-badge" title="${escapeHtml(item.status_message || "语义匹配")}" aria-label="语义匹配"></span>`;
+}
+
+function renderDbValidationMappingRows() {
+  if (!dbValidationMappingTableBody || !dbValidationMappingHead) return;
+  const mappingTableEl = dbValidationMappingTableBody.closest("table");
+  if (mappingTableEl) mappingTableEl.className = `result-table db-validation-history-table db-validation-mapping-table mapping-view-${dbValidationMappingView}`;
+  const headers = _MAPPING_HEADERS[dbValidationMappingView];
+  dbValidationMappingHead.innerHTML = "<tr>" + headers.map(h => `<th>${h}</th>`).join("") + "</tr>";
+  const allRows = dbValidationMappingRowsForView();
+  const query = String(dbValidationMappingFilter?.value || "").trim().toLowerCase();
+  const quickFiltered = allRows.filter(item => dbValidationMappingMatchesQuickFilter(item, dbValidationMappingView, dbValidationMappingQuickFilter));
+  const source = query ? quickFiltered.filter(item => dbValidationMappingSearchText(item, dbValidationMappingView).toLowerCase().includes(query)) : quickFiltered;
+  if (dbValidationMappingFilterCount) dbValidationMappingFilterCount.textContent = `${source.length} / ${allRows.length}`;
+  if (dbValidationMappingTitle) dbValidationMappingTitle.textContent = { table: "表映射", field: "字段映射", cross_table: "跨表映射" }[dbValidationMappingView];
+  if (dbValidationMappingSummary) dbValidationMappingSummary.textContent = dbValidationMappingSummaryText(dbValidationMappingView, allRows);
+  renderDbValidationMappingQuickFilters();
+  if (!source.length) {
+    dbValidationMappingTableBody.innerHTML = `<tr><td colspan="${headers.length}" class="empty">暂无匹配映射</td></tr>`;
+    return;
+  }
+  if (dbValidationMappingView === "cross_table") {
+    dbValidationMappingTableBody.innerHTML = source.map(item => {
+      const key = escapeHtml(`cross_table|${item.logical_code}|${item.scope_code || ""}`);
+      const hasOverride = !!(item.override_template_table_name || item.override_template_field_name);
+      return `<tr class="${dbValidationMappingHasDifference(item, "cross_table") ? "mapping-row-different" : ""}">
+        <td title="${escapeHtml(item.logical_code || "")}">${escapeHtml(item.logical_code || "")}</td>
+        <td>${dbValidationMappingValueCell(item.effective_detail_field_name, item, "cross_table", "detail_field")}</td>
+        <td>${dbValidationMappingValueCell(item.effective_template_table_name, item, "cross_table", "template_table")}</td>
+        <td>${dbValidationMappingValueCell(item.effective_template_field_name, item, "cross_table", "template_field")}</td>
+        <td><button type="button" class="btn-outline btn-sm db-validation-mapping-edit" data-kind="cross_table" data-target="${key}" data-name="${escapeHtml(item.mapping_code)}" data-detail-field="${escapeHtml(item.effective_detail_field_name)}" data-template-table="${escapeHtml(item.effective_template_table_name)}" data-template-field="${escapeHtml(item.effective_template_field_name)}">修改</button>${hasOverride ? ` <button type="button" class="btn-outline btn-sm db-validation-mapping-restore" data-kind="cross_table" data-target="${key}" data-name="${escapeHtml(item.mapping_code)}">恢复</button>` : ""}</td>
+      </tr>`;
+    }).join("");
+  } else if (dbValidationMappingView === "field") {
+    dbValidationMappingTableBody.innerHTML = source.map(item => {
+      const key = escapeHtml(dbValidationMappingTargetKey(item));
+      const name = escapeHtml(item.chinese_name || "");
+      const val = escapeHtml(item.effective_field_name || "");
+      const hasOverride = !!item.override_field_name;
+      return `<tr class="${dbValidationMappingHasDifference(item, "field") ? "mapping-row-different" : ""}">
+        <td title="${escapeHtml(item.logical_code || "")}">${escapeHtml(item.logical_code || "")}</td>
+        <td title="${escapeHtml(item.chinese_name || "未配置")}"><span class="mapping-semantic-wrap">${escapeHtml(item.chinese_name || "未配置")}${dbValidationMappingSemanticBadge(item)}</span></td>
+        <td>${dbValidationMappingValueCell(item.effective_field_name, item, "field", "field")}</td>
+        <td><button type="button" class="btn-outline btn-sm db-validation-mapping-edit" data-kind="field" data-target="${key}" data-name="${name}" data-value="${val}">修改</button>${hasOverride ? ` <button type="button" class="btn-outline btn-sm db-validation-mapping-restore" data-kind="field" data-target="${key}" data-name="${name}">恢复</button>` : ""}</td>
+      </tr>`;
+    }).join("");
+  } else {
+    const typeLabel = { detail: "逐笔", template: "模板", public_info: "公开信息" };
+    dbValidationMappingTableBody.innerHTML = source.map(item => {
+      const key = escapeHtml(dbValidationMappingTargetKey(item));
+      const val = escapeHtml(item.effective_table_name || "");
+      const hasOverride = !!item.override_table_name;
+      return `<tr class="${dbValidationMappingHasDifference(item, "table") ? "mapping-row-different" : ""}">
+        <td>${escapeHtml(typeLabel[item.relation_type] || item.relation_type || "")}</td>
+        <td title="${escapeHtml(item.logical_code || "")}">${escapeHtml(item.logical_code === "PUBLIC_INFO" ? "公开信息" : item.logical_code || "")}${item.scope_code ? `/${escapeHtml(item.scope_code)}` : ""}</td>
+        <td>${dbValidationMappingValueCell(item.effective_table_name, item, "table", "table")}</td>
+        <td><button type="button" class="btn-outline btn-sm db-validation-mapping-edit" data-kind="table" data-target="${key}" data-name="" data-value="${val}">修改</button>${hasOverride ? ` <button type="button" class="btn-outline btn-sm db-validation-mapping-restore" data-kind="table" data-target="${key}" data-name="">恢复</button>` : ""}</td>
+      </tr>`;
+    }).join("");
+  }
+}
+
+async function updateDbValidationMapping(button, restore = false) {
+  const [relationType, logicalCode, scopeCode] = String(button.dataset.target || "").split("|");
+  const chineseName = button.dataset.name || "";
+  let overrideValue = "";
+  if (!restore) {
+    const isField = button.dataset.kind === "field";
+    const isCrossTable = button.dataset.kind === "cross_table";
+    if (isCrossTable) {
+      const crossTableValue = await showCrossTableMappingPrompt(button.dataset.templateTable, button.dataset.templateField);
+      if (!crossTableValue) return;
+      const { templateTable, templateField } = crossTableValue;
+      overrideValue = JSON.stringify({ template_table: templateTable, template_field: templateField });
+    } else {
+    const promptTitle = isField ? "绑定中文到物理列" : "修改映射";
+    const promptLabel = isField
+      ? `请输入物理英文字段名（为「${chineseName || '该字段'}」指定物理列）`
+      : "请输入新的物理表名或英文字段名";
+    overrideValue = String(await showPrompt(promptTitle, promptLabel, { defaultValue: button.dataset.value || "", placeholder: "仅允许数据库标识符" }) || "").trim();
+    if (!overrideValue) return;
+    }
+  }
+  button.disabled = true;
+  try {
+    const payload = await api(`/api/tools/db-validation/field-mapping/${restore ? "restore" : "override"}`, {
+      method: "POST",
+      body: JSON.stringify({ mapping_kind: button.dataset.kind, relation_type: relationType, logical_code: logicalCode, scope_code: scopeCode, chinese_name: chineseName, override_value: overrideValue }),
+    });
+    dbValidationMappingPayload = {
+      tables: payload.tables || [],
+      fields: payload.fields || [],
+      cross_tables: payload.cross_tables || [],
+    };
+    updateDbValidationMappingEntryDots();
+    renderDbValidationMappingRows();
+    showToast(restore ? "已恢复自动映射" : "人工映射已保存", "success");
+  } catch (error) {
+    showToast(`${restore ? "恢复" : "保存"}失败：${error.message}`, "error");
+    button.disabled = false;
+  }
+}
+
+function closeDbValidationFieldMapping() {
+  dbValidationMappingOverlay?.classList.remove("active");
 }
 
 function appendDbValidationLog(message, type = "") {
@@ -10962,6 +11340,24 @@ dbValidationTableList?.addEventListener("change", (e) => {
 });
 saveDbValidationSettingsBtn?.addEventListener("click", saveDbValidationSettings);
 dbValidationRefreshFieldMappingBtn?.addEventListener("click", refreshDbValidationFieldMapping);
+[dbValidationViewTableMappingBtn, dbValidationViewFieldMappingBtn, dbValidationViewCrossTableMappingBtn].forEach(button => {
+  button?.addEventListener("click", () => openDbValidationMappingView(button.dataset.mappingView || "table"));
+});
+dbValidationMappingClose?.addEventListener("click", closeDbValidationFieldMapping);
+dbValidationMappingFilter?.addEventListener("input", renderDbValidationMappingRows);
+dbValidationMappingQuickFilters?.addEventListener("click", event => {
+  const button = event.target.closest("[data-mapping-filter]");
+  if (!button) return;
+  dbValidationMappingQuickFilter = button.dataset.mappingFilter || "all";
+  renderDbValidationMappingRows();
+});
+dbValidationMappingOverlay?.addEventListener("click", event => {
+  if (event.target === dbValidationMappingOverlay) closeDbValidationFieldMapping();
+  const edit = event.target.closest(".db-validation-mapping-edit");
+  const restore = event.target.closest(".db-validation-mapping-restore");
+  if (edit) updateDbValidationMapping(edit, false);
+  if (restore) updateDbValidationMapping(restore, true);
+});
 
 /* ===== Tools: flow chain execution ===== */
 function fillFlowSourceSelect(select, dataSources, selected = "") {

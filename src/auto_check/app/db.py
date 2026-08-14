@@ -58,9 +58,11 @@ class DatabaseClient:
         config: DataSourceConfig,
         *,
         query_logger: Callable[[str], None] | None = None,
+        connect_timeout_seconds: int | None = None,
     ):
         self.config = config
         self.query_logger = query_logger
+        self.connect_timeout_seconds = connect_timeout_seconds
 
     def fetch_all(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         ensure_select_only(sql)
@@ -169,24 +171,34 @@ class DatabaseClient:
         if self.config.db_type == "postgresql":
             import psycopg
 
-            connection = psycopg.connect(
-                host=self.config.host,
-                port=self.config.port,
-                dbname=self.config.database,
-                user=self.config.username,
-                password=self.config.password,
-            )
+            connect_kwargs: dict[str, Any] = {
+                "host": self.config.host,
+                "port": self.config.port,
+                "dbname": self.config.database,
+                "user": self.config.username,
+                "password": self.config.password,
+            }
+            if self.connect_timeout_seconds is not None:
+                connect_kwargs["connect_timeout"] = self.connect_timeout_seconds
+            connection = psycopg.connect(**connect_kwargs)
         elif self.config.db_type == "mysql":
             import pymysql
 
-            connection = pymysql.connect(
-                host=self.config.host,
-                port=self.config.port,
-                database=self.config.database,
-                user=self.config.username,
-                password=self.config.password,
-                charset="utf8mb4",
-            )
+            connect_kwargs = {
+                "host": self.config.host,
+                "port": self.config.port,
+                "database": self.config.database,
+                "user": self.config.username,
+                "password": self.config.password,
+                "charset": "utf8mb4",
+            }
+            if self.connect_timeout_seconds is not None:
+                connect_kwargs.update(
+                    connect_timeout=self.connect_timeout_seconds,
+                    read_timeout=self.connect_timeout_seconds,
+                    write_timeout=self.connect_timeout_seconds,
+                )
+            connection = pymysql.connect(**connect_kwargs)
         else:
             raise ValueError(f"Unsupported database type: {self.config.db_type}")
 
