@@ -1,12 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import sys
+
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 WEB_RESOURCE = ROOT / "src/auto_check/web"
 DATA_RESOURCE = ROOT / "src/auto_check/resources"
+sys.path.insert(0, str(SRC))
+MODULE_DATAS = collect_data_files('auto_check.modules')
+MODULE_HIDDEN_IMPORTS = collect_submodules('auto_check.modules')
 
 a = Analysis(
     [str(SRC / "auto_check" / "__main__.py")],
@@ -15,7 +21,7 @@ a = Analysis(
     datas=[
         (str(WEB_RESOURCE), "auto_check/web"),
         (str(DATA_RESOURCE), "auto_check/resources"),
-    ],
+    ] + MODULE_DATAS,
     hiddenimports=[
         'py7zr',
         'rarfile',
@@ -23,9 +29,11 @@ a = Analysis(
         'psycopg_binary',
         'psycopg.pq',
         'pymysql',
+        'sqlalchemy.dialects.mysql',
+        'sqlalchemy.dialects.mysql.pymysql',
         'auto_check.resources',
         'auto_check.resources.data',
-    ],
+    ] + MODULE_HIDDEN_IMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

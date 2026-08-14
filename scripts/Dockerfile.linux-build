@@ -49,7 +49,11 @@ RUN pyinstaller --noconfirm --onefile \
       --hidden-import pymysql \
       --hidden-import auto_check.resources \
       --hidden-import auto_check.resources.data \
+      --hidden-import sqlalchemy.dialects.mysql \
+      --hidden-import sqlalchemy.dialects.mysql.pymysql \
       --distpath /output \
       --workpath /build/work \
       --specpath /build \
       src/auto_check/__main__.py
+
+RUN /output/auto-check --package-smoke-test

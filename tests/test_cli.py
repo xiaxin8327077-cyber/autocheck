@@ -50,3 +50,20 @@ def test_main_rejects_invalid_deployment_port(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(SystemExit):
         cli.main()
+
+
+def test_main_runs_package_smoke_test_without_starting_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(sys, "argv", ["auto-check", "--package-smoke-test"])
+    monkeypatch.setattr(cli, "run_package_smoke", lambda: calls.append("smoke"))
+    monkeypatch.setattr(
+        cli,
+        "run_server",
+        lambda **kwargs: pytest.fail("server must not start during package smoke test"),
+    )
+
+    cli.main()
+
+    assert calls == ["smoke"]

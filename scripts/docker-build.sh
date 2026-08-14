@@ -8,18 +8,8 @@ mkdir -p "$OUTPUT_DIR" /tmp/build-new
 
 export PATH="/opt/python/cp312/bin:$PATH"
 
-python3.12 -m pip install --quiet \
-  pyinstaller \
-  psycopg-binary \
-  pymysql \
-  openpyxl \
-  py7zr \
-  rarfile \
-  cryptography \
-  bcrypt \
-  pynacl
-
 cd "$ROOT"
+python3.12 -m pip install --quiet -e ".[dev]"
 
 python3.12 -m PyInstaller \
   --noconfirm \
@@ -36,10 +26,16 @@ python3.12 -m PyInstaller \
   --hidden-import psycopg_binary \
   --hidden-import psycopg.pq \
   --hidden-import pymysql \
+  --hidden-import sqlalchemy.dialects.mysql \
+  --hidden-import sqlalchemy.dialects.mysql.pymysql \
+  --hidden-import auto_check.resources \
+  --hidden-import auto_check.resources.data \
   --distpath "$OUTPUT_DIR" \
   --workpath /tmp/build-new \
   --specpath /tmp/build-new \
   src/auto_check/__main__.py
+
+"$OUTPUT_DIR/auto-check" --package-smoke-test
 
 echo ""
 echo "Package created: $OUTPUT_DIR/auto-check"

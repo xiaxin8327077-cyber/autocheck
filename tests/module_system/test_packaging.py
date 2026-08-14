@@ -16,6 +16,18 @@ MODULE_COLLECTION = (
     "--collect-data",
     "auto_check.modules",
 )
+REQUIRED_HIDDEN_IMPORTS = {
+    "py7zr",
+    "rarfile",
+    "psycopg",
+    "psycopg_binary",
+    "psycopg.pq",
+    "pymysql",
+    "sqlalchemy.dialects.mysql",
+    "sqlalchemy.dialects.mysql.pymysql",
+    "auto_check.resources",
+    "auto_check.resources.data",
+}
 POWERSHELL_AST_EXTRACT = r"""
 $VariableName = "__VARIABLE_NAME__"
 $source = [Console]::In.ReadToEnd()
@@ -324,16 +336,7 @@ def test_package_windows_collects_modules_in_the_invoked_parameter_array():
     _assert_existing_assets_and_hidden_imports(
         arguments,
         ";",
-        {
-            "py7zr",
-            "rarfile",
-            "psycopg",
-            "psycopg_binary",
-            "psycopg.pq",
-            "pymysql",
-            "sqlalchemy.dialects.mysql",
-            "sqlalchemy.dialects.mysql.pymysql",
-        },
+        REQUIRED_HIDDEN_IMPORTS,
     )
 
 
@@ -346,16 +349,7 @@ def test_package_linux_collects_modules_in_the_invoked_parameter_array():
     _assert_existing_assets_and_hidden_imports(
         arguments,
         ":",
-        {
-            "py7zr",
-            "rarfile",
-            "psycopg",
-            "psycopg_binary",
-            "psycopg.pq",
-            "pymysql",
-            "sqlalchemy.dialects.mysql",
-            "sqlalchemy.dialects.mysql.pymysql",
-        },
+        REQUIRED_HIDDEN_IMPORTS,
     )
 
 
@@ -368,16 +362,7 @@ def test_linux_build_dockerfile_collects_modules_in_the_pyinstaller_command():
     _assert_existing_assets_and_hidden_imports(
         arguments,
         ":",
-        {
-            "py7zr",
-            "rarfile",
-            "psycopg",
-            "psycopg_binary",
-            "psycopg.pq",
-            "pymysql",
-            "auto_check.resources",
-            "auto_check.resources.data",
-        },
+        REQUIRED_HIDDEN_IMPORTS,
     )
 
 
@@ -390,7 +375,41 @@ def test_docker_build_collects_modules_in_the_pyinstaller_command():
     _assert_existing_assets_and_hidden_imports(
         arguments,
         ":",
-        {"py7zr", "rarfile", "psycopg", "psycopg_binary", "psycopg.pq", "pymysql"},
+        REQUIRED_HIDDEN_IMPORTS,
+    )
+
+
+def test_root_spec_collects_modules_data_and_required_hidden_imports():
+    content = (ROOT / "auto-check.spec").read_text(encoding="utf-8")
+
+    assert "collect_submodules('auto_check.modules')" in content
+    assert "collect_data_files('auto_check.modules')" in content
+    for module_name in REQUIRED_HIDDEN_IMPORTS:
+        assert repr(module_name) in content
+
+
+def test_packaging_entrypoints_run_the_built_artifact_smoke_test():
+    assert '& $exe --package-smoke-test' in _read_script("package-windows.ps1")
+    assert '"$OUTPUT" --package-smoke-test' in _read_script("package-linux.sh")
+    assert 'RUN /output/auto-check --package-smoke-test' in _read_script(
+        "Dockerfile.linux-build"
+    )
+    assert '"$OUTPUT_DIR/auto-check" --package-smoke-test' in _read_script(
+        "docker-build.sh"
+    )
+
+
+def test_module_collection_can_resolve_the_src_package_before_pyinstaller_runs():
+    spec = (ROOT / "auto-check.spec").read_text(encoding="utf-8")
+    assert "sys.path.insert(0, str(SRC))" in spec
+    assert spec.index("sys.path.insert(0, str(SRC))") < spec.index(
+        "collect_data_files('auto_check.modules')"
+    )
+
+    linux_script = _read_script("package-linux.sh")
+    assert 'export PYTHONPATH="$SRC_PATH${PYTHONPATH:+:$PYTHONPATH}"' in linux_script
+    assert linux_script.index("export PYTHONPATH=") < linux_script.index(
+        '"$PYTHON" "${PYINSTALLER_ARGS[@]}"'
     )
 
 

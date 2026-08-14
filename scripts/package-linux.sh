@@ -49,6 +49,7 @@ ENTRY="$ROOT/src/auto_check/__main__.py"
 DIST_PATH="$ROOT/dist"
 BUILD_PATH="$ROOT/build"
 OUTPUT="$DIST_PATH/auto-check"
+export PYTHONPATH="$SRC_PATH${PYTHONPATH:+:$PYTHONPATH}"
 
 if [[ "$SKIP_TESTS" == false ]]; then
   echo "Running tests before packaging..."
@@ -73,6 +74,8 @@ PYINSTALLER_ARGS=(
   "--hidden-import" "pymysql"
   "--hidden-import" "sqlalchemy.dialects.mysql"
   "--hidden-import" "sqlalchemy.dialects.mysql.pymysql"
+  "--hidden-import" "auto_check.resources"
+  "--hidden-import" "auto_check.resources.data"
   "--distpath" "$DIST_PATH"
   "--workpath" "$BUILD_PATH"
   "--specpath" "$BUILD_PATH"
@@ -91,6 +94,9 @@ if [[ ! -f "$OUTPUT" ]]; then
   echo "Package failed, executable not found: $OUTPUT" >&2
   exit 1
 fi
+
+echo "Running packaged artifact smoke test..."
+"$OUTPUT" --package-smoke-test
 
 echo ""
 echo "Package created: $OUTPUT"

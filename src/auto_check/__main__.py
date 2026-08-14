@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 from auto_check.app.server import run_server
+from auto_check.package_smoke import run_package_smoke
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -16,7 +18,12 @@ def main() -> None:
     parser.add_argument("--port", type=_parse_port, default=None)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--config", default=None)
+    parser.add_argument("--package-smoke-test", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.package_smoke_test:
+        print(json.dumps(run_package_smoke(), ensure_ascii=False, sort_keys=True))
+        return
 
     host = args.host or os.environ.get("AUTO_CHECK_HOST", DEFAULT_HOST)
     try:

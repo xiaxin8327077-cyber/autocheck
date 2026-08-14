@@ -72,6 +72,8 @@ $pyinstallerArgs = @(
   "--hidden-import", "pymysql",
   "--hidden-import", "sqlalchemy.dialects.mysql",
   "--hidden-import", "sqlalchemy.dialects.mysql.pymysql",
+  "--hidden-import", "auto_check.resources",
+  "--hidden-import", "auto_check.resources.data",
   "--distpath", $distPath,
   "--workpath", $buildPath,
   "--specpath", $buildPath
@@ -95,6 +97,12 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not (Test-Path $exe)) {
   throw "Package failed, executable not found: $exe"
+}
+
+Write-Host "Running packaged artifact smoke test..."
+& $exe --package-smoke-test
+if ($LASTEXITCODE -ne 0) {
+  throw "Packaged artifact smoke test failed."
 }
 
 Write-Host "Package created: $exe"
