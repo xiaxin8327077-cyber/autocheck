@@ -39,4 +39,5 @@ def test_windows_packaging_script_and_docs_are_present():
     assert "$LASTEXITCODE -ne 0" in script
     assert "dist\\auto-check.exe" in script
     assert "scripts\\package-windows.ps1" in readme
-    assert "每次调整完需要先测试并打包" in readme
+    assert "仅在明确需要 Windows 兼容交付时" in readme
+    assert "先完成测试，再使用统一脚本打包" in readme

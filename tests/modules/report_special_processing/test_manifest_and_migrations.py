@@ -33,8 +33,9 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert "管理员可删除特殊处理记录" in manifest.release_notes.items
-    assert manifest.version == "1.2.1"
+    assert manifest.version == "1.2.7"
+    assert manifest.release_notes.version == "1.2.7"
+    assert "操作记录改前改后固定等宽展示" in manifest.release_notes.items
 
 
 def test_module_is_discovered_without_central_registration():

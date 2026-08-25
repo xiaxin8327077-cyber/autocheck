@@ -5,6 +5,164 @@ import { createProcessMultiSelect } from "./process_multi_select.js";
 const SUMMARY_MAX_LENGTH = 128;
 const FIELD_TEXT_MAX_LENGTH = 128;
 
+const AUDIT_ACTION_META = {
+  create: { label: "创建", tone: "neutral", className: "rsp-audit-action-neutral" },
+  update: { label: "修改", tone: "update", className: "rsp-audit-action-update" },
+  status_change: { label: "状态变更", tone: "update", className: "rsp-audit-action-update" },
+  reopen: { label: "重开", tone: "reopen", className: "rsp-audit-action-reopen" },
+  void: { label: "作废", tone: "void", className: "rsp-audit-action-void" },
+};
+
+const AUDIT_FIELD_LABELS = {
+  report_process_name_snapshot: "关联报送",
+  report_period: "所处报送期",
+  dimension: "所属维度",
+  summary: "处理摘要",
+  table_name: "处理表名",
+  field_name: "处理字段名",
+  value_before: "修改前",
+  value_after: "修改后",
+  processing_script: "处理脚本",
+  special_handling_at: "特殊处理时间",
+  handler_display_name_snapshot: "处理人",
+  governance_owner_display_name_snapshot: "数据治理负责人",
+  status: "状态",
+};
+
+const AUDIT_STATUS_LABELS = {
+  draft: "草稿",
+  pending: "待确认",
+  processing: "处理中",
+  completed: "已完成",
+  voided: "已作废",
+};
+
+function formatAuditValue(value, field = "") {
+  if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) {
+    return "（空）";
+  }
+  if (field === "status") return AUDIT_STATUS_LABELS[value] || String(value);
+  if (Array.isArray(value)) return value.map((item) => formatAuditValue(item)).join("；");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function hasAuditValue(meta, key) {
+  return Object.prototype.hasOwnProperty.call(meta, key);
+}
+
+function auditNoteLabel(key, actionCode) {
+  if (key === "reopen_reason" || actionCode === "reopen") return "重开原因";
+  if (key === "void_reason" || actionCode === "void") return "作废理由";
+  if (actionCode === "status_change") return "确认说明";
+  return "操作说明";
+}
+
+function describeAuditEntry(item) {
+  let action = AUDIT_ACTION_META[item?.action_code] || {
+    label: "操作记录", tone: "neutral", className: "rsp-audit-action-neutral",
+  };
+  if (item?.action_code === "status_change" && item?.to_status === "completed") {
+    action = { label: "完成", tone: "completed", className: "rsp-audit-action-completed" };
+  } else if ((item?.action_code === "create" || item?.action_code === "update") && item?.to_status === "draft") {
+    action = { label: "保存草稿", tone: "neutral", className: "rsp-audit-action-neutral" };
+  }
+
+  const paired = [];
+  const notes = [];
+  const changedFields = item?.changed_fields;
+  const hasStructuredAuditData = Boolean(
+    changedFields && typeof changedFields === "object" && !Array.isArray(changedFields) && Object.keys(changedFields).length,
+  );
+  Object.entries(changedFields || {}).forEach(([key, meta]) => {
+    if (!meta || typeof meta !== "object") return;
+    if (["reason", "reopen_reason", "void_reason"].includes(key)) {
+      if (hasAuditValue(meta, "new")) {
+        notes.push({ label: auditNoteLabel(key, item?.action_code), value: formatAuditValue(meta.new) });
+      }
+      return;
+    }
+    if (key === "processing_script" && (hasAuditValue(meta, "old_chars") || hasAuditValue(meta, "new_chars"))) {
+      paired.push({
+        key,
+        label: AUDIT_FIELD_LABELS[key],
+        old: `${Number(meta.old_chars || 0)} 字`,
+        new: `${Number(meta.new_chars || 0)} 字`,
+      });
+      return;
+    }
+    if (AUDIT_FIELD_LABELS[key] && hasAuditValue(meta, "old") && hasAuditValue(meta, "new")) {
+      paired.push({
+        key,
+        label: AUDIT_FIELD_LABELS[key],
+        old: formatAuditValue(meta.old, key),
+        new: formatAuditValue(meta.new, key),
+      });
+    }
+  });
+
+  if (
+    !paired.some((item) => item.key === "status")
+    && item?.from_status
+    && item?.to_status
+    && item.from_status !== item.to_status
+  ) {
+    paired.unshift({
+      key: "status",
+      label: AUDIT_FIELD_LABELS.status,
+      old: formatAuditValue(item.from_status, "status"),
+      new: formatAuditValue(item.to_status, "status"),
+    });
+  }
+
+  return {
+    ...action,
+    paired,
+    notes,
+    hasStructuredAuditData,
+    status: paired.find((pair) => pair.key === "status") || null,
+    summary: String(item?.action_summary || item?.action_code || "—"),
+  };
+}
+
+function renderAuditDetail(documentRef, entry) {
+  const cells = [];
+  if (entry.paired.length) {
+    ["字段", "修改前", "修改后"].forEach((label) => {
+      cells.push(element(documentRef, "div", { className: "rsp-audit-diff-header", text: label }));
+    });
+    entry.paired.forEach((pair) => {
+      cells.push(element(documentRef, "div", { className: "rsp-audit-field", text: pair.label }));
+      cells.push(element(documentRef, "div", {
+        className: "rsp-audit-value rsp-audit-value-before",
+        "data-audit-label": "修改前",
+        text: pair.old,
+      }));
+      cells.push(element(documentRef, "div", {
+        className: "rsp-audit-value rsp-audit-value-after",
+        "data-audit-label": "修改后",
+        text: pair.new,
+      }));
+    });
+  }
+  entry.notes.forEach((note) => {
+    cells.push(element(documentRef, "div", { className: "rsp-audit-detail-note" }, [
+      element(documentRef, "strong", { text: `${note.label}：` }),
+      element(documentRef, "span", { text: note.value }),
+    ]));
+  });
+  return element(documentRef, "div", { className: "rsp-audit-detail" }, [
+    element(documentRef, "div", {
+      className: "rsp-audit-detail-scroll",
+      "aria-label": "完整变更对照",
+    }, [
+      element(documentRef, "div", {
+        className: `rsp-audit-diff-grid${entry.notes.length ? " has-notes" : ""}`,
+      }, cells),
+    ]),
+  ]);
+}
+
 function nowHandlingAt() {
   const date = new Date();
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -332,6 +490,7 @@ export function createRecordDrawer(documentRef, options) {
   const auditStatus = element(documentRef, "span", { className: "rsp-audit-page", text: "第 1 / 1 页" });
   let auditPage = 1;
   let auditTotalPages = 1;
+  const expandedAuditIds = new Set();
   const auditPrev = actionButton(documentRef, "上一页", "rsp-button-secondary", () => {
     if (auditPage <= 1) return;
     loadAudit(auditPage - 1);
@@ -344,6 +503,83 @@ export function createRecordDrawer(documentRef, options) {
     auditPrev.disabled = auditPage <= 1;
     auditNext.disabled = auditPage >= auditTotalPages;
     auditStatus.textContent = `第 ${auditPage} / ${auditTotalPages} 页`;
+  }
+  function renderAuditBody(items, total) {
+    auditBody.replaceChildren();
+    if (!items.length) {
+      auditBody.append(element(documentRef, "tr", { className: "rsp-empty-row" }, [
+        element(documentRef, "td", {
+          className: "rsp-empty",
+          colspan: "3",
+          text: total ? "本页暂无操作记录" : "暂无操作记录",
+        }),
+      ]));
+      return;
+    }
+    items.forEach((item, index) => {
+      const auditId = String(item?.id ?? `${auditPage}-${index}`);
+      const entry = describeAuditEntry(item);
+      const hasDetails = entry.paired.length > 0 || entry.notes.length > 0;
+      const expanded = hasDetails && expandedAuditIds.has(auditId);
+      const summaryParts = [
+        element(documentRef, "span", {
+          className: `rsp-audit-action ${entry.className}`,
+          text: entry.label,
+        }),
+      ];
+      if (entry.status) {
+        summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
+        summaryParts.push(element(documentRef, "span", {
+          className: "rsp-audit-status-flow",
+          text: `状态：${entry.status.old} → ${entry.status.new}`,
+        }));
+      }
+      entry.notes.forEach((note) => {
+        summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
+        summaryParts.push(element(documentRef, "span", {
+          className: "rsp-audit-summary-note",
+          text: `${note.label}：${note.value}`,
+        }));
+      });
+      if (entry.paired.length) {
+        summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
+        summaryParts.push(element(documentRef, "span", {
+          className: "rsp-audit-change-count",
+          text: `共 ${entry.paired.length} 项变更`,
+        }));
+      }
+      if (hasDetails) {
+        summaryParts.push(element(documentRef, "button", {
+          type: "button",
+          className: "rsp-audit-detail-toggle",
+          text: expanded ? "收起详情" : "查看变更详情",
+          "aria-expanded": expanded ? "true" : "false",
+          onClick: () => {
+            if (expandedAuditIds.has(auditId)) expandedAuditIds.delete(auditId);
+            else expandedAuditIds.add(auditId);
+            renderAuditBody(items, total);
+          },
+        }));
+      } else if (!hasDetails && !entry.hasStructuredAuditData) {
+        summaryParts.push(element(documentRef, "div", {
+          className: "rsp-audit-summary-line rsp-audit-summary-legacy",
+          text: entry.summary,
+        }));
+      }
+      const row = element(documentRef, "tr", { className: expanded ? "is-expanded" : "" }, [
+        element(documentRef, "td", { text: formatDisplayDateTime(item?.occurred_at) || item?.occurred_at || "—" }),
+        element(documentRef, "td", { text: item?.operator_display_name_snapshot || item?.operator_username_snapshot || "—" }),
+        element(documentRef, "td", { className: "rsp-audit-summary" }, [
+          element(documentRef, "div", { className: "rsp-audit-summary-content" }, summaryParts),
+        ]),
+      ]);
+      auditBody.append(row);
+      if (expanded) {
+        auditBody.append(element(documentRef, "tr", { className: "rsp-audit-detail-row" }, [
+          element(documentRef, "td", { colspan: "3" }, [renderAuditDetail(documentRef, entry)]),
+        ]));
+      }
+    });
   }
   async function loadAudit(requestedPage = 1) {
     if (creating) return;
@@ -361,32 +597,11 @@ export function createRecordDrawer(documentRef, options) {
         }
         nextPage = totalPages;
       }
-      auditBody.replaceChildren();
       const items = data.items || [];
-      if (!items.length) {
-        auditBody.append(element(documentRef, "tr", { className: "rsp-empty-row" }, [
-          element(documentRef, "td", {
-            className: "rsp-empty",
-            colspan: "3",
-            text: total ? "本页暂无操作记录" : "暂无操作记录",
-          }),
-        ]));
-      } else {
-        items.forEach((item) => {
-          const summaryText = item.action_summary || item.action_code || "";
-          const summaryLines = String(summaryText).split(/\n+/).map((line) => line.trim()).filter(Boolean);
-          const summaryCell = summaryLines.length > 1
-            ? element(documentRef, "td", { className: "rsp-audit-summary", title: summaryText }, summaryLines.map((line) => element(documentRef, "div", { className: "rsp-audit-summary-line", text: line })))
-            : element(documentRef, "td", { className: "rsp-audit-summary", text: summaryText || "—", title: summaryText || "" });
-          auditBody.append(element(documentRef, "tr", {}, [
-            element(documentRef, "td", { text: formatDisplayDateTime(item.occurred_at) || item.occurred_at || "—" }),
-            element(documentRef, "td", { text: item.operator_display_name_snapshot || item.operator_username_snapshot }),
-            summaryCell,
-          ]));
-        });
-      }
       auditPage = nextPage;
       auditTotalPages = totalPages;
+      expandedAuditIds.clear();
+      renderAuditBody(items, total);
       syncAuditPager();
     } catch (error) {
       if (error?.name !== "AbortError") options.notify("操作记录加载失败", "error");

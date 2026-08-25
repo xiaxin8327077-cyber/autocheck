@@ -315,19 +315,70 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert ".rsp-audit th," in css
     assert "text-align: left;" in css
     assert ".rsp-audit-table-wrap" in css
-    assert "overflow-x: auto" in css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
-    assert "scrollbar-width: thin" in css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
-    assert "height: 6px" in css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
-    for moved in ("开始处理", "转为待处理", "作废", "重开", "操作原因", "completeRecord", "voidRecord", "reopenRecord"):
+    audit_wrap = css.split(".rsp-audit-table-wrap", 1)[1].split(".rsp-audit table", 1)[0]
+    assert "overflow-x: auto" not in audit_wrap
+    for moved in ("开始处理", "转为待处理", "操作原因", "completeRecord", "voidRecord", "reopenRecord"):
         assert moved not in source
     assert "row_version" in source
     assert "catalogAvailable" in source
     assert "disabled" in source
     assert 'aria-modal": "true"' in source
     assert "rsp-record-modal-overlay" in source
-    assert "收起详情" not in source
     assert "Escape" in source
     assert "if (event.target === overlay) onClose()" not in source
+
+
+def test_audit_diff_panel_preserves_long_values_and_operation_semantics():
+    drawer = read("components/record_drawer.js")
+    css = read("styles.css")
+
+    for token in (
+        "AUDIT_ACTION_META", "AUDIT_FIELD_LABELS", "describeAuditEntry",
+        "renderAuditDetail", "查看变更详情", "收起详情", "aria-expanded",
+        "changed_fields", "重开原因", "作废理由", "确认说明", "rsp-audit-detail-scroll",
+        "hasStructuredAuditData",
+    ):
+        assert token in drawer
+    for tone in ("update", "reopen", "void", "completed", "neutral"):
+        assert f"rsp-audit-action-{tone}" in drawer
+    for label in ("创建", "修改", "重开", "作废", "完成"):
+        assert f'label: "{label}"' in drawer
+    for old_label in ("创建记录", "修改记录", "重开记录", "作废记录", "完成记录"):
+        assert old_label not in drawer
+    for selector in (
+        ".rsp-audit-detail-row", ".rsp-audit-diff-grid",
+        ".rsp-audit-detail-scroll",
+        ".rsp-audit-value-before", ".rsp-audit-value-after",
+        ".rsp-audit-action-void", ".rsp-audit-action-reopen",
+    ):
+        assert selector in css
+    assert "white-space: pre-wrap" in css
+    assert "overflow-wrap: anywhere" in css
+    audit_table_css = css.rsplit(".rsp-audit table {", 1)[1].split("}", 1)[0]
+    assert "min-width: 0" in audit_table_css
+    audit_detail_css = css.split(".rsp-audit-detail-row", 1)[1].split(".rsp-audit-pagination", 1)[0]
+    assert "max-height:" not in audit_detail_css
+    audit_detail_cell_css = css.split(".rsp-audit-detail-row > td {", 1)[1].split("}", 1)[0]
+    assert "max-width: 0" in audit_detail_cell_css
+    assert "overflow: hidden" in audit_detail_cell_css
+    audit_detail_box_css = css.split(".rsp-audit-detail {", 1)[1].split("}", 1)[0]
+    assert "width: 100%" in audit_detail_box_css
+    assert "min-width: 0" in audit_detail_box_css
+    audit_scroll_css = css.split(".rsp-audit-detail-scroll {", 1)[1].split("}", 1)[0]
+    assert "overflow: hidden" in audit_scroll_css
+    assert "border: 1px solid #dfe7f2" in audit_scroll_css
+    assert "width: 100%" in audit_scroll_css
+    assert "max-width: 100%" in audit_scroll_css
+    grid_css = css.split(".rsp-audit-diff-grid {", 1)[1].split("}", 1)[0]
+    assert "width: 100%" in grid_css
+    assert "min-width: 0" in grid_css
+    assert "grid-template-columns: 120px minmax(0, 1fr) minmax(0, 1fr)" in grid_css
+    assert "isCompact" not in drawer
+    assert "is-scrollable" not in drawer
+    assert "可横向滚动查看" not in drawer
+    assert ".rsp-audit-detail-scroll.is-scrollable" not in css
+    assert ".rsp-audit-detail-scroll::-webkit-scrollbar" not in css
+    assert "if (!hasDetails && !entry.hasStructuredAuditData)" in drawer
 
 
 def test_ledger_row_actions_include_status_operations():

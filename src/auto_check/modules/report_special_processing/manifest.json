@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.2.1",
+  "version": "1.2.7",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -37,7 +37,7 @@
   ],
   "schema_version": 3,
   "release_notes": {
-    "version": "1.2.1",
-    "items": ["管理员可删除特殊处理记录"]
+    "version": "1.2.7",
+    "items": ["操作记录改前改后固定等宽展示"]
   }
 }
