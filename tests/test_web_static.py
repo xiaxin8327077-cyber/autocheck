@@ -7199,7 +7199,9 @@ def test_space_tech_top_navigation_centers_pages_and_keeps_actions_right():
     top_nav_body = top_nav.group("body")
 
     tabs = re.search(r'<nav class="top-nav-tabs">(?P<body>.*?)</nav>', top_nav_body, re.S)
-    actions = re.search(r'<div class="top-nav-actions">(?P<body>.*?)</div>\s*</header>', html, re.S)
+    # Use a more specific regex that matches the top-nav's closing </div></header>
+    # by looking for the user menu div inside the actions area
+    actions = re.search(r'<div class="top-nav-actions">(?P<body>.*?id="topUserMenu".*?)</div>\s*</header>', html, re.S)
     assert tabs is not None
     assert actions is not None
     assert 'data-page="report-navigation"' in tabs.group("body")

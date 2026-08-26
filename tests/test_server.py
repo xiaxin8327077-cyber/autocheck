@@ -1,4 +1,5 @@
-﻿from decimal import Decimal
+﻿from contextlib import contextmanager
+from decimal import Decimal
 from io import BytesIO
 from datetime import date
 from pathlib import Path
@@ -485,6 +486,13 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
     events = []
     config_path = tmp_path / "config.json"
 
+    class FakeConnection:
+        def execute(self, *args, **kwargs):
+            class FakeResult:
+                def first(self): return None
+                def all(self): return []
+            return FakeResult()
+
     class FakeApplicationDatabase:
         def test_connection(self):
             events.append("test_connection")
@@ -494,6 +502,14 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
 
         def close(self):
             events.append("close")
+
+        @contextmanager
+        def connect(self):
+            yield FakeConnection()
+
+        @contextmanager
+        def transaction(self):
+            yield FakeConnection()
 
     application_database = FakeApplicationDatabase()
 
@@ -555,6 +571,12 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         def stop(self):
             events.append("module_stop")
 
+    class FakeNotificationService:
+        def start_cleanup(self):
+            events.append("notification_cleanup_start")
+        def stop(self):
+            events.append("notification_stop")
+
     def create_user_directory_service(auth_manager):
         events.append(("user_directory", auth_manager))
         return user_directory_spec
@@ -603,6 +625,37 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "from_config_path",
         staticmethod(from_config_path),
     )
+    monkeypatch.setattr(
+        server_module,
+        "NotificationStorage",
+        lambda database: events.append(("notification_storage", database)) or object(),
+    )
+    class FakeStreamHub:
+        def close(self):
+            events.append("notification_stream_hub_close")
+
+    monkeypatch.setattr(
+        server_module,
+        "NotificationStreamHub",
+        lambda **kwargs: events.append(("notification_stream_hub", kwargs)) or FakeStreamHub(),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "NotificationService",
+        lambda *args, **kwargs: events.append("notification_service") or FakeNotificationService(),
+    )
+    monkeypatch.setattr(
+        server_module,
+        "NotificationHttpApi",
+        lambda *args, **kwargs: events.append("notification_http_api") or object(),
+    )
+    import auto_check.app.notifications.platform as _notif_platform
+    notification_platform_spec = object()
+    monkeypatch.setattr(
+        _notif_platform,
+        "create_notification_platform_service",
+        lambda service: events.append("notification_platform") or notification_platform_spec,
+    )
 
     server = server_module.run_server(
         host="127.0.0.1",
@@ -620,13 +673,19 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         ("auth", config_path, application_database),
         ("report_navigation", application_database, config_path),
         "http_server",
+        ("notification_storage", application_database),
+        ("notification_stream_hub", {"max_per_user": 5, "max_total": 200, "queue_size": 100}),
+        "notification_service",
+        "notification_cleanup_start",
+        "notification_http_api",
         ("user_directory", handler_types[0].auth_manager),
         ("report_navigation_platform", report_navigation_service),
+        "notification_platform",
         (
             "module_build",
             application_database,
             config_path,
-            (user_directory_spec, report_navigation_spec),
+            (user_directory_spec, report_navigation_spec, notification_platform_spec),
         ),
         "module_start",
         ("router", application_database, report_navigation_service),
@@ -634,6 +693,8 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "scheduler_start",
         "serve_forever",
         "scheduler_stop",
+        "notification_stop",
+        "notification_stream_hub_close",
         "module_stop",
         "server_close",
         "close",
@@ -642,6 +703,13 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
 
 def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path):
     events = []
+
+    class FakeConnection:
+        def execute(self, *args, **kwargs):
+            class FakeResult:
+                def first(self): return None
+                def all(self): return []
+            return FakeResult()
 
     class FakeApplicationDatabase:
         def test_connection(self):
@@ -653,6 +721,14 @@ def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path
         def close(self):
             events.append("database_close")
             raise RuntimeError("database cleanup failed")
+
+        @contextmanager
+        def connect(self):
+            yield FakeConnection()
+
+        @contextmanager
+        def transaction(self):
+            yield FakeConnection()
 
     class FakeServer:
         server_address = ("127.0.0.1", 8765)

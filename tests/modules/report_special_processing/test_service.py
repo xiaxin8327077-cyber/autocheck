@@ -509,3 +509,102 @@ def test_catalog_governance_candidates_by_dimension_role_display_name():
     assert empty_candidates["fund"] == []
     assert empty_candidates["finance"] == []
     assert empty_catalog["capabilities"]["can_confirm"] is False
+
+
+class FakeNotificationPublisher:
+    def __init__(self):
+        self.requests = []
+
+    def publish(self, request):
+        self.requests.append(request)
+
+
+@pytest.fixture
+def service_with_publisher():
+    from auto_check.modules.report_special_processing.service import SpecialProcessingService
+    publisher = FakeNotificationPublisher()
+    directory = Directory()
+    directory.users["owner"] = User("owner", "gov_owner", "治理负责人甲", role="custom_pa")
+    service = SpecialProcessingService(
+        MemoryStorage(),
+        directory,
+        Reports(),
+        now=lambda: NOW,
+        notification_publisher=publisher,
+    )
+    return service, publisher
+
+
+class TestNotificationTriggerMatrix:
+    @pytest.mark.parametrize("operation", [
+        "create_formal",
+        "submit_draft",
+        "reopen_completed",
+    ])
+    def test_new_pending_relationship_publishes_one_notification(self, operation, service_with_publisher):
+        service, publisher = service_with_publisher
+        if operation == "create_formal":
+            record = service.create(_payload(governance_owner_user_id="owner"), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-1")
+        elif operation == "submit_draft":
+            record = service.create(_payload(save_mode="draft", governance_owner_user_id="owner"), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-1")
+            assert len(publisher.requests) == 0  # draft save should not publish
+            record = service.update(record["id"], _payload(save_mode="record", governance_owner_user_id="owner", row_version=1), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-2")
+        elif operation == "reopen_completed":
+            record = service.create(_payload(governance_owner_user_id="owner"), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-1")
+            owner_actor = {"id": "owner", "username": "gov_owner", "display_name": "治理负责人甲", "role": "custom_pa", "capabilities": ["rsp.confirm"]}
+            record = service.change_status(record["id"], {"target_status": "completed", "row_version": record["row_version"]}, owner_actor, request_id="req-2")
+            record = service.reopen(record["id"], {"row_version": record["row_version"], "reason": "重开原因"}, {"id": "1", "username": "creator", "display_name": "创建人", "role": "user", "capabilities": ["rsp.reopen"]}, request_id="req-3")
+        # create_formal publishes 1, submit_draft publishes 1, reopen_completed publishes 2 (create + reopen)
+        expected_count = 2 if operation == "reopen_completed" else 1
+        assert len(publisher.requests) == expected_count
+        request = publisher.requests[0]
+        assert request.recipient_user_ids == ("owner",)
+        assert request.category == "todo"
+        assert request.level == "info"
+        assert request.title == "有报表特殊处理请您确认"
+        assert "治理负责人甲" in request.content or "项目端" in request.content
+
+    def test_reassignment_publishes_notification(self, service_with_publisher):
+        service, publisher = service_with_publisher
+        directory = service._users
+        directory.users["owner2"] = User("owner2", "gov_owner2", "治理负责人乙", role="custom_pa")
+        record = service.create(_payload(governance_owner_user_id="owner"), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-1")
+        assert len(publisher.requests) == 1
+        # Reassign to owner2
+        updated = service.update(record["id"], _payload(governance_owner_user_id="owner2", row_version=1), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-2")
+        assert len(publisher.requests) == 2
+        assert publisher.requests[1].recipient_user_ids == ("owner2",)
+
+    @pytest.mark.parametrize("operation", [
+        "save_draft",
+        "complete",
+        "void",
+        "delete",
+    ])
+    def test_non_creation_operations_do_not_publish(self, operation, service_with_publisher):
+        service, publisher = service_with_publisher
+        actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user", "capabilities": ["rsp.create", "rsp.edit", "rsp.confirm", "rsp.void", "rsp.delete"]}
+        record = service.create(_payload(governance_owner_user_id="owner"), actor, request_id="req-1")
+        publisher.requests.clear()
+        if operation == "save_draft":
+            draft_record = service.create(_payload(save_mode="draft", governance_owner_user_id="owner"), actor, request_id="req-2")
+            publisher.requests.clear()
+            service.update(draft_record["id"], _payload(save_mode="draft", governance_owner_user_id="owner", row_version=1), actor, request_id="req-3")
+        elif operation == "complete":
+            owner_actor = dict(actor, id="owner", capabilities=["rsp.confirm"])
+            service.change_status(record["id"], {"target_status": "completed", "row_version": record["row_version"]}, owner_actor, request_id="req-2")
+        elif operation == "void":
+            service.void(record["id"], {"reason": "测试作废", "row_version": record["row_version"]}, actor, request_id="req-2")
+        elif operation == "delete":
+            service.delete(record["id"], {"row_version": record["row_version"]}, actor, request_id="req-2")
+        assert publisher.requests == []
+
+    def test_publish_failure_does_not_break_business(self, service_with_publisher):
+        service, publisher = service_with_publisher
+        # Make the publisher raise an exception
+        def failing_publish(request):
+            raise RuntimeError("notification service unavailable")
+        service._notifications = failing_publish
+        # Business operation should still succeed
+        record = service.create(_payload(governance_owner_user_id="owner"), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-1")
+        assert record["status"] == "pending"

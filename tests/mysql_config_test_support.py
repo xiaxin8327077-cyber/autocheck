@@ -80,6 +80,8 @@ class MySqlContractConnection:
             "report_nav_stat_runs": [],
             "report_nav_scheduler_state": [],
             "report_nav_card_provider_states": [],
+            "system_notifications": [],
+            "system_notification_recipients": [],
         }
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> MemoryResult:
@@ -168,6 +170,10 @@ class MySqlContractConnection:
                         "stat_period",
                         "card_code",
                         "user_id",
+                        "notification_id",
+                        "source_module",
+                        "event_type",
+                        "dedupe_hash",
                     ),
                 )
                 self.tables[table_name] = [
@@ -207,8 +213,15 @@ class MySqlContractConnection:
                         "user_id",
                         "role_code",
                         "role",
+                        "notification_id",
+                        "source_module",
+                        "event_type",
+                        "dedupe_hash",
                     ),
                 )
+                # Handle IS NULL conditions that don't generate params
+                if " IS NULL" in sql.upper() and "cleared_at" not in filters:
+                    filters["cleared_at"] = None
             matched = [row for row in self.tables[table_name] if self._matches_filters(row, filters)]
             for row in matched:
                 for key, value in params.items():
@@ -249,8 +262,19 @@ class MySqlContractConnection:
                     "stat_period",
                     "card_code",
                     "user_id",
+                    "notification_id",
+                    "source_module",
+                    "event_type",
+                    "dedupe_hash",
+                    "read_at",
                 ),
             )
+            # Handle IS NULL conditions that don't generate params
+            sql_upper = sql.upper()
+            for name in ("read_at", "user_id", "notification_id", "cleared_at"):
+                col = f".{name.upper()} IS NULL"
+                if col in sql_upper and name not in filters:
+                    filters[name] = None
             if filters:
                 rows = [row for row in rows if self._matches_filters(row, filters)]
             if "count(" in sql.lower():
@@ -447,6 +471,7 @@ class MySqlContractConnection:
             "report_nav_card_manual_history": ("stat_period", "period_key", "card_code"),
             "report_nav_monthly_schedules": ("report_month", "process_code"),
             "report_nav_card_provider_states": ("card_code",),
+            "system_notification_recipients": ("notification_id", "user_id"),
         }
         if table_name in composite_keys:
             return composite_keys[table_name]

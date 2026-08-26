@@ -254,7 +254,7 @@ def test_url_create_preserves_special_password_without_interpolation_or_leak(tmp
 
 
 def test_expected_schema_is_immutable_and_contains_expected_tables():
-    assert len(EXPECTED_APP_SCHEMA) == 51
+    assert len(EXPECTED_APP_SCHEMA) == 53
     assert EXPECTED_APP_SCHEMA["db_validation_cross_table_mappings"] >= frozenset(
         {"logical_code", "scope_code", "effective_detail_field_name", "effective_template_table_name", "effective_template_field_name"}
     )

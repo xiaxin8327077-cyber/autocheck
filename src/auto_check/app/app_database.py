@@ -474,6 +474,27 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "last_error",
             "updated_at",
         ),
+        "system_notifications": _columns(
+            "id",
+            "source_module",
+            "event_type",
+            "category",
+            "level",
+            "title",
+            "content",
+            "action_json",
+            "dedupe_key",
+            "dedupe_hash",
+            "created_at",
+            "expires_at",
+        ),
+        "system_notification_recipients": _columns(
+            "notification_id",
+            "user_id",
+            "received_at",
+            "read_at",
+            "cleared_at",
+        ),
     }
 )
 

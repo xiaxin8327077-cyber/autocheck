@@ -80,6 +80,7 @@ class ReportSpecialProcessingModule:
     def start(self, context: Any) -> None:
         user_directory = context.services.resolve("platform.user_directory", 1)
         report_navigation = context.services.resolve("platform.report_navigation", 1)
+        notification_publisher = context.services.resolve("platform.notification", 1)
         storage = SpecialProcessingStorage(context.application_database)
 
         def role_label_resolver() -> dict[str, str]:
@@ -100,6 +101,7 @@ class ReportSpecialProcessingModule:
             report_navigation,
             now=context.now,
             role_label_resolver=role_label_resolver,
+            notification_publisher=notification_publisher,
         )
         try:
             storage.backfill_processes_from_records()

@@ -30,12 +30,13 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert [(item.name, item.minimum_version) for item in manifest.service_dependencies] == [
         ("platform.user_directory", 1),
         ("platform.report_navigation", 1),
+        ("platform.notification", 1),
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.7"
-    assert manifest.release_notes.version == "1.2.7"
-    assert "操作记录改前改后固定等宽展示" in manifest.release_notes.items
+    assert manifest.version == "1.2.8"
+    assert manifest.release_notes.version == "1.2.8"
+    assert "待确认事项接入系统通知" in manifest.release_notes.items
 
 
 def test_module_is_discovered_without_central_registration():

@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -33,11 +33,12 @@
   "dependencies": [],
   "service_dependencies": [
     {"name": "platform.user_directory", "minimum_version": 1},
-    {"name": "platform.report_navigation", "minimum_version": 1}
+    {"name": "platform.report_navigation", "minimum_version": 1},
+    {"name": "platform.notification", "minimum_version": 1}
   ],
   "schema_version": 3,
   "release_notes": {
-    "version": "1.2.7",
-    "items": ["操作记录改前改后固定等宽展示"]
+    "version": "1.2.8",
+    "items": ["待确认事项接入系统通知"]
   }
 }

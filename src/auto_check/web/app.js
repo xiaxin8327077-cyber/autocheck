@@ -557,6 +557,15 @@ async function ensureAuthenticated() {
   updateCurrentUsername();
   applyRoleAccess();
   revealAuthenticatedApp();
+  if (window.AutoCheckNotificationCenter) {
+    await window.AutoCheckNotificationCenter.start({
+      user: Object.assign({}, authState.user),
+      csrfToken: authState.csrfToken,
+      api: null,
+      handleAction: handleReportNavTodoAction,
+      notify: showToast,
+    });
+  }
   return payload;
 }
 
@@ -3387,6 +3396,9 @@ async function encryptPasswordForTransport(password) {
 async function logout() {
   const confirmed = await showConfirm("退出登录", "确认退出当前账号并返回登录页吗？", { tone: "warning" });
   if (!confirmed) return;
+  if (window.AutoCheckNotificationCenter) {
+    window.AutoCheckNotificationCenter.stop();
+  }
   const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
   const logoutAuthRevision = resetInterfaceRadiusForAuthChange();
   try {
@@ -13395,6 +13407,18 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.16</span>
+        <span class="changelog-date">2026-08-25</span>
+      </div>
+      <ul>
+        <li>新增系统通知中心，支持未读数量、通知列表和实时提醒。</li>
+        <li>报表特殊处理录入模块：待确认事项接入系统通知。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.15</span>

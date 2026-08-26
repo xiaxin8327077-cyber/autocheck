@@ -128,6 +128,12 @@ from auto_check.app.repositories import AutoCheckRepository, DEFAULT_RECONCILE_T
 from auto_check.app.report_navigation import ReportNavigationScheduler, ReportNavigationService
 from auto_check.app.module_system import ModuleRuntime
 from auto_check.app.module_system.contracts import ModuleBootstrapContext, ModuleHttpResponse
+from auto_check.app.notifications.http_api import NotificationHttpApi
+from auto_check.app.notifications import platform as _notification_platform_module
+from auto_check.app.platform_services import _UserDirectoryFacade
+from auto_check.app.notifications.service import NotificationService
+from auto_check.app.notifications.storage import NotificationStorage
+from auto_check.app.notifications.stream import NotificationStreamHub
 from auto_check.app.reconcile_schema import (
     ReconcileSchemaSettings,
     ReconcileTableSchema,
@@ -3554,6 +3560,9 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         if method in {"POST", "PUT", "DELETE"} and self.headers.get("X-CSRF-Token", "") != session.csrf_token:
             self._send_early_json(method, 403, {"error": "invalid csrf token"})
             return
+        if path == "/api/notifications" or path.startswith("/api/notifications/"):
+            self._handle_notifications(method, path, session)
+            return
         if path == "/api/system/modules" or path.startswith("/api/system/modules/"):
             self._handle_module_system(method, path, session)
             return
@@ -3596,6 +3605,72 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self.router._query_string = self.path.split("?", 1)[1] if "?" in self.path else ""
         status, payload = self.router.handle(method, path, body, current_user=_session_user(session))
         self._send_json(status, payload)
+
+    def _handle_notifications(self, method: str, path: str, session: AuthSession) -> None:
+        query_string = self.path.split("?", 1)[1] if "?" in self.path else ""
+        from urllib.parse import parse_qsl
+        query = dict(parse_qsl(query_string))
+        user = _session_user(session)
+        user_id = str(user.get("id") or "")
+        if method == "GET" and path == "/api/notifications":
+            status, payload = self.notification_http_api.list_notifications(user_id=user_id, query=query)
+            self._send_json(status, payload)
+            return
+        if method == "DELETE" and path == "/api/notifications":
+            status, payload = self.notification_http_api.clear_all(user_id=user_id)
+            self._send_json(status, payload)
+            return
+        if method == "POST" and path == "/api/notifications/read-all":
+            status, payload = self.notification_http_api.mark_all_read(user_id=user_id)
+            self._send_json(status, payload)
+            return
+        read_match = re.fullmatch(r"/api/notifications/([0-9a-f]{32})/read", path)
+        if method == "POST" and read_match:
+            notification_id = read_match.group(1)
+            status, payload = self.notification_http_api.mark_read(user_id=user_id, notification_id=notification_id)
+            self._send_json(status, payload)
+            return
+        if method == "GET" and path == "/api/notifications/stream":
+            self._handle_notification_stream(session)
+            return
+        self._send_json(404, {"error": "not found"})
+
+    def _handle_notification_stream(self, session: AuthSession) -> None:
+        user = _session_user(session)
+        user_id = str(user.get("id") or "")
+        try:
+            subscription = self.notification_stream_hub.subscribe(user_id)
+        except Exception:
+            self._send_json(429, {"error": "too many connections"})
+            return
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            while True:
+                event = subscription.next(timeout_seconds=20.0)
+                if event is not None and event.type == "close":
+                    break
+                if event is not None and event.type == "notification" and event.notification is not None:
+                    from auto_check.app.notifications.http_api import _item_to_dict
+                    data = json.dumps({"notification": _item_to_dict(event.notification), "unread_count": event.unread_count}, ensure_ascii=False, default=str)
+                    payload = f"event: notification\ndata: {data}\n\n".encode("utf-8")
+                elif event is not None and event.type == "resync":
+                    data = json.dumps({"resync": True})
+                    payload = f"event: resync\ndata: {data}\n\n".encode("utf-8")
+                else:
+                    # Timeout or non-notification event: send heartbeat ping
+                    payload = b": ping\n\n"
+                try:
+                    self.wfile.write(payload)
+                    self.wfile.flush()
+                except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+                    break
+        finally:
+            subscription.close()
 
     def _handle_module_system(self, method: str, path: str, session: AuthSession) -> None:
         current_user = self.router.session_user_payload(session)
@@ -4693,6 +4768,8 @@ def run_server(
     report_navigation_scheduler: ReportNavigationScheduler | None = None
     module_runtime: ModuleRuntime | None = None
     server: ThreadingHTTPServer | None = None
+    notification_service: NotificationService | None = None
+    notification_stream_hub: NotificationStreamHub | None = None
     execution_error: BaseException | None = None
     try:
         application_database.test_connection()
@@ -4715,6 +4792,20 @@ def run_server(
                 return None
             raise
 
+        # Notification platform service — must be created BEFORE ModuleRuntime.build()
+        # so that the platform.service facade binds to a real service instance.
+        notification_storage = NotificationStorage(application_database)
+        notification_stream_hub = NotificationStreamHub(max_per_user=5, max_total=200, queue_size=100)
+        user_directory_facade = _UserDirectoryFacade(auth_manager)
+        notification_service = NotificationService(
+            notification_storage,
+            user_directory_facade,
+            notification_stream_hub,
+            now=beijing_now,
+        )
+        notification_service.start_cleanup()
+        notification_http_api = NotificationHttpApi(notification_service, notification_stream_hub)
+
         module_runtime = ModuleRuntime.build(
             ModuleBootstrapContext(
                 application_database=application_database,
@@ -4725,6 +4816,7 @@ def run_server(
             platform_services=(
                 create_user_directory_service(auth_manager),
                 create_report_navigation_service(report_navigation_service),
+                _notification_platform_module.create_notification_platform_service(notification_service),
             ),
         )
         module_runtime.start()
@@ -4740,6 +4832,8 @@ def run_server(
 
         Handler.router = router
         Handler.auth_manager = auth_manager
+        Handler.notification_http_api = notification_http_api
+        Handler.notification_stream_hub = notification_stream_hub
         actual_port = server.server_address[1]
         url = f"http://{browser_host}:{actual_port}"
         print(f"Auto Check running at {url}")
@@ -4768,14 +4862,22 @@ def run_server(
                 cleanup(report_navigation_scheduler.stop)
         finally:
             try:
-                if module_runtime is not None:
-                    cleanup(module_runtime.stop)
+                if notification_service is not None:
+                    cleanup(notification_service.stop)
             finally:
                 try:
-                    if server is not None:
-                        cleanup(server.server_close)
+                    if notification_stream_hub is not None:
+                        cleanup(notification_stream_hub.close)
                 finally:
-                    cleanup(application_database.close)
+                    try:
+                        if module_runtime is not None:
+                            cleanup(module_runtime.stop)
+                    finally:
+                        try:
+                            if server is not None:
+                                cleanup(server.server_close)
+                        finally:
+                            cleanup(application_database.close)
         if cleanup_errors and execution_error is None:
             raise cleanup_errors[0]
 

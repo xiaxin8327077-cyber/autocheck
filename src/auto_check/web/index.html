@@ -18,6 +18,7 @@
     </script>
     <link rel="stylesheet" href="/styles.css?v=20260813l" />
     <link rel="stylesheet" href="/module_host.css" />
+    <link rel="stylesheet" href="/notification_center.css" />
   </head>
   <body>
     <aside class="sidebar">
@@ -116,6 +117,37 @@
         </div>
       </nav>
       <div class="top-nav-actions">
+        <div class="notification-center" data-notification-center>
+          <button class="notification-bell" type="button" data-notification-bell
+                  aria-label="通知" aria-haspopup="true" aria-expanded="false">
+            <span class="notification-bell-icon" aria-hidden="true"></span>
+            <span class="notification-badge" data-notification-badge hidden></span>
+          </button>
+          <section class="notification-panel" data-notification-panel hidden
+                   aria-label="系统通知">
+            <header class="notification-panel-header">
+              <h2>通知 <span data-notification-unread-text></span></h2>
+              <div class="notification-header-actions">
+                <button type="button" data-notification-clear>清空通知</button>
+                <button type="button" data-notification-read-all>全部已读</button>
+              </div>
+            </header>
+            <div class="notification-filters" role="tablist" aria-label="通知筛选">
+              <button type="button" role="tab" data-notification-filter="all" aria-selected="false">全部</button>
+              <button type="button" role="tab" data-notification-filter="read" aria-selected="false">已读</button>
+              <button type="button" role="tab" data-notification-filter="unread" aria-selected="true">未读</button>
+            </div>
+            <div class="notification-list" data-notification-list></div>
+            <p class="notification-empty" data-notification-empty hidden>暂无通知</p>
+            <button type="button" class="notification-load-more" data-notification-load-more hidden>加载更多</button>
+            <p class="notification-error" data-notification-error hidden>
+              通知加载失败
+              <button type="button" data-notification-retry>重新加载</button>
+            </p>
+          </section>
+        </div>
+        <div class="notification-toast-region" data-notification-toast-region
+             aria-live="polite" aria-atomic="false"></div>
         <div class="user-menu user-menu--top" id="topUserMenu">
           <button class="user-menu-trigger" type="button" data-current-username>
             <span class="user-menu-icon user-initial-avatar" data-current-user-avatar aria-hidden="true">A</span>
@@ -1884,6 +1916,7 @@
     <script src="/crypto_fallback.js"></script>
     <script src="/export_detail.js"></script>
     <script src="/module_host.js"></script>
+    <script src="/notification_center.js"></script>
     <script src="/app.js?v=20260813o"></script>
   </body>
 </html>

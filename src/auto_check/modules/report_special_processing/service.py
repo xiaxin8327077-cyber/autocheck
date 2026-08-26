@@ -92,12 +92,14 @@ class SpecialProcessingService:
         *,
         now: Any,
         role_label_resolver: Callable[[], Mapping[str, str]] | None = None,
+        notification_publisher: Any = None,
     ) -> None:
         self.storage = storage
         self._users = user_directory
         self._reports = report_navigation
         self._now = now
         self._role_label_resolver = role_label_resolver
+        self._notifications = notification_publisher
 
     def _actor(self, current_user: Mapping[str, Any] | None) -> dict[str, Any]:
         """模块内解析能力矩阵并补齐用户 capabilities，不改平台派发协议。"""
@@ -292,6 +294,8 @@ class SpecialProcessingService:
             request_id,
         )
         created = self.storage.create(record, (), processes, audit)
+        if status == RecordStatus.PENDING:
+            self._publish_pending_notification(created)
         self._refresh_special_governance_stats()
         return created
 
@@ -350,6 +354,14 @@ class SpecialProcessingService:
         updated = self.storage.update(
             record_id, value.row_version, changes, (), processes, audit
         )
+        if updated.get("status") == "pending":
+            if current["status"] == "pending":
+                old_owner = str(current.get("governance_owner_user_id") or "")
+                new_owner = str(updated.get("governance_owner_user_id") or "")
+                if old_owner != new_owner:
+                    self._publish_pending_notification(updated)
+            else:
+                self._publish_pending_notification(updated)
         self._refresh_special_governance_stats()
         return updated
 
@@ -484,6 +496,8 @@ class SpecialProcessingService:
             request_id,
         )
         reopened = self.storage.update_status(record_id, version, changes, audit)
+        if reopened.get("status") == "pending":
+            self._publish_pending_notification(reopened)
         self._refresh_special_governance_stats()
         return reopened
 
@@ -559,6 +573,45 @@ class SpecialProcessingService:
             process = self._process(code)
             resolved.append({"code": process.code, "name": process.name})
         return tuple(resolved)
+
+    def _publish_pending_notification(self, record: Mapping[str, Any]) -> None:
+        if self._notifications is None:
+            return
+        owner_id = str(record.get("governance_owner_user_id") or "").strip()
+        if not owner_id:
+            return
+        dimension = str(record.get("dimension") or "").strip()
+        dimension_label = DIMENSION_LABELS.get(dimension, dimension or "未分维度")
+        field_name = str(record.get("field_name") or "").strip() or "未填字段"
+        record_id = int(record["id"])
+        row_version = int(record["row_version"])
+        from auto_check.app.notifications.contracts import (
+            NotificationAction,
+            NotificationPublishRequest,
+        )
+        request = NotificationPublishRequest(
+            event_type="pending_confirmation_created",
+            dedupe_key=f"rsp-pending:{record_id}:{row_version}:{owner_id}",
+            recipient_user_ids=(owner_id,),
+            category="todo",
+            level="info",
+            title="有报表特殊处理请您确认",
+            content=f"{dimension_label} · {field_name}",
+            action=NotificationAction(
+                type="navigate",
+                route="report-special-processing",
+                query={"record_id": str(record_id), "highlight": "1", "open": "confirm", "period": str(record.get("report_period") or "").strip()[5:]},
+            ),
+        )
+        try:
+            self._notifications.publish(request)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "notification publish failed for record %s:%s recipient=%s",
+                record_id, row_version, owner_id,
+                exc_info=True,
+            )
 
     def _refresh_special_governance_stats(self) -> None:
         """Best-effort single-card refresh; never fail the business write."""
