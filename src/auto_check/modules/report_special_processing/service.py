@@ -408,6 +408,8 @@ class SpecialProcessingService:
             request_id,
         )
         changed = self.storage.update_status(record_id, version, changes, audit)
+        if target == "completed":
+            self._publish_completion_notification(changed, request_id=request_id)
         self._refresh_special_governance_stats()
         return changed
 
@@ -610,6 +612,70 @@ class SpecialProcessingService:
             logging.getLogger(__name__).warning(
                 "notification publish failed for record %s:%s recipient=%s",
                 record_id, row_version, owner_id,
+                exc_info=True,
+            )
+
+    def _publish_completion_notification(
+        self,
+        record: Mapping[str, Any],
+        *,
+        request_id: str,
+    ) -> None:
+        if self._notifications is None:
+            return
+        creator_id = str(record.get("creator_user_id") or "").strip()
+        if not creator_id:
+            return
+
+        dimension = str(record.get("dimension") or "").strip()
+        dimension_label = DIMENSION_LABELS.get(
+            dimension,
+            dimension or "未分维度",
+        )
+        field_name = str(record.get("field_name") or "").strip() or "未填字段"
+        record_id = int(record["id"])
+        row_version = int(record["row_version"])
+        report_period = str(record.get("report_period") or "").strip()
+        query = {
+            "record_id": str(record_id),
+            "highlight": "1",
+        }
+        if len(report_period) >= 10:
+            query["period"] = report_period[5:10]
+
+        from auto_check.app.notifications.contracts import (
+            NotificationAction,
+            NotificationPublishRequest,
+        )
+
+        request = NotificationPublishRequest(
+            event_type="confirmation_completed",
+            dedupe_key=(
+                f"rsp-completed:{record_id}:{row_version}:{creator_id}"
+            ),
+            recipient_user_ids=(creator_id,),
+            category="task",
+            level="success",
+            title="您提交的报表特殊处理已完成确认",
+            content=f"{dimension_label} · {field_name}",
+            action=NotificationAction(
+                type="navigate",
+                route="report-special-processing",
+                query=query,
+            ),
+        )
+        try:
+            self._notifications.publish(request)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "completion notification publish failed for record "
+                "%s:%s recipient=%s request=%s",
+                record_id,
+                row_version,
+                creator_id,
+                request_id,
                 exc_info=True,
             )
 

@@ -519,6 +519,14 @@ class FakeNotificationPublisher:
         self.requests.append(request)
 
 
+def _requests_for(publisher, event_type):
+    return [
+        request
+        for request in publisher.requests
+        if request.event_type == event_type
+    ]
+
+
 @pytest.fixture
 def service_with_publisher():
     from auto_check.modules.report_special_processing.service import SpecialProcessingService
@@ -554,10 +562,13 @@ class TestNotificationTriggerMatrix:
             owner_actor = {"id": "owner", "username": "gov_owner", "display_name": "治理负责人甲", "role": "custom_pa", "capabilities": ["rsp.confirm"]}
             record = service.change_status(record["id"], {"target_status": "completed", "row_version": record["row_version"]}, owner_actor, request_id="req-2")
             record = service.reopen(record["id"], {"row_version": record["row_version"], "reason": "重开原因"}, {"id": "1", "username": "creator", "display_name": "创建人", "role": "user", "capabilities": ["rsp.reopen"]}, request_id="req-3")
-        # create_formal publishes 1, submit_draft publishes 1, reopen_completed publishes 2 (create + reopen)
-        expected_count = 2 if operation == "reopen_completed" else 1
-        assert len(publisher.requests) == expected_count
-        request = publisher.requests[0]
+        pending_requests = _requests_for(
+            publisher,
+            "pending_confirmation_created",
+        )
+        expected_pending_count = 2 if operation == "reopen_completed" else 1
+        assert len(pending_requests) == expected_pending_count
+        request = pending_requests[0]
         assert request.recipient_user_ids == ("owner",)
         assert request.category == "todo"
         assert request.level == "info"
@@ -577,11 +588,10 @@ class TestNotificationTriggerMatrix:
 
     @pytest.mark.parametrize("operation", [
         "save_draft",
-        "complete",
         "void",
         "delete",
     ])
-    def test_non_creation_operations_do_not_publish(self, operation, service_with_publisher):
+    def test_operations_without_notification_semantics_do_not_publish(self, operation, service_with_publisher):
         service, publisher = service_with_publisher
         actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user", "capabilities": ["rsp.create", "rsp.edit", "rsp.confirm", "rsp.void", "rsp.delete"]}
         record = service.create(_payload(governance_owner_user_id="owner"), actor, request_id="req-1")
@@ -590,9 +600,6 @@ class TestNotificationTriggerMatrix:
             draft_record = service.create(_payload(save_mode="draft", governance_owner_user_id="owner"), actor, request_id="req-2")
             publisher.requests.clear()
             service.update(draft_record["id"], _payload(save_mode="draft", governance_owner_user_id="owner", row_version=1), actor, request_id="req-3")
-        elif operation == "complete":
-            owner_actor = dict(actor, id="owner", capabilities=["rsp.confirm"])
-            service.change_status(record["id"], {"target_status": "completed", "row_version": record["row_version"]}, owner_actor, request_id="req-2")
         elif operation == "void":
             service.void(record["id"], {"reason": "测试作废", "row_version": record["row_version"]}, actor, request_id="req-2")
         elif operation == "delete":
@@ -608,3 +615,207 @@ class TestNotificationTriggerMatrix:
         # Business operation should still succeed
         record = service.create(_payload(governance_owner_user_id="owner"), {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}, request_id="req-1")
         assert record["status"] == "pending"
+
+    def test_completion_notifies_creator_instead_of_selected_handler(
+        self,
+        service_with_publisher,
+    ):
+        service, publisher = service_with_publisher
+        record = service.create(
+            _payload(
+                handler_user_id="2",
+                governance_owner_user_id="owner",
+            ),
+            {
+                "id": "1",
+                "username": "creator",
+                "display_name": "创建人",
+                "role": "user",
+            },
+            request_id="req-create",
+        )
+        assert record["creator_user_id"] == "1"
+        assert record["handler_user_id"] == "2"
+
+        completed = service.change_status(
+            record["id"],
+            {
+                "target_status": "completed",
+                "row_version": record["row_version"],
+            },
+            {
+                "id": "owner",
+                "username": "gov_owner",
+                "display_name": "治理负责人甲",
+                "role": "custom_pa",
+                "capabilities": ["rsp.confirm"],
+            },
+            request_id="req-complete",
+        )
+
+        requests = _requests_for(publisher, "confirmation_completed")
+        assert len(requests) == 1
+        request = requests[0]
+        assert request.recipient_user_ids == ("1",)
+        assert request.category == "task"
+        assert request.level == "success"
+        assert request.title == "您提交的报表特殊处理已完成确认"
+        assert request.content == "项目端 · amt"
+        assert request.dedupe_key == (
+            f"rsp-completed:{completed['id']}:"
+            f"{completed['row_version']}:1"
+        )
+        assert request.action.type == "navigate"
+        assert request.action.route == "report-special-processing"
+        assert request.action.query == {
+            "record_id": str(completed["id"]),
+            "highlight": "1",
+            "period": "07-31",
+        }
+        assert "open" not in request.action.query
+
+    def test_denied_or_conflicting_completion_does_not_publish(
+        self,
+        service_with_publisher,
+    ):
+        from auto_check.modules.report_special_processing.contracts import (
+            PermissionDeniedError,
+            VersionConflictError,
+        )
+
+        service, publisher = service_with_publisher
+        record = service.create(
+            _payload(governance_owner_user_id="owner"),
+            {
+                "id": "1",
+                "username": "creator",
+                "display_name": "创建人",
+                "role": "user",
+            },
+            request_id="req-create",
+        )
+        publisher.requests.clear()
+
+        with pytest.raises(PermissionDeniedError):
+            service.change_status(
+                record["id"],
+                {
+                    "target_status": "completed",
+                    "row_version": record["row_version"],
+                },
+                {
+                    "id": "2",
+                    "role": "user",
+                    "capabilities": ["rsp.confirm"],
+                },
+                request_id="req-denied",
+            )
+        assert _requests_for(publisher, "confirmation_completed") == []
+
+        with pytest.raises(VersionConflictError):
+            service.change_status(
+                record["id"],
+                {"target_status": "completed", "row_version": 999},
+                {
+                    "id": "owner",
+                    "role": "custom_pa",
+                    "capabilities": ["rsp.confirm"],
+                },
+                request_id="req-conflict",
+            )
+        assert _requests_for(publisher, "confirmation_completed") == []
+
+    def test_completion_publish_failure_preserves_completed_business_result(
+        self,
+        service_with_publisher,
+    ):
+        class FailingPublisher:
+            def publish(self, request):
+                raise RuntimeError("notification service unavailable")
+
+        service, publisher = service_with_publisher
+        record = service.create(
+            _payload(governance_owner_user_id="owner"),
+            {
+                "id": "1",
+                "username": "creator",
+                "display_name": "创建人",
+                "role": "user",
+            },
+            request_id="req-create",
+        )
+        publisher.requests.clear()
+        service._notifications = FailingPublisher()
+
+        completed = service.change_status(
+            record["id"],
+            {
+                "target_status": "completed",
+                "row_version": record["row_version"],
+            },
+            {
+                "id": "owner",
+                "role": "custom_pa",
+                "capabilities": ["rsp.confirm"],
+            },
+            request_id="req-complete",
+        )
+
+        assert completed["status"] == "completed"
+        assert service.storage.get(record["id"])["status"] == "completed"
+
+    def test_reopen_then_reconfirm_uses_new_completion_dedupe_key(
+        self,
+        service_with_publisher,
+    ):
+        service, publisher = service_with_publisher
+        creator = {
+            "id": "1",
+            "username": "creator",
+            "display_name": "创建人",
+            "role": "user",
+            "capabilities": ["rsp.create", "rsp.reopen"],
+        }
+        owner = {
+            "id": "owner",
+            "username": "gov_owner",
+            "display_name": "治理负责人甲",
+            "role": "custom_pa",
+            "capabilities": ["rsp.confirm"],
+        }
+        record = service.create(
+            _payload(governance_owner_user_id="owner"),
+            creator,
+            request_id="req-create",
+        )
+        first = service.change_status(
+            record["id"],
+            {
+                "target_status": "completed",
+                "row_version": record["row_version"],
+            },
+            owner,
+            request_id="req-complete-1",
+        )
+        reopened = service.reopen(
+            record["id"],
+            {"row_version": first["row_version"], "reason": "补充口径"},
+            creator,
+            request_id="req-reopen",
+        )
+        second = service.change_status(
+            record["id"],
+            {
+                "target_status": "completed",
+                "row_version": reopened["row_version"],
+            },
+            owner,
+            request_id="req-complete-2",
+        )
+
+        requests = _requests_for(publisher, "confirmation_completed")
+        assert [request.dedupe_key for request in requests] == [
+            f"rsp-completed:{first['id']}:{first['row_version']}:1",
+            f"rsp-completed:{second['id']}:{second['row_version']}:1",
+        ]
+        assert requests[0].dedupe_key != requests[1].dedupe_key
