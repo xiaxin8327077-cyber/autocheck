@@ -46,3 +46,7 @@ class TestNotificationResources:
         stop = extract_function(NOTIFICATION_JS, "stop")
         assert ".close()" in stop
         assert "clearInterval" in stop
+
+    def test_notification_time_includes_seconds(self):
+        assert "pad(d.getSeconds())" in NOTIFICATION_JS
+        assert "${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}" in NOTIFICATION_JS
