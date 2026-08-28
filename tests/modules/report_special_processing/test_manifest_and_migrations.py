@@ -34,9 +34,9 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.8"
-    assert manifest.release_notes.version == "1.2.8"
-    assert "待确认事项接入系统通知" in manifest.release_notes.items
+    assert manifest.version == "1.2.9"
+    assert manifest.release_notes.version == "1.2.9"
+    assert manifest.release_notes.items == ("确认完成后通知记录创建人",)
 
 
 def test_module_is_discovered_without_central_registration():

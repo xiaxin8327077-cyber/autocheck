@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -38,7 +38,7 @@
   ],
   "schema_version": 3,
   "release_notes": {
-    "version": "1.2.8",
-    "items": ["待确认事项接入系统通知"]
+    "version": "1.2.9",
+    "items": ["确认完成后通知记录创建人"]
   }
 }
