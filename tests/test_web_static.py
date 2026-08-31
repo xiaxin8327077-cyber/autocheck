@@ -7919,6 +7919,7 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.17</span>' in app_js
     assert '<span class="changelog-version">v1.2.15</span>' in app_js
     # 用户角色仅保留管理员/普通用户；其余走自定义角色
     assert 'governance: "数据治理"' not in app_js
@@ -8296,10 +8297,30 @@ def test_user_management_list_uses_display_fields_pagination_and_admin_guards():
     page_users = re.search(r"(?m)^#page-users\s*\{(?P<body>.*?)\}", css, re.S)
     assert page_users is not None
     assert "height: 100%" in page_users.group("body")
+    assert "overflow: hidden" in page_users.group("body")
     user_management = re.search(r"(?m)^\.user-management\s*\{(?P<body>.*?)\}", css, re.S)
     assert user_management is not None
     assert "flex: 1" in user_management.group("body")
     assert "min-height: 0" in user_management.group("body")
+    page_user_mgmt = re.search(r"(?m)^#page-users \.user-management\s*\{(?P<body>.*?)\}", css, re.S)
+    assert page_user_mgmt is not None
+    assert "min-height: 0" in page_user_mgmt.group("body")
+    assert "100vh" not in page_user_mgmt.group("body")
+    users_html = html[html.index('id="page-users"'):html.index('id="page-settings"')]
+    assert 'class="user-table-wrap"' in users_html
+    assert users_html.index('class="user-table-wrap"') < users_html.index('class="user-table"')
+    assert users_html.index("</table>") < users_html.index('id="userPagination"')
+    table_card = re.search(r"(?m)^\.user-table-card\s*\{(?P<body>.*?)\}", css, re.S)
+    assert table_card is not None
+    assert "min-height: 0" in table_card.group("body")
+    assert "min-height: 430px" not in table_card.group("body")
+    table_wrap = re.search(r"(?m)^\.user-table-wrap\s*\{(?P<body>.*?)\}", css, re.S)
+    assert table_wrap is not None
+    assert "overflow: auto" in table_wrap.group("body")
+    assert "min-height: 0" in table_wrap.group("body")
+    pagination = re.search(r"(?m)^\.user-pagination\s*\{(?P<body>.*?)\}", css, re.S)
+    assert pagination is not None
+    assert "flex-shrink: 0" in pagination.group("body")
     assert ".user-pagination" in css
 
 

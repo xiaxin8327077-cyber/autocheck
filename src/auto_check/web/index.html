@@ -1248,36 +1248,38 @@
           </div>
 
           <section class="user-table-card">
-            <table class="user-table">
-              <colgroup>
-                <col class="user-name-col" />
-                <col class="user-role-col" />
-                <col class="user-status-col" />
-                <col class="user-time-col" />
-                <col class="user-time-col" />
-                <col class="user-actions-col" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>用户</th>
-                  <th>角色</th>
-                  <th>状态</th>
-                  <th>创建时间</th>
-                  <th>最近登录时间</th>
-                  <th class="user-actions-heading">操作</th>
-                </tr>
-              </thead>
-              <tbody id="userTableBody">
-                <tr class="user-loading-row">
-                  <td><span class="user-skeleton user-skeleton-name"></span><span class="user-skeleton user-skeleton-sub"></span></td>
-                  <td><span class="user-skeleton user-skeleton-pill"></span></td>
-                  <td><span class="user-skeleton user-skeleton-pill"></span></td>
-                  <td><span class="user-skeleton user-skeleton-time"></span></td>
-                  <td><span class="user-skeleton user-skeleton-time"></span></td>
-                  <td><span class="user-skeleton user-skeleton-actions"></span></td>
-                </tr>
-              </tbody>
-            </table>
+            <div class="user-table-wrap">
+              <table class="user-table">
+                <colgroup>
+                  <col class="user-name-col" />
+                  <col class="user-role-col" />
+                  <col class="user-status-col" />
+                  <col class="user-time-col" />
+                  <col class="user-time-col" />
+                  <col class="user-actions-col" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th>用户</th>
+                    <th>角色</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                    <th>最近登录时间</th>
+                    <th class="user-actions-heading">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="userTableBody">
+                  <tr class="user-loading-row">
+                    <td><span class="user-skeleton user-skeleton-name"></span><span class="user-skeleton user-skeleton-sub"></span></td>
+                    <td><span class="user-skeleton user-skeleton-pill"></span></td>
+                    <td><span class="user-skeleton user-skeleton-pill"></span></td>
+                    <td><span class="user-skeleton user-skeleton-time"></span></td>
+                    <td><span class="user-skeleton user-skeleton-time"></span></td>
+                    <td><span class="user-skeleton user-skeleton-actions"></span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
             <div class="user-pagination" id="userPagination">
               <span id="userPageInfo">共 0 条</span>
               <div class="user-pagination-actions">
