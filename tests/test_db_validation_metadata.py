@@ -1,4 +1,4 @@
-from auto_check.db_validation.metadata import FieldMetadataLoader
+from auto_check.db_validation.metadata import FieldMetadataLoader, match_chinese_field_name
 
 
 PRODUCT_CODE = "\u4ea7\u54c1\u4ee3\u7801"
@@ -100,3 +100,14 @@ def test_metadata_loader_uses_configured_table_names():
 
     assert '"meta"."baseinfo_custom"' in client.calls[0][0]
     assert '"meta"."field_info_custom"' in client.calls[1][0]
+
+
+def test_match_chinese_field_name_ignores_latin_letter_case():
+    required = "AD200_除资产收益权外其他债权"
+    mixed = "Ad200_除资产收益权外其他债权"
+    lower = "ad200_除资产收益权外其他债权"
+
+    assert match_chinese_field_name(required, [mixed]) == mixed
+    assert match_chinese_field_name(required, [lower]) == lower
+    assert match_chinese_field_name(required, [required]) == required
+    assert match_chinese_field_name(required, ["除资产收益权外其他债权"]) == ""

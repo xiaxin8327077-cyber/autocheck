@@ -108,7 +108,8 @@ def match_chinese_field_name(requested_name: str, candidate_names: Any) -> str:
     """Return one high-confidence metadata name, or empty when none/ambiguous.
 
     Matching is deliberately limited to stable business-name variations. It does
-    not use arbitrary substring or edit-distance matching.
+    not use arbitrary substring or edit-distance matching. Latin letters in the
+    Chinese name are compared case-insensitively.
     """
     requested = str(requested_name or "").strip()
     candidates = [str(name or "").strip() for name in candidate_names if str(name or "").strip()]
@@ -134,7 +135,7 @@ def match_chinese_field_name(requested_name: str, candidate_names: Any) -> str:
 
 
 def _chinese_field_variants(value: str) -> dict[str, int]:
-    normalized = _CHINESE_FIELD_SEPARATORS.sub("", str(value or "").strip()).replace("日期", "日")
+    normalized = _CHINESE_FIELD_SEPARATORS.sub("", str(value or "").strip()).replace("日期", "日").casefold()
     if not normalized:
         return {}
     variants = {normalized: 0}
