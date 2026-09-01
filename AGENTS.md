@@ -93,6 +93,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath
 
 ## Git 约定
 
+- 提交说明必须使用中文。
 - 提交应聚焦当前请求，不混入无关改动。
 - 不要提交 `build/` 等生成目录，除非用户明确要求。
 - 用户要求提交或推送时，先完成测试和必要打包，再提交并推送当前分支。
