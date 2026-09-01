@@ -3495,6 +3495,32 @@ th {
   background: var(--surface-container-low);
 }
 
+#page-auto-check .result-card > .table-wrap {
+  --result-sticky-row-top: 49px;
+}
+
+#page-auto-check .result-card > .table-wrap > .result-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#page-auto-check .result-card > .table-wrap > .result-table > tbody.result-item-body {
+  overflow: clip;
+}
+
+#page-auto-check .result-card > .table-wrap > .result-table > tbody.result-item-body > tr.result-main-row.is-expanded > td {
+  position: sticky;
+  top: var(--result-sticky-row-top);
+  z-index: 1;
+  background: var(--surface-container-low);
+}
+
+#page-auto-check .result-card > .table-wrap > .result-table .detail-table th {
+  position: static;
+  top: auto;
+  z-index: auto;
+}
+
 .result-table tbody tr.detail-row {
   cursor: default;
 }

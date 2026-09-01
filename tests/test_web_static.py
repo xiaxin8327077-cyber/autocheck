@@ -1698,6 +1698,8 @@ def test_result_detail_expansion_is_single_open():
     assert 'otherBtn.textContent = "+";' in body
     assert "row.hidden = !wasHidden;" in body
     assert 'mainRow?.classList.toggle("is-expanded", wasHidden);' in body
+    assert "syncResultStickyRowTop();" in body
+    assert "scrollResultMainRowUnderHeader(mainRow);" in body
     assert ".result-table tbody tr.result-main-row" in css
     assert "cursor: pointer;" in css
     assert ".result-table tbody tr.result-main-row td" in css
@@ -1708,6 +1710,59 @@ def test_result_detail_expansion_is_single_open():
     assert '[data-color-mode="dark"] .result-table tbody tr:hover' in css
     assert ".result-table tbody tr.result-main-row.is-expanded" in css
     assert ".detail-row td {\n  padding: 10px 18px 14px 58px;" in css
+
+
+def test_expanded_result_row_stays_sticky_while_details_scroll():
+    app_js = _read(APP_JS)
+    css = _read(STYLES_CSS)
+    readme = _read(README_MD)
+
+    assert 'document.querySelector("#page-auto-check .result-card > .table-wrap > .result-table")' in app_js
+    assert "function setResultTableBodies(tbodyHtml)" in app_js
+    assert 'resultBody.querySelectorAll(":scope > tbody")' in app_js
+    assert '<tbody class="result-item-body">' in app_js
+    assert "function syncResultStickyRowTop()" in app_js
+    assert "function scrollResultMainRowUnderHeader(mainRow)" in app_js
+    assert 'wrap.style.setProperty("--result-sticky-row-top"' in app_js
+    assert "window.addEventListener(\"resize\"" in app_js
+    sticky_cells = re.search(
+        r"(?m)^#page-auto-check \.result-card > \.table-wrap > \.result-table > tbody\.result-item-body > tr\.result-main-row\.is-expanded > td\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert sticky_cells is not None
+    sticky_body = sticky_cells.group("body")
+    assert "position: sticky;" in sticky_body
+    assert "top: var(--result-sticky-row-top);" in sticky_body
+    assert "z-index: 1;" in sticky_body
+    assert "background: var(--surface-container-low);" in sticky_body
+    assert "--result-sticky-row-top: 49px;" in css
+    table_layout = re.search(
+        r"(?m)^#page-auto-check \.result-card > \.table-wrap > \.result-table\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert table_layout is not None
+    assert "border-collapse: separate;" in table_layout.group("body")
+    assert "border-spacing: 0;" in table_layout.group("body")
+    item_body = re.search(
+        r"(?m)^#page-auto-check \.result-card > \.table-wrap > \.result-table > tbody\.result-item-body\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert item_body is not None
+    assert "overflow: clip;" in item_body.group("body")
+    detail_th = re.search(
+        r"(?m)^#page-auto-check \.result-card > \.table-wrap > \.result-table \.detail-table th\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert detail_th is not None
+    assert "position: static;" in detail_th.group("body")
+    assert "展开后滚动详情时该行固定显示在表头下方" in readme
+    assert "展开行在滚动详情时固定在表头下方" in readme
+    assert '<span class="changelog-version">v1.2.18</span>' in app_js
+    assert "`v1.2.18` (2026-09-01)" in readme
 
 
 def test_result_detail_uses_report_asset_total_label_everywhere():
@@ -7919,6 +7974,7 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.18</span>' in app_js
     assert '<span class="changelog-version">v1.2.17</span>' in app_js
     assert '<span class="changelog-version">v1.2.15</span>' in app_js
     # 用户角色仅保留管理员/普通用户；其余走自定义角色

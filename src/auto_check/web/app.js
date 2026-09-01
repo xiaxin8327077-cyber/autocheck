@@ -105,7 +105,7 @@ const reconcileSteps = [
   { name: "生成报告", percentage: 90 },
   { name: "完成", percentage: 100 }
 ];
-const resultBody = document.getElementById("resultBody");
+const resultBody = document.querySelector("#page-auto-check .result-card > .table-wrap > .result-table");
 const keywordFilter = document.getElementById("keywordFilter");
 const reasonFilter = document.getElementById("reasonFilter");
 const statusFilter = document.getElementById("statusFilter");
@@ -4789,22 +4789,48 @@ function renderSourceNoDataRow() {
   return `<tr><td colspan="9"><div class="no-source-panel" id="noSourcePanel"><div class="no-source-illustration" aria-hidden="true"><svg class="no-source-svg" viewBox="0 0 220 180" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="noSourceCardGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#eef8ff"/><stop offset="100%" stop-color="#ffffff"/></linearGradient><linearGradient id="noSourceAccentGrad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#22c3d6"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><circle class="no-source-orbit no-source-orbit--outer" cx="110" cy="88" r="72"/><circle class="no-source-orbit no-source-orbit--inner" cx="110" cy="88" r="54"/><g class="no-source-card"><rect x="62" y="34" width="96" height="112" rx="14" fill="url(#noSourceCardGrad)" stroke="#b7d7e8" stroke-width="2"/><rect x="62" y="34" width="96" height="28" rx="14" fill="#dff5fb"/><path d="M62 58 H158" stroke="#b7d7e8" stroke-width="2"/><path class="no-source-scan" d="M76 82 H144" stroke="url(#noSourceAccentGrad)" stroke-width="5" stroke-linecap="round"/><path d="M76 102 H128" stroke="#c7d7e5" stroke-width="5" stroke-linecap="round"/><path d="M76 122 H138" stroke="#d7e3ed" stroke-width="5" stroke-linecap="round"/><circle class="no-source-dot no-source-dot--one" cx="84" cy="48" r="4" fill="#22c3d6"/><circle class="no-source-dot no-source-dot--two" cx="100" cy="48" r="4" fill="#3b82f6"/><circle class="no-source-dot no-source-dot--three" cx="116" cy="48" r="4" fill="#f59e0b"/></g><path class="no-source-wave" d="M54 150 C82 136 100 164 126 150 S168 138 184 152" fill="none" stroke="#22c3d6" stroke-width="4" stroke-linecap="round"/></svg></div><div class="no-source-text"><h3 class="no-source-title">报表对应日期无数据</h3><p class="no-source-sub">未查询到 ${selectedDate} 的报表记录，本次不写入历史</p></div></div></td></tr>`;
 }
 
+function setResultTableBodies(tbodyHtml) {
+  if (!resultBody) return;
+  resultBody.querySelectorAll(":scope > tbody").forEach((body) => body.remove());
+  resultBody.insertAdjacentHTML("beforeend", tbodyHtml);
+}
+
+function resultTableWrap() {
+  return resultBody?.closest(".table-wrap");
+}
+
+function syncResultStickyRowTop() {
+  const wrap = resultTableWrap();
+  const headerCell = resultBody?.querySelector(":scope > thead > tr > th");
+  if (!wrap || !headerCell) return;
+  wrap.style.setProperty("--result-sticky-row-top", `${Math.ceil(headerCell.getBoundingClientRect().height)}px`);
+}
+
+function scrollResultMainRowUnderHeader(mainRow) {
+  const wrap = resultTableWrap();
+  const header = resultBody?.querySelector(":scope > thead");
+  if (!wrap || !header || !mainRow) return;
+  const headerHeight = header.getBoundingClientRect().height;
+  wrap.scrollTop += mainRow.getBoundingClientRect().top - wrap.getBoundingClientRect().top - headerHeight;
+}
+
 function renderResults() {
   const { pageItems, total } = getPageItems();
   if (!total) {
     if (resultEmptyState === RESULT_EMPTY_SOURCE) {
-      resultBody.innerHTML = renderSourceNoDataRow();
+      setResultTableBodies(`<tbody>${renderSourceNoDataRow()}</tbody>`);
     } else if (hasReconciled) {
-      resultBody.innerHTML = '<tr><td colspan="9"><div class="success-panel" id="successPanel"><div class="success-illustration"><svg class="success-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="circleGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#25676e"/><stop offset="100%" stop-color="#abeaf2"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><circle cx="100" cy="100" r="88" fill="none" stroke="url(#circleGrad)" stroke-width="3" class="success-ring-outer"/><circle cx="100" cy="100" r="78" fill="none" stroke="#abeaf2" stroke-width="1.5" class="success-ring-inner" opacity="0.5"/><circle cx="100" cy="100" r="60" fill="#e6f4ea" class="success-bg-circle"/><path d="M80 102 L94 116 L122 84" fill="none" stroke="#25676e" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" class="success-check"/></svg></div><div class="success-text"><h3 class="success-title">恭喜！数据完全正确</h3><p class="success-sub">本次核对未发现任何差异数据</p></div></div></td></tr>';
+      setResultTableBodies('<tbody><tr><td colspan="9"><div class="success-panel" id="successPanel"><div class="success-illustration"><svg class="success-svg" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="circleGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#25676e"/><stop offset="100%" stop-color="#abeaf2"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><circle cx="100" cy="100" r="88" fill="none" stroke="url(#circleGrad)" stroke-width="3" class="success-ring-outer"/><circle cx="100" cy="100" r="78" fill="none" stroke="#abeaf2" stroke-width="1.5" class="success-ring-inner" opacity="0.5"/><circle cx="100" cy="100" r="60" fill="#e6f4ea" class="success-bg-circle"/><path d="M80 102 L94 116 L122 84" fill="none" stroke="#25676e" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" class="success-check"/></svg></div><div class="success-text"><h3 class="success-title">恭喜！数据完全正确</h3><p class="success-sub">本次核对未发现任何差异数据</p></div></div></td></tr></tbody>');
       launchConfetti();
     } else {
-      resultBody.innerHTML = '<tr><td colspan="9" class="empty">暂无结果</td></tr>';
+      setResultTableBodies('<tbody><tr><td colspan="9" class="empty">暂无结果</td></tr></tbody>');
     }
     updatePagination(); return;
   }
-  resultBody.innerHTML = pageItems.map((item, i) => {
+  setResultTableBodies(pageItems.map((item, i) => {
     const diff = Number(item.difference), gi = (currentPage - 1) * PAGE_SIZE + i;
-    return `<tr class="result-main-row" data-result-index="${gi}" title="点击展开/收回详情">
+    return `<tbody class="result-item-body">
+    <tr class="result-main-row" data-result-index="${gi}" title="点击展开/收回详情">
       <td><button class="expand-btn" data-index="${gi}">+</button></td>
       <td class="result-project-code">${escapeHtml(item.project_code)}</td>
       <td>${escapeHtml(item.project_name)}</td>
@@ -4815,16 +4841,17 @@ function renderResults() {
       <td>${escapeHtml(item.difference_reason || "")}</td>
       <td style="text-align:center">${renderStatusBadge(item.match_status)}</td>
     </tr>
-    <tr class="detail-row" data-detail="${gi}" hidden><td colspan="9">${renderDetails(item.display_details || [])}</td></tr>`;
-  }).join("");
+    <tr class="detail-row" data-detail="${gi}" hidden><td colspan="9">${renderDetails(item.display_details || [])}</td></tr>
+    </tbody>`;
+  }).join(""));
   updatePagination();
 }
 
 function renderResultListLoading() {
-  resultBody.innerHTML = `<tr class="result-loading-row"><td colspan="9">
+  setResultTableBodies(`<tbody><tr class="result-loading-row"><td colspan="9">
     <span class="loading-spinner result-loading-spinner" aria-hidden="true"></span>
     <span>正在加载执行结果列表...</span>
-  </td></tr>`;
+  </td></tr></tbody>`);
 }
 
 function showResultListReturnLoading() {
@@ -5634,6 +5661,16 @@ resultBody.addEventListener("click", (e) => {
   row.hidden = !wasHidden;
   mainRow?.classList.toggle("is-expanded", wasHidden);
   if (currentBtn) currentBtn.textContent = row.hidden ? "+" : "-";
+  if (wasHidden && mainRow) {
+    requestAnimationFrame(() => {
+      syncResultStickyRowTop();
+      scrollResultMainRowUnderHeader(mainRow);
+    });
+  }
+});
+
+window.addEventListener("resize", () => {
+  if (resultBody?.querySelector(".result-main-row.is-expanded")) syncResultStickyRowTop();
 });
 
 /* ===== History ===== */
@@ -13407,6 +13444,16 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.18</span>
+        <span class="changelog-date">2026-09-01</span>
+      </div>
+      <ul>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.17</span>
