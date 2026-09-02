@@ -172,16 +172,89 @@ def test_mapping_requirements_include_zg05_rule_indicator_names():
     }.issubset(REQUIRED_CHINESE_FIELDS_BY_SCOPE["ZG05"])
 
 
+def test_refresh_includes_zg02_original_amount_used_by_currency_total_rule():
+    table_name = "zgxgzh_begraiseinfo_zg02_26"
+    runtime_field_name = "runtime_original_amount_column"
+    storage = FakeStorage([TableMapping("detail", "ZG02", "", table_name)])
+    service = _service_with_storage(storage)
+    metadata = FakeMetadataClient(
+        tables=[{"table_name_en": table_name}],
+        fields=[{"chinese": "初始募集金额", "english": runtime_field_name}],
+    )
+
+    catalog = service.refresh(
+        metadata_client=metadata,
+        data_clients={"detail": FakeDataClient({table_name: [runtime_field_name]})},
+        baseinfo_table="xt_reg_table_baseinfo",
+        field_info_table="xt_reg_table_field_info",
+        sys_manage_id="",
+        classification_id="",
+        signature=("sig",),
+        source="manual",
+        required_chinese_fields_by_scope=REQUIRED_CHINESE_FIELDS_BY_SCOPE,
+        optional_chinese_fields_by_scope=OPTIONAL_CHINESE_FIELDS_BY_SCOPE,
+    )
+
+    assert catalog.field_for(table_name, "初始募集金额") == runtime_field_name
+
+
+def test_refresh_includes_zg07_loan_balance_used_by_zg05_cross_table_rule():
+    table_name = "zgxgzh_ioudetail_zg07"
+    runtime_field_name = "runtime_loan_balance_column"
+    storage = FakeStorage([TableMapping("detail", "ZG07", "", table_name)])
+    service = _service_with_storage(storage)
+    metadata = FakeMetadataClient(
+        tables=[{"table_name_en": table_name}],
+        fields=[
+            {"chinese": "产品代码", "english": "projcode"},
+            {"chinese": "贷款余额折人民币", "english": runtime_field_name},
+        ],
+    )
+
+    catalog = service.refresh(
+        metadata_client=metadata,
+        data_clients={"detail": FakeDataClient({table_name: ["projcode", runtime_field_name]})},
+        baseinfo_table="xt_reg_table_baseinfo",
+        field_info_table="xt_reg_table_field_info",
+        sys_manage_id="",
+        classification_id="",
+        signature=("sig",),
+        source="manual",
+        required_chinese_fields_by_scope=REQUIRED_CHINESE_FIELDS_BY_SCOPE,
+        optional_chinese_fields_by_scope=OPTIONAL_CHINESE_FIELDS_BY_SCOPE,
+    )
+
+    assert catalog.field_for(table_name, "贷款余额折人民币") == runtime_field_name
+
+
 def test_optional_mapping_fields_remain_visible_without_becoming_validation_blockers():
     assert OPTIONAL_CHINESE_FIELDS_BY_SCOPE == {
-        "ZG06": frozenset({"数据管理机构"}),
+        "ZG04": frozenset({"金融机构编码"}),
+        "ZG05": frozenset({"金融机构编码", "数据管理机构"}),
+        "ZG06": frozenset({"金融机构编码", "数据管理机构"}),
         "ZG08": frozenset({"发行机构代码"}),
         "ZG09": frozenset({"数据管理机构", "法人金融机构名称"}),
         "ZG10": frozenset({"数据管理机构", "法人金融机构名称"}),
-        "ZG13": frozenset({"数据管理机构"}),
+        "ZG13": frozenset({"金融机构编码", "数据管理机构"}),
     }
     for scope_code, chinese_names in OPTIONAL_CHINESE_FIELDS_BY_SCOPE.items():
         assert chinese_names.isdisjoint(REQUIRED_CHINESE_FIELDS_BY_SCOPE.get(scope_code, frozenset()))
+
+
+def test_run_preflight_includes_selected_tables_direct_dependencies():
+    storage = FakeStorage([])
+    captured: dict[str, Any] = {}
+
+    def required_missing_for_tables(selected_tables, **kwargs):
+        captured["selected_tables"] = tuple(selected_tables)
+        return []
+
+    storage.required_missing_for_tables = required_missing_for_tables
+    service = _service_with_storage(storage)
+
+    service.required_missing_for_run(selected_tables=["ZG05"])
+
+    assert captured["selected_tables"] == ("ZG05", "ZG07", "ZG08")
 
 
 def test_refresh_updates_detail_table_from_source_but_keeps_template_and_public_seed_names():

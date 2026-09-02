@@ -59,3 +59,29 @@ def test_rules_document_describes_template_cpkj_table_mapping():
     assert "口径=2 对比口径 2 模板物理表" in flat_text
 
     workbook.close()
+
+
+def test_rules_document_describes_zg05_zg07_loan_balance_mapping_dependency():
+    _, payload = build_rules_document()
+
+    workbook = load_workbook(BytesIO(payload), read_only=True, data_only=True)
+    rows = list(workbook[workbook.sheetnames[2]].iter_rows(values_only=True))
+    detail_by_rule_id = {row[3]: row for row in rows[1:]}
+
+    assert "ZG07“贷款余额折人民币”字段映射" in str(detail_by_rule_id["Zg05_Rule3"][10])
+
+    workbook.close()
+
+
+def test_rules_document_describes_zg02_original_amount_mapping_dependency():
+    _, payload = build_rules_document()
+
+    workbook = load_workbook(BytesIO(payload), read_only=True, data_only=True)
+    rows = list(workbook[workbook.sheetnames[2]].iter_rows(values_only=True))
+    detail_by_rule_id = {row[3]: row for row in rows[1:]}
+
+    assert "“初始募集金额”和“初始募集金额折人民币”字段映射" in str(
+        detail_by_rule_id["Zg02_Rule1"][10]
+    )
+
+    workbook.close()

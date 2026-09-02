@@ -144,7 +144,7 @@ REQUIRED_CHINESE_FIELDS_BY_SCOPE: dict[str, frozenset[str]] = {
     }),
     "ZG02": frozenset({
         "产品代码", "地区代码", "客户类型", "地区", "币种",
-        "初始募集金额折人民币",
+        "初始募集金额", "初始募集金额折人民币",
     }),
     "ZG03": frozenset({
         "产品代码", "兑付客户收益折人民币", "兑付客户收益率", "币种",
@@ -179,7 +179,7 @@ REQUIRED_CHINESE_FIELDS_BY_SCOPE: dict[str, frozenset[str]] = {
         "贷款转让方机构代码", "贷款合同原始发放机构代码", "贷款合同原始发放机构所在地代码",
         "企业出资人经济成分", "贷款实际投向", "贷款担保方式", "贷款转让折扣率",
         "原始合同币种", "原始合同金额", "原始合同金额折人民币", "贷款余额币种",
-        "利率是否固定",
+        "贷款余额折人民币", "利率是否固定",
         "科技相关产业标识", "绿色领域标识", "普惠领域标识", "养老产业标识",
         "数字经济核心产业标识",
     }),
@@ -224,11 +224,13 @@ REQUIRED_CHINESE_FIELDS_BY_SCOPE: dict[str, frozenset[str]] = {
 # 规则运行可读取、但缺失时不阻断校验的中文字段。
 # 这些字段仍参与自动/人工映射，无法映射时归入“未映射”。
 OPTIONAL_CHINESE_FIELDS_BY_SCOPE: dict[str, frozenset[str]] = {
-    "ZG06": frozenset({"数据管理机构"}),
+    "ZG04": frozenset({"金融机构编码"}),
+    "ZG05": frozenset({"金融机构编码", "数据管理机构"}),
+    "ZG06": frozenset({"金融机构编码", "数据管理机构"}),
     "ZG08": frozenset({"发行机构代码"}),
     "ZG09": frozenset({"数据管理机构", "法人金融机构名称"}),
     "ZG10": frozenset({"数据管理机构", "法人金融机构名称"}),
-    "ZG13": frozenset({"数据管理机构"}),
+    "ZG13": frozenset({"金融机构编码", "数据管理机构"}),
 }
 
 

@@ -31,6 +31,10 @@ FORM_NAMES: dict[str, str] = {
 }
 
 DOCUMENT_ENABLED_RULE_IDS: frozenset[str] = frozenset({"Zg09_Rule3", "Zg10_Rule1"})
+RULE_NOTES: dict[str, str] = {
+    "Zg02_Rule1": "依赖“初始募集金额”和“初始募集金额折人民币”字段映射进行人民币合计校验。",
+    "Zg05_Rule3": "依赖 ZG07“贷款余额折人民币”字段映射，按产品代码汇总后与 ZG05 对比。",
+}
 TEMPLATE_RULE_NOTES: dict[str, str] = {
     "Zg09_Rule3": (
         "\u53d7\u6267\u884c\u754c\u9762\u7684\u201c\u6a21\u677f\u6821\u9a8c\u201d\u52fe\u9009\u9879\u63a7\u5236\uff1b"
@@ -133,6 +137,8 @@ def _trigger_condition(rule: LegacyRule, message: str) -> str:
 
 def _note(rule: LegacyRule) -> str:
     notes: list[str] = []
+    if rule.rule_id in RULE_NOTES:
+        notes.append(RULE_NOTES[rule.rule_id])
     if rule.is_public_info_rule:
         notes.append("受执行界面的“公开信息校验”勾选项控制。")
     if rule.rule_id in TEMPLATE_RULE_NOTES:

@@ -6,6 +6,29 @@ from datetime import date
 
 ZG_CODES: tuple[str, ...] = tuple(f"ZG{index:02d}" for index in range(1, 14))
 
+DETAIL_TABLE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
+    "ZG04": ("ZG03", "ZG05"),
+    "ZG05": ("ZG07", "ZG08"),
+    "ZG08": ("ZG01",),
+    "ZG12": ("ZG01", "ZG05"),
+    "ZG13": ("ZG05",),
+}
+
+
+def detail_table_codes_with_dependencies(table_codes: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Return selected detail tables followed by the tables their rules read directly."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in table_codes:
+        code = str(value or "").strip().upper()
+        if not code:
+            continue
+        for current in (code, *DETAIL_TABLE_DEPENDENCIES.get(code, ())):
+            if current not in seen:
+                seen.add(current)
+                result.append(current)
+    return tuple(result)
+
 def month_end(year: int, month: int) -> date:
     return date(year, month, monthrange(year, month)[1])
 

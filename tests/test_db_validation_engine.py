@@ -154,6 +154,48 @@ def test_engine_adds_legacy_chinese_field_aliases_from_metadata(tmp_path, monkey
     assert row["产品名称"] == "Product One"
 
 
+def test_engine_uses_runtime_zg07_loan_balance_mapping_for_zg05_rule3(tmp_path):
+    zg05_table = DETAIL_TABLE_MAPPINGS[("detail", "ZG05", "")]
+    zg07_table = DETAIL_TABLE_MAPPINGS[("detail", "ZG07", "")]
+    runtime_balance_field = "runtime_loan_balance_column"
+    client = FakeClient(
+        {
+            zg05_table: [{
+                "projcode": "P1",
+                "moneytype": "BWB",
+                "datetype": "3",
+                "a5100": "100",
+            }],
+            zg07_table: [{
+                "projcode": "P1",
+                runtime_balance_field: "80",
+            }],
+        }
+    )
+    catalog = TableFieldCatalog(
+        {
+            zg05_table: {
+                "产品代码": "projcode",
+                "币种": "moneytype",
+                "数据类型": "datetype",
+                "A5100_除回购和拆借外贷款": "a5100",
+            },
+            zg07_table: {
+                "产品代码": "projcode",
+                "贷款余额折人民币": runtime_balance_field,
+            },
+        },
+        table_mappings=DETAIL_TABLE_MAPPINGS,
+    )
+    engine = DbValidationEngine(data_client=client, field_catalog=catalog, output_dir=tmp_path)
+
+    result = engine.run(report_date=date(2026, 5, 31), selected_tables=["ZG05"])
+
+    row = next(item for item in result.rows if item.mark.endswith("Zg05_Rule3"))
+    assert row.value1 == "ZG07_贷款余额折人民币:80.0"
+    assert row.value2 == "差值（G05减G07）:20.0"
+
+
 def test_engine_reuses_dependency_table_when_later_selected(tmp_path, monkeypatch):
     fetched_tables = []
 

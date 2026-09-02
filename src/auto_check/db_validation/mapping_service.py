@@ -9,6 +9,7 @@ from auto_check.app.pbc_import import parse_table_ref
 from auto_check.db_validation.mapping_models import CrossTableMapping, FieldMapping, TableMapping
 from auto_check.db_validation.mapping_storage import DbValidationMappingStorage
 from auto_check.db_validation.metadata import FieldMetadataLoader, TableFieldCatalog, match_chinese_field_name
+from auto_check.db_validation.tables import detail_table_codes_with_dependencies
 
 
 TECHNICAL_FIELDS = frozenset({
@@ -80,8 +81,13 @@ class DbValidationMappingService:
         include_template: bool = False,
         include_public_info: bool = False,
     ) -> list[dict[str, Any]]:
+        tables_for_run = (
+            detail_table_codes_with_dependencies(selected_tables)
+            if selected_tables is not None
+            else None
+        )
         return self.storage.required_missing_for_tables(
-            selected_tables,
+            tables_for_run,
             include_template=include_template,
             include_public_info=include_public_info,
         )

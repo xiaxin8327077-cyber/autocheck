@@ -9,7 +9,7 @@ from auto_check.db_validation.metadata import TableFieldCatalog
 from auto_check.db_validation.models import DbValidationRunResult, ValidationResultRow
 from auto_check.db_validation.reader import ValidationTableReader
 from auto_check.db_validation.rules.basic import run_basic_rules
-from auto_check.db_validation.tables import ZG_CODES, previous_table_name
+from auto_check.db_validation.tables import DETAIL_TABLE_DEPENDENCIES, ZG_CODES, previous_table_name
 
 
 ProgressLogger = Callable[[str, int | None, str | None], None]
@@ -147,14 +147,7 @@ class DbValidationEngine:
         if template_rows_by_code.get(zg_code):
             related["TEMPLATE"] = template_rows_by_code[zg_code]
 
-        dependencies_by_code = {
-            "ZG04": ("ZG03", "ZG05"),
-            "ZG05": ("ZG07", "ZG08"),
-            "ZG08": ("ZG01",),
-            "ZG12": ("ZG01", "ZG05"),
-            "ZG13": ("ZG05",),
-        }
-        for dependency in dependencies_by_code.get(zg_code, ()):
+        for dependency in DETAIL_TABLE_DEPENDENCIES.get(zg_code, ()):
             self._current_rows_for(dependency, current_rows_by_code, field_catalog)
             related[dependency] = current_rows_by_code[dependency]
         return related
