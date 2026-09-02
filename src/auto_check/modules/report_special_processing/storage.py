@@ -25,6 +25,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 
 from .contracts import PageQuery, RecordNotFoundError, VersionConflictError
 
@@ -104,7 +105,7 @@ AUDITS = Table(
     Column("occurred_at", DateTime, nullable=False),
     Column("from_status", String(20)),
     Column("to_status", String(20)),
-    Column("changed_fields_json", Text, nullable=False),
+    Column("changed_fields_json", LONGTEXT, nullable=False),
     Column("action_summary", String(1000), nullable=False),
     Column("request_id", String(64)),
 )

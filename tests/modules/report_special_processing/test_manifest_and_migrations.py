@@ -16,7 +16,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.id == "report_special_processing"
     assert manifest.required is False
     assert manifest.api_prefix == "/api/modules/report-special-processing"
-    assert manifest.schema_version == 3
+    assert manifest.schema_version == 4
     assert manifest.permissions == (
         "report_special_processing.view",
         "report_special_processing.detail",
@@ -34,9 +34,9 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.9"
-    assert manifest.release_notes.version == "1.2.9"
-    assert manifest.release_notes.items == ("确认完成后通知记录创建人",)
+    assert manifest.version == "1.2.10"
+    assert manifest.release_notes.version == "1.2.10"
+    assert manifest.release_notes.items == ("操作记录中处理脚本对照显示开头预览，最多400字、8行，超出后省略；修改前和修改后一键复制完整脚本",)
 
 
 def test_module_is_discovered_without_central_registration():
@@ -46,10 +46,11 @@ def test_module_is_discovered_without_central_registration():
 
 def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 3
+    assert len(migrations) == 4
     assert migrations[0].version == 1
     assert migrations[1].version == 2
     assert migrations[2].version == 3
+    assert migrations[3].version == 4
     sql = "\n".join(migrations[0].statements)
     assert sql.count("CREATE TABLE report_special_processing_") == 3
     for table in ("records", "reports", "audit_logs"):
@@ -66,7 +67,7 @@ def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
 
 def test_migration_003_adds_dimension_governance_columns():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 3
+    assert len(migrations) == 4
     assert migrations[2].version == 3
     sql = "\n".join(migrations[2].statements).upper()
     for col in (
@@ -78,6 +79,17 @@ def test_migration_003_adds_dimension_governance_columns():
         "VALUE_AFTER",
     ):
         assert col in sql
+
+
+def test_migration_004_widens_audit_json_to_longtext():
+    migrations = load_module_migrations("auto_check.modules.report_special_processing")
+    assert migrations[3].version == 4
+    sql = "\n".join(migrations[3].statements).upper()
+    assert "REPORT_SPECIAL_PROCESSING_AUDIT_LOGS" in sql
+    assert "CHANGED_FIELDS_JSON" in sql
+    assert "LONGTEXT" in sql
+    assert "DROP TABLE" not in sql
+    assert "DELETE FROM" not in sql
 
 
 def test_initial_migration_has_chinese_comments_for_every_table_and_column():

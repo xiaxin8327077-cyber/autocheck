@@ -358,6 +358,58 @@ def test_update_audit_summary_describes_field_changes():
     ]
 
 
+def test_script_audit_preview_truncates_to_eight_lines_and_400_chars():
+    from auto_check.modules.report_special_processing.service import (
+        SCRIPT_AUDIT_PREVIEW_CHARS,
+        SCRIPT_AUDIT_PREVIEW_LINES,
+        SpecialProcessingService,
+    )
+
+    preview, truncated = SpecialProcessingService._script_audit_preview("select 1;")
+    assert truncated is False
+    assert preview == "select 1;"
+
+    long_chars = "a" * (SCRIPT_AUDIT_PREVIEW_CHARS + 20)
+    preview, truncated = SpecialProcessingService._script_audit_preview(long_chars)
+    assert truncated is True
+    assert preview == "a" * SCRIPT_AUDIT_PREVIEW_CHARS
+
+    lines = [f"L{index}" for index in range(SCRIPT_AUDIT_PREVIEW_LINES + 1)]
+    preview, truncated = SpecialProcessingService._script_audit_preview("\n".join(lines))
+    assert truncated is True
+    assert preview == "\n".join(lines[:SCRIPT_AUDIT_PREVIEW_LINES])
+    assert f"L{SCRIPT_AUDIT_PREVIEW_LINES}" not in preview
+
+
+def test_update_audit_stores_full_script_and_display_preview():
+    import json
+    from auto_check.modules.report_special_processing.service import SCRIPT_AUDIT_PREVIEW_CHARS
+
+    service = _service()
+    actor = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+    created = service.create(_payload(processing_script="select 1;"), actor, request_id="req-create")
+    marker = "UNIQUE_SCRIPT_TAIL"
+    long_script = ("select col\n" * 20) + marker + ("x" * 80)
+    service.update(
+        created["id"],
+        {**_payload(processing_script=long_script), "row_version": created["row_version"]},
+        actor,
+        request_id="req-script",
+    )
+    payload = json.loads(service.storage.audits[-1]["changed_fields_json"])
+    script_meta = payload["processing_script"]
+    assert script_meta["old"] == "select 1;"
+    assert script_meta["new"] == long_script
+    assert script_meta["old_preview"] == "select 1;"
+    assert script_meta["old_truncated"] is False
+    assert script_meta["new_truncated"] is True
+    assert len(script_meta["new_preview"]) <= SCRIPT_AUDIT_PREVIEW_CHARS
+    assert marker not in script_meta["new_preview"]
+    assert marker in script_meta["new"]
+    assert marker in long_script
+    assert "处理脚本由" in service.storage.audits[-1]["action_summary"]
+
+
 def test_detail_capabilities_match_frontend_resource_actions():
     service = _service()
     record = service.create(

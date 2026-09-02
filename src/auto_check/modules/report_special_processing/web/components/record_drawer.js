@@ -37,6 +37,9 @@ const AUDIT_STATUS_LABELS = {
   voided: "已作废",
 };
 
+const SCRIPT_AUDIT_PREVIEW_LINES = 8;
+const SCRIPT_AUDIT_PREVIEW_CHARS = 400;
+
 function formatAuditValue(value, field = "") {
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) {
     return "（空）";
@@ -45,6 +48,92 @@ function formatAuditValue(value, field = "") {
   if (Array.isArray(value)) return value.map((item) => formatAuditValue(item)).join("；");
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function clampScriptAuditPreview(text) {
+  const normalized = String(text ?? "").replace(/\r\n|\r/g, "\n");
+  const lines = normalized.split("\n");
+  let preview = lines.slice(0, SCRIPT_AUDIT_PREVIEW_LINES).join("\n");
+  if (preview.length > SCRIPT_AUDIT_PREVIEW_CHARS) preview = preview.slice(0, SCRIPT_AUDIT_PREVIEW_CHARS);
+  return preview;
+}
+
+async function copyTextToClipboard(documentRef, text) {
+  const value = String(text ?? "");
+  const clipboard = documentRef.defaultView?.navigator?.clipboard;
+  if (clipboard && typeof clipboard.writeText === "function") {
+    try {
+      await clipboard.writeText(value);
+      return;
+    } catch (_) {
+      // HTTP 局域网等非安全上下文会拒绝 clipboard API，改走选区复制。
+    }
+  }
+  const textarea = documentRef.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  documentRef.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  let copied = false;
+  try {
+    copied = Boolean(documentRef.execCommand("copy"));
+  } finally {
+    textarea.remove();
+  }
+  if (!copied) throw new Error("copy failed");
+}
+
+function formatScriptAuditPreviewValue(meta, side) {
+  const hasFull = hasAuditValue(meta, side);
+  const full = hasFull ? String(meta[side] ?? "") : "";
+  const raw = hasAuditValue(meta, `${side}_preview`)
+    ? String(meta[`${side}_preview`] ?? "")
+    : full;
+  const preview = clampScriptAuditPreview(raw);
+  const chars = Number(meta[`${side}_chars`] || full.length || raw.length || 0);
+  const truncated = Boolean(meta[`${side}_truncated`]) || raw !== preview || (hasFull && full !== preview);
+  if (!preview && !full) return { text: "（空）", title: "", copy: "", copyIsPreview: false, truncated: false };
+  return {
+    text: truncated ? `${preview}...` : preview,
+    title: truncated ? `${preview}\n（共 ${chars} 字）` : preview,
+    copy: hasFull ? full : preview,
+    copyIsPreview: !hasFull,
+    truncated,
+  };
+}
+
+function formatScriptAuditPair(meta) {
+  const hasFull = hasAuditValue(meta, "old") || hasAuditValue(meta, "new");
+  const hasPreview = hasAuditValue(meta, "old_preview") || hasAuditValue(meta, "new_preview");
+  const hasChars = hasAuditValue(meta, "old_chars") || hasAuditValue(meta, "new_chars");
+  if (!hasPreview && !hasFull && !hasChars) return null;
+  if (!hasPreview && !hasFull) {
+    return {
+      key: "processing_script",
+      label: AUDIT_FIELD_LABELS.processing_script,
+      old: `${Number(meta.old_chars || 0)} 字`,
+      new: `${Number(meta.new_chars || 0)} 字`,
+    };
+  }
+  const oldCell = formatScriptAuditPreviewValue(meta, "old");
+  const newCell = formatScriptAuditPreviewValue(meta, "new");
+  return {
+    key: "processing_script",
+    label: AUDIT_FIELD_LABELS.processing_script,
+    old: oldCell.text,
+    new: newCell.text,
+    oldTitle: oldCell.title,
+    newTitle: newCell.title,
+    oldCopy: oldCell.copy,
+    newCopy: newCell.copy,
+    oldCopyIsPreview: oldCell.copyIsPreview,
+    newCopyIsPreview: newCell.copyIsPreview,
+    scriptPreview: true,
+  };
 }
 
 function hasAuditValue(meta, key) {
@@ -82,13 +171,9 @@ function describeAuditEntry(item) {
       }
       return;
     }
-    if (key === "processing_script" && (hasAuditValue(meta, "old_chars") || hasAuditValue(meta, "new_chars"))) {
-      paired.push({
-        key,
-        label: AUDIT_FIELD_LABELS[key],
-        old: `${Number(meta.old_chars || 0)} 字`,
-        new: `${Number(meta.new_chars || 0)} 字`,
-      });
+    if (key === "processing_script") {
+      const scriptPair = formatScriptAuditPair(meta);
+      if (scriptPair) paired.push(scriptPair);
       return;
     }
     if (AUDIT_FIELD_LABELS[key] && hasAuditValue(meta, "old") && hasAuditValue(meta, "new")) {
@@ -125,7 +210,36 @@ function describeAuditEntry(item) {
   };
 }
 
-function renderAuditDetail(documentRef, entry) {
+function renderAuditScriptValue(documentRef, pair, side, onCopyScript) {
+  const isBefore = side === "old";
+  const label = isBefore ? "修改前" : "修改后";
+  const text = isBefore ? pair.old : pair.new;
+  const title = isBefore ? pair.oldTitle : pair.newTitle;
+  const copyText = isBefore ? pair.oldCopy : pair.newCopy;
+  const copyIsPreview = isBefore ? pair.oldCopyIsPreview : pair.newCopyIsPreview;
+  const children = [
+    element(documentRef, "div", { className: "rsp-audit-script-text", title: title || undefined, text }),
+  ];
+  if (copyText) {
+    children.unshift(element(documentRef, "button", {
+      type: "button",
+      className: "rsp-button rsp-button-secondary rsp-audit-script-copy",
+      text: "复制",
+      "aria-label": `复制${label}脚本`,
+      onClick: (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onCopyScript?.(copyText, copyIsPreview);
+      },
+    }));
+  }
+  return element(documentRef, "div", {
+    className: `rsp-audit-value ${isBefore ? "rsp-audit-value-before" : "rsp-audit-value-after"} rsp-audit-value--script`,
+    "data-audit-label": label,
+  }, children);
+}
+
+function renderAuditDetail(documentRef, entry, onCopyScript) {
   const cells = [];
   if (entry.paired.length) {
     ["字段", "修改前", "修改后"].forEach((label) => {
@@ -133,6 +247,11 @@ function renderAuditDetail(documentRef, entry) {
     });
     entry.paired.forEach((pair) => {
       cells.push(element(documentRef, "div", { className: "rsp-audit-field", text: pair.label }));
+      if (pair.scriptPreview) {
+        cells.push(renderAuditScriptValue(documentRef, pair, "old", onCopyScript));
+        cells.push(renderAuditScriptValue(documentRef, pair, "new", onCopyScript));
+        return;
+      }
       cells.push(element(documentRef, "div", {
         className: "rsp-audit-value rsp-audit-value-before",
         "data-audit-label": "修改前",
@@ -504,6 +623,17 @@ export function createRecordDrawer(documentRef, options) {
     auditNext.disabled = auditPage >= auditTotalPages;
     auditStatus.textContent = `第 ${auditPage} / ${auditTotalPages} 页`;
   }
+  const copyAuditScript = async (text, copyIsPreview) => {
+    try {
+      await copyTextToClipboard(documentRef, text);
+      options.notify(
+        copyIsPreview ? "已复制脚本开头预览；系统不会执行该脚本" : "脚本已复制；系统不会执行该脚本",
+        "success",
+      );
+    } catch (_) {
+      options.notify("复制失败，请手动选择脚本文本", "error");
+    }
+  };
   function renderAuditBody(items, total) {
     auditBody.replaceChildren();
     if (!items.length) {
@@ -576,7 +706,7 @@ export function createRecordDrawer(documentRef, options) {
       auditBody.append(row);
       if (expanded) {
         auditBody.append(element(documentRef, "tr", { className: "rsp-audit-detail-row" }, [
-          element(documentRef, "td", { colspan: "3" }, [renderAuditDetail(documentRef, entry)]),
+          element(documentRef, "td", { colspan: "3" }, [renderAuditDetail(documentRef, entry, copyAuditScript)]),
         ]));
       }
     });
@@ -610,7 +740,7 @@ export function createRecordDrawer(documentRef, options) {
 
   const copyScript = async () => {
     try {
-      await documentRef.defaultView?.navigator?.clipboard?.writeText(fields.script.value || "");
+      await copyTextToClipboard(documentRef, fields.script.value);
       options.notify("脚本已复制；系统不会执行该脚本", "success");
     } catch (_) {
       options.notify("复制失败，请手动选择脚本文本", "error");

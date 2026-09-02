@@ -55,6 +55,8 @@ _AUDIT_FIELD_LABELS = {
     "void_reason": "作废理由",
     "reopen_reason": "重开原因",
 }
+SCRIPT_AUDIT_PREVIEW_LINES = 8
+SCRIPT_AUDIT_PREVIEW_CHARS = 400
 _AUDIT_SKIP_KEYS = frozenset(
     {
         "updated_by_user_id",
@@ -763,6 +765,19 @@ class SpecialProcessingService:
             return f"{text[:40]}…"
         return text
 
+    @staticmethod
+    def _script_audit_preview(script: str | None) -> tuple[str, bool]:
+        text = str(script or "").replace("\r\n", "\n").replace("\r", "\n")
+        lines = text.splitlines()
+        preview = "\n".join(lines[:SCRIPT_AUDIT_PREVIEW_LINES])
+        truncated = len(lines) > SCRIPT_AUDIT_PREVIEW_LINES
+        if len(preview) > SCRIPT_AUDIT_PREVIEW_CHARS:
+            preview = preview[:SCRIPT_AUDIT_PREVIEW_CHARS]
+            truncated = True
+        if preview != text:
+            truncated = True
+        return preview, truncated
+
     @classmethod
     def _build_action_summary(
         cls,
@@ -877,12 +892,21 @@ class SpecialProcessingService:
             result[key] = {"changed": True, "old": current.get(key), "new": value}
         if current.get("processing_script") != script:
             old_script = current.get("processing_script") or ""
+            new_script = script or ""
+            old_preview, old_truncated = SpecialProcessingService._script_audit_preview(old_script)
+            new_preview, new_truncated = SpecialProcessingService._script_audit_preview(new_script)
             result["processing_script"] = {
                 "changed": True,
                 "old_sha256": current.get("script_sha256"),
                 "new_sha256": changes.get("script_sha256"),
                 "old_chars": len(old_script),
-                "new_chars": len(script or ""),
+                "new_chars": len(new_script),
+                "old": old_script,
+                "new": new_script,
+                "old_preview": old_preview,
+                "new_preview": new_preview,
+                "old_truncated": old_truncated,
+                "new_truncated": new_truncated,
             }
         return result
 

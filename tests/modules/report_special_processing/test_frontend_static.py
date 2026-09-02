@@ -336,9 +336,18 @@ def test_audit_diff_panel_preserves_long_values_and_operation_semantics():
         "AUDIT_ACTION_META", "AUDIT_FIELD_LABELS", "describeAuditEntry",
         "renderAuditDetail", "查看变更详情", "收起详情", "aria-expanded",
         "changed_fields", "重开原因", "作废理由", "确认说明", "rsp-audit-detail-scroll",
-        "hasStructuredAuditData",
+        "hasStructuredAuditData", "formatScriptAuditPair", "rsp-audit-script-copy",
+        "copyAuditScript", "copyTextToClipboard", "execCommand", "copyIsPreview",
+        "SCRIPT_AUDIT_PREVIEW_CHARS = 400", "SCRIPT_AUDIT_PREVIEW_LINES = 8",
+        "已复制脚本开头预览；系统不会执行该脚本",
+        "脚本已复制；系统不会执行该脚本",
+        "复制${label}脚本",
     ):
         assert token in drawer
+    assert "rsp-audit-value--script" in css
+    assert "-webkit-line-clamp: 8" in css
+    assert ".rsp-audit-script-copy" in css
+    assert ".rsp-audit-script-text" in css
     for tone in ("update", "reopen", "void", "completed", "neutral"):
         assert f"rsp-audit-action-{tone}" in drawer
     for label in ("创建", "修改", "重开", "作废", "完成"):
