@@ -21,6 +21,8 @@ def test_storage_uses_optimistic_lock_parameterization_and_has_no_record_delete(
     assert "processing_script" not in source.split("connection.execute(", 1)[0]
     assert "def delete_record" in source
     assert "delete(RECORDS)" in source
+    assert "delete(ATTACHMENTS)" in source
+    assert "ATTACHMENTS" in source
     assert "SORTS" in source
 
 

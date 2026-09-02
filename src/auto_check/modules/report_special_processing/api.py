@@ -7,7 +7,7 @@ from urllib.parse import quote
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
 
 from .contracts import DomainError, ValidationError, public_value
-from .validator import MAX_REQUEST_BYTES
+from .validator import MAX_CONFIRM_STATUS_BYTES, MAX_REQUEST_BYTES
 
 
 def _request_id() -> str:
@@ -47,6 +47,24 @@ def _internal_error(request_id: str) -> ModuleHttpResponse:
             "meta": {"request_id": request_id, "error_id": f"err-{uuid.uuid4().hex}"},
         },
     )
+
+
+def _attachment_id(request: ModuleRequest) -> int:
+    try:
+        value = int(request.path_params["attachment_id"])
+    except (KeyError, TypeError, ValueError):
+        raise ValidationError(fields={"attachment_id": "附件编号无效"}) from None
+    if value < 1:
+        raise ValidationError(fields={"attachment_id": "附件编号无效"})
+    return value
+
+
+def _image_response(payload: Mapping[str, Any]) -> ModuleHttpResponse:
+    content = payload.get("content")
+    content_type = str(payload.get("content_type") or "")
+    if not isinstance(content, (bytes, bytearray)) or not content_type:
+        raise ValidationError()
+    return ModuleHttpResponse.bytes(200, bytes(content), content_type=content_type)
 
 
 def _id(request: ModuleRequest) -> int:
@@ -118,10 +136,11 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
         ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), create, MAX_REQUEST_BYTES, 201),
         ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request), request.current_user), detail, 0, 200),
         ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), edit, MAX_REQUEST_BYTES, 200),
-        ("POST", "/records/{id}/status", lambda service, request, rid: service.change_status(_id(request), _body(request), request.current_user, request_id=rid), confirm, MAX_REQUEST_BYTES, 200),
+        ("POST", "/records/{id}/status", lambda service, request, rid: service.change_status(_id(request), _body(request), request.current_user, request_id=rid), confirm, MAX_CONFIRM_STATUS_BYTES, 200),
         ("POST", "/records/{id}/void", lambda service, request, rid: service.void(_id(request), _body(request), request.current_user, request_id=rid), void, MAX_REQUEST_BYTES, 200),
         ("DELETE", "/records/{id}", lambda service, request, rid: service.delete(_id(request), _body(request), request.current_user, request_id=rid), delete, MAX_REQUEST_BYTES, 200),
         ("POST", "/records/{id}/reopen", lambda service, request, rid: service.reopen(_id(request), _body(request), request.current_user, request_id=rid), reopen, MAX_REQUEST_BYTES, 200),
+        ("GET", "/records/{id}/confirm-attachments/{attachment_id}", lambda service, request, rid: _image_response(service.get_confirm_attachment(_id(request), _attachment_id(request), request.current_user)), detail, 0, 200),
         ("GET", "/records/{id}/audit", lambda service, request, rid: service.audit(_id(request), request.query), detail, 0, 200),
         ("GET", "/summary", lambda service, request, rid: service.summary(request.query), detail, 0, 200),
     )

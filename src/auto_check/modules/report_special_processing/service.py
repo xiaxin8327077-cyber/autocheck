@@ -33,6 +33,7 @@ from .validator import (
     MAX_REPORTS,
     MAX_SCRIPT_BYTES,
     validate_action,
+    validate_confirm_images,
     validate_page_query,
     validate_record_input,
 )
@@ -243,6 +244,22 @@ class SpecialProcessingService:
     ) -> dict[str, Any]:
         return self._with_capabilities(self._record(record_id), self._actor(current_user))
 
+    def get_confirm_attachment(
+        self,
+        record_id: int,
+        attachment_id: int,
+        current_user: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self.get(record_id, current_user)
+        item = self.storage.get_confirm_attachment(record_id, attachment_id)
+        if item is None:
+            raise RecordNotFoundError()
+        content = item.get("content")
+        content_type = str(item.get("content_type") or "")
+        if not isinstance(content, (bytes, bytearray)) or not content_type:
+            raise RecordNotFoundError()
+        return {"content": bytes(content), "content_type": content_type}
+
     def audit(self, record_id: int, query: Mapping[str, str]) -> dict[str, Any]:
         self._record(record_id)
         return self.storage.audit(record_id, validate_page_query(query))
@@ -386,6 +403,11 @@ class SpecialProcessingService:
         version, reason = validate_action(payload)
         if not isinstance(target, str) or not can_transition(str(current["status"]), target):
             raise InvalidTransitionError()
+        confirm_images: tuple[dict[str, Any], ...] = ()
+        if target == "completed":
+            confirm_images = validate_confirm_images(payload.get("confirm_images"))
+        elif payload.get("confirm_images") not in (None, [], ()):
+            raise ValidationError(fields={"confirm_images": "仅确认完成时可提交图片"})
         if target in {"pending", "completed"}:
             self._require_complete(current)
         actor = self._user(current_user.get("id"))
@@ -398,9 +420,16 @@ class SpecialProcessingService:
         }
         if target == "completed":
             changes["completed_at"] = now
+        changed_fields: dict[str, Any] = {
+            "status": {"changed": True, "old": current["status"], "new": target},
+        }
+        if target == "completed" and reason:
+            changed_fields["reason"] = {"present": True, "new": reason}
+        elif reason:
+            changed_fields["reason"] = {"present": True}
         audit = self._audit(
             "status_change", actor, now, current["status"], target,
-            {"status": {"changed": True, "old": current["status"], "new": target}, **({"reason": {"present": True}} if reason else {})},
+            changed_fields,
             self._build_action_summary(
                 "status_change",
                 current["status"],
@@ -409,7 +438,13 @@ class SpecialProcessingService:
             ),
             request_id,
         )
-        changed = self.storage.update_status(record_id, version, changes, audit)
+        changed = self.storage.update_status(
+            record_id,
+            version,
+            changes,
+            audit,
+            attachments=confirm_images,
+        )
         if target == "completed":
             self._publish_completion_notification(changed, request_id=request_id)
         self._refresh_special_governance_stats()

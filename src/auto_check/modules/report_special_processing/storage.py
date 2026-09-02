@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import hashlib
 import json
 import math
 import uuid
@@ -25,7 +26,7 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 
 from .contracts import PageQuery, RecordNotFoundError, VersionConflictError
 
@@ -108,6 +109,19 @@ AUDITS = Table(
     Column("changed_fields_json", LONGTEXT, nullable=False),
     Column("action_summary", String(1000), nullable=False),
     Column("request_id", String(64)),
+)
+ATTACHMENTS = Table(
+    "report_special_processing_confirm_attachments",
+    METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("record_id", BigInteger, nullable=False),
+    Column("audit_id", BigInteger, nullable=False),
+    Column("sequence_no", Integer, nullable=False),
+    Column("content_type", String(64), nullable=False),
+    Column("byte_size", Integer, nullable=False),
+    Column("content_sha256", String(64), nullable=False),
+    Column("content", LONGBLOB, nullable=False),
+    Column("created_at", DateTime, nullable=False),
 )
 
 SORTS = {
@@ -246,6 +260,7 @@ class SpecialProcessingStorage:
         row_version: int,
         changes: Mapping[str, Any],
         audit: Mapping[str, Any],
+        attachments: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         values = {key: _db_value(value) for key, value in changes.items()}
         with self.database.transaction() as connection:
@@ -257,7 +272,15 @@ class SpecialProcessingStorage:
             if result.rowcount != 1:
                 raise VersionConflictError()
             current = self._get_with_connection(connection, record_id)
-            self._write_audit(connection, record_id, current["record_no"], audit)
+            audit_id = self._write_audit(connection, record_id, current["record_no"], audit)
+            if attachments:
+                self._write_confirm_attachments(
+                    connection,
+                    record_id,
+                    audit_id,
+                    attachments,
+                    current["updated_at"],
+                )
         return current
 
     def delete_record(self, record_id: int, row_version: int) -> None:
@@ -269,6 +292,7 @@ class SpecialProcessingStorage:
                 raise VersionConflictError()
             connection.execute(delete(REPORTS).where(REPORTS.c.record_id == record_id))
             connection.execute(delete(PROCESSES).where(PROCESSES.c.record_id == record_id))
+            connection.execute(delete(ATTACHMENTS).where(ATTACHMENTS.c.record_id == record_id))
             connection.execute(delete(AUDITS).where(AUDITS.c.record_id == record_id))
             result = connection.execute(
                 delete(RECORDS).where(
@@ -404,6 +428,19 @@ class SpecialProcessingStorage:
             self._attach_reports(connection, items)
             self._attach_processes(connection, items)
         return items
+
+    def get_confirm_attachment(self, record_id: int, attachment_id: int) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            return _row(
+                connection.execute(
+                    select(ATTACHMENTS).where(
+                        and_(
+                            ATTACHMENTS.c.id == attachment_id,
+                            ATTACHMENTS.c.record_id == record_id,
+                        )
+                    )
+                )
+            )
 
     def audit(self, record_id: int, query: PageQuery) -> dict[str, Any]:
         count_statement = select(func.count()).select_from(AUDITS).where(
@@ -559,13 +596,59 @@ class SpecialProcessingStorage:
         record_id: int,
         record_no: str,
         audit: Mapping[str, Any],
-    ) -> None:
-        connection.execute(
+    ) -> int:
+        result = connection.execute(
             insert(AUDITS).values(
                 record_id=record_id,
                 record_no_snapshot=record_no,
                 **{key: _db_value(value) for key, value in audit.items()},
             )
+        )
+        primary_key = result.inserted_primary_key
+        if primary_key:
+            return int(primary_key[0])
+        return int(result.lastrowid)
+
+    @staticmethod
+    def _write_confirm_attachments(
+        connection: Any,
+        record_id: int,
+        audit_id: int,
+        attachments: Sequence[Mapping[str, Any]],
+        created_at: datetime,
+    ) -> None:
+        ids: list[int] = []
+        for sequence_no, item in enumerate(attachments, 1):
+            content = bytes(item["content"])
+            result = connection.execute(
+                insert(ATTACHMENTS).values(
+                    record_id=record_id,
+                    audit_id=audit_id,
+                    sequence_no=sequence_no,
+                    content_type=str(item["content_type"]),
+                    byte_size=len(content),
+                    content_sha256=hashlib.sha256(content).hexdigest(),
+                    content=content,
+                    created_at=_db_value(created_at),
+                )
+            )
+            primary_key = result.inserted_primary_key
+            attachment_id = int(primary_key[0]) if primary_key else int(result.lastrowid)
+            ids.append(attachment_id)
+        raw_changed = connection.execute(
+            select(AUDITS.c.changed_fields_json).where(AUDITS.c.id == audit_id)
+        ).scalar_one()
+        try:
+            changed = json.loads(raw_changed)
+        except (TypeError, ValueError):
+            changed = {}
+        if not isinstance(changed, dict):
+            changed = {}
+        changed["confirm_attachments"] = {"count": len(ids), "ids": ids}
+        connection.execute(
+            update(AUDITS)
+            .where(AUDITS.c.id == audit_id)
+            .values(changed_fields_json=json.dumps(changed, ensure_ascii=False, separators=(",", ":")))
         )
 
     @staticmethod

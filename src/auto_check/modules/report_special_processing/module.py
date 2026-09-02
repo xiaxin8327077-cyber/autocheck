@@ -76,6 +76,13 @@ class ReportSpecialProcessingModule:
                 "from_status", "to_status", "changed_fields_json", "action_summary", "request_id",
             },
         )
+        registry.add(
+            "report_special_processing_confirm_attachments",
+            {
+                "id", "record_id", "audit_id", "sequence_no", "content_type", "byte_size",
+                "content_sha256", "content", "created_at",
+            },
+        )
 
     def start(self, context: Any) -> None:
         user_directory = context.services.resolve("platform.user_directory", 1)

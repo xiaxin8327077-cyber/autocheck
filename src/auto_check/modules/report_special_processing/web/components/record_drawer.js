@@ -1,6 +1,7 @@
 import { element, labeledField, option } from "./dom.js";
 import { formatDisplayDateTime } from "./record_table.js";
 import { createProcessMultiSelect } from "./process_multi_select.js";
+import { confirmAttachmentUrl } from "../api.js";
 
 const SUMMARY_MAX_LENGTH = 128;
 const FIELD_TEXT_MAX_LENGTH = 128;
@@ -39,6 +40,16 @@ const AUDIT_STATUS_LABELS = {
 
 const SCRIPT_AUDIT_PREVIEW_LINES = 8;
 const SCRIPT_AUDIT_PREVIEW_CHARS = 400;
+const MAX_CONFIRM_IMAGES = 3;
+const MAX_CONFIRM_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_CONFIRM_NOTE_CHARS = 500;
+const CONFIRM_IMAGE_TYPES = {
+  "image/png": "image/png",
+  "image/jpeg": "image/jpeg",
+  "image/jpg": "image/jpeg",
+  "image/pjpeg": "image/jpeg",
+  "image/webp": "image/webp",
+};
 
 function formatAuditValue(value, field = "") {
   if (value === null || value === undefined || value === "" || (Array.isArray(value) && !value.length)) {
@@ -147,7 +158,7 @@ function auditNoteLabel(key, actionCode) {
   return "操作说明";
 }
 
-function describeAuditEntry(item) {
+function describeAuditEntry(item, recordId) {
   let action = AUDIT_ACTION_META[item?.action_code] || {
     label: "操作记录", tone: "neutral", className: "rsp-audit-action-neutral",
   };
@@ -159,6 +170,7 @@ function describeAuditEntry(item) {
 
   const paired = [];
   const notes = [];
+  const attachments = [];
   const changedFields = item?.changed_fields;
   const hasStructuredAuditData = Boolean(
     changedFields && typeof changedFields === "object" && !Array.isArray(changedFields) && Object.keys(changedFields).length,
@@ -169,6 +181,11 @@ function describeAuditEntry(item) {
       if (hasAuditValue(meta, "new")) {
         notes.push({ label: auditNoteLabel(key, item?.action_code), value: formatAuditValue(meta.new) });
       }
+      return;
+    }
+    if (key === "confirm_attachments") {
+      const ids = Array.isArray(meta.ids) ? meta.ids.map(Number).filter((id) => id > 0) : [];
+      attachments.push(...ids);
       return;
     }
     if (key === "processing_script") {
@@ -204,6 +221,8 @@ function describeAuditEntry(item) {
     ...action,
     paired,
     notes,
+    attachments,
+    recordId: Number(recordId || item?.record_id || 0),
     hasStructuredAuditData,
     status: paired.find((pair) => pair.key === "status") || null,
     summary: String(item?.action_summary || item?.action_code || "—"),
@@ -239,7 +258,7 @@ function renderAuditScriptValue(documentRef, pair, side, onCopyScript) {
   }, children);
 }
 
-function renderAuditDetail(documentRef, entry, onCopyScript) {
+function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage) {
   const cells = [];
   if (entry.paired.length) {
     ["字段", "修改前", "修改后"].forEach((label) => {
@@ -270,13 +289,33 @@ function renderAuditDetail(documentRef, entry, onCopyScript) {
       element(documentRef, "span", { text: note.value }),
     ]));
   });
+  if (entry.attachments?.length && entry.recordId) {
+    cells.push(element(documentRef, "div", { className: "rsp-audit-detail-attachments" }, [
+      element(documentRef, "strong", { text: "确认图片：" }),
+      element(documentRef, "div", { className: "rsp-confirm-thumbs" }, entry.attachments.map((id) => {
+        const src = confirmAttachmentUrl(entry.recordId, id);
+        return element(documentRef, "button", {
+          type: "button",
+          className: "rsp-confirm-thumb",
+          "aria-label": "查看确认图片",
+          onClick: (event) => {
+            event.preventDefault();
+            onOpenImage?.(src);
+          },
+        }, [
+          element(documentRef, "img", { src, alt: "确认图片" }),
+        ]);
+      })),
+    ]));
+  }
+  const hasExtras = Boolean(entry.notes.length || entry.attachments?.length);
   return element(documentRef, "div", { className: "rsp-audit-detail" }, [
     element(documentRef, "div", {
       className: "rsp-audit-detail-scroll",
       "aria-label": "完整变更对照",
     }, [
       element(documentRef, "div", {
-        className: `rsp-audit-diff-grid${entry.notes.length ? " has-notes" : ""}`,
+        className: `rsp-audit-diff-grid${hasExtras ? " has-notes" : ""}`,
       }, cells),
     ]),
   ]);
@@ -597,14 +636,146 @@ export function createRecordDrawer(documentRef, options) {
       creating ? "特殊处理记录已创建" : "修改已保存",
     );
   };
-  const confirmSourceSystem = () => run(
-    () => actions.changeStatus(current.id, {
+  const confirmImages = [];
+  const confirmNoteInput = confirming ? element(documentRef, "textarea", {
+    className: "rsp-confirm-note-input",
+    rows: "3",
+    maxlength: String(MAX_CONFIRM_NOTE_CHARS),
+    placeholder: "可填写说明，也可直接粘贴最多 3 张图片；不填也能确认",
+    "aria-label": "确认说明",
+  }) : null;
+  const confirmNoteCount = confirming ? element(documentRef, "span", {
+    className: "rsp-confirm-note-count",
+    text: `0 / ${MAX_CONFIRM_NOTE_CHARS}`,
+  }) : null;
+  const confirmThumbs = confirming ? element(documentRef, "div", { className: "rsp-confirm-thumbs" }) : null;
+  let overlayNode = null;
+  let lightboxNode = null;
+  function closeImageLightbox() {
+    lightboxNode?.remove();
+    lightboxNode = null;
+  }
+  function openImageLightbox(src) {
+    if (!overlayNode || !src) return;
+    closeImageLightbox();
+    const img = element(documentRef, "img", {
+      className: "rsp-image-lightbox-img",
+      src,
+      alt: "确认图片预览",
+    });
+    lightboxNode = element(documentRef, "div", {
+      className: "rsp-image-lightbox",
+      role: "dialog",
+      tabIndex: "-1",
+      "aria-modal": "true",
+      "aria-label": "图片预览",
+      onClick: (event) => {
+        if (event.target === lightboxNode) closeImageLightbox();
+      },
+    }, [img]);
+    overlayNode.append(lightboxNode);
+    lightboxNode.focus();
+  }
+  function normalizeConfirmImageType(type) {
+    return CONFIRM_IMAGE_TYPES[String(type || "").toLowerCase()] || "";
+  }
+  function renderConfirmThumbs() {
+    if (!confirmThumbs) return;
+    confirmThumbs.replaceChildren();
+    confirmImages.forEach((image, index) => {
+      confirmThumbs.append(element(documentRef, "div", { className: "rsp-confirm-thumb-wrap" }, [
+        element(documentRef, "button", {
+          type: "button",
+          className: "rsp-confirm-thumb",
+          "aria-label": "预览图片",
+          onClick: () => openImageLightbox(image.previewUrl),
+        }, [element(documentRef, "img", { src: image.previewUrl, alt: "待确认图片" })]),
+        element(documentRef, "button", {
+          type: "button",
+          className: "rsp-confirm-thumb-remove",
+          text: "×",
+          "aria-label": "删除图片",
+          onClick: (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            confirmImages.splice(index, 1);
+            renderConfirmThumbs();
+          },
+        }),
+      ]));
+    });
+  }
+  function addConfirmFiles(files) {
+    const accepted = [];
+    for (const file of files) {
+      const contentType = normalizeConfirmImageType(file.type);
+      if (!contentType) {
+        options.notify("仅支持 PNG、JPEG、WebP 图片", "error");
+        continue;
+      }
+      if (file.size > MAX_CONFIRM_IMAGE_BYTES) {
+        options.notify("单张图片最大 2 MiB", "error");
+        continue;
+      }
+      accepted.push(file);
+    }
+    if (!accepted.length) return;
+    const remaining = MAX_CONFIRM_IMAGES - confirmImages.length;
+    if (remaining <= 0) {
+      options.notify("最多粘贴 3 张图片", "error");
+      return;
+    }
+    if (accepted.length > remaining) options.notify("最多粘贴 3 张图片", "error");
+    accepted.slice(0, remaining).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const url = String(reader.result || "");
+        const comma = url.indexOf(",");
+        confirmImages.push({
+          contentType: normalizeConfirmImageType(file.type),
+          dataBase64: comma >= 0 ? url.slice(comma + 1) : "",
+          previewUrl: url,
+        });
+        renderConfirmThumbs();
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  function handleConfirmPaste(event) {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    const files = [];
+    if (clipboard.files?.length) {
+      Array.from(clipboard.files).forEach((file) => files.push(file));
+    }
+    if (!files.length && clipboard.items) {
+      Array.from(clipboard.items).forEach((item) => {
+        if (item.kind === "file" && String(item.type || "").startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      });
+    }
+    const imageFiles = files.filter((file) => String(file.type || "").startsWith("image/"));
+    if (!imageFiles.length) return;
+    event.preventDefault();
+    addConfirmFiles(imageFiles);
+  }
+  const confirmSourceSystem = () => {
+    const payload = {
       target_status: "completed",
       row_version: current.row_version,
-      reason: "源系统已确认",
-    }),
-    "记录已确认完成",
-  );
+    };
+    const note = confirmNoteInput?.value.trim() || "";
+    if (note) payload.reason = note;
+    if (confirmImages.length) {
+      payload.confirm_images = confirmImages.map((item) => ({
+        content_type: item.contentType,
+        data_base64: item.dataBase64,
+      }));
+    }
+    return run(() => actions.changeStatus(current.id, payload), "记录已确认完成");
+  };
   const auditBody = element(documentRef, "tbody");
   const auditStatus = element(documentRef, "span", { className: "rsp-audit-page", text: "第 1 / 1 页" });
   let auditPage = 1;
@@ -648,8 +819,8 @@ export function createRecordDrawer(documentRef, options) {
     }
     items.forEach((item, index) => {
       const auditId = String(item?.id ?? `${auditPage}-${index}`);
-      const entry = describeAuditEntry(item);
-      const hasDetails = entry.paired.length > 0 || entry.notes.length > 0;
+      const entry = describeAuditEntry(item, current.id);
+      const hasDetails = entry.paired.length > 0 || entry.notes.length > 0 || entry.attachments.length > 0;
       const expanded = hasDetails && expandedAuditIds.has(auditId);
       const summaryParts = [
         element(documentRef, "span", {
@@ -706,7 +877,7 @@ export function createRecordDrawer(documentRef, options) {
       auditBody.append(row);
       if (expanded) {
         auditBody.append(element(documentRef, "tr", { className: "rsp-audit-detail-row" }, [
-          element(documentRef, "td", { colspan: "3" }, [renderAuditDetail(documentRef, entry, copyAuditScript)]),
+          element(documentRef, "td", { colspan: "3" }, [renderAuditDetail(documentRef, entry, copyAuditScript, openImageLightbox)]),
         ]));
       }
     });
@@ -818,10 +989,35 @@ export function createRecordDrawer(documentRef, options) {
     }
     footerButtons.push(actionButton(documentRef, creating ? "保存记录" : "保存修改", "rsp-button-primary", saveRecord, saveDisabled));
   }
-  const footer = element(documentRef, "footer", { className: "rsp-modal-actions" }, [
+  const actionBar = element(documentRef, "div", { className: "rsp-modal-actions-bar" }, [
     formHint,
     element(documentRef, "div", { className: "rsp-modal-actions-right" }, footerButtons),
   ]);
+  const footerChildren = [];
+  if (confirming) {
+    confirmNoteInput.addEventListener("input", () => {
+      confirmNoteCount.textContent = `${confirmNoteInput.value.length} / ${MAX_CONFIRM_NOTE_CHARS}`;
+    });
+    footerChildren.push(element(documentRef, "div", {
+      className: "rsp-confirm-note",
+      onPaste: handleConfirmPaste,
+    }, [
+      element(documentRef, "div", { className: "rsp-confirm-note-head" }, [
+        element(documentRef, "span", { className: "rsp-field-label", text: "确认说明（选填）" }),
+        confirmNoteCount,
+      ]),
+      confirmNoteInput,
+      confirmThumbs,
+      element(documentRef, "p", {
+        className: "rsp-confirm-note-hint",
+        text: "可直接粘贴图片，最多 3 张；系统只保存展示，不会解析或执行图片内容。",
+      }),
+    ]));
+  }
+  footerChildren.push(actionBar);
+  const footer = element(documentRef, "footer", {
+    className: confirming ? "rsp-modal-actions rsp-modal-actions--confirm" : "rsp-modal-actions",
+  }, footerChildren);
   const body = element(documentRef, "div", { className: "rsp-modal-body" }, [
     basic, content, script, audit,
   ]);
@@ -834,13 +1030,17 @@ export function createRecordDrawer(documentRef, options) {
   const overlay = element(documentRef, "div", {
     className: "rsp-record-modal-overlay",
   }, [shell]);
+  overlayNode = overlay;
 
-  shell.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (lightboxNode) {
+      closeImageLightbox();
+      return;
     }
+    onClose();
   });
 
   loadAudit(1);

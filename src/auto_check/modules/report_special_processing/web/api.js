@@ -4,6 +4,7 @@ const STATUS_PATH = "/status";
 const VOID_PATH = "/void";
 const REOPEN_PATH = "/reopen";
 const AUDIT_PATH = "/audit";
+const CONFIRM_ATTACHMENTS_PATH = "/confirm-attachments";
 const CONFLICT_MESSAGE = "记录已被其他人更新，请刷新后重试";
 
 function queryString(parameters = {}) {
@@ -36,6 +37,10 @@ function normalizeError(error) {
   normalized.fields = error?.payload?.error?.fields || {};
   normalized.refreshRequired = isVersionConflict;
   return normalized;
+}
+
+export function confirmAttachmentUrl(recordId, attachmentId) {
+  return `${API_PREFIX}/records/${encodeURIComponent(recordId)}${CONFIRM_ATTACHMENTS_PATH}/${encodeURIComponent(attachmentId)}`;
 }
 
 function filenameFromDisposition(header) {

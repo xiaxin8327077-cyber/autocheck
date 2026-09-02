@@ -14,6 +14,8 @@ class Service:
     def list_records(self, query, user): return {"items": [], "page": 1, "page_size": 20, "total": 0, "total_pages": 0}
     def create(self, body, user, request_id): return {"id": 1, "row_version": 1}
     def get(self, record_id, user): return {"id": record_id}
+    def get_confirm_attachment(self, record_id, attachment_id, user):
+        return {"content": b"\x89PNG\r\n\x1a\n", "content_type": "image/png"}
     def update(self, record_id, body, user, request_id): return {"id": record_id, "row_version": 2}
     def change_status(self, record_id, body, user, request_id): return {"id": record_id}
     def void(self, record_id, body, user, request_id): return {"id": record_id}
@@ -51,6 +53,12 @@ def test_api_registers_contract_routes_and_enforces_body_limit():
     assert _dispatch(router, "GET", "/catalog", user={"role": "user"}).status == 200
     assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}).status == 201
     assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}, body_size=1048577).status == 413
+    assert _dispatch(router, "POST", "/records/1/status", body={}, user={"role": "user"}, body_size=10 * 1024 * 1024).status == 200
+    assert _dispatch(router, "POST", "/records/1/status", body={}, user={"role": "user"}, body_size=10 * 1024 * 1024 + 1).status == 413
+    attachment = _dispatch(router, "GET", "/records/1/confirm-attachments/2", user={"role": "user"})
+    assert attachment.status == 200
+    assert attachment.content_type == "image/png"
+    assert attachment.body == b"\x89PNG\r\n\x1a\n"
     assert _dispatch(router, "DELETE", "/records/1", body={"row_version": 1}, user={"role": "admin"}).status == 200
 
 

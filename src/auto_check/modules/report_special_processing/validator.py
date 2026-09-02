@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import date, datetime
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
@@ -12,6 +14,14 @@ MAX_REPORTS = 50
 MAX_PROCESSES = 20
 MAX_SCRIPT_BYTES = 512 * 1024
 MAX_REQUEST_BYTES = 1024 * 1024
+MAX_CONFIRM_IMAGES = 3
+MAX_CONFIRM_IMAGE_BYTES = 2 * 1024 * 1024
+MAX_CONFIRM_STATUS_BYTES = 10 * 1024 * 1024
+ALLOWED_CONFIRM_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+_WEBP_RIFF = b"RIFF"
+_WEBP_TYPE = b"WEBP"
 SORTS = frozenset(
     {"special_handling_at_desc", "updated_at_desc", "created_at_desc"}
 )
@@ -219,3 +229,53 @@ def validate_action(
     maximum = max(1, int(reason_max_length))
     reason = _text(payload.get("reason"), "reason", maximum, required=require_reason)
     return version, reason
+
+
+def _detect_confirm_image_type(content: bytes) -> str | None:
+    if content.startswith(_PNG_MAGIC):
+        return "image/png"
+    if content.startswith(_JPEG_MAGIC):
+        return "image/jpeg"
+    if len(content) >= 12 and content[:4] == _WEBP_RIFF and content[8:12] == _WEBP_TYPE:
+        return "image/webp"
+    return None
+
+
+def _decode_confirm_image_base64(raw: Any) -> bytes:
+    if not isinstance(raw, str) or not raw.strip():
+        raise _error("confirm_images", "图片内容无效")
+    payload = raw.strip()
+    if payload.lower().startswith("data:"):
+        comma = payload.find(",")
+        if comma < 0:
+            raise _error("confirm_images", "图片内容无效")
+        payload = payload[comma + 1 :]
+    payload = "".join(payload.split())
+    padding = (-len(payload)) % 4
+    if padding:
+        payload += "=" * padding
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise _error("confirm_images", "图片内容无效") from None
+
+
+def validate_confirm_images(raw: Any) -> tuple[dict[str, Any], ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise _error("confirm_images")
+    if len(raw) > MAX_CONFIRM_IMAGES:
+        raise _error("confirm_images", "最多粘贴 3 张图片")
+    images: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise _error("confirm_images")
+        content = _decode_confirm_image_base64(item.get("data_base64"))
+        if len(content) > MAX_CONFIRM_IMAGE_BYTES:
+            raise _error("confirm_images", "单张图片最大 2 MiB")
+        detected = _detect_confirm_image_type(content)
+        if detected is None or detected not in ALLOWED_CONFIRM_IMAGE_TYPES:
+            raise _error("confirm_images", "仅支持 PNG、JPEG、WebP 图片")
+        images.append({"content_type": detected, "content": content})
+    return tuple(images)

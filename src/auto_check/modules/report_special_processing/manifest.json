@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.2.10",
+  "version": "1.2.11",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -36,9 +36,9 @@
     {"name": "platform.report_navigation", "minimum_version": 1},
     {"name": "platform.notification", "minimum_version": 1}
   ],
-  "schema_version": 4,
+  "schema_version": 5,
   "release_notes": {
-    "version": "1.2.10",
-    "items": ["操作记录中处理脚本对照显示开头预览，最多400字、8行，超出后省略；修改前和修改后一键复制完整脚本"]
+    "version": "1.2.11",
+    "items": ["确认时可在弹窗选填说明并粘贴最多3张图片，完成后操作记录展示确认说明与可点击缩略图"]
   }
 }

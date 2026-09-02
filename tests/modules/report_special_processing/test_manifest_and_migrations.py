@@ -16,7 +16,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.id == "report_special_processing"
     assert manifest.required is False
     assert manifest.api_prefix == "/api/modules/report-special-processing"
-    assert manifest.schema_version == 4
+    assert manifest.schema_version == 5
     assert manifest.permissions == (
         "report_special_processing.view",
         "report_special_processing.detail",
@@ -34,9 +34,9 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.10"
-    assert manifest.release_notes.version == "1.2.10"
-    assert manifest.release_notes.items == ("操作记录中处理脚本对照显示开头预览，最多400字、8行，超出后省略；修改前和修改后一键复制完整脚本",)
+    assert manifest.version == "1.2.11"
+    assert manifest.release_notes.version == "1.2.11"
+    assert manifest.release_notes.items == ("确认时可在弹窗选填说明并粘贴最多3张图片，完成后操作记录展示确认说明与可点击缩略图",)
 
 
 def test_module_is_discovered_without_central_registration():
@@ -46,11 +46,8 @@ def test_module_is_discovered_without_central_registration():
 
 def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 4
-    assert migrations[0].version == 1
-    assert migrations[1].version == 2
-    assert migrations[2].version == 3
-    assert migrations[3].version == 4
+    assert len(migrations) == 5
+    assert [item.version for item in migrations] == [1, 2, 3, 4, 5]
     sql = "\n".join(migrations[0].statements)
     assert sql.count("CREATE TABLE report_special_processing_") == 3
     for table in ("records", "reports", "audit_logs"):
@@ -67,7 +64,7 @@ def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
 
 def test_migration_003_adds_dimension_governance_columns():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 4
+    assert len(migrations) == 5
     assert migrations[2].version == 3
     sql = "\n".join(migrations[2].statements).upper()
     for col in (
@@ -79,6 +76,41 @@ def test_migration_003_adds_dimension_governance_columns():
         "VALUE_AFTER",
     ):
         assert col in sql
+
+
+def test_migration_005_adds_confirm_attachment_table():
+    migrations = load_module_migrations("auto_check.modules.report_special_processing")
+    assert migrations[4].version == 5
+    sql = "\n".join(migrations[4].statements)
+    assert "report_special_processing_confirm_attachments" in sql
+    assert "LONGBLOB" in sql.upper()
+    assert "uq_rsp_confirm_att_audit_seq" in sql
+    assert "DROP TABLE" not in sql.upper()
+    assert "DELETE FROM" not in sql.upper()
+    create_pattern = re.compile(
+        r"CREATE TABLE (?P<table>report_special_processing_confirm_attachments) \("
+        r"(?P<body>.*?)\) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 "
+        r"COMMENT='(?P<comment>[^']+)'",
+        re.DOTALL,
+    )
+    match = create_pattern.search(sql)
+    assert match is not None
+    assert re.search(r"[\u4e00-\u9fff]", match.group("comment"))
+    column_lines = re.findall(
+        r"(?m)^\s{4}(?!PRIMARY\b|UNIQUE\b|KEY\b)"
+        r"(?P<column>[a-z][a-z0-9_]*)\s+.*$",
+        match.group("body"),
+    )
+    assert column_lines
+    for column_name in column_lines:
+        column_line = re.search(
+            rf"(?m)^\s{{4}}{re.escape(column_name)}\s+.*$",
+            match.group("body"),
+        ).group(0)
+        assert re.search(
+            r"\bCOMMENT\s+'[^']*[\u4e00-\u9fff][^']*'",
+            column_line,
+        ), f"confirm_attachments.{column_name} lacks a Chinese comment"
 
 
 def test_migration_004_widens_audit_json_to_longtext():
@@ -163,5 +195,6 @@ def test_module_registers_only_its_schema_tables():
             "report_special_processing_reports",
             "report_special_processing_processes",
             "report_special_processing_audit_logs",
+            "report_special_processing_confirm_attachments",
         }
     )

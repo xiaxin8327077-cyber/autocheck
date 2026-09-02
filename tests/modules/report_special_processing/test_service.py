@@ -2,6 +2,7 @@ from copy import deepcopy
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import json
 import pytest
 
 
@@ -45,21 +46,36 @@ class Reports:
 
 
 class MemoryStorage:
-    def __init__(self): self.records = {}; self.audits = []; self.calls = []; self.create_reports_args = []
+    def __init__(self):
+        self.records = {}
+        self.audits = []
+        self.attachments = []
+        self.calls = []
+        self.create_reports_args = []
+        self._next_id = 1
+        self._next_audit_id = 1
+        self._next_attachment_id = 1
+
     def create(self, record, reports, processes, audit):
         self.calls.append("create")
         self.create_reports_args.append(list(reports))
+        record_id = self._next_id
+        self._next_id += 1
         value = {
             **record,
-            "id": 1,
+            "id": record_id,
             "record_no": "RSP-20260802-token",
             "row_version": 1,
             "reports": list(reports),
             "report_processes": [dict(item) for item in processes],
             "report_process_codes": [item["code"] for item in processes],
         }
-        self.records[1] = value
-        self.audits.append(audit)
+        self.records[record_id] = value
+        stored_audit = dict(audit)
+        stored_audit["id"] = self._next_audit_id
+        stored_audit["record_id"] = record_id
+        self._next_audit_id += 1
+        self.audits.append(stored_audit)
         return deepcopy(value)
     def get(self, record_id): return deepcopy(self.records.get(record_id))
     def list(self, query):
@@ -75,13 +91,50 @@ class MemoryStorage:
         current["report_processes"] = [dict(item) for item in processes]
         current["report_process_codes"] = [item["code"] for item in processes]
         current["row_version"] += 1
-        self.audits.append(audit)
+        stored_audit = dict(audit)
+        stored_audit["id"] = self._next_audit_id
+        stored_audit["record_id"] = record_id
+        self._next_audit_id += 1
+        self.audits.append(stored_audit)
         return deepcopy(current)
-    def update_status(self, record_id, row_version, changes, audit):
+    def update_status(self, record_id, row_version, changes, audit, attachments=()):
         current = self.records[record_id]
         from auto_check.modules.report_special_processing.contracts import VersionConflictError
         if current["row_version"] != row_version: raise VersionConflictError()
-        current.update(changes); current["row_version"] += 1; self.audits.append(audit); return deepcopy(current)
+        current.update(changes)
+        current["row_version"] += 1
+        stored_audit = dict(audit)
+        stored_audit["id"] = self._next_audit_id
+        stored_audit["record_id"] = record_id
+        self._next_audit_id += 1
+        ids = []
+        for sequence_no, item in enumerate(attachments, 1):
+            attachment_id = self._next_attachment_id
+            self._next_attachment_id += 1
+            ids.append(attachment_id)
+            content = bytes(item["content"])
+            self.attachments.append({
+                "id": attachment_id,
+                "record_id": record_id,
+                "audit_id": stored_audit["id"],
+                "sequence_no": sequence_no,
+                "content_type": item["content_type"],
+                "content": content,
+            })
+        if ids:
+            fields = json.loads(stored_audit["changed_fields_json"])
+            fields["confirm_attachments"] = {"count": len(ids), "ids": ids}
+            stored_audit["changed_fields_json"] = json.dumps(
+                fields, ensure_ascii=False, separators=(",", ":")
+            )
+        self.audits.append(stored_audit)
+        return deepcopy(current)
+
+    def get_confirm_attachment(self, record_id, attachment_id):
+        for item in self.attachments:
+            if item["id"] == attachment_id and item["record_id"] == record_id:
+                return dict(item)
+        return None
 
     def delete_record(self, record_id, row_version):
         current = self.records.get(record_id)
@@ -92,6 +145,7 @@ class MemoryStorage:
             raise VersionConflictError()
         del self.records[record_id]
         self.audits = [item for item in self.audits if item.get("record_id") != record_id]
+        self.attachments = [item for item in self.attachments if item.get("record_id") != record_id]
         self.calls.append("delete")
 
 
@@ -871,3 +925,225 @@ class TestNotificationTriggerMatrix:
             f"rsp-completed:{second['id']}:{second['row_version']}:1",
         ]
         assert requests[0].dedupe_key != requests[1].dedupe_key
+
+
+PNG_1x1 = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+JPEG_TINY = b"\xff\xd8\xff\xe0" + b"\x00" * 16
+WEBP_TINY = b"RIFF" + (12).to_bytes(4, "little") + b"WEBP" + b"VP8L" + b"\x00" * 4
+
+
+def _b64_image(content, content_type="image/png"):
+    import base64
+    return {
+        "content_type": content_type,
+        "data_base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
+def _complete_actor():
+    return {"id": "9", "username": "admin", "display_name": "管理员", "role": "admin"}
+
+
+def test_complete_without_note_or_images_omits_reason_and_attachments():
+    service = _service()
+    created = service.create(_payload(), {"id": "1", "username": "creator", "role": "user"}, request_id="req-create")
+    completed = service.change_status(
+        created["id"],
+        {"target_status": "completed", "row_version": created["row_version"]},
+        _complete_actor(),
+        request_id="req-complete",
+    )
+    assert completed["status"] == "completed"
+    fields = json.loads(service.storage.audits[-1]["changed_fields_json"])
+    assert "reason" not in fields
+    assert "confirm_attachments" not in fields
+    assert service.storage.attachments == []
+    assert service.storage.audits[-1]["action_summary"].splitlines() == [
+        "完成记录：",
+        "1.状态由待确认改为已完成",
+    ]
+
+
+def test_complete_with_note_stores_user_text_not_button_label():
+    service = _service()
+    created = service.create(_payload(), {"id": "1", "username": "creator", "role": "user"}, request_id="req-create")
+    service.change_status(
+        created["id"],
+        {
+            "target_status": "completed",
+            "row_version": created["row_version"],
+            "reason": "  源系统核对无误  ",
+        },
+        _complete_actor(),
+        request_id="req-complete",
+    )
+    fields = json.loads(service.storage.audits[-1]["changed_fields_json"])
+    assert fields["reason"]["new"] == "源系统核对无误"
+    assert fields["reason"]["new"] != "源系统已确认"
+    assert "确认说明" not in service.storage.audits[-1]["action_summary"]
+    assert service.storage.attachments == []
+
+
+def test_complete_with_one_to_three_images_persists_bytes_and_audit_ids():
+    from auto_check.modules.report_special_processing.contracts import RecordNotFoundError
+
+    service = _service()
+    created = service.create(_payload(), {"id": "1", "username": "creator", "role": "user"}, request_id="req-create")
+    images = [
+        _b64_image(PNG_1x1, "image/png"),
+        _b64_image(JPEG_TINY, "image/jpeg"),
+        _b64_image(WEBP_TINY, "image/webp"),
+    ]
+    service.change_status(
+        created["id"],
+        {
+            "target_status": "completed",
+            "row_version": created["row_version"],
+            "reason": "已贴图",
+            "confirm_images": images,
+        },
+        _complete_actor(),
+        request_id="req-complete",
+    )
+    fields = json.loads(service.storage.audits[-1]["changed_fields_json"])
+    ids = fields["confirm_attachments"]["ids"]
+    assert fields["confirm_attachments"]["count"] == 3
+    assert ids == [item["id"] for item in service.storage.attachments]
+    payloads = [PNG_1x1, JPEG_TINY, WEBP_TINY]
+    types = ["image/png", "image/jpeg", "image/webp"]
+    for attachment_id, expected, content_type in zip(ids, payloads, types):
+        loaded = service.get_confirm_attachment(created["id"], attachment_id, _complete_actor())
+        assert loaded["content"] == expected
+        assert loaded["content_type"] == content_type
+        assert expected not in service.storage.audits[-1]["changed_fields_json"].encode("utf-8")
+    with pytest.raises(RecordNotFoundError):
+        service.get_confirm_attachment(created["id"] + 99, ids[0], _complete_actor())
+
+
+def test_complete_rejects_fourth_image_oversize_and_bad_magic():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service()
+    actor = {"id": "1", "username": "creator", "role": "user"}
+    admin = _complete_actor()
+
+    created = service.create(_payload(), actor, request_id="req-1")
+    with pytest.raises(ValidationError) as too_many:
+        service.change_status(
+            created["id"],
+            {
+                "target_status": "completed",
+                "row_version": created["row_version"],
+                "confirm_images": [_b64_image(PNG_1x1)] * 4,
+            },
+            admin,
+            request_id="req-4",
+        )
+    assert "最多粘贴 3 张图片" in too_many.value.fields["confirm_images"]
+    assert service.storage.get(created["id"])["status"] == "pending"
+    assert service.storage.attachments == []
+
+    created2 = service.create(_payload(), actor, request_id="req-2")
+    oversize = b"\x89PNG\r\n\x1a\n" + b"\x00" * (2 * 1024 * 1024 + 1)
+    with pytest.raises(ValidationError) as large:
+        service.change_status(
+            created2["id"],
+            {
+                "target_status": "completed",
+                "row_version": created2["row_version"],
+                "confirm_images": [_b64_image(oversize)],
+            },
+            admin,
+            request_id="req-big",
+        )
+    assert "2 MiB" in large.value.fields["confirm_images"]
+
+    created3 = service.create(_payload(), actor, request_id="req-3")
+    with pytest.raises(ValidationError) as magic:
+        service.change_status(
+            created3["id"],
+            {
+                "target_status": "completed",
+                "row_version": created3["row_version"],
+                "confirm_images": [_b64_image(b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "image/svg+xml")],
+            },
+            admin,
+            request_id="req-svg",
+        )
+    assert "PNG" in magic.value.fields["confirm_images"]
+    assert service.storage.attachments == []
+
+
+def test_delete_record_removes_confirm_attachments():
+    service = _service()
+    created = service.create(_payload(), {"id": "1", "username": "creator", "role": "user"}, request_id="req-create")
+    completed = service.change_status(
+        created["id"],
+        {
+            "target_status": "completed",
+            "row_version": created["row_version"],
+            "confirm_images": [_b64_image(PNG_1x1)],
+        },
+        _complete_actor(),
+        request_id="req-complete",
+    )
+    assert service.storage.attachments
+    service.delete(
+        completed["id"],
+        {"row_version": completed["row_version"]},
+        _complete_actor(),
+        request_id="req-delete",
+    )
+    assert service.storage.records == {}
+    assert service.storage.audits == []
+    assert service.storage.attachments == []
+
+
+def test_reopen_then_reconfirm_keeps_old_and_new_attachment_sets():
+    service = _service()
+    admin = _complete_actor()
+    created = service.create(_payload(), {"id": "1", "username": "creator", "role": "user"}, request_id="req-create")
+    first = service.change_status(
+        created["id"],
+        {
+            "target_status": "completed",
+            "row_version": created["row_version"],
+            "reason": "第一次确认",
+            "confirm_images": [_b64_image(PNG_1x1)],
+        },
+        admin,
+        request_id="req-1",
+    )
+    reopened = service.reopen(
+        first["id"],
+        {"row_version": first["row_version"], "reason": "补充口径"},
+        admin,
+        request_id="req-reopen",
+    )
+    service.change_status(
+        reopened["id"],
+        {
+            "target_status": "completed",
+            "row_version": reopened["row_version"],
+            "reason": "第二次确认",
+            "confirm_images": [_b64_image(JPEG_TINY, "image/jpeg"), _b64_image(PNG_1x1)],
+        },
+        admin,
+        request_id="req-2",
+    )
+    complete_audits = [
+        json.loads(item["changed_fields_json"])
+        for item in service.storage.audits
+        if item.get("to_status") == "completed"
+    ]
+    assert len(complete_audits) == 2
+    assert complete_audits[0]["reason"]["new"] == "第一次确认"
+    assert complete_audits[1]["reason"]["new"] == "第二次确认"
+    assert complete_audits[0]["confirm_attachments"]["count"] == 1
+    assert complete_audits[1]["confirm_attachments"]["count"] == 2
+    assert complete_audits[0]["confirm_attachments"]["ids"] != complete_audits[1]["confirm_attachments"]["ids"]
+    assert len(service.storage.attachments) == 3

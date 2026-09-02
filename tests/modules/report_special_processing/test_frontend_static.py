@@ -43,6 +43,7 @@ def test_api_contract_covers_catalog_ledger_actions_conflicts_and_audit():
         '"/void"',
         '"/reopen"',
         '"/audit"',
+        '"/confirm-attachments"',
     ):
         assert endpoint in source
     assert "exportRecords" in source
@@ -213,6 +214,16 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
     assert 'keyword: String(record.record_no' in ledger
     assert 'action === "confirm"' in ledger
     assert 'target_status: "completed"' in drawer
+    assert 'reason: "源系统已确认"' not in drawer
+    assert "confirm_images" in drawer
+    assert "MAX_CONFIRM_IMAGES = 3" in drawer
+    assert "确认说明（选填）" in drawer
+    assert "onPaste: handleConfirmPaste" in drawer
+    assert "最多粘贴 3 张图片" in drawer
+    assert "rsp-image-lightbox" in drawer
+    assert "openImageLightbox" in drawer
+    assert "上传" not in drawer
+    assert "type: \"file\"" not in drawer
     assert 'await confirm("确认完成"' not in ledger
     assert 'confirm("确认将该记录标记为已完成吗？")' not in ledger
     assert "源系统已确认" in drawer
@@ -342,6 +353,8 @@ def test_audit_diff_panel_preserves_long_values_and_operation_semantics():
         "已复制脚本开头预览；系统不会执行该脚本",
         "脚本已复制；系统不会执行该脚本",
         "复制${label}脚本",
+        "confirm_attachments", "rsp-confirm-thumbs", "rsp-image-lightbox",
+        "确认图片",
     ):
         assert token in drawer
     assert "rsp-audit-value--script" in css
