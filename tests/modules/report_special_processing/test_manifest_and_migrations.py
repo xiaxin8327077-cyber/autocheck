@@ -34,9 +34,11 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.11"
-    assert manifest.release_notes.version == "1.2.11"
-    assert manifest.release_notes.items == ("确认时可在弹窗选填说明并粘贴最多3张图片，完成后操作记录展示确认说明与可点击缩略图",)
+    assert manifest.version == "1.2.12"
+    assert manifest.release_notes.version == "1.2.12"
+    assert manifest.release_notes.items == (
+        "数据治理负责人可按所属维度自动带出后，改选任意启用用户",
+    )
 
 
 def test_module_is_discovered_without_central_registration():

@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -38,7 +38,7 @@
   ],
   "schema_version": 5,
   "release_notes": {
-    "version": "1.2.11",
-    "items": ["确认时可在弹窗选填说明并粘贴最多3张图片，完成后操作记录展示确认说明与可点击缩略图"]
+    "version": "1.2.12",
+    "items": ["数据治理负责人可按所属维度自动带出后，改选任意启用用户"]
   }
 }

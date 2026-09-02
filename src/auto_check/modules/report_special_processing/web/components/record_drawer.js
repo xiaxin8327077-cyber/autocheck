@@ -423,15 +423,14 @@ export function createRecordDrawer(documentRef, options) {
   function syncGovernanceOwnerOptions({ preferExisting = false, autoPick = true } = {}) {
     const code = dimension.value || "";
     const candidates = code ? (candidatesByDimension[code] || []) : [];
-    const previous = governanceOwner.value;
-    fillSelect(governanceOwner, candidates, "请选择数据治理负责人");
+    fillSelect(governanceOwner, users, "请选择数据治理负责人");
 
     let next = "";
     if (preferExisting) {
       const existingId = current.governance_owner_user_id != null && current.governance_owner_user_id !== ""
         ? String(current.governance_owner_user_id)
         : "";
-      if (existingId && candidates.some((item) => String(item.id) === existingId)) {
+      if (existingId && users.some((item) => String(item.id) === existingId)) {
         next = existingId;
       } else if (existingId) {
         governanceOwner.append(option(
@@ -443,8 +442,6 @@ export function createRecordDrawer(documentRef, options) {
         ));
         next = existingId;
       }
-    } else if (previous && candidates.some((item) => String(item.id) === previous)) {
-      next = previous;
     }
 
     if (!next && autoPick && candidates.length) {

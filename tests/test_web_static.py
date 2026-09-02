@@ -7974,6 +7974,7 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.21</span>' in app_js
     assert '<span class="changelog-version">v1.2.20</span>' in app_js
     assert '<span class="changelog-version">v1.2.19</span>' in app_js
     assert '<span class="changelog-version">v1.2.18</span>' in app_js

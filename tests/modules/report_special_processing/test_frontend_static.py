@@ -112,6 +112,10 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
     assert "rsp-form-grid-basic" in drawer
     assert "defaultHandlerId" in drawer
     assert "governance_owner_candidates_by_dimension" in drawer
+    assert "fillSelect(governanceOwner, users," in drawer
+    assert "fillSelect(governanceOwner, candidates" not in drawer
+    assert "previous && candidates.some" not in drawer
+    assert "syncGovernanceOwnerOptions({ preferExisting: false, autoPick: true })" in drawer
     assert "Math.floor(Math.random()" in drawer
     assert 'labeledField(documentRef, "操作原因"' not in drawer
     assert "rsp-workflow-state" not in drawer

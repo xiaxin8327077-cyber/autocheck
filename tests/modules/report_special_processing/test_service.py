@@ -223,6 +223,19 @@ def test_create_formal_record_persists_dimension_governance_fields_and_skips_rep
     assert item["field_name"] == "amt"
 
 
+def test_create_accepts_governance_owner_outside_dimension_candidates():
+    directory = Directory()
+    directory.users["outsider"] = User("outsider", "other", "其他用户", role="user")
+    service = _service(directory=directory)
+    record = service.create(
+        _payload(governance_owner_user_id="outsider"),
+        {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"},
+        request_id="req-any-owner",
+    )
+    assert record["governance_owner_user_id"] == "outsider"
+    assert record["governance_owner_display_name_snapshot"] == "其他用户"
+
+
 def test_confirm_denied_for_non_governance_owner_even_with_capability():
     from auto_check.modules.report_special_processing.contracts import PermissionDeniedError
 
