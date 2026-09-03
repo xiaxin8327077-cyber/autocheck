@@ -6380,12 +6380,19 @@ input:focus, select:focus {
   width: min(1120px, calc(100vw - 40px));
 }
 
+.db-validation-history-table-shell {
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--ui-radius);
+  background: var(--surface-container-lowest);
+}
+
 .db-validation-history-table-wrap {
   max-height: calc(100vh - 240px);
   overflow-y: auto;
-  overflow-x: auto;
-  border: 1px solid var(--outline-variant);
-  border-radius: 8px;
+  overflow-x: hidden;
+  border: 0;
+  border-radius: 0;
   scrollbar-width: thin !important;
   -ms-overflow-style: auto !important;
 }
@@ -6398,7 +6405,6 @@ input:focus, select:focus {
   background: var(--ui-thin-scrollbar-thumb, #c5d0e0);
   border-radius: 3px;
 }
-}
 
 .db-validation-history-table {
   table-layout: fixed;
@@ -6408,24 +6414,27 @@ input:focus, select:focus {
 
 .db-validation-history-table th,
 .db-validation-history-table td {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .db-validation-history-table th:nth-child(1),
 .db-validation-history-table td:nth-child(1) {
-  width: 160px;
+  width: 18%;
 }
 
 .db-validation-history-table th:nth-child(2),
 .db-validation-history-table td:nth-child(2) {
-  width: 120px;
+  width: 11%;
 }
 
 .db-validation-history-table th:nth-child(3),
 .db-validation-history-table td:nth-child(3) {
-  width: 110px;
+  width: 15%;
 }
 
 .db-validation-history-table th:nth-child(4),
@@ -6436,7 +6445,134 @@ input:focus, select:focus {
 .db-validation-history-table td:nth-child(6),
 .db-validation-history-table th:nth-child(7),
 .db-validation-history-table td:nth-child(7) {
-  width: 84px;
+  width: 14%;
+}
+
+.db-validation-history-result-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.db-validation-history-help {
+  display: inline-flex;
+  flex: 0 0 10px;
+  align-items: center;
+  justify-content: center;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--secondary);
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.db-validation-history-help:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--secondary) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.db-validation-history-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.db-validation-history-pagination {
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 0;
+  border-top: 1px solid var(--outline-variant);
+  border-radius: 0;
+}
+
+.db-validation-history-pagination .page-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--ui-radius);
+}
+
+.db-validation-history-pagination .page-current {
+  min-width: 24px;
+  height: 28px;
+}
+
+.db-validation-history-pagination .pagination-jump {
+  margin-left: 8px;
+}
+
+.db-validation-history-pagination .pagination-jump .custom-input-shell {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 26px;
+  min-height: 26px;
+  border-radius: var(--ui-radius);
+}
+
+.db-validation-history-pagination .pagination-jump input {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 4px;
+  border-radius: var(--ui-radius);
+}
+
+@media (max-width: 900px) {
+  .db-validation-history-table th,
+  .db-validation-history-table td {
+    padding-right: 6px;
+    padding-left: 6px;
+    font-size: 12px;
+  }
+
+  .db-validation-history-table th:nth-child(1),
+  .db-validation-history-table td:nth-child(1) {
+    width: 26%;
+  }
+
+  .db-validation-history-table th:nth-child(2),
+  .db-validation-history-table td:nth-child(2) {
+    width: 10%;
+  }
+
+  .db-validation-history-table th:nth-child(3),
+  .db-validation-history-table td:nth-child(3) {
+    width: 16%;
+  }
+
+  .db-validation-history-table th:nth-child(4),
+  .db-validation-history-table td:nth-child(4),
+  .db-validation-history-table th:nth-child(5),
+  .db-validation-history-table td:nth-child(5) {
+    width: 13%;
+  }
+
+  .db-validation-history-table th:nth-child(6),
+  .db-validation-history-table td:nth-child(6) {
+    width: 10%;
+  }
+
+  .db-validation-history-table th:nth-child(7),
+  .db-validation-history-table td:nth-child(7) {
+    width: 12%;
+  }
+}
+
+@media (max-width: 520px) {
+  .db-validation-history-pagination {
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .db-validation-history-pagination .pagination-controls {
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
 }
 
 .db-validation-mapping-modal {

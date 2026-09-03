@@ -203,6 +203,13 @@ const dbValidationHistoryBtn = document.getElementById("dbValidationHistoryBtn")
 const dbValidationHistoryOverlay = document.getElementById("dbValidationHistoryOverlay");
 const dbValidationHistoryClose = document.getElementById("dbValidationHistoryClose");
 const dbValidationHistoryBody = document.getElementById("dbValidationHistoryBody");
+const dbValidationHistoryPageInfo = document.getElementById("dbValidationHistoryPageInfo");
+const dbValidationHistoryPrevPage = document.getElementById("dbValidationHistoryPrevPage");
+const dbValidationHistoryPageCurrent = document.getElementById("dbValidationHistoryPageCurrent");
+const dbValidationHistoryNextPage = document.getElementById("dbValidationHistoryNextPage");
+const dbValidationHistoryJumpPage = document.getElementById("dbValidationHistoryJumpPage");
+let dbValidationHistoryRuns = [];
+let dbValidationHistoryCurrentPage = 1;
 const dbValidationReportDate = document.getElementById("dbValidationReportDate");
 const dbValidationTableList = document.getElementById("dbValidationTableList");
 const dbValidationSelectAllTablesBtn = document.getElementById("dbValidationSelectAllTablesBtn");
@@ -11193,13 +11200,24 @@ function closeDbValidationHistory() {
 
 async function loadDbValidationHistory() {
   if (!dbValidationHistoryBody) return;
+  dbValidationHistoryRuns = [];
+  dbValidationHistoryCurrentPage = 1;
   dbValidationHistoryBody.innerHTML = '<tr><td colspan="7" class="empty">正在加载...</td></tr>';
+  if (dbValidationHistoryPageInfo) dbValidationHistoryPageInfo.textContent = "正在加载...";
+  if (dbValidationHistoryPageCurrent) dbValidationHistoryPageCurrent.textContent = "-";
+  if (dbValidationHistoryPrevPage) dbValidationHistoryPrevPage.disabled = true;
+  if (dbValidationHistoryNextPage) dbValidationHistoryNextPage.disabled = true;
+  if (dbValidationHistoryJumpPage) {
+    dbValidationHistoryJumpPage.value = "";
+    dbValidationHistoryJumpPage.disabled = true;
+  }
   try {
     const payload = await api("/api/tools/db-validation/history");
-    const sortedHistory = [...(payload.history || [])].sort(compareDbValidationHistoryRunsDesc);
-    renderDbValidationHistory(sortedHistory);
+    dbValidationHistoryRuns = [...(payload.history || [])].sort(compareDbValidationHistoryRunsDesc);
+    renderDbValidationHistory();
   } catch (e) {
     dbValidationHistoryBody.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    updateDbValidationHistoryPagination(0, 1);
   }
 }
 
@@ -11235,18 +11253,57 @@ function dbValidationHistoryExecutorName(run = {}) {
   return String(run.executor_name || run.executor_username || run.executor || "-").trim() || "-";
 }
 
-function renderDbValidationHistory(history = []) {
+function getDbValidationHistoryPageItems() {
+  const total = dbValidationHistoryRuns.length;
+  const pageSize = Math.max(1, Number(PAGE_SIZE) || 10);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  dbValidationHistoryCurrentPage = Math.min(Math.max(1, dbValidationHistoryCurrentPage), totalPages);
+  const start = (dbValidationHistoryCurrentPage - 1) * pageSize;
+  return {
+    items: dbValidationHistoryRuns.slice(start, start + pageSize),
+    total,
+    totalPages,
+  };
+}
+
+function updateDbValidationHistoryPagination(total, totalPages) {
+  if (dbValidationHistoryPageInfo) {
+    dbValidationHistoryPageInfo.textContent = total
+      ? `共 ${total} 条`
+      : "暂无数据";
+  }
+  if (dbValidationHistoryPageCurrent) {
+    dbValidationHistoryPageCurrent.textContent = total ? String(dbValidationHistoryCurrentPage) : "-";
+  }
+  if (dbValidationHistoryPrevPage) {
+    dbValidationHistoryPrevPage.disabled = !total || dbValidationHistoryCurrentPage <= 1;
+  }
+  if (dbValidationHistoryNextPage) {
+    dbValidationHistoryNextPage.disabled = !total || dbValidationHistoryCurrentPage >= totalPages;
+  }
+  if (dbValidationHistoryJumpPage) {
+    dbValidationHistoryJumpPage.max = String(totalPages);
+    dbValidationHistoryJumpPage.disabled = !total;
+    if (!total) dbValidationHistoryJumpPage.value = "";
+  }
+}
+
+function renderDbValidationHistory() {
   if (!dbValidationHistoryBody) return;
-  if (!history.length) {
+  const { items, total, totalPages } = getDbValidationHistoryPageItems();
+  updateDbValidationHistoryPagination(total, totalPages);
+  if (!items.length) {
     dbValidationHistoryBody.innerHTML = '<tr><td colspan="7" class="empty">暂无历史记录</td></tr>';
     return;
   }
-  dbValidationHistoryBody.innerHTML = history.map((run) => {
+  dbValidationHistoryBody.innerHTML = items.map((run) => {
     const downloadUrl = run.download_url || `${DB_VALIDATION_HISTORY_DOWNLOAD_PREFIX}${encodeURIComponent(run.id || "")}`;
+    const executionTime = formatDbValidationHistoryTime(run.run_at || run.started_at || "");
+    const executorName = dbValidationHistoryExecutorName(run);
     return `
     <tr>
-      <td>${escapeHtml(formatDbValidationHistoryTime(run.run_at || run.started_at || ""))}</td>
-      <td>${escapeHtml(dbValidationHistoryExecutorName(run))}</td>
+      <td title="${escapeHtml(executionTime)}">${escapeHtml(executionTime)}</td>
+      <td title="${escapeHtml(executorName)}">${escapeHtml(executorName)}</td>
       <td>${escapeHtml(run.report_date || run.run_date || "-")}</td>
       <td class="money-cell">
         <button type="button" class="db-validation-history-count-link db-validation-history-download" data-url="${escapeHtml(downloadUrl)}">${formatMoney(run.result_count || 0)}</button>
@@ -11358,6 +11415,29 @@ dbValidationHistoryBody?.addEventListener("click", (e) => {
   if (!button) return;
   const url = button.dataset.url || "";
   if (url) window.location.href = url;
+});
+dbValidationHistoryPrevPage?.addEventListener("click", () => {
+  if (dbValidationHistoryCurrentPage <= 1) return;
+  dbValidationHistoryCurrentPage--;
+  renderDbValidationHistory();
+});
+dbValidationHistoryNextPage?.addEventListener("click", () => {
+  const { totalPages } = getDbValidationHistoryPageItems();
+  if (dbValidationHistoryCurrentPage >= totalPages) return;
+  dbValidationHistoryCurrentPage++;
+  renderDbValidationHistory();
+});
+function jumpToDbValidationHistoryPage() {
+  if (dbValidationHistoryJumpPage?.disabled) return;
+  const { totalPages } = getDbValidationHistoryPageItems();
+  const requestedPage = parseInt(dbValidationHistoryJumpPage?.value || "1", 10) || 1;
+  dbValidationHistoryCurrentPage = Math.max(1, Math.min(totalPages, requestedPage));
+  if (dbValidationHistoryJumpPage) dbValidationHistoryJumpPage.value = "";
+  renderDbValidationHistory();
+}
+dbValidationHistoryJumpPage?.addEventListener("change", jumpToDbValidationHistoryPage);
+dbValidationHistoryJumpPage?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") jumpToDbValidationHistoryPage();
 });
 dbValidationStartBtn?.addEventListener("click", startDbValidation);
 dbValidationDownloadBtn?.addEventListener("click", () => {
@@ -13444,6 +13524,16 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.22</span>
+        <span class="changelog-date">2026-09-03</span>
+      </div>
+      <ul>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.21</span>

@@ -5867,7 +5867,7 @@ def test_primary_tool_modals_preserve_their_pre_shared_layout_contract():
         assert '<div class="app-modal-body pbc-modal-body">' not in modal.group("body")
 
     for auxiliary_body_class in (
-        "db-validation-history-table-wrap",
+        "db-validation-history-table-shell",
         "flow-history-table-wrap",
         "flow-chain-editor-body",
     ):
@@ -7974,6 +7974,7 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.22</span>' in app_js
     assert '<span class="changelog-version">v1.2.21</span>' in app_js
     assert '<span class="changelog-version">v1.2.20</span>' in app_js
     assert '<span class="changelog-version">v1.2.19</span>' in app_js
@@ -8964,6 +8965,7 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
+    readme = _read(README_MD)
 
     for item_id in [
         'id="toolCardDbValidation"',
@@ -9040,17 +9042,99 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
     assert 'id="dbValidationHistoryBtn"' in html
     assert 'id="dbValidationHistoryBody"' in html
     assert "<th>执行人</th>" in html
+    assert 'class="db-validation-history-help"' in html
+    assert 'title="点击条数即可下载对应结果文件。"' in html
+    assert 'aria-label="点击条数即可下载对应结果文件。"' in html
+    for element_id in [
+        "dbValidationHistoryPagination",
+        "dbValidationHistoryPageInfo",
+        "dbValidationHistoryPrevPage",
+        "dbValidationHistoryPageCurrent",
+        "dbValidationHistoryNextPage",
+        "dbValidationHistoryJumpPage",
+    ]:
+        assert f'id="{element_id}"' in html
+    history_shell_start = html.index('<div class="db-validation-history-table-shell">')
+    history_table_start = html.index('<div class="db-validation-history-table-wrap">', history_shell_start)
+    history_pagination_start = html.index(
+        '<div class="pagination db-validation-history-pagination"',
+        history_table_start,
+    )
+    assert history_shell_start < history_table_start < history_pagination_start
     assert "db-validation-history-count-link" in app_js
     assert "function dbValidationHistoryExecutorName" in app_js
     assert "dbValidationHistoryExecutorName(run)" in app_js
+    assert "let dbValidationHistoryRuns = [];" in app_js
+    assert "let dbValidationHistoryCurrentPage = 1;" in app_js
+    assert "function getDbValidationHistoryPageItems()" in app_js
+    assert "const pageSize = Math.max(1, Number(PAGE_SIZE) || 10);" in app_js
+    assert "dbValidationHistoryRuns.slice(start, start + pageSize)" in app_js
+    assert "dbValidationHistoryJumpPage.disabled = !total;" in app_js
+    assert "if (dbValidationHistoryJumpPage?.disabled) return;" in app_js
+    assert 'title="${escapeHtml(executorName)}"' in app_js
+    assert 'title="${escapeHtml(executionTime)}"' in app_js
     assert "function formatDbValidationHistoryTime" in app_js
     assert '.replace("T", " ")' in app_js
     assert ".db-validation-history-modal" in css
+    assert ".db-validation-history-help" in css
+    history_help = re.search(r"(?m)^\.db-validation-history-help\s*\{(?P<body>.*?)\}", css, re.S)
+    assert history_help is not None
+    assert "flex: 0 0 10px;" in history_help.group("body")
+    assert "width: 10px;" in history_help.group("body")
+    assert "height: 10px;" in history_help.group("body")
+    history_shell = re.search(r"(?m)^\.db-validation-history-table-shell\s*\{(?P<body>.*?)\}", css, re.S)
+    assert history_shell is not None
+    assert "overflow: hidden;" in history_shell.group("body")
+    assert "border: 1px solid var(--outline-variant);" in history_shell.group("body")
+    assert "border-radius: var(--ui-radius);" in history_shell.group("body")
     history_wrap = re.search(r"(?m)^\.db-validation-history-table-wrap\s*\{(?P<body>.*?)\}", css, re.S)
     assert history_wrap is not None
-    assert "overflow-x: auto;" in history_wrap.group("body")
+    assert "overflow-x: hidden;" in history_wrap.group("body")
+    assert "border: 0;" in history_wrap.group("body")
+    assert "border-radius: 0;" in history_wrap.group("body")
     assert ".db-validation-history-table {\n  table-layout: fixed;" in css
+    history_cells = re.search(
+        r"(?m)^\.db-validation-history-table th,\s*\n"
+        r"\.db-validation-history-table td\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert history_cells is not None
+    assert "white-space: nowrap;" in history_cells.group("body")
+    assert "text-overflow: ellipsis;" in history_cells.group("body")
+    assert "overflow-wrap: normal;" in history_cells.group("body")
+    assert "word-break: normal;" in history_cells.group("body")
+    narrow_history = re.search(
+        r"@media \(max-width: 900px\) \{(?P<body>.*?)\n\}",
+        css[css.index(".db-validation-history-pagination"):],
+        re.S,
+    )
+    assert narrow_history is not None
+    assert ".db-validation-history-table th:nth-child(1)" in narrow_history.group("body")
+    assert "width: 26%;" in narrow_history.group("body")
+    history_pagination = re.search(r"(?m)^\.db-validation-history-pagination\s*\{(?P<body>.*?)\}", css, re.S)
+    assert history_pagination is not None
+    assert "min-height: 40px;" in history_pagination.group("body")
+    assert "padding: 6px 12px;" in history_pagination.group("body")
+    assert "border: 0;" in history_pagination.group("body")
+    assert "border-top: 1px solid var(--outline-variant);" in history_pagination.group("body")
+    assert ".db-validation-history-table tbody tr:last-child td" in css
+    assert "@media (max-width: 520px)" in css
+    assert ".db-validation-history-pagination .pagination-controls" in css
+    assert "flex-wrap: wrap;" in css
+    pagination_input = re.search(
+        r"(?m)^\.db-validation-history-pagination \.pagination-jump input\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert pagination_input is not None
+    assert "width: 40px;" in pagination_input.group("body")
+    assert "height: 26px;" in pagination_input.group("body")
     assert ".db-validation-history-count-link" in css
+    assert "人行逐笔校验执行历史新增分页" in readme
+    assert "分页栏与表格共用一体化外框" in readme
+    assert "全部列内容保持单行显示" in readme
+    assert "不再出现横向滚动条" in readme
 
 
 def test_packaged_exe_includes_db_validation_resource_package():
@@ -9067,13 +9151,28 @@ def test_db_validation_history_sorts_by_execution_time_desc():
 
     load_history = re.search(r"async function loadDbValidationHistory\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert load_history is not None
-    assert "const sortedHistory = [...(payload.history || [])].sort(compareDbValidationHistoryRunsDesc);" in load_history.group("body")
-    assert "renderDbValidationHistory(sortedHistory);" in load_history.group("body")
+    load_body = load_history.group("body")
+    assert "dbValidationHistoryRuns = [];" in load_body
+    assert "dbValidationHistoryCurrentPage = 1;" in load_body
+    assert "dbValidationHistoryJumpPage.disabled = true;" in load_body
+    assert load_body.index("dbValidationHistoryRuns = [];") < load_body.index('api("/api/tools/db-validation/history")')
+    assert load_body.index("dbValidationHistoryCurrentPage = 1;") < load_body.index('api("/api/tools/db-validation/history")')
+    assert "dbValidationHistoryRuns = [...(payload.history || [])].sort(compareDbValidationHistoryRunsDesc);" in load_history.group("body")
+    assert "renderDbValidationHistory();" in load_history.group("body")
     assert "function compareDbValidationHistoryRunsDesc" in app_js
     assert "function dbValidationHistoryExecutionTimeValue" in app_js
     assert "const raw = dbValidationHistoryExecutionTime(run);" in app_js
     assert "Date.UTC(" in app_js
     assert "dbValidationHistoryExecutionTimeValue(right) - dbValidationHistoryExecutionTimeValue(left)" in app_js
+
+    update_pagination = re.search(
+        r"function updateDbValidationHistoryPagination\(total, totalPages\) \{(?P<body>.*?)\n\}",
+        app_js,
+        re.S,
+    )
+    assert update_pagination is not None
+    assert "`共 ${total} 条`" in update_pagination.group("body")
+    assert "第 ${dbValidationHistoryCurrentPage}" not in update_pagination.group("body")
 
 
 def test_selects_use_scheme_5_glass_style_without_particles():

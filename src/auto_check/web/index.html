@@ -903,24 +903,42 @@
             </div>
           </div>
           <div class="app-modal-body pbc-modal-body">
-          <div class="db-validation-history-table-wrap">
-            <table class="result-table db-validation-history-table">
-              <thead>
-                <tr>
-                  <th>执行时间</th>
-                  <th>执行人</th>
-                  <th>报告期</th>
-                  <th>结果条数</th>
-                  <th>公开信息</th>
-                  <th>模板</th>
-                  <th>表单数</th>
-                </tr>
-              </thead>
-              <tbody id="dbValidationHistoryBody">
-                <tr><td colspan="7" class="empty">暂无历史记录</td></tr>
-              </tbody>
-            </table>
-          </div>
+            <div class="db-validation-history-table-shell">
+              <div class="db-validation-history-table-wrap">
+                <table class="result-table db-validation-history-table">
+                  <thead>
+                    <tr>
+                      <th>执行时间</th>
+                      <th>执行人</th>
+                      <th>报告期</th>
+                      <th>
+                        <span class="db-validation-history-result-heading">
+                          结果条数
+                          <span class="db-validation-history-help" role="img" tabindex="0" title="点击条数即可下载对应结果文件。" aria-label="点击条数即可下载对应结果文件。">?</span>
+                        </span>
+                      </th>
+                      <th>公开信息</th>
+                      <th>模板</th>
+                      <th>表单数</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dbValidationHistoryBody">
+                    <tr><td colspan="7" class="empty">暂无历史记录</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="pagination db-validation-history-pagination" id="dbValidationHistoryPagination">
+                <span class="pagination-info" id="dbValidationHistoryPageInfo">暂无数据</span>
+                <div class="pagination-controls">
+                  <button class="page-btn" id="dbValidationHistoryPrevPage" disabled>&#9664;</button>
+                  <span class="page-current" id="dbValidationHistoryPageCurrent">-</span>
+                  <button class="page-btn" id="dbValidationHistoryNextPage" disabled>&#9654;</button>
+                  <span class="pagination-jump">
+                    跳至 <input id="dbValidationHistoryJumpPage" type="number" min="1" /> 页
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
