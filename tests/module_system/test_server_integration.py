@@ -678,9 +678,11 @@ def test_expired_session_get_precheck_401_has_required_header(module_server):
 
 
 def _encrypt_transport_password(auth_manager, password: str) -> str:
-    from Crypto.Cipher import PKCS1_OAEP
-    from Crypto.Hash import SHA256
-    from Crypto.PublicKey import RSA
+    # 与生产 security.py 一致使用 Cryptodome（依赖 pycryptodomex）；
+    # 之前误写 Crypto 只在本机恰好装了 pycryptodome 时才通过，builder 镜像会失败。
+    from Cryptodome.Cipher import PKCS1_OAEP
+    from Cryptodome.Hash import SHA256
+    from Cryptodome.PublicKey import RSA
 
     key = RSA.import_key(auth_manager.public_key_pem())
     cipher = PKCS1_OAEP.new(key, hashAlgo=SHA256)

@@ -15,6 +15,45 @@ ROOT = Path(__file__).resolve().parents[3]
 WEB = ROOT / "src" / "auto_check" / "modules" / "report_special_processing" / "web"
 
 
+# 打包 builder 镜像的 Node 16 没有浏览器/Node20+ 的全局 `File`，也没有全局 `crypto`。
+# 组件按 duck-typing 消费 File（name/type/size/arrayBuffer/slice），这里补最小实现；
+# crypto 走 node:crypto 的 webcrypto（自带 subtle.digest），两者都只在宿主缺失时兜底。
+GLOBAL_FILE_POLYFILL = r"""
+import { webcrypto } from "node:crypto";
+if (typeof globalThis.crypto === "undefined") {
+  globalThis.crypto = webcrypto;
+}
+if (typeof globalThis.File === "undefined") {
+  class FilePolyfill {
+    constructor(parts, name, options = {}) {
+      const buffers = [];
+      for (const part of parts || []) {
+        if (part instanceof ArrayBuffer) buffers.push(Buffer.from(part));
+        else if (ArrayBuffer.isView(part)) buffers.push(Buffer.from(part.buffer, part.byteOffset, part.byteLength));
+        else if (part && typeof part.arrayBuffer === "function") buffers.push(Buffer.from(part));
+        else buffers.push(Buffer.from(String(part), "utf8"));
+      }
+      this._buffer = Buffer.concat(buffers);
+      this.name = String(name);
+      this.type = String(options.type || "");
+      this.size = this._buffer.length;
+      this.lastModified = typeof options.lastModified === "number" ? options.lastModified : 0;
+    }
+    arrayBuffer() {
+      const copy = this._buffer.slice();
+      return Promise.resolve(copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength));
+    }
+    text() { return Promise.resolve(this._buffer.toString("utf8")); }
+    slice(start, end) {
+      const from = start < 0 ? Math.max(this.size + start, 0) : start;
+      const to = end === undefined ? this.size : (end < 0 ? this.size + end : Math.min(end, this.size));
+      return new FilePolyfill([this._buffer.subarray(from, to)], this.name, { type: this.type });
+    }
+  }
+  globalThis.File = FilePolyfill;
+}
+"""
+
 PREAMBLE = r"""
 import assert from "node:assert/strict";
 import {
@@ -169,6 +208,9 @@ function makeNotify() {
 
 const DEFAULT_LIMITS = { max_count: 10, max_file_bytes: 10485760, max_total_bytes: 31457280 };
 """
+
+# File 兜底与 webcrypto 导入必须在场景脚本最前部求值。
+PREAMBLE = GLOBAL_FILE_POLYFILL + PREAMBLE
 
 
 def _run_scenario(tmp_path: Path, scenario: str, name: str) -> subprocess.CompletedProcess:
@@ -752,6 +794,7 @@ def _run_drawer_scenario(tmp_path: Path, scenario: str, name: str) -> subprocess
         'import assert from "node:assert/strict";\n'
         'import { createRecordDrawer } from "./components/record_drawer.js";\n'
         'globalThis.window = { innerWidth: 1280, innerHeight: 800 };\n'
+        + GLOBAL_FILE_POLYFILL
         + DRAWER_HARNESS
         + "\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\n"
         + "async function runScenario() {\n"
@@ -868,6 +911,7 @@ def _run_ledger_scenario(tmp_path: Path, scenario: str, name: str) -> subprocess
         'import { createLedgerPage } from "./pages/ledger.js";\n'
         'import { createState } from "./state.js";\n'
         'globalThis.window = { innerWidth: 1280, innerHeight: 800 };\n'
+        + GLOBAL_FILE_POLYFILL
         + DRAWER_HARNESS
         + LEDGER_HARNESS_EXTRA
         + "\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\n"

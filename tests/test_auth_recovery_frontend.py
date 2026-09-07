@@ -481,6 +481,47 @@ def _request_layer_source() -> str:
     return app_js[start:end]
 
 
+# Node 场景运行在打包 builder 镜像（Node 16）时没有浏览器/Node18+ 的 WHATWG 全局。
+# app.js 请求层用到 `new Headers(init)`，构造入参可能是普通对象、二元组数组，或
+# 已有 Headers 实例（透传测试）。这里只在宿主缺失时补一个最小且大小写不敏感的实现，
+# 使被测代码逻辑不依赖"宿主碰巧带了哪些内置对象"。
+BROWSER_GLOBAL_POLYFILL = r"""
+if (typeof globalThis.Headers === "undefined") {
+  class HeadersPolyfill {
+    constructor(init) {
+      this._map = new Map();
+      const append = (name, value) => {
+        this._map.set(String(name).toLowerCase(), String(value));
+      };
+      if (init instanceof HeadersPolyfill) {
+        init.forEach((value, name) => append(name, value));
+      } else if (Array.isArray(init)) {
+        for (const pair of init) append(pair[0], pair[1]);
+      } else if (init && typeof init === "object") {
+        for (const name of Object.keys(init)) append(name, init[name]);
+      }
+    }
+    get(name) {
+      const key = String(name).toLowerCase();
+      return this._map.has(key) ? this._map.get(key) : null;
+    }
+    set(name, value) {
+      this._map.set(String(name).toLowerCase(), String(value));
+    }
+    has(name) {
+      return this._map.has(String(name).toLowerCase());
+    }
+    delete(name) {
+      this._map.delete(String(name).toLowerCase());
+    }
+    forEach(callback, thisArg) {
+      for (const [key, value] of this._map) callback.call(thisArg, value, key, this);
+    }
+  }
+  globalThis.Headers = HeadersPolyfill;
+}
+"""
+
 REQUEST_LAYER_STUBS = r"""
 const authState = { csrfToken: "old-token", user: { id: "user-1", username: "zhangsan" } };
 const applyCalls = [];
@@ -542,6 +583,7 @@ def _run_request_layer_scenario(tmp_path: Path, scenario: str, name: str) -> sub
     script = textwrap.dedent(
         f"""\
         const assert = require("node:assert/strict");
+        {BROWSER_GLOBAL_POLYFILL}
         {REQUEST_LAYER_STUBS}
         {_request_layer_source()}
         async function runScenario() {{
@@ -1018,6 +1060,7 @@ def _run_e2e_scenario(tmp_path: Path, scenario: str, name: str) -> subprocess.Co
         import assert from "node:assert/strict";
         import {{ createApi }} from "./module_api.js";
         globalThis.window = globalThis.window || {{}};
+        {BROWSER_GLOBAL_POLYFILL}
         await import("./auth_recovery.js");
         const {{ createAuthRecovery }} = window.AutoCheckAuthRecovery;
         {DOM_STUB}
