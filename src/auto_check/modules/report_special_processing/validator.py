@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import io
+import zipfile
 from datetime import date, datetime
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from .contracts import DIMENSIONS, PageQuery, RecordInput, RecordStatus, ValidationError
+from .contracts import (
+    DIMENSIONS,
+    PageQuery,
+    RecordAttachmentChange,
+    RecordAttachmentFile,
+    RecordInput,
+    RecordStatus,
+    ValidationError,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -22,6 +33,40 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
 _WEBP_RIFF = b"RIFF"
 _WEBP_TYPE = b"WEBP"
+
+# ===== 记录附件（图片 / Excel / Word / ZIP）校验常量 =====
+MAX_RECORD_ATTACHMENTS = 10
+MAX_RECORD_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_RECORD_ATTACHMENTS_TOTAL_BYTES = 30 * 1024 * 1024
+MAX_RECORD_ATTACHMENT_REQUEST_BYTES = 45 * 1024 * 1024
+MAX_RECORD_ATTACHMENT_FILE_NAME_CHARS = 255
+MAX_OOXML_ENTRIES = 5000
+MAX_OOXML_CONTENT_TYPES_BYTES = 1024 * 1024
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+# 扩展名 -> 分类；服务端按魔数/容器校验后写回规范化 MIME，不信任客户端声明。
+ATTACHMENT_EXTENSION_KINDS = {
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+    ".xls": "ole",
+    ".doc": "ole",
+    ".xlsx": "ooxml",
+    ".docx": "ooxml",
+    ".zip": "zip",
+}
+ALLOWED_ATTACHMENT_EXTENSIONS = tuple(sorted(ATTACHMENT_EXTENSION_KINDS))
+_EXPECTED_IMAGE_TYPE = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+_OOXML_CONTENT_TYPES = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_OOXML_MARKER_DIRS = {".xlsx": "xl/", ".docx": "word/"}
 SORTS = frozenset(
     {"special_handling_at_desc", "updated_at_desc", "created_at_desc"}
 )
@@ -44,6 +89,7 @@ _RECORD_FIELDS = frozenset(
         "field_name",
         "value_before",
         "value_after",
+        "record_attachments",
     }
 )
 
@@ -279,3 +325,176 @@ def validate_confirm_images(raw: Any) -> tuple[dict[str, Any], ...]:
             raise _error("confirm_images", "仅支持 PNG、JPEG、WebP 图片")
         images.append({"content_type": detected, "content": content})
     return tuple(images)
+
+
+# ===== 记录附件校验 =====
+# 省略语义：省略整个字段返回 None；一旦提供，必须显式给出 retained_ids 与
+# new_files 两个数组；``([], [])`` 表示清空当前附件。
+
+
+def validate_record_attachment_change(
+    payload: Mapping[str, Any], *, creating: bool
+) -> RecordAttachmentChange | None:
+    if "record_attachments" not in payload:
+        return None
+    raw = payload["record_attachments"]
+    if not isinstance(raw, Mapping) or set(raw) != {"retained_ids", "new_files"}:
+        raise _error("record_attachments", "附件参数不完整")
+    retained_ids = _validate_retained_attachment_ids(raw["retained_ids"])
+    if creating and retained_ids:
+        raise _error("record_attachments", "新建记录不能引用已有附件")
+    raw_files = raw["new_files"]
+    if not isinstance(raw_files, list):
+        raise _error("record_attachments", "附件参数不完整")
+    new_files = tuple(_validate_record_attachment_file(item) for item in raw_files)
+    seen_hashes: set[str] = set()
+    for item in new_files:
+        if item.content_sha256 in seen_hashes:
+            raise _error(f"record_attachments.{item.client_id}", "该附件已添加")
+        seen_hashes.add(item.content_sha256)
+    if len(retained_ids) + len(new_files) > MAX_RECORD_ATTACHMENTS:
+        raise _error("record_attachments", f"每条记录最多 {MAX_RECORD_ATTACHMENTS} 个附件")
+    return RecordAttachmentChange(retained_ids, new_files)
+
+
+def _validate_retained_attachment_ids(raw: Any) -> tuple[int, ...]:
+    if not isinstance(raw, list):
+        raise _error("record_attachments", "附件参数不完整")
+    ids: list[int] = []
+    seen: set[int] = set()
+    for item in raw:
+        if type(item) is not int or item < 1:
+            raise _error("record_attachments", "附件引用无效")
+        if item in seen:
+            raise _error("record_attachments", "附件引用重复")
+        seen.add(item)
+        ids.append(item)
+    return tuple(ids)
+
+
+def _validate_record_attachment_file(item: Any) -> RecordAttachmentFile:
+    if not isinstance(item, Mapping) or set(item) != {
+        "client_id",
+        "file_name",
+        "content_type",
+        "data_base64",
+    }:
+        raise _error("record_attachments", "附件内容无效")
+    client_id = item.get("client_id")
+    if not isinstance(client_id, str) or not client_id.strip() or len(client_id.strip()) > 64:
+        raise _error("record_attachments", "附件内容无效")
+    client_id = client_id.strip()
+    field_key = f"record_attachments.{client_id}"
+    file_name = _sanitize_attachment_file_name(item.get("file_name"), field_key)
+    extension = _attachment_extension(file_name, field_key)
+    content = _decode_attachment_base64(item.get("data_base64"), field_key)
+    if len(content) > MAX_RECORD_ATTACHMENT_BYTES:
+        raise _error(field_key, "单个附件最大 10 MiB")
+    content_type = _validate_attachment_content(extension, content, field_key)
+    content_sha256 = hashlib.sha256(content).hexdigest()
+    return RecordAttachmentFile(
+        client_id=client_id,
+        file_name=file_name,
+        file_extension=extension,
+        content_type=content_type,
+        content=content,
+        content_sha256=content_sha256,
+    )
+
+
+def _sanitize_attachment_file_name(raw: Any, field_key: str) -> str:
+    if not isinstance(raw, str):
+        raise _error(field_key, "文件名无效")
+    # basename 语义：去除路径分隔符之前的部分。
+    name = raw.replace("\\", "/").split("/")[-1]
+    # 去除 NUL、控制字符与删除符。
+    name = "".join(ch for ch in name if ord(ch) >= 32 and ord(ch) != 127)
+    name = name.strip()
+    if not name or len(name) > MAX_RECORD_ATTACHMENT_FILE_NAME_CHARS:
+        raise _error(field_key, "文件名无效")
+    return name
+
+
+def _attachment_extension(file_name: str, field_key: str) -> str:
+    dot = file_name.rfind(".")
+    if dot <= 0 or dot == len(file_name) - 1:
+        raise _error(field_key, "不支持的附件类型")
+    extension = file_name[dot:].lower()
+    if extension not in ATTACHMENT_EXTENSION_KINDS:
+        raise _error(field_key, "不支持的附件类型")
+    return extension
+
+
+def _decode_attachment_base64(raw: Any, field_key: str) -> bytes:
+    # 严格解码：不剥离空白、不自动补 padding，非规范编码一律拒绝。
+    if not isinstance(raw, str) or not raw:
+        raise _error(field_key, "附件内容无效")
+    try:
+        content = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise _error(field_key, "附件内容无效") from None
+    if not content:
+        raise _error(field_key, "附件内容无效")
+    return content
+
+
+def _validate_attachment_content(extension: str, content: bytes, field_key: str) -> str:
+    kind = ATTACHMENT_EXTENSION_KINDS[extension]
+    if kind == "image":
+        detected = _detect_confirm_image_type(content)
+        if detected is None or detected != _EXPECTED_IMAGE_TYPE[extension]:
+            raise _error(field_key, "图片内容与类型不匹配")
+        return detected
+    if kind == "ole":
+        if not content.startswith(_OLE_MAGIC):
+            raise _error(field_key, "文件内容无效")
+        return "application/x-ole-storage"
+    if kind == "ooxml":
+        return _validate_ooxml_content(extension, content, field_key)
+    # zip：仅校验容器结构，不解压成员正文、不执行任何内容。
+    _validate_zip_container(content, field_key)
+    return "application/zip"
+
+
+def _validate_zip_container(content: bytes, field_key: str) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            archive.namelist()
+    except zipfile.BadZipFile:
+        raise _error(field_key, "文件内容无效") from None
+
+
+def _validate_ooxml_content(extension: str, content: bytes, field_key: str) -> str:
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile:
+        raise _error(field_key, "文件内容无效") from None
+    # 成员读取阶段（目录/CRC/加密/压缩方式）的预期输入错误统一转为字段校验错误；
+    # 其他异常（程序/数据库错误）不捕获、不伪装。
+    try:
+        with archive:
+            entries = archive.namelist()
+            if len(entries) > MAX_OOXML_ENTRIES:
+                raise _error(field_key, "文件内容无效")
+            lowered = [name.lower() for name in entries]
+            if any("vbaproject.bin" in name for name in lowered):
+                raise _error(field_key, "不支持宏启用文件")
+            if "[content_types].xml" not in lowered:
+                raise _error(field_key, "文件内容无效")
+            content_types_name = next(
+                name for name in entries if name.lower() == "[content_types].xml"
+            )
+            info = archive.getinfo(content_types_name)
+            if info.file_size > MAX_OOXML_CONTENT_TYPES_BYTES:
+                raise _error(field_key, "文件内容无效")
+            content_types = archive.read(content_types_name).decode("utf-8", "ignore").lower()
+            if "macroenabled" in content_types:
+                raise _error(field_key, "不支持宏启用文件")
+            marker = _OOXML_MARKER_DIRS[extension]
+            if not any(name.lower().startswith(marker) for name in entries):
+                raise _error(field_key, "文件内容无效")
+    except zipfile.BadZipFile:
+        raise _error(field_key, "文件内容无效或已损坏") from None
+    except (zipfile.LargeZipFile, RuntimeError, NotImplementedError):
+        raise _error(field_key, "不支持加密或该压缩方式的容器") from None
+    return _OOXML_CONTENT_TYPES[extension]

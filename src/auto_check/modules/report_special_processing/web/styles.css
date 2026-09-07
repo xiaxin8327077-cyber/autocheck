@@ -1762,3 +1762,227 @@
     transition: none !important;
   }
 }
+
+/* ===== 记录附件（上传 / 粘贴 / 快照 / 审计双栏） ===== */
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rsp-muted);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-input {
+  display: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-list,
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rsp-muted);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  background: var(--rsp-soft);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-card:hover {
+  border-color: var(--rsp-brand);
+  transform: translateY(-1px);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  padding: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--rsp-brand);
+  cursor: pointer;
+  background: #ffffff;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  font-size: 12px;
+  color: var(--rsp-muted);
+  background: #ffffff;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-kind-excel {
+  color: #16875d;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-kind-word {
+  color: var(--rsp-brand);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-kind-zip {
+  color: #c86d08;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-name {
+  font-size: 13px;
+  color: var(--rsp-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-size {
+  font-size: 12px;
+  color: var(--rsp-muted);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-remove {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  font-size: 15px;
+  line-height: 1;
+  color: #cf3d3d;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid #cf3d3d;
+  border-radius: var(--ui-radius);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-remove:hover {
+  background: #fff0f0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-download {
+  flex: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-change {
+  flex: none;
+  padding: 1px 8px;
+  font-size: 12px;
+  border-radius: var(--ui-radius);
+  border: 1px solid transparent;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-change-added {
+  color: #16875d;
+  background: #eaf8f1;
+  border-color: #bfe6d4;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-change-removed {
+  color: #cf3d3d;
+  background: #fff0f0;
+  border-color: #f2c9c9;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-attachment-change-retained {
+  color: var(--rsp-muted);
+  background: #ffffff;
+  border-color: var(--rsp-line);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-record-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-record-attachments-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .auto-check-module[data-module="report_special_processing"] .rsp-audit-record-attachments-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-record-attachments-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-record-attachments-column h4 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rsp-muted);
+}
+
+/* ===== 版本冲突提示条（保留未保存内容，显式加载最新记录） ===== */
+.auto-check-module[data-module="report_special_processing"] .rsp-conflict-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid #f0d9b8;
+  border-radius: var(--ui-radius);
+  background: #fff8e8;
+  color: #c86d08;
+  font-size: 13px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-conflict-bar[hidden] {
+  display: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-conflict-bar-text {
+  flex: 1;
+  min-width: 0;
+}

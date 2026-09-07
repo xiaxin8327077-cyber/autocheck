@@ -6,6 +6,7 @@
     started: false,
     userId: "",
     csrfToken: "",
+    api: null,
     filter: "unread",
     items: [],
     unreadCount: 0,
@@ -78,6 +79,10 @@
   }
 
   async function apiRequest(url, options) {
+    // 优先使用平台 API：带专用标识的 401 由平台统一重新认证并重试。
+    if (typeof state.api === "function") {
+      return await state.api(url, options || {});
+    }
     const opts = Object.assign({ credentials: "same-origin" }, options || {});
     if (opts.body && typeof opts.body !== "string") {
       opts.body = JSON.stringify(opts.body);
@@ -467,8 +472,22 @@
     state.started = true;
     state.userId = user.id || "";
     state.csrfToken = csrfToken;
+    state.api = typeof api === "function" ? api : null;
     bindEvents();
     startEventSource();
+  };
+
+  // 重新认证成功后由平台调用：仅接受同一用户，更新 Token 并重建 SSE 连接。
+  // 不改变 started，也不重复绑定 DOM 事件。
+  const updateSession = async ({ user, csrfToken } = {}) => {
+    if (!state.started) return;
+    if (!user || String(user.id || "") !== String(state.userId)) return;
+    state.csrfToken = csrfToken || state.csrfToken;
+    closeEventSource();
+    clearPollingTimer();
+    state.reconnectFailures = 0;
+    startEventSource();
+    await loadFirstPage();
   };
 
   const stop = function () {
@@ -490,5 +509,5 @@
     closePanel();
   };
 
-  window.AutoCheckNotificationCenter = Object.freeze({ start, stop });
+  window.AutoCheckNotificationCenter = Object.freeze({ start, stop, updateSession });
 })();

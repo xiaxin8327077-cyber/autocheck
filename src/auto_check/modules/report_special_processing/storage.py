@@ -123,6 +123,40 @@ ATTACHMENTS = Table(
     Column("content", LONGBLOB, nullable=False),
     Column("created_at", DateTime, nullable=False),
 )
+RECORD_ATTACHMENTS = Table(
+    "report_special_processing_record_attachments",
+    METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("record_id", BigInteger, nullable=False),
+    Column("original_file_name", String(255), nullable=False),
+    Column("file_extension", String(16), nullable=False),
+    Column("content_type", String(128), nullable=False),
+    Column("byte_size", Integer, nullable=False),
+    Column("content_sha256", String(64), nullable=False),
+    Column("content", LONGBLOB, nullable=False),
+    Column("created_by_user_id", String(64), nullable=False),
+    Column("created_by_username_snapshot", String(100), nullable=False),
+    Column("created_at", DateTime, nullable=False),
+    Column("removed_by_user_id", String(64)),
+    Column("removed_by_username_snapshot", String(100)),
+    Column("removed_at", DateTime),
+)
+
+# 附件元数据查询显式选列：排除 content LONGBLOB，避免详情/审计读取拉回正文。
+# 只有 get_record_attachment（下载路径）才读取 content。
+RECORD_ATTACHMENT_METADATA_COLUMNS = (
+    RECORD_ATTACHMENTS.c.id,
+    RECORD_ATTACHMENTS.c.record_id,
+    RECORD_ATTACHMENTS.c.original_file_name,
+    RECORD_ATTACHMENTS.c.file_extension,
+    RECORD_ATTACHMENTS.c.content_type,
+    RECORD_ATTACHMENTS.c.byte_size,
+    RECORD_ATTACHMENTS.c.content_sha256,
+    RECORD_ATTACHMENTS.c.created_by_user_id,
+    RECORD_ATTACHMENTS.c.created_by_username_snapshot,
+    RECORD_ATTACHMENTS.c.created_at,
+    RECORD_ATTACHMENTS.c.removed_at,
+)
 
 SORTS = {
     "special_handling_at_desc": (RECORDS.c.special_handling_at.desc(), RECORDS.c.id.desc()),
@@ -214,15 +248,37 @@ class SpecialProcessingStorage:
         reports: Sequence[str],
         processes: Sequence[Mapping[str, str]],
         audit: Mapping[str, Any],
+        *,
+        record_attachment_change: Any = None,
+        attachment_actor: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         values = {key: _db_value(value) for key, value in record.items()}
         values["record_no"] = generate_record_no(record["created_at"])
+        new_files = (
+            tuple(record_attachment_change.new_files)
+            if record_attachment_change is not None
+            else ()
+        )
+        if new_files and attachment_actor is None:
+            raise ValueError("attachment_actor is required when creating attachments")
         with self.database.transaction() as connection:
             result = connection.execute(insert(RECORDS).values(**values))
             record_id = int(result.inserted_primary_key[0])
             self._replace_reports(connection, record_id, reports, record["created_at"])
             self._replace_processes(connection, record_id, processes, record["created_at"])
-            self._write_audit(connection, record_id, values["record_no"], audit)
+            audit_to_write = audit
+            if record_attachment_change is not None:
+                attachment_ids = (
+                    self._insert_record_attachments(
+                        connection, record_id, new_files, attachment_actor, record["created_at"]
+                    )
+                    if new_files
+                    else []
+                )
+                audit_to_write = self._with_attachment_audit_fields(
+                    audit, {"record_attachments": {"count": len(attachment_ids), "ids": attachment_ids}}
+                )
+            self._write_audit(connection, record_id, values["record_no"], audit_to_write)
             created = self._get_with_connection(connection, record_id)
         return created
 
@@ -238,8 +294,13 @@ class SpecialProcessingStorage:
         reports: Sequence[str],
         processes: Sequence[Mapping[str, str]],
         audit: Mapping[str, Any],
+        *,
+        record_attachment_change: Any = None,
+        attachment_actor: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         values = {key: _db_value(value) for key, value in changes.items()}
+        if record_attachment_change is not None and attachment_actor is None:
+            raise ValueError("attachment_actor is required when modifying attachments")
         with self.database.transaction() as connection:
             result = connection.execute(
                 update(RECORDS)
@@ -250,8 +311,18 @@ class SpecialProcessingStorage:
                 raise VersionConflictError()
             self._replace_reports(connection, record_id, reports, changes["updated_at"])
             self._replace_processes(connection, record_id, processes, changes["updated_at"])
+            audit_to_write = audit
+            if record_attachment_change is not None:
+                audit_to_write = self._apply_record_attachment_change(
+                    connection,
+                    record_id,
+                    record_attachment_change,
+                    attachment_actor,
+                    changes["updated_at"],
+                    audit,
+                )
             current = self._get_with_connection(connection, record_id)
-            self._write_audit(connection, record_id, current["record_no"], audit)
+            self._write_audit(connection, record_id, current["record_no"], audit_to_write)
         return current
 
     def update_status(
@@ -293,6 +364,9 @@ class SpecialProcessingStorage:
             connection.execute(delete(REPORTS).where(REPORTS.c.record_id == record_id))
             connection.execute(delete(PROCESSES).where(PROCESSES.c.record_id == record_id))
             connection.execute(delete(ATTACHMENTS).where(ATTACHMENTS.c.record_id == record_id))
+            connection.execute(
+                delete(RECORD_ATTACHMENTS).where(RECORD_ATTACHMENTS.c.record_id == record_id)
+            )
             connection.execute(delete(AUDITS).where(AUDITS.c.record_id == record_id))
             result = connection.execute(
                 delete(RECORDS).where(
@@ -397,6 +471,7 @@ class SpecialProcessingStorage:
             items = [_normalize_record(row) for row in _rows(connection.execute(statement))]
             self._attach_reports(connection, items)
             self._attach_processes(connection, items)
+            self._attach_record_attachment_counts(connection, items)
         return {
             "items": items,
             "page": query.page,
@@ -442,6 +517,85 @@ class SpecialProcessingStorage:
                 )
             )
 
+    def list_record_attachments(
+        self,
+        record_id: int,
+        *,
+        include_removed: bool = False,
+        attachment_ids: Sequence[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            return self._list_record_attachments_with_connection(
+                connection,
+                record_id,
+                include_removed=include_removed,
+                attachment_ids=attachment_ids,
+            )
+
+    def get_record_attachment(self, record_id: int, attachment_id: int) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = _row(
+                connection.execute(
+                    select(RECORD_ATTACHMENTS).where(
+                        and_(
+                            RECORD_ATTACHMENTS.c.id == attachment_id,
+                            RECORD_ATTACHMENTS.c.record_id == record_id,
+                        )
+                    )
+                )
+            )
+        if row is None:
+            return None
+        metadata = self._record_attachment_metadata(row)
+        content = row.get("content")
+        metadata["content"] = bytes(content) if isinstance(content, (bytes, bytearray)) else b""
+        return metadata
+
+    def _list_record_attachments_with_connection(
+        self,
+        connection: Any,
+        record_id: int,
+        *,
+        include_removed: bool = False,
+        attachment_ids: Sequence[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        statement = select(*RECORD_ATTACHMENT_METADATA_COLUMNS).where(
+            RECORD_ATTACHMENTS.c.record_id == record_id
+        )
+        if attachment_ids is not None:
+            if not attachment_ids:
+                return []
+            statement = statement.where(
+                RECORD_ATTACHMENTS.c.id.in_(tuple(int(item) for item in attachment_ids))
+            )
+        elif not include_removed:
+            statement = statement.where(RECORD_ATTACHMENTS.c.removed_at.is_(None))
+        statement = statement.order_by(
+            RECORD_ATTACHMENTS.c.created_at.asc(), RECORD_ATTACHMENTS.c.id.asc()
+        )
+        rows = _rows(connection.execute(statement))
+        return [self._record_attachment_metadata(row) for row in rows]
+
+    @staticmethod
+    def _record_attachment_metadata(row: Mapping[str, Any]) -> dict[str, Any]:
+        created_at = row.get("created_at")
+        if isinstance(created_at, datetime):
+            created_at = _aware(created_at)
+        return {
+            "id": int(row["id"]),
+            "file_name": str(row["original_file_name"]),
+            "file_extension": str(row["file_extension"]),
+            "content_type": str(row["content_type"]),
+            "byte_size": int(row["byte_size"]),
+            "content_sha256": str(row["content_sha256"]),
+            "created_by": {
+                "user_id": str(row["created_by_user_id"]),
+                "username": str(row["created_by_username_snapshot"]),
+            },
+            "created_at": created_at,
+            "removed": row.get("removed_at") is not None,
+        }
+
     def audit(self, record_id: int, query: PageQuery) -> dict[str, Any]:
         count_statement = select(func.count()).select_from(AUDITS).where(
             AUDITS.c.record_id == record_id
@@ -462,13 +616,14 @@ class SpecialProcessingStorage:
                 .limit(query.page_size)
             )
             items = _rows(connection.execute(statement)) if total else []
-        for item in items:
-            if isinstance(item.get("occurred_at"), datetime):
-                item["occurred_at"] = _aware(item["occurred_at"])
-            try:
-                item["changed_fields"] = json.loads(item.pop("changed_fields_json"))
-            except (TypeError, ValueError):
-                item["changed_fields"] = {}
+            for item in items:
+                if isinstance(item.get("occurred_at"), datetime):
+                    item["occurred_at"] = _aware(item["occurred_at"])
+                try:
+                    item["changed_fields"] = json.loads(item.pop("changed_fields_json"))
+                except (TypeError, ValueError):
+                    item["changed_fields"] = {}
+            self._hydrate_record_attachment_audits(connection, record_id, items)
         return {
             "items": items,
             "page": page,
@@ -476,6 +631,55 @@ class SpecialProcessingStorage:
             "total": total,
             "total_pages": total_pages,
         }
+
+    def _hydrate_record_attachment_audits(
+        self, connection: Any, record_id: int, items: list[dict[str, Any]]
+    ) -> None:
+        """批量补全审计中的附件修改前后元数据，避免逐附件 N+1 查询。
+
+        新增/移除/保留标签只按该条审计自身的 old_ids/new_ids 集合差计算，
+        不读取附件行当前的 removed_at 推断历史状态。
+        """
+        attachment_fields: list[dict[str, Any]] = []
+        wanted: set[int] = set()
+        for item in items:
+            changed = item.get("changed_fields") or {}
+            field = changed.get("record_attachments")
+            if not isinstance(field, dict) or "ids" in field:
+                continue
+            old_ids = field.get("old_ids") or []
+            new_ids = field.get("new_ids") or []
+            wanted.update(int(value) for value in old_ids)
+            wanted.update(int(value) for value in new_ids)
+            attachment_fields.append(field)
+        if not wanted:
+            return
+        rows = _rows(
+            connection.execute(
+                select(*RECORD_ATTACHMENT_METADATA_COLUMNS).where(
+                    and_(
+                        RECORD_ATTACHMENTS.c.record_id == record_id,
+                        RECORD_ATTACHMENTS.c.id.in_(tuple(wanted)),
+                    )
+                )
+            )
+        )
+        metadata = {int(row["id"]): self._record_attachment_metadata(row) for row in rows}
+        for field in attachment_fields:
+            old_ids = [int(value) for value in field.get("old_ids") or []]
+            new_ids = [int(value) for value in field.get("new_ids") or []]
+            old_set = set(old_ids)
+            new_set = set(new_ids)
+            field["old"] = [
+                {**(metadata.get(attachment_id) or {"id": attachment_id}),
+                 "change": "retained" if attachment_id in new_set else "removed"}
+                for attachment_id in old_ids
+            ]
+            field["new"] = [
+                {**(metadata.get(attachment_id) or {"id": attachment_id}),
+                 "change": "retained" if attachment_id in old_set else "added"}
+                for attachment_id in new_ids
+            ]
 
     def count_by_handling_period(
         self, start: datetime, end_exclusive: datetime
@@ -545,6 +749,9 @@ class SpecialProcessingStorage:
         result = _normalize_record(record)
         self._attach_reports(connection, [result])
         self._attach_processes(connection, [result])
+        result["record_attachments"] = self._list_record_attachments_with_connection(
+            connection, record_id
+        )
         return result
 
     @staticmethod
@@ -651,6 +858,124 @@ class SpecialProcessingStorage:
             .values(changed_fields_json=json.dumps(changed, ensure_ascii=False, separators=(",", ":")))
         )
 
+    def _insert_record_attachments(
+        self,
+        connection: Any,
+        record_id: int,
+        files: Sequence[Any],
+        actor: Mapping[str, str],
+        created_at: datetime,
+    ) -> list[int]:
+        ids: list[int] = []
+        for item in files:
+            content = bytes(item.content)
+            result = connection.execute(
+                insert(RECORD_ATTACHMENTS).values(
+                    record_id=record_id,
+                    original_file_name=item.file_name,
+                    file_extension=item.file_extension,
+                    content_type=item.content_type,
+                    byte_size=len(content),
+                    content_sha256=item.content_sha256,
+                    content=content,
+                    created_by_user_id=str(actor["user_id"]),
+                    created_by_username_snapshot=str(actor["username"]),
+                    created_at=_db_value(created_at),
+                )
+            )
+            primary_key = result.inserted_primary_key
+            attachment_id = int(primary_key[0]) if primary_key else int(result.lastrowid)
+            ids.append(attachment_id)
+        return ids
+
+    @staticmethod
+    def _with_attachment_audit_fields(
+        audit: Mapping[str, Any], extra: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        merged = dict(audit)
+        try:
+            changed = json.loads(merged.get("changed_fields_json") or "{}")
+        except (TypeError, ValueError):
+            changed = {}
+        if not isinstance(changed, dict):
+            changed = {}
+        changed.update(extra)
+        merged["changed_fields_json"] = json.dumps(
+            changed, ensure_ascii=False, separators=(",", ":")
+        )
+        return merged
+
+    def _apply_record_attachment_change(
+        self,
+        connection: Any,
+        record_id: int,
+        change: Any,
+        actor: Mapping[str, str] | None,
+        updated_at: datetime,
+        audit: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        # 只需当前附件 ID：显式选择 id 列，禁止把 content LONGBLOB 读回事务内存。
+        current_rows = _rows(
+            connection.execute(
+                select(RECORD_ATTACHMENTS.c.id)
+                .where(
+                    and_(
+                        RECORD_ATTACHMENTS.c.record_id == record_id,
+                        RECORD_ATTACHMENTS.c.removed_at.is_(None),
+                    )
+                )
+                .order_by(
+                    RECORD_ATTACHMENTS.c.created_at.asc(), RECORD_ATTACHMENTS.c.id.asc()
+                )
+            )
+        )
+        current_ids = [int(row["id"]) for row in current_rows]
+        retained_set = {int(item) for item in change.retained_ids}
+        if not retained_set.issubset(set(current_ids)):
+            raise RecordNotFoundError()
+        removed_ids = [cid for cid in current_ids if cid not in retained_set]
+        added_ids: list[int] = []
+        if removed_ids or change.new_files:
+            if actor is None:
+                raise ValueError("attachment_actor is required when modifying attachments")
+        if removed_ids:
+            connection.execute(
+                update(RECORD_ATTACHMENTS)
+                .where(
+                    and_(
+                        RECORD_ATTACHMENTS.c.record_id == record_id,
+                        RECORD_ATTACHMENTS.c.id.in_(tuple(removed_ids)),
+                        RECORD_ATTACHMENTS.c.removed_at.is_(None),
+                    )
+                )
+                .values(
+                    removed_by_user_id=str(actor["user_id"]),
+                    removed_by_username_snapshot=str(actor["username"]),
+                    removed_at=_db_value(updated_at),
+                )
+            )
+        if change.new_files:
+            added_ids = self._insert_record_attachments(
+                connection, record_id, change.new_files, actor, updated_at
+            )
+        if not removed_ids and not added_ids:
+            # 集合未变化：不计为附件修改，避免产生空审计字段。
+            return audit
+        retained_in_order = [cid for cid in current_ids if cid in retained_set]
+        new_ids = retained_in_order + added_ids
+        return self._with_attachment_audit_fields(
+            audit,
+            {
+                "record_attachments": {
+                    "changed": True,
+                    "old_ids": current_ids,
+                    "new_ids": new_ids,
+                    "added_ids": added_ids,
+                    "removed_ids": removed_ids,
+                }
+            },
+        )
+
     @staticmethod
     def _attach_reports(connection: Any, records: list[dict[str, Any]]) -> None:
         if not records:
@@ -704,6 +1029,29 @@ class SpecialProcessingStorage:
                 record["report_process_name_snapshot"] = "；".join(
                     item["name"] for item in processes if item["name"]
                 ) or record.get("report_process_name_snapshot")
+
+    @staticmethod
+    def _attach_record_attachment_counts(connection: Any, records: list[dict[str, Any]]) -> None:
+        for record in records:
+            record["record_attachment_count"] = 0
+        if not records:
+            return
+        ids = [record["id"] for record in records]
+        rows = _rows(
+            connection.execute(
+                select(RECORD_ATTACHMENTS.c.record_id, func.count().label("attachment_count"))
+                .where(
+                    and_(
+                        RECORD_ATTACHMENTS.c.record_id.in_(tuple(ids)),
+                        RECORD_ATTACHMENTS.c.removed_at.is_(None),
+                    )
+                )
+                .group_by(RECORD_ATTACHMENTS.c.record_id)
+            )
+        )
+        counts = {int(row["record_id"]): int(row["attachment_count"]) for row in rows}
+        for record in records:
+            record["record_attachment_count"] = counts.get(int(record["id"]), 0)
 
     @staticmethod
     def _conditions(filters: Mapping[str, Any]) -> list[Any]:

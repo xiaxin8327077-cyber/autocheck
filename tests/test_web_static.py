@@ -7821,12 +7821,17 @@ def test_index_hides_home_until_auth_check_finishes():
 def test_api_helper_sends_csrf_token_for_mutating_requests():
     app_js = _read(APP_JS)
 
-    start = app_js.index("async function api(path, options = {})")
-    end = app_js.index("function setStatus", start)
+    # CSRF 与预期用户头由平台请求层 authenticatedFetch 统一设置，
+    # api() 委托 authenticatedFetch，默认仍解析 JSON 并保留 status/payload。
+    start = app_js.index("async function authenticatedFetch(path, options = {})")
+    end = app_js.index("async function api(", start)
     body = app_js[start:end]
     assert '"X-CSRF-Token"' in body
     assert "authState.csrfToken" in body
-    assert 'window.location.href = "/login.html";' in body
+    assert '"X-Auto-Check-Expected-User-Id"' in body
+    api_body = app_js[app_js.index("async function api(path, options = {})"):app_js.index("async function authenticateOriginalUser")]
+    assert "authenticatedFetch(path" in api_body
+    assert "response.json()" in api_body
 
 
 def test_logout_controls_exist_for_space_and_light_themes():
@@ -8836,8 +8841,8 @@ def test_report_navigation_and_settings_show_thin_main_content_scrollbar():
     )
     assert "width: var(--ui-thin-scrollbar-size, 6px);" in css
     assert "background: var(--ui-thin-scrollbar-thumb, #c5d0e0);" in css
-    assert 'href="/styles.css?v=20260813l"' in html
-    assert 'src="/app.js?v=20260813o"' in html
+    assert 'href="/styles.css?v=20260904a"' in html
+    assert 'src="/app.js?v=20260904a"' in html
 
 
 def test_space_tech_top_nav_is_edge_stuck_not_floating():
@@ -10195,3 +10200,155 @@ def test_db_validation_mapping_modal_has_three_filtered_fixed_views():
     assert "display: inline-block" in value_wrap.group("body")
     assert "max-width: 100%" in value_wrap.group("body")
     assert not re.search(r"(?m)^\s*width:\s*100%;", value_wrap.group("body"))
+
+
+# ---------------------------------------------------------------------------
+# 登录超时原账号重新认证（遮罩、脚本加载、认证回调、请求恢复）
+# ---------------------------------------------------------------------------
+
+AUTH_RECOVERY_JS = ROOT / "src" / "auto_check" / "web" / "auth_recovery.js"
+
+
+def test_auth_recovery_script_loaded_before_app_with_bumped_cache_params():
+    html = _read(INDEX_HTML)
+    assert AUTH_RECOVERY_JS.exists()
+
+    assert "/styles.css?v=20260904a" in html
+    assert 'src="/auth_recovery.js?v=20260904a"' in html
+    assert 'src="/app.js?v=20260904a"' in html
+    # auth_recovery.js 必须先于 notification_center.js 与 app.js 加载。
+    assert html.index('src="/auth_recovery.js?v=20260904a"') < html.index('src="/app.js?v=20260904a"')
+    assert html.index('src="/auth_recovery.js?v=20260904a"') < html.index('src="/notification_center.js"')
+    # 旧缓存参数不再残留。
+    assert "20260813l" not in html
+    assert "20260813o" not in html
+
+
+def test_auth_recovery_overlay_structure_is_present_and_accessible():
+    html = _read(INDEX_HTML)
+    assert '<div id="authRecoveryOverlay" class="auth-recovery-overlay" hidden>' in html
+    overlay_block = html[html.index('id="authRecoveryOverlay"'):]
+    overlay_block = overlay_block[: overlay_block.index("</section>") + len("</section>")]
+    assert 'role="dialog"' in overlay_block
+    assert 'aria-modal="true"' in overlay_block
+    assert 'aria-labelledby="authRecoveryTitle"' in overlay_block
+    assert 'id="authRecoveryUsername"' in overlay_block
+    assert 'id="authRecoveryPassword"' in overlay_block
+    assert 'type="password"' in overlay_block
+    assert 'autocomplete="current-password"' in overlay_block
+    assert 'id="authRecoveryExit"' in overlay_block
+    assert 'id="authRecoverySubmit"' in overlay_block
+    assert "退出系统" in overlay_block
+    assert "重新登录" in overlay_block
+
+
+def test_auth_recovery_styles_are_scoped_and_use_global_tokens():
+    css = _read(STYLES_CSS)
+    assert ".auth-recovery-overlay" in css
+    # 圆角与主题变量必须复用全局 token。
+    overlay_css = css[css.index(".auth-recovery-overlay"):]
+    assert "var(--ui-radius)" in overlay_css
+    assert "var(--theme-accent" in overlay_css
+    # 不得引入暗色主题或自定义主题开关。
+    assert "prefers-color-scheme: dark" not in overlay_css
+    assert "data-theme" not in overlay_css
+    # 作用域必须限定在 .auth-recovery-* 前缀下。
+    recovery_rules = re.findall(r"(?m)^([^{}\n]+)\{", css)
+    for selector in recovery_rules:
+        if "auth-recovery" in selector:
+            for part in selector.split(","):
+                stripped = part.strip()
+                if stripped:
+                    assert stripped.startswith(".auth-recovery") or stripped.startswith(":root"), (
+                        f"auth recovery style leaked into non-scoped selector: {stripped}"
+                    )
+
+
+def test_app_js_declares_auth_recovery_callbacks_and_wiring():
+    app_js = _read(APP_JS)
+    assert "createAuthRecovery" in app_js
+    assert "authenticateOriginalUser" in app_js
+    assert "applyReauthenticatedSession" in app_js
+    assert "discardAuthenticatedSession" in app_js
+    assert "exitExpiredSession" in app_js
+    assert "window.AutoCheckAuthRecovery" in app_js
+    # 重新认证登录不经过 authenticatedFetch，避免自身 401 触发恢复。
+    auth_fn = app_js[app_js.index("async function authenticateOriginalUser"):]
+    auth_fn = auth_fn[: auth_fn.index("\n}\n")]
+    assert "/api/auth/key" in auth_fn
+    assert "/api/auth/login" in auth_fn
+    assert "encryptPasswordForTransport" in auth_fn
+    assert "authenticatedFetch(" not in auth_fn
+    # 密码使用固定原账号，页面不提供修改用户名的控件。
+    assert "authState.user" in app_js
+
+
+def test_authenticated_fetch_implements_single_retry_and_recovery_header_contract():
+    app_js = _read(APP_JS)
+    assert 'const AUTH_RECOVERY_HEADER = "X-Auto-Check-Auth-Recovery";' in app_js
+    assert 'const AUTH_RECOVERY_REQUIRED = "required";' in app_js
+    assert 'const AUTH_RECOVERY_ACCOUNT_MISMATCH = "account-mismatch";' in app_js
+    assert "async function authenticatedFetch(path, options = {})" in app_js
+    body = app_js[app_js.index("async function authenticatedFetch(path, options = {})"):]
+    body = body[: body.index("async function api(")]
+    assert "isRecoverableAuthResponse" in body
+    assert "isAccountMismatchResponse" in body
+    assert "authRecovery.recover()" in body
+    assert '"X-Auto-Check-Expected-User-Id"' in body
+    assert 'credentials: "same-origin"' in body
+    # authPreflight 状态预检使用双端 no-store。
+    assert "async function verifyOriginalSessionBeforeSend()" in app_js
+    assert '"/api/auth/status"' in app_js
+    assert 'cache: "no-store"' in app_js
+
+
+def test_api_helper_supports_raw_and_authpreflight_without_sending_them():
+    app_js = _read(APP_JS)
+    start = app_js.index("async function api(path, options = {})")
+    end = app_js.index("function setStatus", start)
+    body = app_js[start:end]
+    # responseType / authPreflight 只影响平台行为，不能作为 fetch 参数发送。
+    assert "responseType" in body
+    assert "authenticatedFetch" in body
+    assert '"X-CSRF-Token"' in app_js
+    assert "authState.csrfToken" in app_js
+
+
+def test_changelog_has_single_v1223_entry_with_recovery_feature():
+    app_js = _read(APP_JS)
+
+    assert app_js.count("v1.2.23") == 1, "应用内只新增一个 v1.2.23 条目"
+    entry = app_js[app_js.index("v1.2.23"):]
+    entry = entry[: entry.index("</ul>")]
+    assert "新增登录超时原账号重新认证及原操作自动恢复" in entry
+    assert entry.count("系统优化及BUG修复") == 1
+    # v1.2.23 必须排在 v1.2.22 之前（最新条目在最上）。
+    assert app_js.index("v1.2.23") < app_js.index("v1.2.22")
+    # 顶栏展示大版本保持 V1.2。
+    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
+
+
+def test_pbc_upload_splits_attempt_and_recovers_once():
+    app_js = _read(APP_JS)
+    assert "function uploadPbcFileAttempt(file, form)" in app_js
+    assert "async function uploadPbcFileWithProgress(file, form)" in app_js
+    body = app_js[app_js.index("// Auth recovery upload start"):app_js.index("// Auth recovery upload end")]
+    assert '"X-Auto-Check-Expected-User-Id"' in body
+    assert "AUTH_RECOVERY_REQUIRED" in body
+    assert "AUTH_RECOVERY_ACCOUNT_MISMATCH" in body
+    assert "authRecovery.recover()" in body
+    assert "createAuthRecoveryFailedError()" in body
+    # 首次 + 恢复后各一次调用，第二次仍带标识 401 时不再重传。
+    assert body.count("await uploadPbcFileAttempt(file, form)") == 2
+
+
+def test_background_polling_keeps_same_job_status_url_through_recovery():
+    app_js = _read(APP_JS)
+    for name in ("pollRunJob", "pollDbValidationJob", "pollFlowChainJob", "pollPbcImportJob"):
+        assert f"async function {name}(" in app_js
+    # 轮询继续通过平台 api() 请求同一状态 URL，恢复由平台请求层透明完成，
+    # 不重新调用 start API。
+    assert "api(`/api/run/status/${encodeURIComponent(jobId)}`)" in app_js
+    assert "api(`/api/tools/db-validation/status/${encodeURIComponent(jobId)}`)" in app_js
+    assert "api(`/api/tools/flow/status/${encodeURIComponent(jobId)}`)" in app_js
+    assert "api(`/api/tools/pbc-import/status/${encodeURIComponent(jobId)}`)" in app_js

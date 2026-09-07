@@ -568,7 +568,7 @@ async function ensureAuthenticated() {
     await window.AutoCheckNotificationCenter.start({
       user: Object.assign({}, authState.user),
       csrfToken: authState.csrfToken,
-      api: null,
+      api,
       handleAction: handleReportNavTodoAction,
       notify: showToast,
     });
@@ -1551,26 +1551,268 @@ function formatApiErrorMessage(message) {
   return raw;
 }
 
+/* ===== 登录超时原账号重新认证与请求恢复 =====
+ * 设计：docs/superpowers/specs/2026-09-04-session-expiry-reauthentication-design.md
+ * 只有带 `X-Auto-Check-Auth-Recovery: required` 的平台前置 401 才触发重新认证
+ * 并自动重试一次；业务 401、403、普通 409、422、500 和网络错误不触发。
+ */
+// Auth recovery request layer start
+const AUTH_RECOVERY_HEADER = "X-Auto-Check-Auth-Recovery";
+const AUTH_RECOVERY_REQUIRED = "required";
+const AUTH_RECOVERY_ACCOUNT_MISMATCH = "account-mismatch";
+
+function isRecoverableAuthResponse(response) {
+  return (
+    !!response &&
+    response.status === 401 &&
+    !!response.headers &&
+    typeof response.headers.get === "function" &&
+    response.headers.get(AUTH_RECOVERY_HEADER) === AUTH_RECOVERY_REQUIRED
+  );
+}
+
+function isAccountMismatchResponse(response) {
+  return (
+    !!response &&
+    response.status === 409 &&
+    !!response.headers &&
+    typeof response.headers.get === "function" &&
+    response.headers.get(AUTH_RECOVERY_HEADER) === AUTH_RECOVERY_ACCOUNT_MISMATCH
+  );
+}
+
+function assertReplayableBody(body) {
+  if (body === undefined || body === null) return;
+  if (typeof body === "string") return;
+  // ReadableStream、FormData 等一次性请求体不进入通用自动重试。
+  const error = new Error("request body is not replayable after re-authentication");
+  error.code = "auth_body_not_replayable";
+  throw error;
+}
+
+function createAbortError() {
+  const error = new Error("request aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function createAuthRecoveryFailedError() {
+  const error = new Error("登录状态恢复失败，请退出后重新登录");
+  error.code = "auth_recovery_failed";
+  return error;
+}
+
+function createAuthPreflightFailedError() {
+  const error = new Error("登录状态检查失败，请重试");
+  error.code = "auth_preflight_failed";
+  return error;
+}
+
+function authRecoveryCancelledError() {
+  const Ctor = window.AutoCheckAuthRecovery?.AuthRecoveryCancelledError;
+  return Ctor ? new Ctor() : new Error("authentication recovery cancelled");
+}
+
+async function verifyOriginalSessionBeforeSend() {
+  let response;
+  try {
+    response = await fetch("/api/auth/status", {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  } catch (_error) {
+    throw createAuthPreflightFailedError();
+  }
+  if (!response.ok) throw createAuthPreflightFailedError();
+  let statusPayload;
+  try {
+    statusPayload = await response.json();
+  } catch (_error) {
+    throw createAuthPreflightFailedError();
+  }
+  if (!statusPayload || typeof statusPayload.authenticated !== "boolean") {
+    throw createAuthPreflightFailedError();
+  }
+  if (!statusPayload.authenticated) {
+    // 未认证时 user 必须为空；矛盾结构 fail closed，不恢复、不发送业务请求。
+    if (statusPayload.user !== null && statusPayload.user !== undefined) {
+      throw createAuthPreflightFailedError();
+    }
+    await authRecovery.recover();
+    return;
+  }
+  const statusUser = statusPayload.user;
+  const statusUsername =
+    statusUser && typeof statusUser.username === "string" ? statusUser.username.trim() : "";
+  if (
+    !statusUser ||
+    statusUser.id === undefined ||
+    statusUser.id === null ||
+    !statusUsername ||
+    !statusPayload.csrf_token
+  ) {
+    throw createAuthPreflightFailedError();
+  }
+  const currentUser = authState.user;
+  if (!currentUser || currentUser.id === undefined || currentUser.id === null) {
+    // 本地无用户却服务端已认证：结构异常，fail closed。
+    throw createAuthPreflightFailedError();
+  }
+  if (
+    String(statusUser.id) !== String(currentUser.id) ||
+    statusUsername !== String(currentUser.username || "")
+  ) {
+    // 其他账号（含用户名不一致）：不得发送业务请求，注销意外会话并进入不可恢复退出。
+    await authRecovery.discardUnexpectedSession(statusPayload);
+    throw authRecoveryCancelledError();
+  }
+  if (String(statusPayload.csrf_token) !== String(authState.csrfToken)) {
+    await applyReauthenticatedSession(statusPayload);
+  }
+}
+
+async function authenticatedFetch(path, options = {}) {
+  const { authPreflight = false, responseType: _responseType, ...fetchOptions } = options;
+  if (authPreflight) await verifyOriginalSessionBeforeSend();
+  const requestOnce = () => {
+    const method = String(fetchOptions.method || "GET").toUpperCase();
+    const headers = new Headers(fetchOptions.headers || {});
+    if (authState.user?.id) {
+      headers.set("X-Auto-Check-Expected-User-Id", String(authState.user.id));
+    }
+    if (method !== "GET" && authState.csrfToken) {
+      headers.set("X-CSRF-Token", authState.csrfToken);
+    }
+    return fetch(path, { ...fetchOptions, method, credentials: "same-origin", headers });
+  };
+
+  let response = await requestOnce();
+  if (isAccountMismatchResponse(response)) {
+    await authRecovery.discardUnexpectedSession(await response.clone().json());
+    throw authRecoveryCancelledError();
+  }
+  if (!isRecoverableAuthResponse(response)) return response;
+  assertReplayableBody(fetchOptions.body);
+  await authRecovery.recover();
+  if (fetchOptions.signal?.aborted) throw createAbortError();
+  response = await requestOnce();
+  if (isAccountMismatchResponse(response)) {
+    await authRecovery.discardUnexpectedSession(await response.clone().json());
+    throw authRecoveryCancelledError();
+  }
+  if (isRecoverableAuthResponse(response)) throw createAuthRecoveryFailedError();
+  return response;
+}
+
 async function api(path, options = {}) {
-  const method = String(options.method || "GET").toUpperCase();
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (method !== "GET" && authState.csrfToken) {
-    headers["X-CSRF-Token"] = authState.csrfToken;
+  const { responseType, authPreflight, ...fetchOptions } = options;
+  const method = String(fetchOptions.method || "GET").toUpperCase();
+  // 用 Headers 构建以兼容调用方传入 Headers 实例或 tuple 数组；仅补默认 Content-Type。
+  const headers = new Headers(fetchOptions.headers);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
-  const r = await fetch(path, { ...options, headers });
-  const p = await r.json();
-  if (r.status === 401) {
-    window.location.href = "/login.html";
-    throw new Error("login required");
+  const response = await authenticatedFetch(path, {
+    ...fetchOptions,
+    method,
+    headers,
+    authPreflight,
+  });
+  if (responseType === "raw") {
+    return response;
   }
-  if (!r.ok) {
-    const error = new Error(formatApiErrorMessage(p.error || `请求失败: ${r.status}`));
-    error.status = r.status;
-    error.payload = p;
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(
+      formatApiErrorMessage((payload && payload.error) || `请求失败: ${response.status}`),
+    );
+    error.status = response.status;
+    error.payload = payload;
     throw error;
   }
-  return p;
+  return payload;
 }
+// Auth recovery request layer end
+
+async function authenticateOriginalUser({ username, password }) {
+  // 直接 fetch 认证端点，不经过 authenticatedFetch，避免自身 401 再次触发恢复。
+  const encrypted = await window.autoCheckCrypto.encryptPasswordForTransport(password, () =>
+    fetch("/api/auth/key", { credentials: "same-origin" }).then((response) => response.json()),
+  );
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password_encrypted: encrypted }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message =
+      payload && payload.error === "invalid credentials"
+        ? "账号或密码验证失败"
+        : (payload && payload.error) || "重新登录失败，请重试";
+    throw new Error(message);
+  }
+  return payload;
+}
+
+async function applyReauthenticatedSession(payload) {
+  authState.csrfToken = payload.csrf_token || "";
+  authState.user = payload.user || null;
+  document.documentElement.dataset.role =
+    authState.user?.role === "admin" ? "admin" : "user";
+  updateCurrentUsername();
+  applyRoleAccess();
+  if (window.AutoCheckNotificationCenter?.updateSession) {
+    await window.AutoCheckNotificationCenter.updateSession({
+      user: Object.assign({}, authState.user),
+      csrfToken: authState.csrfToken,
+    });
+  }
+}
+
+async function discardAuthenticatedSession(payload) {
+  const csrfToken = (payload && payload.csrf_token) || "";
+  // 先停止新会话通知并清空本地认证、角色、权限与用户界面状态；即使注销失败也不恢复。
+  if (window.AutoCheckNotificationCenter) window.AutoCheckNotificationCenter.stop();
+  authState.csrfToken = "";
+  authState.user = null;
+  document.documentElement.dataset.role = "user";
+  clearReportNavigationCache();
+  const response = await fetch("/api/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+    },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    throw new Error("logout failed");
+  }
+}
+
+function exitExpiredSession() {
+  if (window.AutoCheckNotificationCenter) window.AutoCheckNotificationCenter.stop();
+  authState.csrfToken = "";
+  authState.user = null;
+  document.documentElement.dataset.role = "user";
+  clearReportNavigationCache();
+  try {
+    sessionStorage.removeItem(USER_AVATAR_SESSION_KEY);
+  } catch (_) {}
+  window.location.href = "/login.html";
+}
+
+const authRecovery = window.AutoCheckAuthRecovery.createAuthRecovery({
+  documentRef: document,
+  getCurrentUser: () => authState.user,
+  authenticate: authenticateOriginalUser,
+  applySession: applyReauthenticatedSession,
+  discardSession: discardAuthenticatedSession,
+  exitSession: exitExpiredSession,
+});
 
 const REPORT_NAV_CARD_STYLES = {
   report_forms: {
@@ -12790,11 +13032,15 @@ function setPbcUploadState(uploading, percent = 0, filename = "") {
   if (pbcUploadProgressText) pbcUploadProgressText.textContent = uploading ? `正在上传 ${filename || "文件"}...` : "正在上传...";
 }
 
-function uploadPbcFileWithProgress(file, form) {
+// Auth recovery upload start
+function uploadPbcFileAttempt(file, form) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/tools/pbc-import/upload");
     if (authState.csrfToken) xhr.setRequestHeader("X-CSRF-Token", authState.csrfToken);
+    if (authState.user?.id) {
+      xhr.setRequestHeader("X-Auto-Check-Expected-User-Id", String(authState.user.id));
+    }
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {
         setPbcUploadState(true, (event.loaded / event.total) * 100, file.name);
@@ -12807,11 +13053,17 @@ function uploadPbcFileWithProgress(file, form) {
       try {
         payload = JSON.parse(xhr.responseText || "{}");
       } catch (_) {
-        reject(new Error("upload response is invalid"));
-        return;
+        payload = {};
       }
       if (xhr.status < 200 || xhr.status >= 300) {
-        reject(new Error(payload.error || `upload failed: ${xhr.status}`));
+        const error = new Error(payload.error || `upload failed: ${xhr.status}`);
+        error.status = xhr.status;
+        error.payload = payload;
+        error.authRecovery =
+          typeof xhr.getResponseHeader === "function"
+            ? xhr.getResponseHeader(AUTH_RECOVERY_HEADER)
+            : null;
+        reject(error);
         return;
       }
       resolve(payload);
@@ -12822,6 +13074,44 @@ function uploadPbcFileWithProgress(file, form) {
     xhr.send(form);
   });
 }
+
+async function uploadPbcFileWithProgress(file, form) {
+  try {
+    return await uploadPbcFileAttempt(file, form);
+  } catch (error) {
+    if (error && error.status === 409 && error.authRecovery === AUTH_RECOVERY_ACCOUNT_MISMATCH) {
+      await authRecovery.discardUnexpectedSession(error.payload || {});
+      throw authRecoveryCancelledError();
+    }
+    if (!(error && error.status === 401 && error.authRecovery === AUTH_RECOVERY_REQUIRED)) {
+      throw error;
+    }
+    // 带专用标识的前置 401：等待原账号重新认证后从 0% 重新上传一次。
+    await authRecovery.recover();
+    try {
+      return await uploadPbcFileAttempt(file, form);
+    } catch (retryError) {
+      // 重试响应的账号不一致与首次响应共享同一注销处理；不进行第三次上传。
+      if (
+        retryError &&
+        retryError.status === 409 &&
+        retryError.authRecovery === AUTH_RECOVERY_ACCOUNT_MISMATCH
+      ) {
+        await authRecovery.discardUnexpectedSession(retryError.payload || {});
+        throw authRecoveryCancelledError();
+      }
+      if (
+        retryError &&
+        retryError.status === 401 &&
+        retryError.authRecovery === AUTH_RECOVERY_REQUIRED
+      ) {
+        throw createAuthRecoveryFailedError();
+      }
+      throw retryError;
+    }
+  }
+}
+// Auth recovery upload end
 
 async function handlePbcFileUpload(file) {
   const form = new FormData();
@@ -13524,6 +13814,17 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.23</span>
+        <span class="changelog-date">2026-09-04</span>
+      </div>
+      <ul>
+        <li>新增登录超时原账号重新认证及原操作自动恢复。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.22</span>

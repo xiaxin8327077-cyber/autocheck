@@ -13,9 +13,19 @@ class Service:
     def catalog(self, user=None): return {"report_processes": [], "users": [], "statuses": [], "limits": {}, "workflow": {}, "capabilities": {}}
     def list_records(self, query, user): return {"items": [], "page": 1, "page_size": 20, "total": 0, "total_pages": 0}
     def create(self, body, user, request_id): return {"id": 1, "row_version": 1}
-    def get(self, record_id, user): return {"id": record_id}
+    def get(self, record_id, user): return {"id": record_id, "record_attachments": []}
     def get_confirm_attachment(self, record_id, attachment_id, user):
         return {"content": b"\x89PNG\r\n\x1a\n", "content_type": "image/png"}
+    def get_record_attachment(self, record_id, attachment_id, user):
+        if attachment_id == 404:
+            from auto_check.modules.report_special_processing.contracts import RecordNotFoundError
+            raise RecordNotFoundError()
+        return {
+            "id": attachment_id,
+            "file_name": "处理依据.xlsx",
+            "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "content": b"PK\x03\x04bytes",
+        }
     def update(self, record_id, body, user, request_id): return {"id": record_id, "row_version": 2}
     def change_status(self, record_id, body, user, request_id): return {"id": record_id}
     def void(self, record_id, body, user, request_id): return {"id": record_id}
@@ -52,7 +62,11 @@ def test_api_registers_contract_routes_and_enforces_body_limit():
     router = _router()
     assert _dispatch(router, "GET", "/catalog", user={"role": "user"}).status == 200
     assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}).status == 201
-    assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}, body_size=1048577).status == 413
+    # POST/PUT /records 支持附件，路由上限提升至 45 MiB；其余路由保持原上限。
+    assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}, body_size=1048577).status == 201
+    assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}, body_size=45 * 1024 * 1024).status == 201
+    assert _dispatch(router, "POST", "/records", body={}, user={"role": "user"}, body_size=45 * 1024 * 1024 + 1).status == 413
+    assert _dispatch(router, "PUT", "/records/1", body={}, user={"role": "user"}, body_size=45 * 1024 * 1024 + 1).status == 413
     assert _dispatch(router, "POST", "/records/1/status", body={}, user={"role": "user"}, body_size=10 * 1024 * 1024).status == 200
     assert _dispatch(router, "POST", "/records/1/status", body={}, user={"role": "user"}, body_size=10 * 1024 * 1024 + 1).status == 413
     attachment = _dispatch(router, "GET", "/records/1/confirm-attachments/2", user={"role": "user"})
@@ -60,6 +74,26 @@ def test_api_registers_contract_routes_and_enforces_body_limit():
     assert attachment.content_type == "image/png"
     assert attachment.body == b"\x89PNG\r\n\x1a\n"
     assert _dispatch(router, "DELETE", "/records/1", body={"row_version": 1}, user={"role": "admin"}).status == 200
+
+
+def test_record_attachment_download_returns_bytes_disposition_and_nosniff():
+    router = _router()
+    response = _dispatch(router, "GET", "/records/1/attachments/14", user={"role": "user"})
+    assert response.status == 200
+    assert response.body == b"PK\x03\x04bytes"
+    assert response.content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    header_map = dict(response.headers)
+    # nosniff 由平台 _send_bytes 统一添加，模块只声明 Content-Disposition。
+    assert "filename*=UTF-8''" in header_map.get("Content-Disposition", "")
+    # 中文文件名经过百分号编码。
+    assert "%E5%A4%84%E7%90%86%E4%BE%9D%E6%8D%AE.xlsx" in header_map.get("Content-Disposition", "")
+
+
+def test_record_attachment_download_missing_returns_uniform_not_found():
+    router = _router()
+    response = _dispatch(router, "GET", "/records/1/attachments/404", user={"role": "user"})
+    assert response.status == 404
+    assert response.body["error"]["code"] == "record_not_found"
 
 
 def test_api_void_delete_reopen_use_view_permission_service_enforces():

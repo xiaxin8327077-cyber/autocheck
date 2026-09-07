@@ -17,7 +17,13 @@ function queryString(parameters = {}) {
 }
 
 function bodyOptions(method, payload) {
-  return { method, body: JSON.stringify(payload) };
+  const options = { method, body: JSON.stringify(payload) };
+  // 携带附件的大 JSON body 在发送前需要平台会话预检；authPreflight 由平台剥离，
+  // 模块不请求认证端点、不显示登录 UI、不保存密码。
+  if (payload && Object.prototype.hasOwnProperty.call(payload, "record_attachments")) {
+    options.authPreflight = true;
+  }
+  return options;
 }
 
 function normalizeError(error) {
@@ -76,16 +82,13 @@ export function createApi(context) {
     const controller = new AbortController();
     controllers.add(controller);
     try {
-      const response = await fetch(`${API_PREFIX}${path}${queryString(parameters)}`, {
+      // 走平台 API 的 raw 模式：带专用标识的 401 由平台重新认证并重试，
+      // 模块不再自行判断 401 或跳转登录页。
+      const response = await context.api(`${API_PREFIX}${path}${queryString(parameters)}`, {
         method: "GET",
-        credentials: "same-origin",
+        responseType: "raw",
         signal: controller.signal,
       });
-      if (response.status === 401) {
-        const error = new Error("login required");
-        error.status = 401;
-        throw normalizeError(error);
-      }
       if (!response.ok) {
         let payload = null;
         try {
@@ -112,8 +115,43 @@ export function createApi(context) {
     }
   }
 
+  async function fetchRecordAttachment(recordId, attachmentId) {
+    const controller = new AbortController();
+    controllers.add(controller);
+    try {
+      const response = await context.api(
+        `${API_PREFIX}/records/${encodeURIComponent(recordId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        { method: "GET", responseType: "raw", signal: controller.signal },
+      );
+      if (!response.ok) {
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch (_error) {
+          payload = null;
+        }
+        const error = new Error(payload?.error?.message || `请求失败: ${response.status}`);
+        error.status = response.status;
+        error.payload = payload;
+        throw normalizeError(error);
+      }
+      const blob = await response.blob();
+      if (!blob.size) throw normalizeError(new Error("附件内容为空"));
+      return {
+        blob,
+        filename: filenameFromDisposition(response.headers.get("Content-Disposition")) || "attachment",
+      };
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      throw normalizeError(error);
+    } finally {
+      controllers.delete(controller);
+    }
+  }
+
   return Object.freeze({
     catalog: () => request("/catalog"),
+    fetchRecordAttachment,
     listRecords: (parameters) => request(`/records${queryString(parameters)}`),
     exportRecords: (parameters) => download("/records/export", parameters),
     summary: (reportPeriod) => request(`${SUMMARY_PATH}${queryString({ report_period: reportPeriod })}`),

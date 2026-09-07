@@ -116,6 +116,34 @@ class PageQuery:
     filters: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RecordAttachmentFile:
+    """服务端校验通过的单个新附件；内容与元数据创建后不可覆盖。"""
+
+    client_id: str
+    file_name: str
+    file_extension: str
+    content_type: str
+    content: bytes
+    content_sha256: str
+
+    @property
+    def byte_size(self) -> int:
+        return len(self.content)
+
+
+@dataclass(frozen=True)
+class RecordAttachmentChange:
+    """一次保存请求对记录附件集合的完整声明。
+
+    ``retained_ids`` 为继续保留的当前附件 ID；``new_files`` 为本次新增文件。
+    两者都必须显式提供；``([], [])`` 表示清空当前附件。
+    """
+
+    retained_ids: tuple[int, ...]
+    new_files: tuple[RecordAttachmentFile, ...]
+
+
 def public_value(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
         return value.isoformat()

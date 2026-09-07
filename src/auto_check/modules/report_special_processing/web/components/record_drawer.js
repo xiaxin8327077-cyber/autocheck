@@ -1,6 +1,7 @@
 import { element, labeledField, option } from "./dom.js";
 import { formatDisplayDateTime } from "./record_table.js";
 import { createProcessMultiSelect } from "./process_multi_select.js";
+import { createRecordAttachmentSection, renderRecordAttachmentSnapshot } from "./record_attachments.js";
 import { confirmAttachmentUrl } from "../api.js";
 
 const SUMMARY_MAX_LENGTH = 128;
@@ -171,6 +172,7 @@ function describeAuditEntry(item, recordId) {
   const paired = [];
   const notes = [];
   const attachments = [];
+  let attachmentDiff = null;
   const changedFields = item?.changed_fields;
   const hasStructuredAuditData = Boolean(
     changedFields && typeof changedFields === "object" && !Array.isArray(changedFields) && Object.keys(changedFields).length,
@@ -186,6 +188,16 @@ function describeAuditEntry(item, recordId) {
     if (key === "confirm_attachments") {
       const ids = Array.isArray(meta.ids) ? meta.ids.map(Number).filter((id) => id > 0) : [];
       attachments.push(...ids);
+      return;
+    }
+    if (key === "record_attachments") {
+      // 记录附件走专用双栏快照，不进入普通字符串对照，也不 JSON.stringify 到单元格。
+      if (Array.isArray(meta.old) || Array.isArray(meta.new)) {
+        attachmentDiff = {
+          old: Array.isArray(meta.old) ? meta.old : [],
+          new: Array.isArray(meta.new) ? meta.new : [],
+        };
+      }
       return;
     }
     if (key === "processing_script") {
@@ -222,6 +234,7 @@ function describeAuditEntry(item, recordId) {
     paired,
     notes,
     attachments,
+    attachmentDiff,
     recordId: Number(recordId || item?.record_id || 0),
     hasStructuredAuditData,
     status: paired.find((pair) => pair.key === "status") || null,
@@ -258,7 +271,7 @@ function renderAuditScriptValue(documentRef, pair, side, onCopyScript) {
   }, children);
 }
 
-function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage) {
+function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage, attachmentOptions = null) {
   const cells = [];
   if (entry.paired.length) {
     ["字段", "修改前", "修改后"].forEach((label) => {
@@ -309,6 +322,24 @@ function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage) {
     ]));
   }
   const hasExtras = Boolean(entry.notes.length || entry.attachments?.length);
+  // 记录附件“修改前 / 修改后”双栏：标签只按该条审计的 old/new 集合渲染。
+  let attachmentBlock = null;
+  if (entry.attachmentDiff && attachmentOptions) {
+    const snapshotOptions = { ...attachmentOptions, recordId: entry.recordId || attachmentOptions.recordId };
+    attachmentBlock = element(documentRef, "div", { className: "rsp-audit-record-attachments" }, [
+      element(documentRef, "strong", { className: "rsp-audit-record-attachments-title", text: "附件：" }),
+      element(documentRef, "div", { className: "rsp-audit-record-attachments-columns" }, [
+        element(documentRef, "div", { className: "rsp-audit-record-attachments-column" }, [
+          element(documentRef, "h4", { text: "修改前" }),
+          renderRecordAttachmentSnapshot(documentRef, { ...snapshotOptions, attachments: entry.attachmentDiff.old }),
+        ]),
+        element(documentRef, "div", { className: "rsp-audit-record-attachments-column" }, [
+          element(documentRef, "h4", { text: "修改后" }),
+          renderRecordAttachmentSnapshot(documentRef, { ...snapshotOptions, attachments: entry.attachmentDiff.new }),
+        ]),
+      ]),
+    ]);
+  }
   return element(documentRef, "div", { className: "rsp-audit-detail" }, [
     element(documentRef, "div", {
       className: "rsp-audit-detail-scroll",
@@ -318,6 +349,7 @@ function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage) {
         className: `rsp-audit-diff-grid${hasExtras ? " has-notes" : ""}`,
       }, cells),
     ]),
+    attachmentBlock,
   ]);
 }
 
@@ -515,6 +547,24 @@ export function createRecordDrawer(documentRef, options) {
     role: "alert",
     hidden: "",
   });
+  // 版本冲突提示条：只提示并提供显式“加载最新记录”动作，
+  // 刷新/放弃必须由用户明确触发，错误回调不得自动重建抽屉。
+  const conflictText = element(documentRef, "span", { className: "rsp-conflict-bar-text" });
+  const conflictBar = element(documentRef, "div", {
+    className: "rsp-conflict-bar",
+    role: "alert",
+    hidden: "",
+  }, [
+    conflictText,
+    actionButton(documentRef, "加载最新记录", "rsp-button-secondary", () => {
+      onConflict();
+    }),
+  ]);
+  function showConflictBar() {
+    conflictText.textContent =
+      "记录已被其他人修改，未保存内容已保留；点击“加载最新记录”将覆盖当前未保存内容。";
+    conflictBar.hidden = false;
+  }
   const FIELD_LABELS = {
     report_process_codes: "关联报送",
     report_process_code: "关联报送",
@@ -581,15 +631,34 @@ export function createRecordDrawer(documentRef, options) {
       const control = resolveControl(fieldName);
       control?.setAttribute?.("aria-invalid", "true");
     });
-    if (error.refreshRequired) onConflict();
+    // 版本冲突：仅显示提示条保留编辑状态；是否加载最新记录由用户显式决定。
+    if (error.refreshRequired) showConflictBar();
+  }
+  // 提交互斥锁：保存/确认请求在途期间忽略重复点击并禁用底部操作按钮，
+  // 防止多次点击创建重复记录；成功后保持锁定直到抽屉关闭。
+  let submitting = false;
+  const footerActionButtons = [];
+  function setFooterActionsDisabled(disabled) {
+    footerActionButtons.forEach((button) => {
+      button.disabled = Boolean(disabled);
+    });
   }
   async function run(operation, successMessage) {
+    if (submitting) return;
+    submitting = true;
+    setFooterActionsDisabled(true);
     clearFormHint();
     try {
       const response = await operation();
       options.notify(successMessage, "success");
       await onSaved(response?.data || response);
+      // 保存成功后抽屉关闭，释放附件组件的 Blob URL 与监听器。
+      attachmentSection?.destroy();
     } catch (error) {
+      // 保存失败（含普通业务 409、400 与网络错误）不销毁附件组件，
+      // 表单与未保存附件保留在当前标签页内，允许修正后重试。
+      submitting = false;
+      setFooterActionsDisabled(false);
       if (error?.name !== "AbortError") showError(error);
     }
   }
@@ -615,23 +684,37 @@ export function createRecordDrawer(documentRef, options) {
   fields.summary.addEventListener("input", () => {
     if (!formHint.hidden) clearFormHint();
   });
+  async function buildSavePayload(saveMode) {
+    const payload = draftPayload(
+      fields,
+      saveMode,
+      creating ? null : current.row_version,
+      resolveHandlingAt(),
+    );
+    if (attachmentSection) {
+      // 等待附件 Base64 构建完成后一次性提交；无变化时省略字段。
+      const attachmentChange = await attachmentSection.buildChangePayload();
+      if (attachmentChange) payload.record_attachments = attachmentChange;
+    }
+    return payload;
+  }
   const saveDraft = () => {
     if (!validateForm()) return;
-    return run(
-      () => creating
-        ? actions.createRecord(draftPayload(fields, "draft", null, resolveHandlingAt()))
-        : actions.updateRecord(current.id, draftPayload(fields, "draft", current.row_version, resolveHandlingAt())),
-      "草稿已保存",
-    );
+    return run(async () => {
+      const payload = await buildSavePayload("draft");
+      return creating
+        ? actions.createRecord(payload)
+        : actions.updateRecord(current.id, payload);
+    }, "草稿已保存");
   };
   const saveRecord = () => {
     if (!validateForm()) return;
-    return run(
-      () => creating
-        ? actions.createRecord(draftPayload(fields, "record", null, resolveHandlingAt()))
-        : actions.updateRecord(current.id, draftPayload(fields, "record", current.row_version, resolveHandlingAt())),
-      creating ? "特殊处理记录已创建" : "修改已保存",
-    );
+    return run(async () => {
+      const payload = await buildSavePayload("record");
+      return creating
+        ? actions.createRecord(payload)
+        : actions.updateRecord(current.id, payload);
+    }, creating ? "特殊处理记录已创建" : "修改已保存");
   };
   const confirmImages = [];
   const confirmNoteInput = confirming ? element(documentRef, "textarea", {
@@ -648,9 +731,25 @@ export function createRecordDrawer(documentRef, options) {
   const confirmThumbs = confirming ? element(documentRef, "div", { className: "rsp-confirm-thumbs" }) : null;
   let overlayNode = null;
   let lightboxNode = null;
+  let attachmentPreviewUrl = "";
+  function revokeAttachmentPreview() {
+    if (!attachmentPreviewUrl) return;
+    const url = attachmentPreviewUrl;
+    attachmentPreviewUrl = "";
+    try {
+      (documentRef.defaultView || globalThis).URL?.revokeObjectURL?.(url);
+    } catch (_) {}
+  }
   function closeImageLightbox() {
     lightboxNode?.remove();
     lightboxNode = null;
+    revokeAttachmentPreview();
+  }
+  function openAttachmentPreview(blobUrl) {
+    if (!blobUrl || !overlayNode) return;
+    // openImageLightbox 内部先关闭旧灯箱并撤销旧的附件预览 URL。
+    openImageLightbox(blobUrl);
+    attachmentPreviewUrl = blobUrl;
   }
   function openImageLightbox(src) {
     if (!overlayNode || !src) return;
@@ -658,7 +757,7 @@ export function createRecordDrawer(documentRef, options) {
     const img = element(documentRef, "img", {
       className: "rsp-image-lightbox-img",
       src,
-      alt: "确认图片预览",
+      alt: "图片预览",
     });
     lightboxNode = element(documentRef, "div", {
       className: "rsp-image-lightbox",
@@ -817,7 +916,8 @@ export function createRecordDrawer(documentRef, options) {
     items.forEach((item, index) => {
       const auditId = String(item?.id ?? `${auditPage}-${index}`);
       const entry = describeAuditEntry(item, current.id);
-      const hasDetails = entry.paired.length > 0 || entry.notes.length > 0 || entry.attachments.length > 0;
+      const hasDetails = entry.paired.length > 0 || entry.notes.length > 0
+        || entry.attachments.length > 0 || Boolean(entry.attachmentDiff);
       const expanded = hasDetails && expandedAuditIds.has(auditId);
       const summaryParts = [
         element(documentRef, "span", {
@@ -844,6 +944,17 @@ export function createRecordDrawer(documentRef, options) {
         summaryParts.push(element(documentRef, "span", {
           className: "rsp-audit-change-count",
           text: `共 ${entry.paired.length} 项变更`,
+        }));
+      }
+      if (entry.attachmentDiff) {
+        const addedCount = entry.attachmentDiff.new.filter((meta) => meta?.change === "added").length;
+        const removedCount = entry.attachmentDiff.old.filter((meta) => meta?.change === "removed").length;
+        summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
+        summaryParts.push(element(documentRef, "span", {
+          className: "rsp-audit-change-count",
+          text: entry.paired.length || entry.notes.length
+            ? `附件新增 ${addedCount} 个、移除 ${removedCount} 个`
+            : (entry.summary || `附件新增 ${addedCount} 个、移除 ${removedCount} 个`),
         }));
       }
       if (hasDetails) {
@@ -874,7 +985,9 @@ export function createRecordDrawer(documentRef, options) {
       auditBody.append(row);
       if (expanded) {
         auditBody.append(element(documentRef, "tr", { className: "rsp-audit-detail-row" }, [
-          element(documentRef, "td", { colspan: "3" }, [renderAuditDetail(documentRef, entry, copyAuditScript, openImageLightbox)]),
+          element(documentRef, "td", { colspan: "3" }, [
+            renderAuditDetail(documentRef, entry, copyAuditScript, openImageLightbox, auditAttachmentOptions),
+          ]),
         ]));
       }
     });
@@ -917,12 +1030,65 @@ export function createRecordDrawer(documentRef, options) {
     }
   };
 
+  // 附件区域：新建/可编辑记录使用编辑组件；查看与确认模式使用只读快照。
+  const currentAttachments = Array.isArray(current.record_attachments) ? current.record_attachments : [];
+  // 抽屉级缩略图 object URL 缓存：编辑区、详情快照与审计双栏共享，关闭时统一释放。
+  const thumbCache = new Map();
+  const attachmentSection = !confirming && (creating || canEdit)
+    ? createRecordAttachmentSection(documentRef, {
+      recordId: current.id || null,
+      initialAttachments: currentAttachments,
+      editable: true,
+      limits: catalog?.limits?.record_attachments,
+      notify: options.notify,
+      fetchAttachment: actions.fetchRecordAttachment,
+      previewImage: openAttachmentPreview,
+      thumbCache,
+    })
+    : null;
+  const attachmentSnapshot = !attachmentSection && currentAttachments.length
+    ? renderRecordAttachmentSnapshot(documentRef, {
+      recordId: current.id || null,
+      attachments: currentAttachments,
+      fetchAttachment: actions.fetchRecordAttachment,
+      previewImage: openAttachmentPreview,
+      notify: options.notify,
+      thumbCache,
+    })
+    : null;
+  const attachmentsSectionNode = attachmentSection
+    ? element(documentRef, "section", { className: "rsp-modal-section" }, [attachmentSection.element])
+    : (attachmentSnapshot
+      ? element(documentRef, "section", { className: "rsp-modal-section" }, [
+        element(documentRef, "h3", { text: "附件" }),
+        attachmentSnapshot,
+      ])
+      : null);
+  const auditAttachmentOptions = {
+    recordId: current.id,
+    fetchAttachment: actions.fetchRecordAttachment,
+    previewImage: openAttachmentPreview,
+    notify: options.notify,
+    thumbCache,
+  };
+  function closeWithCleanup() {
+    attachmentSection?.destroy();
+    const view = documentRef?.defaultView || globalThis;
+    thumbCache.forEach((url) => {
+      try {
+        view.URL?.revokeObjectURL?.(url);
+      } catch (_) {}
+    });
+    thumbCache.clear();
+    onClose();
+  }
+
   const closeButton = element(documentRef, "button", {
     type: "button",
     className: "rsp-modal-close",
     text: "×",
     "aria-label": "关闭",
-    onClick: onClose,
+    onClick: closeWithCleanup,
   });
   const header = element(documentRef, "header", { className: "rsp-modal-head" }, [
     element(documentRef, "h2", { text: title }),
@@ -986,6 +1152,7 @@ export function createRecordDrawer(documentRef, options) {
     }
     footerButtons.push(actionButton(documentRef, creating ? "保存记录" : "保存修改", "rsp-button-primary", saveRecord, saveDisabled));
   }
+  footerActionButtons.push(...footerButtons);
   const actionBar = element(documentRef, "div", { className: "rsp-modal-actions-bar" }, [
     formHint,
     element(documentRef, "div", { className: "rsp-modal-actions-right" }, footerButtons),
@@ -1011,12 +1178,12 @@ export function createRecordDrawer(documentRef, options) {
       }),
     ]));
   }
-  footerChildren.push(actionBar);
+  footerChildren.push(conflictBar, actionBar);
   const footer = element(documentRef, "footer", {
     className: confirming ? "rsp-modal-actions rsp-modal-actions--confirm" : "rsp-modal-actions",
   }, footerChildren);
   const body = element(documentRef, "div", { className: "rsp-modal-body" }, [
-    basic, content, script, audit,
+    basic, content, script, attachmentsSectionNode, audit,
   ]);
   const shell = element(documentRef, "div", {
     className: "rsp-record-modal",
@@ -1037,8 +1204,14 @@ export function createRecordDrawer(documentRef, options) {
       closeImageLightbox();
       return;
     }
-    onClose();
+    closeWithCleanup();
   });
+  if (attachmentSection) {
+    // 抽屉级粘贴监听：只有剪贴板包含文件时才拦截，纯文字粘贴不受影响。
+    overlay.addEventListener("paste", (event) => {
+      attachmentSection.handlePaste(event);
+    });
+  }
 
   loadAudit(1);
   syncAuditPager();

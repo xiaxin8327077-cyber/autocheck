@@ -127,6 +127,13 @@ def module_server(monkeypatch, tmp_path):
             permission="alpha.view",
             max_body_bytes=0,
         )
+        router.add(
+            "GET",
+            "/unauthorized",
+            lambda request: (route_calls.append(request), ModuleHttpResponse.json(401, {"error": "business unauthorized"}))[1],
+            permission="alpha.view",
+            max_body_bytes=0,
+        )
 
     route_calls = []
     monkeypatch.setattr(alpha_module.AlphaModule, "register_routes", register_routes)
@@ -637,3 +644,137 @@ def test_short_module_body_is_rejected_before_dispatch(authenticated_module_serv
     assert status == 400
     assert response_headers["connection"].lower() == "close"
     assert server.module_route_calls == []
+
+
+# ---------------------------------------------------------------------------
+# 登录超时重新认证后端协议：专用响应头、预期用户绑定、状态禁缓存
+# ---------------------------------------------------------------------------
+
+RECOVERY_HEADER = "x-auto-check-auth-recovery"
+
+
+def test_expired_session_precheck_401_has_required_header_and_skips_module(module_server):
+    server, _ = module_server
+    status, data, headers = _request(
+        server,
+        "POST",
+        "/api/modules/alpha/echo",
+        body={"value": "keep"},
+        headers={"Cookie": "auto_check_session=expired"},
+    )
+    assert status == 401
+    assert json.loads(data) == {"error": "login required"}
+    assert headers.get(RECOVERY_HEADER) == "required"
+    # 安全前提：前置 401 时模块写处理器调用次数必须为 0。
+    assert server.module_route_calls == []
+
+
+def test_expired_session_get_precheck_401_has_required_header(module_server):
+    server, _ = module_server
+    status, data, headers = _request(server, "GET", "/api/modules/alpha/whoami")
+    assert status == 401
+    assert headers.get(RECOVERY_HEADER) == "required"
+    assert server.module_route_calls == []
+
+
+def _encrypt_transport_password(auth_manager, password: str) -> str:
+    from Crypto.Cipher import PKCS1_OAEP
+    from Crypto.Hash import SHA256
+    from Crypto.PublicKey import RSA
+
+    key = RSA.import_key(auth_manager.public_key_pem())
+    cipher = PKCS1_OAEP.new(key, hashAlgo=SHA256)
+    return cipher.encrypt(password.encode("utf-8")).hex()
+
+
+def test_login_failure_401_has_no_recovery_header(module_server):
+    server, auth_manager = module_server
+    auth_manager.set_admin_password("AdminPass123")
+    status, data, headers = _request(
+        server,
+        "POST",
+        "/api/auth/login",
+        body={
+            "username": "admin",
+            "password_encrypted": _encrypt_transport_password(auth_manager, "WrongPass999"),
+        },
+    )
+    assert status == 401
+    assert RECOVERY_HEADER not in headers
+
+
+def test_business_401_from_module_has_no_recovery_header(authenticated_module_server):
+    server, auth_headers = authenticated_module_server
+    status, data, headers = _request(
+        server,
+        "GET",
+        "/api/modules/alpha/unauthorized",
+        headers=auth_headers,
+    )
+    assert status == 401
+    assert RECOVERY_HEADER not in headers
+
+
+def _login_headers(auth_manager, password="AdminPass123"):
+    auth_manager.set_admin_password(password)
+    session = auth_manager.login("admin", password)
+    assert session is not None
+    return session, {
+        "Cookie": f"auto_check_session={session.session_id}",
+        "X-CSRF-Token": session.csrf_token,
+    }
+
+
+def test_expected_user_mismatch_returns_account_mismatch_before_module(module_server):
+    server, auth_manager = module_server
+    session, headers = _login_headers(auth_manager)
+    status, data, response_headers = _request(
+        server,
+        "POST",
+        "/api/modules/alpha/echo",
+        body={"value": "x"},
+        headers={**headers, "X-Auto-Check-Expected-User-Id": "some-other-user"},
+    )
+    assert status == 409
+    assert response_headers.get(RECOVERY_HEADER) == "account-mismatch"
+    payload = json.loads(data)
+    assert payload["user"]["id"] == session.user_id
+    assert payload["csrf_token"] == session.csrf_token
+    assert server.module_route_calls == []
+
+
+def test_expected_user_match_continues_to_module(module_server):
+    server, auth_manager = module_server
+    session, headers = _login_headers(auth_manager)
+    status, data, response_headers = _request(
+        server,
+        "POST",
+        "/api/modules/alpha/echo",
+        body={"value": "x"},
+        headers={**headers, "X-Auto-Check-Expected-User-Id": str(session.user_id)},
+    )
+    assert status == 200
+    assert RECOVERY_HEADER not in response_headers
+    assert len(server.module_route_calls) == 1
+
+
+def test_missing_expected_user_header_stays_compatible(module_server):
+    server, auth_manager = module_server
+    _session, headers = _login_headers(auth_manager)
+    status, data, response_headers = _request(
+        server,
+        "POST",
+        "/api/modules/alpha/echo",
+        body={"value": "x"},
+        headers=headers,
+    )
+    assert status == 200
+    assert len(server.module_route_calls) == 1
+
+
+def test_auth_status_response_is_private_no_store(module_server):
+    server, _ = module_server
+    status, data, headers = _request(server, "GET", "/api/auth/status")
+    assert status == 200
+    assert headers.get("cache-control") == "private, no-store"
+    assert json.loads(data)["authenticated"] is False

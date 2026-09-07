@@ -50,13 +50,49 @@ class MemoryStorage:
         self.records = {}
         self.audits = []
         self.attachments = []
+        self.record_attachments = []
         self.calls = []
         self.create_reports_args = []
         self._next_id = 1
         self._next_audit_id = 1
         self._next_attachment_id = 1
+        self._next_record_attachment_id = 1
 
-    def create(self, record, reports, processes, audit):
+    def _new_record_attachment(self, record_id, item):
+        att_id = self._next_record_attachment_id
+        self._next_record_attachment_id += 1
+        meta = {
+            "id": att_id,
+            "record_id": record_id,
+            "file_name": item.file_name,
+            "file_extension": item.file_extension,
+            "content_type": item.content_type,
+            "byte_size": item.byte_size,
+            "content_sha256": item.content_sha256,
+            "content": item.content,
+            "created_by": {"user_id": "1", "username": "creator"},
+            "created_at": NOW,
+            "removed": False,
+            "removed_at": None,
+        }
+        self.record_attachments.append(meta)
+        return att_id
+
+    @staticmethod
+    def _public_attachment(meta):
+        return {
+            "id": meta["id"],
+            "file_name": meta["file_name"],
+            "file_extension": meta["file_extension"],
+            "content_type": meta["content_type"],
+            "byte_size": meta["byte_size"],
+            "content_sha256": meta["content_sha256"],
+            "created_by": meta["created_by"],
+            "created_at": meta["created_at"],
+            "removed": meta["removed_at"] is not None,
+        }
+
+    def create(self, record, reports, processes, audit, *, record_attachment_change=None, attachment_actor=None):
         self.calls.append("create")
         self.create_reports_args.append(list(reports))
         record_id = self._next_id
@@ -70,6 +106,19 @@ class MemoryStorage:
             "report_processes": [dict(item) for item in processes],
             "report_process_codes": [item["code"] for item in processes],
         }
+        attachment_ids = []
+        if record_attachment_change is not None:
+            for item in record_attachment_change.new_files:
+                attachment_ids.append(self._new_record_attachment(record_id, item))
+            fields = json.loads(audit["changed_fields_json"])
+            fields["record_attachments"] = {"count": len(attachment_ids), "ids": attachment_ids}
+            audit = dict(audit)
+            audit["changed_fields_json"] = json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+        value["record_attachments"] = [
+            self._public_attachment(meta)
+            for meta in self.record_attachments
+            if meta["record_id"] == record_id and meta["removed_at"] is None
+        ]
         self.records[record_id] = value
         stored_audit = dict(audit)
         stored_audit["id"] = self._next_audit_id
@@ -81,7 +130,27 @@ class MemoryStorage:
     def list(self, query):
         items = [deepcopy(item) for item in self.records.values()]
         return {"items": items, "total": len(items), "page": 1, "page_size": 10}
-    def update(self, record_id, row_version, changes, reports, processes, audit):
+    def list_record_attachments(self, record_id, *, include_removed=False, attachment_ids=None):
+        result = []
+        wanted = set(attachment_ids) if attachment_ids is not None else None
+        for meta in self.record_attachments:
+            if meta["record_id"] != record_id:
+                continue
+            if wanted is not None:
+                if meta["id"] not in wanted:
+                    continue
+            elif not include_removed and meta["removed_at"] is not None:
+                continue
+            result.append(self._public_attachment(meta))
+        return result
+    def get_record_attachment(self, record_id, attachment_id):
+        for meta in self.record_attachments:
+            if meta["record_id"] == record_id and meta["id"] == attachment_id:
+                public = self._public_attachment(meta)
+                public["content"] = meta["content"]
+                return public
+        return None
+    def update(self, record_id, row_version, changes, reports, processes, audit, *, record_attachment_change=None, attachment_actor=None):
         current = self.records.get(record_id)
         if current is None: return None
         from auto_check.modules.report_special_processing.contracts import VersionConflictError
@@ -91,6 +160,38 @@ class MemoryStorage:
         current["report_processes"] = [dict(item) for item in processes]
         current["report_process_codes"] = [item["code"] for item in processes]
         current["row_version"] += 1
+        if record_attachment_change is not None:
+            current_atts = [
+                meta for meta in self.record_attachments
+                if meta["record_id"] == record_id and meta["removed_at"] is None
+            ]
+            current_ids = [meta["id"] for meta in current_atts]
+            retained = set(record_attachment_change.retained_ids)
+            removed_ids = [cid for cid in current_ids if cid not in retained]
+            for meta in self.record_attachments:
+                if meta["record_id"] == record_id and meta["id"] in removed_ids:
+                    meta["removed_at"] = NOW
+            added_ids = [
+                self._new_record_attachment(record_id, item)
+                for item in record_attachment_change.new_files
+            ]
+            if removed_ids or added_ids:
+                new_ids = [cid for cid in current_ids if cid in retained] + added_ids
+                fields = json.loads(audit["changed_fields_json"])
+                fields["record_attachments"] = {
+                    "changed": True,
+                    "old_ids": current_ids,
+                    "new_ids": new_ids,
+                    "added_ids": added_ids,
+                    "removed_ids": removed_ids,
+                }
+                audit = dict(audit)
+                audit["changed_fields_json"] = json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+        current["record_attachments"] = [
+            self._public_attachment(meta)
+            for meta in self.record_attachments
+            if meta["record_id"] == record_id and meta["removed_at"] is None
+        ]
         stored_audit = dict(audit)
         stored_audit["id"] = self._next_audit_id
         stored_audit["record_id"] = record_id
@@ -234,6 +335,180 @@ def test_create_accepts_governance_owner_outside_dimension_candidates():
     )
     assert record["governance_owner_user_id"] == "outsider"
     assert record["governance_owner_display_name_snapshot"] == "其他用户"
+
+
+def _png_bytes(marker: bytes = b"") -> bytes:
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + marker
+
+
+def _attachment_file(client_id: str, file_name: str, content: bytes) -> dict:
+    return {
+        "client_id": client_id,
+        "file_name": file_name,
+        "content_type": "image/png",
+        "data_base64": _b64encode(content),
+    }
+
+
+def _b64encode(content: bytes) -> str:
+    import base64
+
+    return base64.b64encode(content).decode("ascii")
+
+
+def _attachment_change(retained=None, files=None) -> dict:
+    return {"record_attachments": {"retained_ids": retained or [], "new_files": files or []}}
+
+
+def _create_user() -> dict:
+    return {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+
+
+def test_create_record_with_attachments_stores_metadata_and_audit_count():
+    service = _service()
+    payload = _payload(
+        record_attachments={
+            "retained_ids": [],
+            "new_files": [
+                _attachment_file("c1", "a.png", _png_bytes(b"one")),
+                _attachment_file("c2", "b.png", _png_bytes(b"two")),
+            ],
+        }
+    )
+    record = service.create(payload, _create_user(), request_id="req-att")
+    names = [item["file_name"] for item in record["record_attachments"]]
+    assert names == ["a.png", "b.png"]
+    assert all("content" not in item for item in record["record_attachments"])
+    audit_fields = json.loads(service.storage.audits[0]["changed_fields_json"])
+    assert audit_fields["record_attachments"]["count"] == 2
+
+
+def test_create_omitting_attachments_has_none():
+    service = _service()
+    record = service.create(_payload(), _create_user(), request_id="req-noatt")
+    assert record["record_attachments"] == []
+
+
+def test_update_attachment_only_increments_version_and_writes_summary():
+    service = _service()
+    record = service.create(
+        _payload(record_attachments={"retained_ids": [], "new_files": [_attachment_file("c1", "a.png", _png_bytes(b"one"))]}),
+        _create_user(),
+        request_id="req-1",
+    )
+    record_id = record["id"]
+    existing_id = record["record_attachments"][0]["id"]
+    updated = service.update(
+        record_id,
+        _payload(
+            save_mode="record",
+            row_version=record["row_version"],
+            record_attachments={
+                "retained_ids": [existing_id],
+                "new_files": [_attachment_file("c2", "b.png", _png_bytes(b"two"))],
+            },
+        ),
+        _create_user(),
+        request_id="req-2",
+    )
+    assert updated["row_version"] == record["row_version"] + 1
+    audit_fields = json.loads(service.storage.audits[-1]["changed_fields_json"])
+    field = audit_fields["record_attachments"]
+    assert field["old_ids"] == [existing_id]
+    assert field["removed_ids"] == []
+    assert len(field["added_ids"]) == 1
+    assert service.storage.audits[-1]["action_summary"] == "修改附件（新增 1 个，移除 0 个）"
+
+
+def test_update_rejects_retained_id_from_other_record_or_removed():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service()
+    record = service.create(
+        _payload(record_attachments={"retained_ids": [], "new_files": [_attachment_file("c1", "a.png", _png_bytes(b"one"))]}),
+        _create_user(),
+        request_id="req-1",
+    )
+    with pytest.raises(ValidationError):
+        service.update(
+            record["id"],
+            _payload(row_version=record["row_version"], record_attachments={"retained_ids": [99999], "new_files": []}),
+            _create_user(),
+            request_id="req-2",
+        )
+
+
+def test_update_explicit_empty_set_clears_attachments():
+    service = _service()
+    record = service.create(
+        _payload(record_attachments={"retained_ids": [], "new_files": [_attachment_file("c1", "a.png", _png_bytes(b"one"))]}),
+        _create_user(),
+        request_id="req-1",
+    )
+    updated = service.update(
+        record["id"],
+        _payload(row_version=record["row_version"], record_attachments={"retained_ids": [], "new_files": []}),
+        _create_user(),
+        request_id="req-2",
+    )
+    assert updated["record_attachments"] == []
+    audit_fields = json.loads(service.storage.audits[-1]["changed_fields_json"])
+    assert audit_fields["record_attachments"]["removed_ids"]
+
+
+def test_update_rejects_duplicate_content_against_current_retained():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service()
+    content = _png_bytes(b"same")
+    record = service.create(
+        _payload(record_attachments={"retained_ids": [], "new_files": [_attachment_file("c1", "a.png", content)]}),
+        _create_user(),
+        request_id="req-1",
+    )
+    existing_id = record["record_attachments"][0]["id"]
+    with pytest.raises(ValidationError):
+        service.update(
+            record["id"],
+            _payload(
+                row_version=record["row_version"],
+                record_attachments={
+                    "retained_ids": [existing_id],
+                    "new_files": [_attachment_file("c2", "dup.png", content)],
+                },
+            ),
+            _create_user(),
+            request_id="req-2",
+        )
+
+
+def test_get_record_attachment_reads_current_and_removed_but_not_cross_record():
+    from auto_check.modules.report_special_processing.contracts import RecordNotFoundError
+
+    service = _service()
+    record = service.create(
+        _payload(record_attachments={"retained_ids": [], "new_files": [_attachment_file("c1", "a.png", _png_bytes(b"one"))]}),
+        _create_user(),
+        request_id="req-1",
+    )
+    record_id = record["id"]
+    attachment_id = record["record_attachments"][0]["id"]
+    detail_user = {"id": "1", "role": "user", "capabilities": ["rsp.detail"]}
+    item = service.get_record_attachment(record_id, attachment_id, detail_user)
+    assert item["file_name"] == "a.png"
+    assert item["content"] == _png_bytes(b"one")
+    # 移除后仍可按历史 ID 读取。
+    service.update(
+        record_id,
+        _payload(row_version=record["row_version"], record_attachments={"retained_ids": [], "new_files": []}),
+        _create_user(),
+        request_id="req-2",
+    )
+    removed_item = service.get_record_attachment(record_id, attachment_id, detail_user)
+    assert removed_item["removed"] is True
+    # 跨记录统一 not found。
+    with pytest.raises(RecordNotFoundError):
+        service.get_record_attachment(record_id, 99999, detail_user)
 
 
 def test_confirm_denied_for_non_governance_owner_even_with_capability():

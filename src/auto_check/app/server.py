@@ -3555,7 +3555,27 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
         session = self._authenticated_session()
         if session is None:
-            self._send_early_json(method, 401, {"error": "login required"})
+            # 仅全局会话前置校验失败才携带专用标识，供前端重新认证并自动重试一次。
+            self._send_early_json(
+                method,
+                401,
+                {"error": "login required"},
+                headers=[("X-Auto-Check-Auth-Recovery", "required")],
+            )
+            return
+        # 会话成功后、CSRF 与业务路由前原子比较预期用户，防止跨标签页切换账号误用身份。
+        expected_user_id = self.headers.get("X-Auto-Check-Expected-User-Id")
+        if expected_user_id is not None and str(expected_user_id) != str(session.user_id):
+            self._send_early_json(
+                method,
+                409,
+                {
+                    "error": "account mismatch",
+                    "csrf_token": session.csrf_token,
+                    "user": self.router.session_user_payload(session),
+                },
+                headers=[("X-Auto-Check-Auth-Recovery", "account-mismatch")],
+            )
             return
         if method in {"POST", "PUT", "DELETE"} and self.headers.get("X-CSRF-Token", "") != session.csrf_token:
             self._send_early_json(method, 403, {"error": "invalid csrf token"})
@@ -3932,12 +3952,16 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
         if method == "GET" and path == "/api/auth/status":
             session = self._authenticated_session()
-            self._send_json(200, {
-                "authenticated": session is not None,
-                "setup_required": self.auth_manager.setup_required(),
-                "csrf_token": session.csrf_token if session else "",
-                "user": self.router.session_user_payload(session),
-            })
+            self._send_json(
+                200,
+                {
+                    "authenticated": session is not None,
+                    "setup_required": self.auth_manager.setup_required(),
+                    "csrf_token": session.csrf_token if session else "",
+                    "user": self.router.session_user_payload(session),
+                },
+                headers=[("Cache-Control", "private, no-store")],
+            )
             return
         if method == "POST" and path in {"/api/auth/setup", "/api/auth/login", "/api/auth/logout"}:
             length = int(self.headers.get("Content-Length", "0"))

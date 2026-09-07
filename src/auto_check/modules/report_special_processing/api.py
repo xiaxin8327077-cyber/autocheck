@@ -7,7 +7,11 @@ from urllib.parse import quote
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
 
 from .contracts import DomainError, ValidationError, public_value
-from .validator import MAX_CONFIRM_STATUS_BYTES, MAX_REQUEST_BYTES
+from .validator import (
+    MAX_CONFIRM_STATUS_BYTES,
+    MAX_RECORD_ATTACHMENT_REQUEST_BYTES,
+    MAX_REQUEST_BYTES,
+)
 
 
 def _request_id() -> str:
@@ -65,6 +69,21 @@ def _image_response(payload: Mapping[str, Any]) -> ModuleHttpResponse:
     if not isinstance(content, (bytes, bytearray)) or not content_type:
         raise ValidationError()
     return ModuleHttpResponse.bytes(200, bytes(content), content_type=content_type)
+
+
+def _record_attachment_response(payload: Mapping[str, Any]) -> ModuleHttpResponse:
+    content = payload.get("content")
+    content_type = str(payload.get("content_type") or "application/octet-stream")
+    if not isinstance(content, (bytes, bytearray)):
+        raise ValidationError()
+    file_name = str(payload.get("file_name") or "attachment")
+    # X-Content-Type-Options: nosniff 由平台 _send_bytes 统一添加。
+    return ModuleHttpResponse.bytes(
+        200,
+        bytes(content),
+        content_type=content_type,
+        headers=(("Content-Disposition", f"attachment; filename*=UTF-8''{quote(file_name)}"),),
+    )
 
 
 def _id(request: ModuleRequest) -> int:
@@ -133,14 +152,15 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
             0,
             200,
         ),
-        ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), create, MAX_REQUEST_BYTES, 201),
+        ("POST", "/records", lambda service, request, rid: service.create(_body(request), request.current_user, request_id=rid), create, MAX_RECORD_ATTACHMENT_REQUEST_BYTES, 201),
         ("GET", "/records/{id}", lambda service, request, rid: service.get(_id(request), request.current_user), detail, 0, 200),
-        ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), edit, MAX_REQUEST_BYTES, 200),
+        ("PUT", "/records/{id}", lambda service, request, rid: service.update(_id(request), _body(request), request.current_user, request_id=rid), edit, MAX_RECORD_ATTACHMENT_REQUEST_BYTES, 200),
         ("POST", "/records/{id}/status", lambda service, request, rid: service.change_status(_id(request), _body(request), request.current_user, request_id=rid), confirm, MAX_CONFIRM_STATUS_BYTES, 200),
         ("POST", "/records/{id}/void", lambda service, request, rid: service.void(_id(request), _body(request), request.current_user, request_id=rid), void, MAX_REQUEST_BYTES, 200),
         ("DELETE", "/records/{id}", lambda service, request, rid: service.delete(_id(request), _body(request), request.current_user, request_id=rid), delete, MAX_REQUEST_BYTES, 200),
         ("POST", "/records/{id}/reopen", lambda service, request, rid: service.reopen(_id(request), _body(request), request.current_user, request_id=rid), reopen, MAX_REQUEST_BYTES, 200),
         ("GET", "/records/{id}/confirm-attachments/{attachment_id}", lambda service, request, rid: _image_response(service.get_confirm_attachment(_id(request), _attachment_id(request), request.current_user)), detail, 0, 200),
+        ("GET", "/records/{id}/attachments/{attachment_id}", lambda service, request, rid: _record_attachment_response(service.get_record_attachment(_id(request), _attachment_id(request), request.current_user)), detail, 0, 200),
         ("GET", "/records/{id}/audit", lambda service, request, rid: service.audit(_id(request), request.query), detail, 0, 200),
         ("GET", "/summary", lambda service, request, rid: service.summary(request.query), detail, 0, 200),
     )

@@ -83,6 +83,15 @@ class ReportSpecialProcessingModule:
                 "content_sha256", "content", "created_at",
             },
         )
+        registry.add(
+            "report_special_processing_record_attachments",
+            {
+                "id", "record_id", "original_file_name", "file_extension", "content_type",
+                "byte_size", "content_sha256", "content", "created_by_user_id",
+                "created_by_username_snapshot", "created_at", "removed_by_user_id",
+                "removed_by_username_snapshot", "removed_at",
+            },
+        )
 
     def start(self, context: Any) -> None:
         user_directory = context.services.resolve("platform.user_directory", 1)

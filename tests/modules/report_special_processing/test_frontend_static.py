@@ -570,3 +570,98 @@ def test_no_business_catalog_is_hardcoded_in_module_frontend():
         "五篇大文章报送",
     ):
         assert old_catalog_value not in source
+
+
+def test_record_drawer_integrates_attachment_section_and_save_flow():
+    source = read("components/record_drawer.js")
+
+    assert (
+        'import { createRecordAttachmentSection, renderRecordAttachmentSnapshot } from "./record_attachments.js";'
+        in source
+    )
+    # 保存前等待附件构建，并把非 null 结果写入 payload。
+    assert "async function buildSavePayload(saveMode)" in source
+    assert "await attachmentSection.buildChangePayload()" in source
+    assert "payload.record_attachments = attachmentChange" in source
+    # 粘贴监听挂在抽屉层，且由组件决定是否拦截。
+    assert 'overlay.addEventListener("paste"' in source
+    assert "attachmentSection.handlePaste(event)" in source
+    # 关闭与保存成功后销毁附件组件，失败保留。
+    assert "attachmentSection?.destroy()" in source
+    # authPreflight 声明只出现在 api.js，不在抽屉里。
+    assert "authPreflight" not in source
+    # 抽屉不请求认证端点、不显示登录 UI。
+    assert "/api/auth/" not in source
+    # 附件预览 Blob URL 关闭时释放。
+    assert "revokeObjectURL" in source
+
+
+def test_record_drawer_audit_renders_attachment_dual_columns():
+    source = read("components/record_drawer.js")
+
+    assert 'if (key === "record_attachments")' in source
+    assert "attachmentDiff = {" in source
+    assert "Array.isArray(meta.old) ? meta.old : []" in source
+    assert "rsp-audit-record-attachments-columns" in source
+    assert '"修改前"' in source
+    assert '"修改后"' in source
+    assert "Boolean(entry.attachmentDiff)" in source
+    # 附件对象不得 JSON.stringify 进普通单元格。
+    assert "JSON.stringify(meta)" not in source
+
+
+def test_attachment_styles_are_scoped_and_follow_theme_rules():
+    css = read("styles.css")
+
+    assert ".rsp-attachment-section" in css
+    assert ".rsp-attachment-card" in css
+    assert ".rsp-attachment-change-added" in css
+    assert ".rsp-attachment-change-removed" in css
+    assert ".rsp-attachment-change-retained" in css
+    assert ".rsp-audit-record-attachments-columns" in css
+    # 所有附件相关规则必须限定在模块作用域内。
+    for line in css.splitlines():
+        if "rsp-attachment" in line and "{" in line:
+            assert line.strip().startswith('.auto-check-module[data-module="report_special_processing"]'), line
+    # 圆角复用全局变量；卡片悬浮无主题光晕。
+    attachment_css = css[css.index(".rsp-attachment-section"):]
+    assert "var(--ui-radius)" in attachment_css
+    assert "box-shadow: 0 0 0" not in attachment_css.split(".rsp-audit-record-attachments")[0]
+    # 上传按钮为次要样式（不使用渐变），删除按钮使用危险红色。
+    assert "rsp-button-secondary rsp-attachment-upload" in read("components/record_attachments.js")
+    assert "#cf3d3d" in attachment_css
+
+
+def test_module_download_uses_platform_raw_api_without_private_login_handling():
+    source = read("api.js")
+
+    # 下载统一走平台 API 的 raw 响应模式，由平台负责认证恢复。
+    assert 'responseType: "raw"' in source
+    assert "context.api(" in source
+    assert "fetchRecordAttachment" in source
+    # 模块不再通过 window.location 跳登录页，也不自判 401 做私有登录恢复。
+    assert "window.location" not in source
+    assert "/login.html" not in source
+    assert "response.status === 401" not in source
+    assert "login required" not in source
+    # 保留 AbortController、Content-Disposition、空 Blob 与错误归一化行为。
+    assert "AbortController" in source
+    assert "Content-Disposition" in source
+    assert "normalizeError" in source
+    assert "生成的导出文件为空" in source
+
+
+def test_record_drawer_guards_duplicate_submissions():
+    source = read("components/record_drawer.js")
+
+    # 提交互斥锁：在途保存/确认期间忽略重复点击并禁用底部操作按钮。
+    assert "let submitting = false;" in source
+    assert "if (submitting) return;" in source
+    assert "setFooterActionsDisabled(true)" in source
+    # 失败后解锁允许重试；成功路径保持锁定直到抽屉关闭。
+    run_source = source[source.index("async function run("):]
+    run_source = run_source[: run_source.index("function validateForm()")]
+    assert "submitting = false;" in run_source
+    assert "setFooterActionsDisabled(false)" in run_source
+    assert run_source.index("submitting = true;") < run_source.index("submitting = false;")
+    assert "footerActionButtons.push(...footerButtons)" in source

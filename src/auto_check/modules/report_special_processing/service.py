@@ -30,11 +30,16 @@ from .permissions import (
 from .statistics import status_metrics
 from .export_workbook import MAX_EXPORT_ROWS, build_export_xlsx
 from .validator import (
+    ALLOWED_ATTACHMENT_EXTENSIONS,
+    MAX_RECORD_ATTACHMENTS,
+    MAX_RECORD_ATTACHMENTS_TOTAL_BYTES,
+    MAX_RECORD_ATTACHMENT_BYTES,
     MAX_REPORTS,
     MAX_SCRIPT_BYTES,
     validate_action,
     validate_confirm_images,
     validate_page_query,
+    validate_record_attachment_change,
     validate_record_input,
 )
 
@@ -146,7 +151,16 @@ class SpecialProcessingService:
                 {"code": status.value, "label": label}
                 for status, label in STATUS_LABELS.items()
             ],
-            "limits": {"max_reports": MAX_REPORTS, "max_script_bytes": MAX_SCRIPT_BYTES},
+            "limits": {
+                "max_reports": MAX_REPORTS,
+                "max_script_bytes": MAX_SCRIPT_BYTES,
+                "record_attachments": {
+                    "max_count": MAX_RECORD_ATTACHMENTS,
+                    "max_file_bytes": MAX_RECORD_ATTACHMENT_BYTES,
+                    "max_total_bytes": MAX_RECORD_ATTACHMENTS_TOTAL_BYTES,
+                    "allowed_extensions": list(ALLOWED_ATTACHMENT_EXTENSIONS),
+                },
+            },
             "workflow": {"enabled": False, "status": "not_enabled"},
             "capabilities": {
                 "can_view": can_view(actor),
@@ -260,6 +274,63 @@ class SpecialProcessingService:
             raise RecordNotFoundError()
         return {"content": bytes(content), "content_type": content_type}
 
+    def get_record_attachment(
+        self,
+        record_id: int,
+        attachment_id: int,
+        current_user: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        # 先校验记录详情权限；跨记录或历史附件统一 not found，不泄露存在性。
+        self.get(record_id, current_user)
+        item = self.storage.get_record_attachment(record_id, attachment_id)
+        if item is None:
+            raise RecordNotFoundError()
+        return item
+
+    def _validated_record_attachment_change(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        creating: bool,
+        current: Sequence[Mapping[str, Any]] = (),
+    ) -> Any:
+        change = validate_record_attachment_change(payload, creating=creating)
+        if change is None:
+            return None
+        current_ids = {int(item["id"]) for item in current}
+        if not creating:
+            for retained_id in change.retained_ids:
+                if retained_id not in current_ids:
+                    raise ValidationError(fields={"record_attachments": "附件引用无效"})
+        current_by_id = {int(item["id"]): item for item in current}
+        retained_bytes = sum(
+            int(current_by_id[retained_id].get("byte_size") or 0)
+            for retained_id in change.retained_ids
+
+        )
+        new_bytes = sum(item.byte_size for item in change.new_files)
+        if retained_bytes + new_bytes > MAX_RECORD_ATTACHMENTS_TOTAL_BYTES:
+            raise ValidationError(fields={"record_attachments": "附件总大小超过 30 MiB"})
+        seen_hashes = {
+            str(item.get("content_sha256"))
+            for item in current
+            if int(item["id"]) in {int(retained_id) for retained_id in change.retained_ids}
+        }
+        for item in change.new_files:
+            if item.content_sha256 in seen_hashes:
+                raise ValidationError(
+                    fields={f"record_attachments.{item.client_id}": "该附件已添加"}
+                )
+            seen_hashes.add(item.content_sha256)
+        return change
+
+    @staticmethod
+    def _attachment_actor(current_user: Mapping[str, Any]) -> dict[str, str]:
+        return {
+            "user_id": str(current_user.get("id") or ""),
+            "username": str(current_user.get("username") or ""),
+        }
+
     def audit(self, record_id: int, query: Mapping[str, str]) -> dict[str, Any]:
         self._record(record_id)
         return self.storage.audit(record_id, validate_page_query(query))
@@ -312,7 +383,18 @@ class SpecialProcessingService:
             "保存草稿" if value.save_mode == "draft" else "创建特殊处理记录",
             request_id,
         )
-        created = self.storage.create(record, (), processes, audit)
+        attachment_change = self._validated_record_attachment_change(payload, creating=True)
+        attachment_actor = (
+            self._attachment_actor(current_user) if attachment_change is not None else None
+        )
+        created = self.storage.create(
+            record,
+            (),
+            processes,
+            audit,
+            record_attachment_change=attachment_change,
+            attachment_actor=attachment_actor,
+        )
         if status == RecordStatus.PENDING:
             self._publish_pending_notification(created)
         self._refresh_special_governance_stats()
@@ -353,25 +435,54 @@ class SpecialProcessingService:
             updated_at=now,
         )
         changed = self._changed_fields(current, changes, value.processing_script)
+        attachment_change = None
+        attachment_actor = None
+        attachment_added = 0
+        attachment_removed = 0
+        if "record_attachments" in payload:
+            current_attachments = self.storage.list_record_attachments(record_id)
+            attachment_change = self._validated_record_attachment_change(
+                payload, creating=False, current=current_attachments
+            )
+            if attachment_change is not None:
+                attachment_actor = self._attachment_actor(current_user)
+                current_ids = {int(item["id"]) for item in current_attachments}
+                attachment_removed = len(current_ids - set(attachment_change.retained_ids))
+                attachment_added = len(attachment_change.new_files)
+        attachments_changed = attachment_added > 0 or attachment_removed > 0
         draft_save = value.save_mode == "draft" or next_status == "draft"
+        action_code = "update" if next_status == current["status"] else "status_change"
+        summary = self._build_action_summary(
+            action_code,
+            current["status"],
+            next_status,
+            changed,
+            draft_save=draft_save,
+        )
+        if attachments_changed:
+            if changed:
+                summary = f"{summary}；附件新增 {attachment_added} 个、移除 {attachment_removed} 个"
+            else:
+                summary = f"修改附件（新增 {attachment_added} 个，移除 {attachment_removed} 个）"
         audit = self._audit(
-            "update" if next_status == current["status"] else "status_change",
+            action_code,
             actor,
             now,
             current["status"],
             next_status,
             changed,
-            self._build_action_summary(
-                "update" if next_status == current["status"] else "status_change",
-                current["status"],
-                next_status,
-                changed,
-                draft_save=draft_save,
-            ),
+            summary,
             request_id,
         )
         updated = self.storage.update(
-            record_id, value.row_version, changes, (), processes, audit
+            record_id,
+            value.row_version,
+            changes,
+            (),
+            processes,
+            audit,
+            record_attachment_change=attachment_change,
+            attachment_actor=attachment_actor,
         )
         if updated.get("status") == "pending":
             if current["status"] == "pending":
