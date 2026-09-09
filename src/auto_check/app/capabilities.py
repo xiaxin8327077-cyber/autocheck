@@ -58,7 +58,7 @@ CAPABILITY_DEFINITIONS: dict[str, dict[str, str]] = {
     "sys.role_permissions": {"label": "角色权限配置页", "type": TYPE_MENU},
     "history.delete": {"label": "删除对数历史记录", "type": TYPE_FUNCTION},
     "report_navigation.edit_schedule": {"label": "编辑报送日期", "type": TYPE_FUNCTION},
-    "report_navigation.edit_stats": {"label": "编辑数据治理统计", "type": TYPE_FUNCTION},
+    "report_navigation.edit_stats": {"label": "编辑治理统计", "type": TYPE_FUNCTION},
     # 以下 rsp.* 一期仅注册展示，运行时不接通 RSP 业务鉴权。
     "rsp.view": {"label": "页面查看", "type": TYPE_MENU},
     "rsp.detail": {"label": "查看详情", "type": TYPE_FUNCTION},

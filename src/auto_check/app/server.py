@@ -125,7 +125,24 @@ from auto_check.app.pbc_import import (
     projected_columns,
 )
 from auto_check.app.repositories import AutoCheckRepository, DEFAULT_RECONCILE_TABLES
-from auto_check.app.report_navigation import ReportNavigationScheduler, ReportNavigationService
+from auto_check.app.report_check_config import (
+    default_report_check_config,
+    load_report_check_config,
+    normalize_report_check_config,
+    save_report_check_config,
+)
+from auto_check.app.report_check_statistics import (
+    PROVIDER_OWNER as REPORT_CHECK_PROVIDER_OWNER,
+    SEMANTICS_VERSION as REPORT_CHECK_SEMANTICS_VERSION,
+    ReportCheckStatistics,
+    fetch_report_check_counts,
+    resolve_report_check_entry,
+)
+from auto_check.app.report_navigation import (
+    ReportNavigationScheduler,
+    ReportNavigationService,
+    report_navigation_business_report_date,
+)
 from auto_check.app.module_system import ModuleRuntime
 from auto_check.app.module_system.contracts import ModuleBootstrapContext, ModuleHttpResponse
 from auto_check.app.notifications.http_api import NotificationHttpApi
@@ -445,6 +462,37 @@ class ApiRouter:
         self.max_archive_member_bytes = max_archive_member_bytes
         if start_field_mapping_auto_refresh:
             self._start_db_validation_field_mapping_auto_refresh()
+
+    def _report_check_config_payload(self) -> dict[str, Any]:
+        with self.application_database.connect() as connection:
+            config = load_report_check_config(connection)
+        defaults = default_report_check_config()
+        sources = load_store(database=self.application_database).data_sources
+        return {
+            "data_source": config["data_source"],
+            "total_sql": config["total_sql"],
+            "remaining_sql": config["remaining_sql"],
+            "description": config["description"],
+            "data_sources": [entry.name for entry in sources],
+            "is_default": config == defaults,
+            "defaults": defaults,
+        }
+
+    def _save_report_check_config(self, payload: Any) -> dict[str, Any]:
+        with self.application_database.transaction() as connection:
+            save_report_check_config(connection, payload or {})
+        return self._report_check_config_payload()
+
+    def _test_report_check_config(self, payload: Any) -> dict[str, Any]:
+        config = normalize_report_check_config(payload or {})
+        sources = load_store(database=self.application_database).data_sources
+        entry = resolve_report_check_entry(config, sources)
+        total, remaining = fetch_report_check_counts(
+            config,
+            DatabaseClient(entry.config),
+            report_navigation_business_report_date(beijing_now()),
+        )
+        return {"ok": True, "total": total, "remaining": remaining}
 
     def _custom_role_codes(self) -> list[str]:
         with self.application_database.connect() as connection:
@@ -769,6 +817,27 @@ class ApiRouter:
                     values,
                     current_user or {},
                 )
+
+            if method == "GET" and path == "/api/report-navigation/report-check-config":
+                if not self._user_has_capability(current_user, "report_navigation.edit_stats"):
+                    return 403, {"error": "admin role required"}
+                return 200, self._report_check_config_payload()
+
+            if method == "POST" and path == "/api/report-navigation/report-check-config":
+                if not self._user_has_capability(current_user, "report_navigation.edit_stats"):
+                    return 403, {"error": "admin role required"}
+                try:
+                    return 200, self._save_report_check_config(body)
+                except ValueError as exc:
+                    return 400, {"error": str(exc)}
+
+            if method == "POST" and path == "/api/report-navigation/report-check-config/test":
+                if not self._user_has_capability(current_user, "report_navigation.edit_stats"):
+                    return 403, {"error": "admin role required"}
+                try:
+                    return 200, self._test_report_check_config(body)
+                except ValueError as exc:
+                    return 400, {"error": sanitize_error_message(str(exc))}
 
             if path.startswith("/api/admin/storage"):
                 return self._handle_admin_storage(method, path, body, current_user=current_user)
@@ -4790,6 +4859,7 @@ def run_server(
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
     application_database = ApplicationDatabase.from_config_path(resolved_config_path)
     report_navigation_scheduler: ReportNavigationScheduler | None = None
+    report_check_provider_handle = None
     module_runtime: ModuleRuntime | None = None
     server: ThreadingHTTPServer | None = None
     notification_service: NotificationService | None = None
@@ -4805,6 +4875,14 @@ def run_server(
         report_navigation_service = ReportNavigationService(
             application_database,
             config_path=resolved_config_path,
+        )
+        report_check_provider_handle = report_navigation_service.register_card_provider(
+            owner=REPORT_CHECK_PROVIDER_OWNER,
+            card_code="report_check",
+            provider=ReportCheckStatistics(application_database),
+            semantics_version=REPORT_CHECK_SEMANTICS_VERSION,
+            include_in_collect=False,
+            refresh_on_dashboard=True,
         )
         try:
             server = ThreadingHTTPServer((host, port), Handler)
@@ -4884,6 +4962,8 @@ def run_server(
         try:
             if report_navigation_scheduler is not None:
                 cleanup(report_navigation_scheduler.stop)
+            if report_check_provider_handle is not None:
+                cleanup(report_check_provider_handle.close)
         finally:
             try:
                 if notification_service is not None:

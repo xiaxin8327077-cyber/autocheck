@@ -172,7 +172,7 @@
           <div class="report-nav-stats-toolbar">
             <div class="report-nav-report-period">
               <span class="report-nav-overview-label">报送概览</span>
-              <span class="report-nav-report-month-label">报送期</span>
+              <span class="report-nav-report-month-label">当前报送期</span>
               <div class="report-nav-report-month" aria-label="当前报送期">
                 <strong id="reportNavMonth">--</strong>
               </div>
@@ -1802,6 +1802,47 @@
           <div class="app-modal-footer modal-footer">
             <button class="btn-outline" id="reportNavCardMaintenanceCancel" type="button" data-action-tone="neutral" data-action-variant="weak">取消</button>
             <button class="btn-confirm-primary" id="reportNavCardMaintenanceSave" type="button" data-action-tone="primary" data-action-variant="solid">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 报送导航报表校验口径配置弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="reportCheckConfigModal" hidden>
+        <div class="app-modal-shell modal report-check-config-modal">
+          <div class="app-modal-header modal-header">
+            <h3>报表校验口径配置</h3>
+            <button class="app-modal-close btn-close" id="reportCheckConfigClose" type="button">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body">
+            <div class="report-check-config-row">
+              <label class="report-check-config-label" for="reportCheckConfigDescription">描述文字</label>
+              <input id="reportCheckConfigDescription" class="prompt-input report-check-config-description" maxlength="100" placeholder="请输入卡片备注说明" />
+            </div>
+            <div class="report-check-config-row">
+              <label class="report-check-config-label" for="reportCheckConfigSource">数据源</label>
+              <select id="reportCheckConfigSource" class="prompt-input report-check-config-source"></select>
+            </div>
+            <div class="report-check-config-block">
+              <div class="report-check-config-block-head">
+                <label for="reportCheckConfigTotalSql">总数 SQL（所有校验）</label>
+                <span>执行时包一层子查询统计行数</span>
+              </div>
+              <textarea id="reportCheckConfigTotalSql" class="report-check-config-sql" rows="4" spellcheck="false"></textarea>
+            </div>
+            <div class="report-check-config-block">
+              <div class="report-check-config-block-head">
+                <label for="reportCheckConfigRemainingSql">剩余 SQL（未完成）</label>
+                <span>需返回单个数值；<code>${report_period}</code> 为当前报送期月末日期参数</span>
+              </div>
+              <textarea id="reportCheckConfigRemainingSql" class="report-check-config-sql report-check-config-sql-tall" rows="10" spellcheck="false"></textarea>
+            </div>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <p class="modal-status report-check-config-result" id="reportCheckConfigResult" role="status" aria-live="polite"></p>
+            <button class="btn-outline btn-sm" id="reportCheckConfigReset" type="button" data-action-tone="neutral" data-action-variant="weak">恢复默认</button>
+            <button class="btn-outline btn-sm" id="reportCheckConfigTest" type="button" data-action-tone="primary" data-action-variant="weak">测试执行</button>
+            <button class="btn-outline btn-sm" id="reportCheckConfigCancel" type="button" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button class="btn-primary btn-sm" id="reportCheckConfigSave" type="button" data-action-tone="primary" data-action-variant="solid">保存</button>
           </div>
         </div>
       </div>

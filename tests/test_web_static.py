@@ -2410,17 +2410,61 @@ def test_report_navigation_statistics_keep_the_existing_four_icon_colors():
 
     assert 'report_forms: {\n    color: "blue"' in app_js
     assert 'supplement_tasks: {\n    color: "green"' in app_js
-    assert 'data_governance: {\n    color: "orange"' in app_js
-    assert 'label: "数据治理"' in app_js
+    assert 'report_check: {\n    color: "orange"' in app_js
+    assert 'label: "报表校验"' in app_js
     assert 'special_governance: {\n    color: "red"' in app_js
     assert 'escapeHtml(style.label || card.name || "")' in app_js
     assert 'class="report-nav-stat-body"' in app_js
     assert '<path d="M14 2H6a2 2 0 0 0-2 2v16' in app_js
     assert '<path d="M20 6L9 17l-5-5"' in app_js
-    assert '<path d="M21 12a9 9 0 1 1-6.22-8.56"' in app_js
+    assert '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"' in app_js
     assert '<path d="M10.29 3.86L1.82 18' in app_js
     for color in ["blue", "green", "orange", "red"]:
         assert f"#page-report-navigation .report-nav-stat-card.{color} .report-nav-stat-icon" in css
+
+
+def test_report_check_card_config_entry_and_modal_exist():
+    app_js = _read(APP_JS)
+    index_html = _read(INDEX_HTML)
+    styles_css = _read(STYLES_CSS)
+    readme = _read(README_MD)
+
+    assert 'id="reportNavCheckConfigButton"' not in index_html
+    assert 'id="reportCheckConfigModal"' in index_html
+    assert 'id="reportCheckConfigSource"' in index_html
+    assert 'id="reportCheckConfigTotalSql"' in index_html
+    assert 'id="reportCheckConfigRemainingSql"' in index_html
+    assert 'id="reportCheckConfigDescription"' in index_html
+    assert 'id="reportCheckConfigTest"' in index_html
+    assert 'id="reportCheckConfigReset"' in index_html
+    assert 'class="modal-status report-check-config-result"' in index_html
+    assert 'class="app-modal-shell modal report-check-config-modal"' in index_html
+    assert 'class="btn-primary btn-sm" id="reportCheckConfigSave"' in index_html
+    assert "${report_period}" in index_html
+    assert 'REPORT_NAV_MAINTAINABLE_CARDS = new Set(["special_governance"])' in app_js
+    assert "async function openReportCheckConfig()" in app_js
+    assert 'api("/api/report-navigation/report-check-config")' in app_js
+    assert 'api("/api/report-navigation/report-check-config/test"' in app_js
+    assert 'reportNavStats?.addEventListener("contextmenu"' in app_js
+    assert """event.target.closest('[data-report-nav-card="report_check"]')""" in app_js
+    assert "function reportNavigationCardConfigurable(cardCode)" in app_js
+    assert 'card.card_code === "report_check"' in app_js
+    assert "较前一日" in app_js
+    assert 'class="report-check-description-icon"' in app_js
+    assert 'data-tooltip="${escapeHtml(card.description || "")}"' in app_js
+    assert 'title="管理员右击可配置报表校验口径"' not in app_js
+    assert "reportCheckConfigDescription?.value" in app_js
+    assert "reportCheckConfigDescription.value = String(config.description || \"\")" in app_js
+    assert "if (event.target === reportCheckConfigModal)" not in app_js
+    assert 'const monthlyCards = cards.filter((card) => ["report_forms", "report_check"].includes(card.card_code));' in app_js
+    assert 'grid-template-columns: repeat(2, minmax(0, 1fr));' in styles_css
+    assert "#page-report-navigation .report-nav-period-stats,\n  #page-report-navigation .report-nav-monthly-stat" in styles_css
+    assert '<span class="changelog-version">v1.2.24</span>' in app_js
+    assert ".modal.report-check-config-modal" in styles_css
+    assert ".report-check-config-row {\n  display: flex;\n  flex-direction: column;\n  align-items: stretch;" in styles_css
+    assert ".report-check-config-modal .report-check-config-source {\n  width: 100%;" in styles_css
+    assert "#page-report-navigation .report-nav-stat-card.configurable" in styles_css
+    assert "- 报送导航：" in readme
 
 
 def test_report_navigation_display_only_step_is_visually_neutral():
@@ -2977,14 +3021,17 @@ def test_space_tech_uses_gap_safe_panel_shadows_across_all_pages():
     assert "--space-panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);" in css
 
 
-def test_report_navigation_month_label_uses_snapshot_while_period_only_reloads_statistics_cards():
+def test_report_navigation_month_label_and_overview_cards_stay_on_reporting_period():
     app_js = _read(APP_JS)
 
     assert "function reportNavigationMonthText(value)" in app_js
     assert 'const businessPeriod = String(payload.business_report_date || payload.report_month || "").slice(0, 7);' in app_js
+    assert '<span class="report-nav-report-month-label">当前报送期</span>' in _read(INDEX_HTML)
     assert "reportNavMonth.textContent = reportNavigationMonthText(businessPeriod);" in app_js
-    assert 'const monthlyCard = cards.find((card) => card.card_code === "report_forms")' in app_js
-    assert 'const periodCards = cards.filter((card) => card.card_code !== "report_forms")' in app_js
+    assert "#page-report-navigation .report-nav-report-period {" in _read(STYLES_CSS)
+    assert "align-items: flex-end;" in _read(STYLES_CSS)
+    assert 'const monthlyCards = cards.filter((card) => ["report_forms", "report_check"].includes(card.card_code))' in app_js
+    assert 'const periodCards = cards.filter((card) => !["report_forms", "report_check"].includes(card.card_code))' in app_js
     assert 'const period = reportNavPeriodSelect?.value || "month";' in app_js
     assert 'dashboard?period=${encodeURIComponent(period)}' in app_js
     assert "report_month=" not in app_js
@@ -5578,6 +5625,7 @@ def test_all_system_modals_use_balanced_shared_shell():
         "reportNavTodoAllModal",
         "reportNavHistoryModal",
         "reportNavCardMaintenanceModal",
+        "reportCheckConfigModal",
         "userModal",
         "configModal",
         "rolePermissionsModal",

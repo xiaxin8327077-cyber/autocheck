@@ -131,7 +131,7 @@ def test_store_saves_governance_card_values_independently_for_all_four_periods()
     current = datetime(2026, 7, 16, 9, 30)
 
     store.save_manual_card_values(
-        "data_governance",
+        "special_governance",
         {
             "week": {"completed_count": 1, "incomplete_count": 2},
             "month": {"completed_count": 3, "incomplete_count": 4},
@@ -142,11 +142,11 @@ def test_store_saves_governance_card_values_independently_for_all_four_periods()
         now=current,
     )
 
-    values = store.load_manual_card_values("data_governance")
+    values = store.load_manual_card_values("special_governance")
     assert set(values) == {"week", "month", "quarter", "year"}
     assert (values["quarter"].completed_count, values["quarter"].incomplete_count) == (5, 6)
     assert values["year"].operator_username == "admin"
-    assert store.load_manual_card_values("special_governance") == {}
+    assert store.load_manual_card_values("report_check") == {}
 
 
 def test_schedule_inherits_previous_year_and_clamps_leap_day():
@@ -1179,9 +1179,11 @@ def test_dashboard_returns_selected_period_snapshots_processes_and_latest_run():
     assert [card["card_code"] for card in payload["cards"]] == [
         "report_forms",
         "supplement_tasks",
-        "data_governance",
+        "report_check",
         "special_governance",
     ]
+    report_check = next(card for card in payload["cards"] if card["card_code"] == "report_check")
+    assert report_check["name"] == "报表校验"
     supplement = next(card for card in payload["cards"] if card["card_code"] == "supplement_tasks")
     assert (supplement["total_count"], supplement["completed_count"], supplement["incomplete_count"]) == (12, 3, 9)
     assert [process["process_code"] for process in payload["processes"]] == ["p1", "p2"]
@@ -1283,10 +1285,11 @@ def test_governance_card_maintenance_rejects_non_admin_invalid_card_and_missing_
     fractional_values["week"]["completed_count"] = 1.5
 
     for card_code, user, payload in [
-        ("data_governance", {"role": "user"}, values),
+        ("report_check", {"role": "admin"}, values),
+        ("special_governance", {"role": "user"}, values),
         ("report_forms", {"role": "admin"}, values),
-        ("data_governance", {"role": "admin"}, {"month": values["month"]}),
-        ("data_governance", {"role": "admin"}, fractional_values),
+        ("special_governance", {"role": "admin"}, {"month": values["month"]}),
+        ("special_governance", {"role": "admin"}, fractional_values),
     ]:
         try:
             service.update_card_manual_values(card_code, payload, user)
@@ -1898,7 +1901,22 @@ def test_managed_card_rejects_manual_values_even_when_inactive_and_unclaimed_car
         period: {"completed_count": 1, "incomplete_count": 2}
         for period in ("week", "month", "quarter", "year")
     }
-    service.update_card_manual_values("data_governance", values, admin)
+    service.update_card_manual_values("special_governance", values, admin)
+
+    unclaimed_card = next(
+        item
+        for item in service.dashboard(period="month", current_user=admin)["cards"]
+        if item["card_code"] == "special_governance"
+    )
+    assert (unclaimed_card["completed_count"], unclaimed_card["incomplete_count"]) == (1, 2)
+
+    try:
+        service.update_card_manual_values("report_check", values, admin)
+    except ValueError as exc:
+        assert str(exc) == "仅支持维护报表特殊治理"
+    else:
+        raise AssertionError("report check card must not accept manual maintenance")
+
     bound = platform_module.create_report_navigation_service(service).binder("alpha")
     handle = bound.value.register_card_provider(
         card_code="special_governance",
@@ -1913,13 +1931,6 @@ def test_managed_card_rejects_manual_values_even_when_inactive_and_unclaimed_car
         assert exc.args == ("card statistics are managed by a provider",)
     else:
         raise AssertionError("claimed cards must reject manual maintenance")
-
-    data_card = next(
-        item
-        for item in service.dashboard(period="month", current_user=admin)["cards"]
-        if item["card_code"] == "data_governance"
-    )
-    assert (data_card["completed_count"], data_card["incomplete_count"]) == (1, 2)
 
 
 def test_provider_callback_runs_outside_registry_lock_and_obsolete_result_cannot_overwrite_new_provider():

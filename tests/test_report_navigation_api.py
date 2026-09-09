@@ -171,16 +171,16 @@ def test_governance_card_values_require_admin_and_pass_all_four_periods(tmp_path
     body = {"values": values}
 
     denied, _ = router.handle(
-        "POST", "/api/report-navigation/cards/data_governance", body, current_user=_user()
+        "POST", "/api/report-navigation/cards/special_governance", body, current_user=_user()
     )
     allowed, payload = router.handle(
-        "POST", "/api/report-navigation/cards/data_governance", body, current_user=_admin()
+        "POST", "/api/report-navigation/cards/special_governance", body, current_user=_admin()
     )
 
     assert denied == 403
     assert allowed == 200
-    assert payload == {"ok": True, "card_code": "data_governance"}
-    assert service.calls == [("card-values", "data_governance", values, _admin())]
+    assert payload == {"ok": True, "card_code": "special_governance"}
+    assert service.calls == [("card-values", "special_governance", values, _admin())]
 
 
 def test_provider_managed_governance_card_values_return_conflict(tmp_path):

@@ -533,7 +533,15 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         handler_types.append(handler)
         return FakeServer()
 
-    report_navigation_service = object()
+    class FakeProviderHandle:
+        def close(self):
+            pass
+
+    class FakeReportNavigationService:
+        def register_card_provider(self, **_kwargs):
+            return FakeProviderHandle()
+
+    report_navigation_service = FakeReportNavigationService()
     user_directory_spec = object()
     report_navigation_spec = object()
 
@@ -779,10 +787,18 @@ def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path
         "create_user_directory_service",
         lambda _auth_manager: object(),
     )
+    class FakeProviderHandle:
+        def close(self):
+            pass
+
+    class FakeReportNavigationService:
+        def register_card_provider(self, **_kwargs):
+            return FakeProviderHandle()
+
     monkeypatch.setattr(
         server_module,
         "ReportNavigationService",
-        lambda *_args, **_kwargs: object(),
+        lambda *_args, **_kwargs: FakeReportNavigationService(),
     )
     monkeypatch.setattr(server_module, "ReportNavigationScheduler", FakeScheduler)
     monkeypatch.setattr(

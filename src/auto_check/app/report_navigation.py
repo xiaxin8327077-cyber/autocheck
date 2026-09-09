@@ -13,6 +13,7 @@ import uuid
 from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.config import DataSourceEntry, load_store
 from auto_check.app.db import DatabaseClient, qualified_name, quote_identifier
+from auto_check.app.report_check_config import load_report_check_config
 from auto_check.app.report_navigation_platform import (
     CardProviderRegistry,
     CardStatisticsRequest,
@@ -523,7 +524,7 @@ EVALUATORS: dict[str, Callable[[EvaluationContext], EvaluationResult]] = {
 
 
 PERIODS = ("week", "month", "quarter", "year")
-GOVERNANCE_CARD_CODES = ("data_governance", "special_governance")
+GOVERNANCE_CARD_CODES = ("special_governance",)
 
 
 def period_bounds(period: str, today: date) -> tuple[datetime, datetime]:
@@ -1012,12 +1013,14 @@ class ReportNavigationService:
         schedules = self.store.load_schedules(report_month)
         cards = self.store.load_card_snapshots(period)
         provider_states = self.store.load_card_provider_states()
+        with self.database.connect() as connection:
+            report_check_description = load_report_check_config(connection)["description"]
         is_admin = str((current_user or {}).get("role") or "") == "admin"
         last_run = self.store.load_latest_run()
         card_order = (
             ("report_forms", "报送报表"),
             ("supplement_tasks", "补录任务"),
-            ("data_governance", "数据治理流程"),
+            ("report_check", "报表校验"),
             ("special_governance", "报表特殊治理"),
         )
         card_payload = []
@@ -1081,6 +1084,8 @@ class ReportNavigationService:
                         )
                     ),
                 }
+            if card_code == "report_check":
+                card["description"] = report_check_description
             if provider_state is not None:
                 card.update(
                     source="provider",
@@ -1212,7 +1217,7 @@ class ReportNavigationService:
         if str(current_user.get("role") or "") != "admin":
             raise ValueError("仅管理员可以维护治理统计")
         if card_code not in GOVERNANCE_CARD_CODES:
-            raise ValueError("仅支持维护数据治理流程和报表特殊治理")
+            raise ValueError("仅支持维护报表特殊治理")
         if self.store.load_card_provider_state(card_code) is not None:
             raise ProviderManagedCardError("card statistics are managed by a provider")
         if not isinstance(values, Mapping) or set(values) != set(PERIODS):

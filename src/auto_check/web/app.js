@@ -71,6 +71,17 @@ const reportNavCardMaintenanceGrid = document.getElementById("reportNavCardMaint
 const reportNavCardMaintenanceClose = document.getElementById("reportNavCardMaintenanceClose");
 const reportNavCardMaintenanceCancel = document.getElementById("reportNavCardMaintenanceCancel");
 const reportNavCardMaintenanceSave = document.getElementById("reportNavCardMaintenanceSave");
+const reportCheckConfigModal = document.getElementById("reportCheckConfigModal");
+const reportCheckConfigSource = document.getElementById("reportCheckConfigSource");
+const reportCheckConfigTotalSql = document.getElementById("reportCheckConfigTotalSql");
+const reportCheckConfigRemainingSql = document.getElementById("reportCheckConfigRemainingSql");
+const reportCheckConfigDescription = document.getElementById("reportCheckConfigDescription");
+const reportCheckConfigResult = document.getElementById("reportCheckConfigResult");
+const reportCheckConfigClose = document.getElementById("reportCheckConfigClose");
+const reportCheckConfigCancel = document.getElementById("reportCheckConfigCancel");
+const reportCheckConfigTest = document.getElementById("reportCheckConfigTest");
+const reportCheckConfigReset = document.getElementById("reportCheckConfigReset");
+const reportCheckConfigSave = document.getElementById("reportCheckConfigSave");
 
 // 顶栏/系统信息展示用月度版本号（约每月更新）；更新日志 changelog 仍用独立版本号，互不影响。
 const DEFAULT_VERSION = "V1.2";
@@ -1825,11 +1836,11 @@ const REPORT_NAV_CARD_STYLES = {
     icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
     unit: "个",
   },
-  data_governance: {
+  report_check: {
     color: "orange",
-    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.22-8.56"/><polyline points="21 4 21 10 15 10"/></svg>',
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>',
     unit: "个",
-    label: "数据治理",
+    label: "报表校验",
   },
   special_governance: {
     color: "red",
@@ -1849,7 +1860,7 @@ const REPORT_NAV_PERIOD_COMPARISON_LABELS = {
   quarter: "较上季度",
   year: "较上年",
 };
-const REPORT_NAV_MAINTAINABLE_CARDS = new Set(["data_governance", "special_governance"]);
+const REPORT_NAV_MAINTAINABLE_CARDS = new Set(["special_governance"]);
 const REPORT_NAV_CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 const REPORT_NAV_PROCESS_DISPLAY_NAMES = {
   pbc_template: "资管产品模板、逐笔报送",
@@ -1882,6 +1893,10 @@ function reportNavigationCardMaintainable(cardCode) {
   if (!hasCapability("report_navigation.edit_stats") || !REPORT_NAV_MAINTAINABLE_CARDS.has(cardCode)) return false;
   const maintenance = reportNavigationPayload?.card_maintenance?.[cardCode];
   return Boolean(maintenance) && maintenance.editable !== false;
+}
+
+function reportNavigationCardConfigurable(cardCode) {
+  return cardCode === "report_check" && hasCapability("report_navigation.edit_stats");
 }
 
 function reportNavigationTimingSummary(processes = []) {
@@ -2642,7 +2657,9 @@ function renderReportNavigationStatFooter(card, processes = [], period = "month"
       <span class="overdue"><i></i>逾期 <b>${summary.overdue}</b></span>
     </div>`;
   }
-  const comparisonLabel = REPORT_NAV_PERIOD_COMPARISON_LABELS[period] || REPORT_NAV_PERIOD_COMPARISON_LABELS.month;
+  const comparisonLabel = card.card_code === "report_check"
+    ? "较前一日"
+    : REPORT_NAV_PERIOD_COMPARISON_LABELS[period] || REPORT_NAV_PERIOD_COMPARISON_LABELS.month;
   const comparisonMissing = card.comparison_delta === null || card.comparison_delta === undefined;
   const rawComparisonValue = Number(card.comparison_delta);
   const comparisonValue = Number.isFinite(rawComparisonValue) ? rawComparisonValue : 0;
@@ -2671,12 +2688,17 @@ function renderReportNavigationStatCard(card, processes = [], period = "month") 
   const tagsMarkup = unavailable
     ? '<div class="report-nav-stat-tags"><span class="warn"><b>--</b> 统计暂不可用</span></div>'
     : `<div class="report-nav-stat-tags"><span class="up"><b>${reportNavigationCountText(card.completed_count)}</b> 已完成</span><span class="warn"><b>${reportNavigationCountText(card.incomplete_count)}</b> 未完成</span>${card.stale ? '<span class="warn"><b>!</b> 数据已过期</span>' : ""}</div>`;
+  const descriptionMarkup = card.card_code === "report_check" && card.description
+    ? `<span class="report-check-description-icon" tabindex="0" role="img" aria-label="${escapeHtml(card.description)}" data-tooltip="${escapeHtml(card.description || "")}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="11" x2="12" y2="16"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+      </span>`
+    : "";
   return `
-    <article class="report-nav-stat-card ${style.color}${card.card_code === "report_forms" ? " overview" : ""}${maintainable ? " maintainable" : ""}${unavailable ? " unavailable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
+    <article class="report-nav-stat-card ${style.color}${["report_forms", "report_check"].includes(card.card_code) ? " overview" : ""}${maintainable ? " maintainable" : ""}${unavailable ? " unavailable" : ""}${reportNavigationCardConfigurable(card.card_code) ? " configurable" : ""}" data-report-nav-card="${escapeHtml(card.card_code || "")}"${interaction}>
       <div class="report-nav-stat-icon" aria-hidden="true">${style.icon}</div>
       <div class="report-nav-stat-body">
         <div class="report-nav-stat-heading">
-          <span>${escapeHtml(style.label || card.name || "")}</span>
+          <span>${escapeHtml(style.label || card.name || "")}${descriptionMarkup}</span>
           <strong>${countMarkup}<small>${unavailable ? "" : style.unit}</small></strong>
         </div>
         <div class="report-nav-stat-progress-row"><span>完成率</span><i><b style="width:${unavailable ? 0 : rate}%"></b></i><em>${rateMarkup}</em></div>
@@ -2687,9 +2709,11 @@ function renderReportNavigationStatCard(card, processes = [], period = "month") 
 }
 
 function renderReportNavigationCards(cards, processes = [], period = "month") {
-  const monthlyCard = cards.find((card) => card.card_code === "report_forms");
-  const periodCards = cards.filter((card) => card.card_code !== "report_forms");
-  if (reportNavMonthlyStat) reportNavMonthlyStat.innerHTML = renderReportNavigationStatCard(monthlyCard, processes, period);
+  const monthlyCards = cards.filter((card) => ["report_forms", "report_check"].includes(card.card_code));
+  const periodCards = cards.filter((card) => !["report_forms", "report_check"].includes(card.card_code));
+  if (reportNavMonthlyStat) {
+    reportNavMonthlyStat.innerHTML = monthlyCards.map((card) => renderReportNavigationStatCard(card, processes, period)).join("");
+  }
   if (reportNavPeriodStats) {
     reportNavPeriodStats.innerHTML = periodCards.map((card) => renderReportNavigationStatCard(card, processes, period)).join("");
   }
@@ -2785,6 +2809,123 @@ reportNavStats?.addEventListener("keydown", (event) => {
   if (!card) return;
   event.preventDefault();
   openReportNavigationCardMaintenance(card.dataset.maintenanceCard);
+});
+
+let reportCheckConfigBusy = false;
+let reportCheckConfigDefaults = null;
+
+function reportCheckConfigValues() {
+  return {
+    data_source: reportCheckConfigSource?.value || "",
+    total_sql: reportCheckConfigTotalSql?.value || "",
+    remaining_sql: reportCheckConfigRemainingSql?.value || "",
+    description: reportCheckConfigDescription?.value || "",
+  };
+}
+
+function setReportCheckConfigResult(message, tone = "") {
+  if (!reportCheckConfigResult) return;
+  reportCheckConfigResult.textContent = message || "";
+  reportCheckConfigResult.dataset.tone = tone;
+}
+
+function fillReportCheckConfig(config = {}) {
+  if (reportCheckConfigSource) {
+    const names = Array.isArray(config.data_sources) ? config.data_sources : [];
+    const current = String(config.data_source || "");
+    const options = names.includes(current) ? names : [...names, current].filter(Boolean);
+    reportCheckConfigSource.innerHTML = options.length
+      ? options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")
+      : '<option value="">暂无数据源</option>';
+    reportCheckConfigSource.value = current;
+    reportCheckConfigSource.disabled = !options.length;
+  }
+  if (reportCheckConfigTotalSql) reportCheckConfigTotalSql.value = String(config.total_sql || "");
+  if (reportCheckConfigRemainingSql) reportCheckConfigRemainingSql.value = String(config.remaining_sql || "");
+  if (reportCheckConfigDescription) reportCheckConfigDescription.value = String(config.description || "");
+  reportCheckConfigDefaults = config.defaults || null;
+  setReportCheckConfigResult("");
+}
+
+async function openReportCheckConfig() {
+  if (!reportCheckConfigModal || !hasCapability("report_navigation.edit_stats")) return;
+  try {
+    const payload = await api("/api/report-navigation/report-check-config");
+    fillReportCheckConfig(payload);
+    reportCheckConfigModal.hidden = false;
+    setTimeout(() => reportCheckConfigSource?.focus(), 0);
+  } catch (error) {
+    showToast(`报表校验口径读取失败：${error.message}`, "error");
+  }
+}
+
+function closeReportCheckConfig() {
+  if (!reportCheckConfigModal || reportCheckConfigModal.hidden) return;
+  reportCheckConfigModal.classList.add("closing");
+  setTimeout(() => {
+    reportCheckConfigModal.hidden = true;
+    reportCheckConfigModal.classList.remove("closing");
+  }, 200);
+}
+
+// 管理员右击"报表校验"统计卡打开口径配置弹窗（与报送日期右击编辑同一交互惯例）。
+reportNavStats?.addEventListener("contextmenu", (event) => {
+  const card = event.target.closest('[data-report-nav-card="report_check"]');
+  if (!card || !hasCapability("report_navigation.edit_stats")) return;
+  event.preventDefault();
+  openReportCheckConfig();
+});
+reportCheckConfigClose?.addEventListener("click", closeReportCheckConfig);
+reportCheckConfigCancel?.addEventListener("click", closeReportCheckConfig);
+reportCheckConfigReset?.addEventListener("click", () => {
+  if (!reportCheckConfigDefaults) return;
+  fillReportCheckConfig({
+    ...reportCheckConfigDefaults,
+    data_sources: reportCheckConfigSource
+      ? Array.from(reportCheckConfigSource.options).map((option) => option.value)
+      : [],
+  });
+  setReportCheckConfigResult("已恢复默认口径，保存后生效。");
+});
+reportCheckConfigTest?.addEventListener("click", async () => {
+  if (reportCheckConfigBusy || !reportCheckConfigTest) return;
+  reportCheckConfigBusy = true;
+  reportCheckConfigTest.disabled = true;
+  setReportCheckConfigResult("测试执行中…");
+  try {
+    const payload = await api("/api/report-navigation/report-check-config/test", {
+      method: "POST",
+      body: JSON.stringify(reportCheckConfigValues()),
+    });
+    setReportCheckConfigResult(
+      `测试执行成功：总数 ${Number(payload.total || 0).toLocaleString("zh-CN")} 个，剩余 ${Number(payload.remaining || 0).toLocaleString("zh-CN")} 个。`,
+    );
+  } catch (error) {
+    setReportCheckConfigResult(`测试执行失败：${error.message}`, "error");
+  } finally {
+    reportCheckConfigBusy = false;
+    reportCheckConfigTest.disabled = false;
+  }
+});
+reportCheckConfigSave?.addEventListener("click", async () => {
+  if (reportCheckConfigBusy || !reportCheckConfigSave) return;
+  reportCheckConfigBusy = true;
+  reportCheckConfigSave.disabled = true;
+  try {
+    await api("/api/report-navigation/report-check-config", {
+      method: "POST",
+      body: JSON.stringify(reportCheckConfigValues()),
+    });
+    closeReportCheckConfig();
+    clearReportNavigationCache();
+    await loadReportNavigation();
+    showToast("报表校验口径已保存", "success");
+  } catch (error) {
+    setReportCheckConfigResult(`保存失败：${error.message}`, "error");
+  } finally {
+    reportCheckConfigBusy = false;
+    reportCheckConfigSave.disabled = false;
+  }
 });
 
 function updateReportNavigationRefreshButton() {
@@ -6024,7 +6165,7 @@ const CAPABILITY_MENU_TREE = [
     children: [
       { code: "menu.report_navigation", label: "页面查看", type: "menu" },
       { code: "report_navigation.edit_schedule", label: "编辑报送日期", type: "function" },
-      { code: "report_navigation.edit_stats", label: "编辑数据治理统计", type: "function" },
+      { code: "report_navigation.edit_stats", label: "编辑治理统计", type: "function" },
     ],
   },
   {
@@ -13814,6 +13955,18 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.24</span>
+        <span class="changelog-date">2026-09-09</span>
+      </div>
+      <ul>
+        <li>报送导航数据治理卡改为报表校验并移入报送概览，支持当前报送期统计、较前一日对比及可配置备注。</li>
+        <li>管理员右击"报表校验"统计卡可维护描述文字、数据源、总数与剩余 SQL，并支持测试执行。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.23</span>
