@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace as _dataclass_replace
 from datetime import date, datetime
 import hashlib
 import json
+import re
 from typing import Any, Callable, Mapping, Sequence
 
 from .contracts import (
@@ -29,6 +31,27 @@ from .permissions import (
 )
 from .statistics import status_metrics
 from .export_workbook import MAX_EXPORT_ROWS, build_export_xlsx
+from .bilingual_names import (
+    MAX_BILINGUAL_ITEMS,
+    MAX_BILINGUAL_PART_LEN,
+    MAX_BILINGUAL_TOTAL_LEN,
+    BilingualNameError,
+    BILINGUAL_GROUP_SEPARATOR,
+    BILINGUAL_ITEM_SEPARATOR,
+    BILINGUAL_PART_SEPARATOR,
+    parse_bilingual_groups,
+    parse_bilingual_items,
+    serialize_bilingual_items,
+    bilingual_summary,
+)
+from .structured_content import (
+    StructuredContentError,
+    SUPPORTED_DATASOURCE_TYPES,
+    parse_structured_content,
+)
+from .sql_builder import ScriptGenerationError, generate_script
+
+_RE_PHYSICAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]{0,127}$")
 from .validator import (
     ALLOWED_ATTACHMENT_EXTENSIONS,
     MAX_RECORD_ATTACHMENTS,
@@ -48,6 +71,8 @@ _AUDIT_FIELD_LABELS = {
     "report_process_name_snapshot": "关联报送",
     "report_period": "所处报送期",
     "dimension": "所属维度",
+    "business_system_name_snapshot": "所属业务系统",
+    "datasource_name_snapshot": "数据源",
     "summary": "处理摘要",
     "table_name": "处理表名",
     "field_name": "处理字段名",
@@ -71,6 +96,10 @@ _AUDIT_SKIP_KEYS = frozenset(
         "handler_user_id",
         "handler_username_snapshot",
         "report_process_code",
+        "business_system_code",
+        "datasource_id",
+        "datasource_type",
+        "structured_content_json",
         "script_sha256",
         "completed_at",
         "voided_at",
@@ -101,6 +130,8 @@ class SpecialProcessingService:
         now: Any,
         role_label_resolver: Callable[[], Mapping[str, str]] | None = None,
         notification_publisher: Any = None,
+        dictionary_service: Any = None,
+        metadata_service: Any = None,
     ) -> None:
         self.storage = storage
         self._users = user_directory
@@ -108,6 +139,8 @@ class SpecialProcessingService:
         self._now = now
         self._role_label_resolver = role_label_resolver
         self._notifications = notification_publisher
+        self._dictionary = dictionary_service
+        self._metadata = metadata_service
 
     def _actor(self, current_user: Mapping[str, Any] | None) -> dict[str, Any]:
         """模块内解析能力矩阵并补齐用户 capabilities，不改平台派发协议。"""
@@ -146,6 +179,14 @@ class SpecialProcessingService:
                 {"code": code, "label": DIMENSION_LABELS[code]}
                 for code in _DIMENSION_ORDER
             ],
+            "business_systems": [
+                {"code": item.code, "name": item.label}
+                for item in self._active_business_system_items()
+            ],
+            "report_period_fields": [
+                {"code": item.code, "name": item.label}
+                for item in self._active_report_period_field_items()
+            ],
             "governance_owner_candidates_by_dimension": candidates_by_dimension,
             "statuses": [
                 {"code": status.value, "label": label}
@@ -169,6 +210,94 @@ class SpecialProcessingService:
                 "can_delete": can_delete(actor),
             },
         }
+
+    def _active_business_system_items(self) -> tuple[Any, ...]:
+        return self._active_dictionary_items("business_system")
+
+    def _active_report_period_field_items(self) -> tuple[Any, ...]:
+        return self._active_dictionary_items("report_period_field")
+
+    def _active_dictionary_items(self, dictionary_code: str) -> tuple[Any, ...]:
+        if self._dictionary is None:
+            return ()
+        try:
+            return tuple(self._dictionary.list_active_items(dictionary_code))
+        except Exception:
+            return ()
+
+    def _resolve_business_system(
+        self, code: Any, current: Mapping[str, Any] | None
+    ) -> tuple[str | None, str | None]:
+        """解析所属业务系统代码并返回 (代码, 名称快照)。
+
+        创建新选必须是当前启用项；编辑时保持原代码不变则沿用当前名称快照（
+        已停用项仍可读）；改选或新建必须命中启用项。
+        """
+        clean = str(code or "").strip()
+        if not clean:
+            return (None, None)
+        current_code = str((current or {}).get("business_system_code") or "").strip()
+        if current is not None and clean == current_code:
+            return (clean, (current or {}).get("business_system_name_snapshot"))
+        if self._dictionary is None:
+            raise ValidationError(fields={"business_system_code": "业务系统字典服务暂不可用"})
+        try:
+            item = self._dictionary.get_active_item("business_system", clean)
+        except Exception:
+            raise PlatformUnavailableError() from None
+        if item is None:
+            raise ValidationError(fields={"business_system_code": "所属业务系统无效或已停用，请重新选择"})
+        return (item.code, item.label)
+
+    @staticmethod
+    def _require_canonical_bilingual(field: str, label: str, value: Any) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        try:
+            if field == "field_name":
+                # 字段名支持分组格式（；；分隔，组对应处理表）；无分隔符时即旧版单组规范串。
+                parse_bilingual_groups(text)
+            else:
+                if BILINGUAL_GROUP_SEPARATOR in text:
+                    raise BilingualNameError("处理表名不支持分组分隔符“；；”")
+                parse_bilingual_items(text)
+        except ValueError as exc:
+            raise ValidationError(fields={field: f"{label}：{exc}"}) from None
+
+    @staticmethod
+    def _enforce_field_group_alignment(value: Any) -> None:
+        """分组字段串必须与处理表数量一一对应。"""
+        field_value = str(getattr(value, "field_name") or "").strip()
+        if BILINGUAL_GROUP_SEPARATOR not in field_value:
+            return
+        table_value = str(getattr(value, "table_name") or "").strip()
+        try:
+            tables = parse_bilingual_items(table_value)
+        except ValueError as exc:
+            raise ValidationError(fields={
+                "table_name": f"处理表名：保存关联字段前需先按“中文｜英文”规范格式补全（{exc}）",
+            }) from None
+        groups = parse_bilingual_groups(field_value)
+        if len(groups) != len(tables):
+            raise ValidationError(fields={
+                "field_name": f"处理字段名：字段分组数（{len(groups)}）必须与处理表数（{len(tables)}）一致",
+            })
+
+    def _enforce_bilingual_fields(
+        self, value: Any, current: Mapping[str, Any] | None
+    ) -> None:
+        """新建记录强制双语规范串；编辑时未改动的旧值可保留，一旦修改必须升级格式。"""
+        for field, label in (("table_name", "处理表名"), ("field_name", "处理字段名")):
+            submitted = str(getattr(value, field) or "").strip()
+            if current is not None:
+                previous = str(current.get(field) or "").strip()
+                if submitted == previous:
+                    continue
+            self._require_canonical_bilingual(field, label, submitted)
+        # 分组一致性：只要字段名为分组格式就校验（含表名被单独修改的情况）。
+        if BILINGUAL_GROUP_SEPARATOR in str(getattr(value, "field_name") or ""):
+            self._enforce_field_group_alignment(value)
 
     def _role_display_name_to_code(self) -> dict[str, str]:
         resolver = self._role_label_resolver
@@ -331,6 +460,154 @@ class SpecialProcessingService:
             "username": str(current_user.get("username") or ""),
         }
 
+    def _pin_datasource(self, value: Any) -> Any:
+        """结构化内容的数据源类型/名称以系统已配置数据源为准，防前端伪造。
+
+        每个表都可能使用不同数据源：记录级标识取第一条表的（顶层），
+        其余表的数据源逐个校验存在性与类型，并把类型修正为配置实际值。
+        """
+        content = value.structured_content
+        if content is None or self._metadata is None:
+            return value
+        resolved: dict[str, str] = {}
+        for wanted in [content.datasource_id, *(table.datasource_id for table in content.tables)]:
+            key = str(wanted or "").strip()
+            if not key or key in resolved:
+                continue
+            entry = self._metadata.resolve(key)
+            if entry is None:
+                raise ValidationError(fields={
+                    "datasource_id": "数据源不存在或已被删除，请在系统配置中确认",
+                })
+            db_type = str(getattr(entry.config, "db_type", "") or "").strip().lower()
+            if db_type not in SUPPORTED_DATASOURCE_TYPES:
+                raise ValidationError(fields={
+                    "datasource_id": "该数据源类型暂不支持处理表字段自动读取（仅支持 PostgreSQL / MySQL）",
+                })
+            resolved[key] = db_type
+        pinned_type = resolved.get(content.datasource_id, content.datasource_type)
+        pinned_tables = tuple(
+            _dataclass_replace(
+                table,
+                datasource_type=resolved.get(table.datasource_id, table.datasource_type),
+            )
+            for table in content.tables
+        )
+        return _dataclass_replace(
+            value,
+            structured_content=_dataclass_replace(
+                content,
+                datasource_type=pinned_type,
+                tables=pinned_tables,
+            ),
+            datasource_name_snapshot=str(getattr(self._metadata.resolve(content.datasource_id), "name", "") or "")[:200] or None,
+        )
+
+    # ===== 数据源元数据透传（表/字段选择器） =====
+
+    def _require_metadata(self) -> Any:
+        if self._metadata is None:
+            raise PlatformUnavailableError(message="数据源元数据服务暂时不可用，请稍后重试")
+        return self._metadata
+
+    @staticmethod
+    def _metadata_query(query: Mapping[str, str], *, default_page_size: int) -> tuple[str, int, int]:
+        keyword = str(query.get("keyword") or "").strip()[:100]
+        try:
+            page = int(query.get("page") or 1)
+            page_size = int(query.get("page_size") or default_page_size)
+        except (TypeError, ValueError):
+            raise ValidationError(fields={"page": "分页参数无效"}) from None
+        if page < 1 or page > 10000:
+            raise ValidationError(fields={"page": "分页参数无效"})
+        page_size = min(100, max(1, page_size))
+        return keyword, page, page_size
+
+    def list_datasources(self) -> dict[str, Any]:
+        return {"items": self._require_metadata().list_datasources()}
+
+    def list_datasource_tables(self, datasource_id: str, query: Mapping[str, str]) -> dict[str, Any]:
+        keyword, page, page_size = self._metadata_query(query, default_page_size=20)
+        return self._require_metadata().list_tables(
+            str(datasource_id or "").strip(), keyword=keyword, page=page, page_size=page_size,
+        )
+
+    def list_datasource_columns(self, datasource_id: str, table_name: str, query: Mapping[str, str]) -> dict[str, Any]:
+        keyword, page, page_size = self._metadata_query(query, default_page_size=50)
+        return self._require_metadata().list_columns(
+            str(datasource_id or "").strip(), str(table_name or "").strip(),
+            keyword=keyword, page=page, page_size=page_size,
+        )
+
+    # ===== 处理范围 字段定位映射（项目/合同） =====
+
+    def list_field_mappings(self, datasource_id: str, current_user: Mapping[str, Any]) -> dict[str, Any]:
+        if not can_view(self._actor(current_user)):
+            raise PermissionDeniedError()
+        wanted = str(datasource_id or "").strip()
+        if not wanted:
+            return {"items": []}
+        return {"items": self.storage.list_field_mappings(wanted)}
+
+    def upsert_field_mapping(
+        self,
+        datasource_id: str,
+        payload: Mapping[str, Any],
+        current_user: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if not user_has_capability(self._actor(current_user), "rsp.edit"):
+            raise PermissionDeniedError()
+        wanted = str(datasource_id or "").strip()
+        if not wanted:
+            raise ValidationError(fields={"datasource_id": "数据源无效"})
+        schema_name = str((payload or {}).get("schema") or "").strip()[:128]
+        table_name = str((payload or {}).get("table_name") or "").strip()
+        if not table_name or len(table_name) > 128:
+            raise ValidationError(fields={"table_name": "处理表名无效"})
+        project_field = str((payload or {}).get("project_field") or "").strip()
+        contract_field = str((payload or {}).get("contract_field") or "").strip()
+        if not project_field and not contract_field:
+            raise ValidationError(fields={"project_field": "项目字段与合同字段至少填写一个"})
+        for column, label in ((project_field, "project_field"), (contract_field, "contract_field")):
+            if column and not _RE_PHYSICAL_NAME.match(column):
+                raise ValidationError(fields={label: "字段名必须是数据库真实列名"})
+        actor = self._user(current_user.get("id"))
+        return self.storage.upsert_field_mapping(
+            wanted, schema_name, table_name, project_field, contract_field,
+            user_id=actor.id, username=actor.username,
+        )
+
+    def generate_script(self, payload: Mapping[str, Any], current_user: Mapping[str, Any]) -> dict[str, Any]:
+        """根据表单生成处理脚本文本（仅生成，绝不执行）。
+
+        payload: {structured_content, report_period, field_types}
+        - report_period: 基本信息“所属报送期”（YYYY-MM-DD），参与报送期 WHERE 条件；
+        - field_types: {datasource_id: {table_name: {column: data_type}}}，来源为前端已缓存
+          的表字段元数据，仅用于报送期日期字面量格式判断（不影响生成权限与内容安全）。
+        """
+        if not user_has_capability(self._actor(current_user), "rsp.edit"):
+            raise PermissionDeniedError()
+        structured_raw = (payload or {}).get("structured_content")
+        if structured_raw is None:
+            raise ValidationError(fields={"structured_content": "请先完善特殊处理内容"})
+        try:
+            content = parse_structured_content(structured_raw)
+        except StructuredContentError as exc:
+            raise ValidationError(fields=exc.fields) from None
+        report_period = str((payload or {}).get("report_period") or "").strip()[:16]
+        field_types = (payload or {}).get("field_types") or {}
+        if not isinstance(field_types, Mapping):
+            raise ValidationError(fields={"structured_content": "字段类型信息无效"})
+        try:
+            script = generate_script(
+                content,
+                report_period=report_period,
+                field_types=field_types,
+            )
+        except ScriptGenerationError as exc:
+            raise ValidationError(fields={"processing_script": str(exc)}) from None
+        return {"script": script}
+
     def audit(self, record_id: int, query: Mapping[str, str]) -> dict[str, Any]:
         self._record(record_id)
         return self.storage.audit(record_id, validate_page_query(query))
@@ -345,6 +622,7 @@ class SpecialProcessingService:
         if not can_create(self._actor(current_user)):
             raise PermissionDeniedError()
         value = validate_record_input(payload)
+        value = self._pin_datasource(value)
         processes = self._processes(value.report_process_codes)
         actor = self._user(current_user.get("id"))
         handler = self._user(value.handler_user_id) if value.handler_user_id else None
@@ -355,8 +633,14 @@ class SpecialProcessingService:
         )
         now = self._now()
         status = RecordStatus.DRAFT if value.save_mode == "draft" else RecordStatus.PENDING
+        self._enforce_bilingual_fields(value, None)
+        business_system_code, business_system_name = self._resolve_business_system(
+            value.business_system_code, None
+        )
         record = self._record_values(value, processes, handler, governance_owner)
         record.update(
+            business_system_code=business_system_code,
+            business_system_name_snapshot=business_system_name,
             status=status.value,
             creator_user_id=actor.id,
             creator_username_snapshot=actor.username,
@@ -413,6 +697,7 @@ class SpecialProcessingService:
         if not can_edit(actor_user, current):
             raise PermissionDeniedError()
         value = validate_record_input(payload)
+        value = self._pin_datasource(value)
         if value.row_version is None:
             raise ValidationError(fields={"row_version": "不能为空"})
         if current["status"] != "draft" and value.save_mode != "record":
@@ -427,8 +712,14 @@ class SpecialProcessingService:
         actor = self._user(current_user.get("id"))
         now = self._now()
         next_status = "pending" if current["status"] == "draft" and value.save_mode == "record" else current["status"]
+        self._enforce_bilingual_fields(value, current)
+        business_system_code, business_system_name = self._resolve_business_system(
+            value.business_system_code, current
+        )
         changes = self._record_values(value, processes, handler, governance_owner)
         changes.update(
+            business_system_code=business_system_code,
+            business_system_name_snapshot=business_system_name,
             status=next_status,
             updated_by_user_id=actor.id,
             updated_by_username_snapshot=actor.username,
@@ -732,7 +1023,7 @@ class SpecialProcessingService:
             return
         dimension = str(record.get("dimension") or "").strip()
         dimension_label = DIMENSION_LABELS.get(dimension, dimension or "未分维度")
-        field_name = str(record.get("field_name") or "").strip() or "未填字段"
+        field_name = bilingual_summary(record.get("field_name"), which="字段") or "未填字段"
         record_id = int(record["id"])
         row_version = int(record["row_version"])
         from auto_check.app.notifications.contracts import (
@@ -780,7 +1071,7 @@ class SpecialProcessingService:
             dimension,
             dimension or "未分维度",
         )
-        field_name = str(record.get("field_name") or "").strip() or "未填字段"
+        field_name = bilingual_summary(record.get("field_name"), which="字段") or "未填字段"
         record_id = int(record["id"])
         row_version = int(record["row_version"])
         report_period = str(record.get("report_period") or "").strip()
@@ -847,11 +1138,21 @@ class SpecialProcessingService:
         script = value.processing_script
         primary = processes[0]
         names = "；".join(item["name"] for item in processes)
+        structured = value.structured_content
+        datasource_name = None
+        if structured is not None:
+            datasource_name = (value.datasource_name_snapshot or "").strip() or structured.datasource_id
         return {
             "report_process_code": primary["code"],
             "report_process_name_snapshot": names[:500],
             "report_period": value.report_period,
             "dimension": value.dimension,
+            "business_system_code": None,
+            "business_system_name_snapshot": None,
+            "datasource_id": structured.datasource_id if structured else None,
+            "datasource_name_snapshot": datasource_name,
+            "datasource_type": structured.datasource_type if structured else None,
+            "structured_content_json": structured.to_json() if structured else None,
             "summary": value.summary or None,
             "table_name": value.table_name,
             "field_name": value.field_name,

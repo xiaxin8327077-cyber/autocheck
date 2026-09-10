@@ -1,4 +1,16 @@
 import { element } from "./dom.js";
+import { parseBilingualItems, parseBilingualGroups, BILINGUAL_PART_SEPARATOR } from "./bilingual_name_list.js";
+
+function bilingualCellLines(value) {
+  const text = String(value || "").trim();
+  if (!text) return [];
+  const items = parseBilingualItems(text);
+  if (items) return items.map((item) => `${item.zh}${BILINGUAL_PART_SEPARATOR}${item.en}`);
+  // 分组串（表→字段关联）：按组顺序摊平逐字段分行展示。
+  const groups = parseBilingualGroups(text);
+  if (!groups) return [text];
+  return groups.flat().map((item) => `${item.zh}${BILINGUAL_PART_SEPARATOR}${item.en}`);
+}
 
 const STATUS_LABELS = {
   draft: "草稿",
@@ -78,6 +90,55 @@ function clampedTextCell(documentRef, text) {
     content.addEventListener("blur", () => hideCellTip(documentRef));
     content.tabIndex = 0;
   }
+  return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
+}
+
+function fieldNameCell(documentRef, value) {
+  const text = String(value || "").trim();
+  const items = parseBilingualItems(text);
+  const groups = items ? null : parseBilingualGroups(text);
+  // 历史值直接沿用既有单元格渲染，不插入表名、标签或任何格式标记。
+  if (!items && !groups) return clampedTextCell(documentRef, text);
+  const lines = bilingualCellLines(text);
+  const fullText = lines.join("\n");
+  const content = element(documentRef, "div", {
+    className: "rsp-cell-clamp rsp-cell-clamp-multiline",
+    text: fullText || "—",
+  });
+  if (fullText) {
+    content.addEventListener("mouseenter", () => showCellTip(documentRef, content, fullText));
+    content.addEventListener("mouseleave", () => hideCellTip(documentRef));
+    content.addEventListener("focus", () => showCellTip(documentRef, content, fullText));
+    content.addEventListener("blur", () => hideCellTip(documentRef));
+    content.tabIndex = 0;
+  }
+  return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
+}
+
+/* 修改前/修改后：每个关联字段一行，与“修改字段名”逐行对应；
+ * 连续相同值去重显示“同上”，真实值仍完整保存在记录中。 */
+function valueLinesCell(documentRef, value) {
+  const raw = String(value ?? "");
+  const text = raw.trim();
+  if (!text) return cell(documentRef, "");
+  const rawLines = raw.split("\n");
+  if (rawLines.length <= 1) return clampedTextCell(documentRef, text);
+  const shown = rawLines.map((line, index) => {
+    const current = String(line || "");
+    if (!current.trim()) return "—";
+    if (index > 0 && current === String(rawLines[index - 1] || "")) return "同上";
+    return current;
+  });
+  const fullText = shown.join("\n");
+  const content = element(documentRef, "div", {
+    className: "rsp-cell-clamp rsp-cell-clamp-multiline",
+    text: fullText,
+  });
+  content.addEventListener("mouseenter", () => showCellTip(documentRef, content, rawLines.join("\n")));
+  content.addEventListener("mouseleave", () => hideCellTip(documentRef));
+  content.addEventListener("focus", () => showCellTip(documentRef, content, rawLines.join("\n")));
+  content.addEventListener("blur", () => hideCellTip(documentRef));
+  content.tabIndex = 0;
   return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
 }
 
@@ -193,9 +254,9 @@ export function createRecordTable(documentRef, records, { selectedId, highlightI
       dataset: { recordId: String(record.id) },
       "aria-label": `${record.record_no || "记录"}，${record.field_name || record.summary || "未填写字段"}`,
     }, [
-      clampedTextCell(documentRef, record.field_name),
-      clampedTextCell(documentRef, record.value_before),
-      clampedTextCell(documentRef, record.value_after),
+      fieldNameCell(documentRef, record.field_name),
+      valueLinesCell(documentRef, record.value_before),
+      valueLinesCell(documentRef, record.value_after),
       processNamesCell(documentRef, record),
       element(documentRef, "td", {}, [element(documentRef, "span", { className: `rsp-status rsp-status-${record.status}`, text: STATUS_LABELS[record.status] || record.status })]),
       cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),

@@ -22,6 +22,7 @@
 14. 生产升级必须先备份 MySQL 应用库，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 3 张模块平台表。
 14a. 执行 `sql/app_storage/mysql/018_system_notifications.sql`，新增系统通知主体和收件状态两张表。该脚本使用 `CREATE TABLE IF NOT EXISTS`，可重复执行，不影响已有数据。
 15. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`；完整应用结构共 45 张表，`app_schema_version` 仍为 `1`。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`。执行 `sql/app_storage/mysql/014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照），不修改 `app_schema_version`。再执行 `sql/app_storage/mysql/015_role_definitions.sql` 新增角色定义表（自定义角色），不修改 `app_schema_version`。
+15a. 执行 `sql/app_storage/mysql/019_dictionary_management.sql`，新增系统字典分类 `system_dictionaries` 与字典项 `system_dictionary_items` 两张表，并预置系统锁定分类 `business_system`（业务系统）；脚本幂等、可重复执行，不影响已有数据，执行后完整应用结构为 47 张表。报表特殊处理模块升级（schema 7）由模块迁移在服务启动时自动执行。
 15. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
 16. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
 17. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。

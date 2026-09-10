@@ -79,3 +79,70 @@ def create_user_directory_service(auth_manager: AuthManager) -> PlatformServiceS
         version=USER_DIRECTORY_VERSION,
         binder=bind,
     )
+
+
+DICTIONARY_SERVICE = "platform.dictionary"
+DICTIONARY_SERVICE_VERSION = 1
+
+
+@dataclass(frozen=True)
+class PublicDictionaryItem:
+    """对外暴露的最小字典项视图：编码、展示名与排序。"""
+
+    code: str
+    label: str
+    sort_order: int
+
+
+class _DictionaryFacade:
+    """只读、可撤销的系统字典视图；仅返回启用分类下的启用字典项。"""
+
+    def __init__(self, database) -> None:
+        self._database = database
+        self._closed = False
+        self._lock = RLock()
+
+    def list_active_items(self, dictionary_code: str) -> tuple[PublicDictionaryItem, ...]:
+        with self._lock:
+            self._require_open()
+            from auto_check.app.storage_dictionaries import list_active_dictionary_items
+
+            with self._database.connect() as connection:
+                rows = list_active_dictionary_items(connection, str(dictionary_code or ""))
+            return tuple(
+                PublicDictionaryItem(
+                    code=str(row["code"]),
+                    label=str(row["name"]),
+                    sort_order=int(row["sort_order"]),
+                )
+                for row in rows
+            )
+
+    def get_active_item(self, dictionary_code: str, item_code: str) -> PublicDictionaryItem | None:
+        requested = str(item_code or "")
+        return next(
+            (item for item in self.list_active_items(dictionary_code) if item.code == requested),
+            None,
+        )
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise RuntimeError(_CLOSED_FACADE_ERROR)
+
+    def _close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+
+def create_dictionary_service(application_database) -> PlatformServiceSpec:
+    """创建 v1 只读字典平台服务；每个模块 owner 绑定独立 facade。"""
+
+    def bind(_owner: str) -> BoundService:
+        facade = _DictionaryFacade(application_database)
+        return BoundService(value=facade, close=facade._close)
+
+    return PlatformServiceSpec(
+        name=DICTIONARY_SERVICE,
+        version=DICTIONARY_SERVICE_VERSION,
+        binder=bind,
+    )

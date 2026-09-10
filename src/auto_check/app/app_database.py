@@ -495,6 +495,31 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "read_at",
             "cleared_at",
         ),
+        "system_dictionaries": _columns(
+            "dictionary_code",
+            "dictionary_name",
+            "description",
+            "enabled",
+            "system_locked",
+            "sort_order",
+            "created_by",
+            "created_at",
+            "updated_by",
+            "updated_at",
+        ),
+        "system_dictionary_items": _columns(
+            "id",
+            "dictionary_code",
+            "item_code",
+            "item_name",
+            "description",
+            "enabled",
+            "sort_order",
+            "created_by",
+            "created_at",
+            "updated_by",
+            "updated_at",
+        ),
     }
 )
 

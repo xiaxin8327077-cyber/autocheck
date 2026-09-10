@@ -57,6 +57,7 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "sys.settings.admin",
         "sys.users",
         "sys.role_permissions",
+        "sys.dictionaries",
         "history.delete",
         "report_navigation.edit_schedule",
         "report_navigation.edit_stats",

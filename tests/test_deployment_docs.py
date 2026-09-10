@@ -210,6 +210,16 @@ def test_deployment_upgrade_docs_define_safe_manual_004_through_008_boundary() -
         assert "人工执行" in text
 
 
+def test_dictionary_management_migration_documented() -> None:
+    deployment = _read(DEPLOYMENT_DOC)
+    readme = _read(README)
+    assert "019_dictionary_management.sql" in deployment
+    assert "system_dictionaries" in deployment
+    assert "system_dictionary_items" in deployment
+    assert "business_system" in deployment
+    assert "019_dictionary_management.sql" in readme
+
+
 def test_operator_followable_upgrade_sequences_include_013_after_012() -> None:
     scripts_001_to_013 = [
         "001_init_schema.sql",

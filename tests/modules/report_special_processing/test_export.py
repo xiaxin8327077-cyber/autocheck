@@ -210,3 +210,31 @@ def test_api_export_empty_result_returns_domain_message():
     response = _dispatch("/records/export", query={"empty": "1"})
     assert response.status == 400
     assert response.body["error"]["message"] == "无数据可导出"
+
+
+def test_export_rows_render_grouped_field_names_as_blocks():
+    rows = export_rows(
+        [
+            {
+                "report_period": date(2026, 7, 31),
+                "report_process_name_snapshot": "人行大集中报送",
+                "dimension": "project",
+                "summary": "摘要",
+                "table_name": "资产表｜fa；估值表｜va",
+                "field_name": "金额｜amt；数量｜qty；；汇率｜rate",
+                "value_before": "1",
+                "value_after": "2",
+                "special_handling_at": NOW,
+                "handler_display_name_snapshot": "管理员",
+                "governance_owner_display_name_snapshot": "治理负责人",
+                "status": "pending",
+                "record_no": "RSP-1",
+                "reports": ["报表A"],
+                "processing_content": "说明",
+                "processing_script": "select 1;",
+            }
+        ]
+    )
+    # 表名列保持逐表分行；字段名列按分组拆块，组间空行对应各表
+    assert rows[0][4] == "资产表｜fa\n估值表｜va"
+    assert rows[0][5] == "金额｜amt\n数量｜qty\n\n汇率｜rate"

@@ -1,7 +1,7 @@
 {
   "id": "report_special_processing",
   "name": "报表特殊处理录入",
-  "version": "1.2.13",
+  "version": "1.2.16",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.report_special_processing.module:create_module",
@@ -34,11 +34,13 @@
   "service_dependencies": [
     {"name": "platform.user_directory", "minimum_version": 1},
     {"name": "platform.report_navigation", "minimum_version": 1},
-    {"name": "platform.notification", "minimum_version": 1}
+    {"name": "platform.notification", "minimum_version": 1},
+    {"name": "platform.dictionary", "minimum_version": 1}
   ],
-  "schema_version": 6,
+  "schema_version": 9,
   "release_notes": {
-    "version": "1.2.13",
-    "items": ["支持为报表特殊处理记录粘贴或上传图片、Excel、Word、ZIP 附件，并在修改记录中查看新旧附件"]
+    "version": "1.2.16",
+    "items": ["特殊处理内容的处理表增加处理范围（项目/合同，多个值用“、”“；”分隔，正式保存与生成脚本时至少填一项），表与字段改为在当前弹窗内的可搜索下拉选择，物理名只能来自真实元数据，中文名自动带出且允许修改",
+     "处理脚本增加“生成脚本”：按每张表各自数据源与字段定位映射（项目/合同字段由模块映射配置维护）生成 UPDATE SQL，修改前参与 WHERE 校验、禁止无 WHERE 的 UPDATE、多表分段注释、脚本仅保存留痕不执行；重新生成前若脚本已被修改需确认覆盖"]
   }
 }

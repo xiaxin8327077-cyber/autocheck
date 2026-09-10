@@ -2449,6 +2449,7 @@ def test_report_check_card_config_entry_and_modal_exist():
     assert """event.target.closest('[data-report-nav-card="report_check"]')""" in app_js
     assert "function reportNavigationCardConfigurable(cardCode)" in app_js
     assert 'card.card_code === "report_check"' in app_js
+    assert 'const countMarkup = unavailable\n    ? "--"\n    : reportNavigationCountText(card.card_code === "report_check" ? card.incomplete_count : card.total_count);' in app_js
     assert "较前一日" in app_js
     assert 'class="report-check-description-icon"' in app_js
     assert 'data-tooltip="${escapeHtml(card.description || "")}"' in app_js
@@ -2460,6 +2461,10 @@ def test_report_check_card_config_entry_and_modal_exist():
     assert 'grid-template-columns: repeat(2, minmax(0, 1fr));' in styles_css
     assert "#page-report-navigation .report-nav-period-stats,\n  #page-report-navigation .report-nav-monthly-stat" in styles_css
     assert '<span class="changelog-version">v1.2.24</span>' in app_js
+    assert '<span class="changelog-version">v1.2.26</span>' in app_js
+    assert "系统管理新增字典管理页" in app_js
+    assert "报表特殊处理录入模块：基本信息新增所属业务系统单选下拉" in app_js
+    assert "报表特殊处理录入模块：处理表名、处理字段名支持中英文双语多项录入" in app_js
     assert ".modal.report-check-config-modal" in styles_css
     assert ".report-check-config-row {\n  display: flex;\n  flex-direction: column;\n  align-items: stretch;" in styles_css
     assert ".report-check-config-modal .report-check-config-source {\n  width: 100%;" in styles_css
@@ -5629,7 +5634,8 @@ def test_all_system_modals_use_balanced_shared_shell():
         "userModal",
         "configModal",
         "rolePermissionsModal",
-        "roleDefinitionModal",
+            "roleDefinitionModal",
+            "dictionaryItemsModal",
     )
     for overlay_id in overlay_ids:
         opening = re.search(
@@ -8066,6 +8072,13 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert 'showPrompt("新增角色"' not in app_js
     assert ".user-modal .custom-select-shell.user-role-cards" in css
     assert 'id="rolePermissionsAddBtn"' in html
+    assert 'id="rolePermissionsSearch" class="filter-input management-toolbar-filter" type="text"' in html
+    assert 'id="clearRolePermissionsSearch" class="filter-clear-button"' in html
+    assert 'placeholder="搜索角色名称 / 英文 / 备注"' in html
+    assert 'id="rolePermissionsAddBtn" class="btn-primary btn-sm management-toolbar-add"' in html
+    assert ".management-toolbar-filter" in css
+    assert ".management-toolbar-add" in css
+    assert 'document.getElementById("clearRolePermissionsSearch")?.addEventListener("click"' in app_js
     assert 'id="rolePermissionsEditBtn"' not in html
     assert 'id="rolePermissionsDeleteBtn"' not in html
     assert 'id="roleDefinitionCode"' in html

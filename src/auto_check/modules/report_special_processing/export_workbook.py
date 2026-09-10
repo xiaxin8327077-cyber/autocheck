@@ -63,6 +63,33 @@ def _dimension_text(value: Any) -> str:
     return DIMENSION_LABELS.get(code, code)
 
 
+def _bilingual_multiline(value: Any) -> str:
+    """将双语规范串拆为多行“中文｜英文”；分组串按组拆块，组间用空行分隔；旧值原样返回。"""
+    from .bilingual_names import (
+        BILINGUAL_GROUP_SEPARATOR,
+        BILINGUAL_PART_SEPARATOR,
+        parse_bilingual_groups,
+        parse_bilingual_items,
+    )
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        if BILINGUAL_GROUP_SEPARATOR in text:
+            groups = parse_bilingual_groups(text)
+            blocks = [
+                "\n".join(f"{zh}{BILINGUAL_PART_SEPARATOR}{en}" for zh, en in group)
+                for group in groups
+                if group
+            ]
+            return "\n\n".join(blocks)
+        items = parse_bilingual_items(text)
+    except ValueError:
+        return text
+    return "\n".join(f"{zh}{BILINGUAL_PART_SEPARATOR}{en}" for zh, en in items)
+
+
 def export_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
     rows: list[list[Any]] = []
     for record in records:
@@ -72,8 +99,8 @@ def export_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
                 str(record.get("report_process_name_snapshot") or record.get("report_process_name") or ""),
                 _dimension_text(record.get("dimension")),
                 str(record.get("summary") or ""),
-                str(record.get("table_name") or ""),
-                str(record.get("field_name") or ""),
+                _bilingual_multiline(record.get("table_name")),
+                _bilingual_multiline(record.get("field_name")),
                 str(record.get("value_before") or ""),
                 str(record.get("value_after") or ""),
                 str(
@@ -103,6 +130,11 @@ def build_export_xlsx(records: Sequence[Mapping[str, Any]], *, title: str = "报
     for row in export_rows(records):
         sheet.append(row)
     sheet.freeze_panes = "A2"
+    from openpyxl.styles import Alignment
+
+    for column_index in (5, 6):  # 处理表名、处理字段名
+        for cell in sheet[chr(ord("A") + column_index - 1)][1:]:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()

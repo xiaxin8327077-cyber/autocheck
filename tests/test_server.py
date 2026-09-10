@@ -543,6 +543,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
 
     report_navigation_service = FakeReportNavigationService()
     user_directory_spec = object()
+    dictionary_spec = object()
     report_navigation_spec = object()
 
     class FakeRouter:
@@ -589,6 +590,10 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         events.append(("user_directory", auth_manager))
         return user_directory_spec
 
+    def create_dictionary_service(database):
+        events.append(("dictionary_platform", database))
+        return dictionary_spec
+
     def create_report_navigation_service(service):
         events.append(("report_navigation_platform", service))
         return report_navigation_spec
@@ -611,6 +616,11 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         server_module,
         "create_user_directory_service",
         create_user_directory_service,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_dictionary_service",
+        create_dictionary_service,
     )
     monkeypatch.setattr(
         server_module,
@@ -687,13 +697,14 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         "notification_cleanup_start",
         "notification_http_api",
         ("user_directory", handler_types[0].auth_manager),
+        ("dictionary_platform", application_database),
         ("report_navigation_platform", report_navigation_service),
         "notification_platform",
         (
             "module_build",
             application_database,
             config_path,
-            (user_directory_spec, report_navigation_spec, notification_platform_spec),
+            (user_directory_spec, dictionary_spec, report_navigation_spec, notification_platform_spec),
         ),
         "module_start",
         ("router", application_database, report_navigation_service),

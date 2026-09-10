@@ -42,11 +42,17 @@ RECORDS = Table(
     Column("report_process_name_snapshot", String(100), nullable=False),
     Column("report_period", Date),
     Column("dimension", String(16)),
+    Column("business_system_code", String(64)),
+    Column("business_system_name_snapshot", String(100)),
+    Column("datasource_id", String(64)),
+    Column("datasource_name_snapshot", String(200)),
+    Column("datasource_type", String(32)),
+    Column("structured_content_json", Text),
     Column("summary", String(200)),
-    Column("table_name", String(128)),
-    Column("field_name", String(128)),
-    Column("value_before", String(500)),
-    Column("value_after", String(500)),
+    Column("table_name", Text),
+    Column("field_name", Text),
+    Column("value_before", Text),
+    Column("value_after", Text),
     Column("processing_content", Text),
     Column("processing_script", Text),
     Column("script_sha256", String(64)),
@@ -109,6 +115,19 @@ AUDITS = Table(
     Column("changed_fields_json", LONGTEXT, nullable=False),
     Column("action_summary", String(1000), nullable=False),
     Column("request_id", String(64)),
+)
+FIELD_MAPPINGS = Table(
+    "report_special_processing_field_mappings",
+    METADATA,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("datasource_id", String(64), nullable=False),
+    Column("schema_name", String(128), nullable=False),
+    Column("table_name", String(128), nullable=False),
+    Column("project_field", String(128), nullable=False),
+    Column("contract_field", String(128), nullable=False),
+    Column("updated_by_user_id", String(64)),
+    Column("updated_by_username_snapshot", String(100)),
+    Column("updated_at", DateTime),
 )
 ATTACHMENTS = Table(
     "report_special_processing_confirm_attachments",
@@ -191,11 +210,37 @@ def _row(result: Any) -> dict[str, Any] | None:
     return dict(value) if value is not None else None
 
 
+def _field_mapping_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    updated_at = row.get("updated_at")
+    if isinstance(updated_at, datetime):
+        updated_at = _aware(updated_at)
+    return {
+        "datasource_id": str(row["datasource_id"]),
+        "schema": str(row["schema_name"]),
+        "table_name": str(row["table_name"]),
+        "project_field": str(row["project_field"]),
+        "contract_field": str(row["contract_field"]),
+        "updated_by_username_snapshot": str(row.get("updated_by_username_snapshot") or ""),
+        "updated_at": updated_at,
+    }
+
+
 def _normalize_record(row: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(row)
     for key in ("created_at", "updated_at", "completed_at", "voided_at", "special_handling_at"):
         if isinstance(result.get(key), datetime):
             result[key] = _aware(result[key])
+    # 结构化内容以解析后的 dict 对外暴露；解析失败（历史/损坏）按无结构化处理。
+    raw_structured = result.pop("structured_content_json", None)
+    structured = None
+    if raw_structured:
+        try:
+            parsed = json.loads(str(raw_structured))
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            structured = parsed
+    result["structured_content"] = structured
     return result
 
 
@@ -575,6 +620,111 @@ class SpecialProcessingStorage:
         )
         rows = _rows(connection.execute(statement))
         return [self._record_attachment_metadata(row) for row in rows]
+
+    # ===== 处理表 项目/合同 定位字段映射 =====
+
+    def list_field_mappings(self, datasource_id: str) -> list[dict[str, Any]]:
+        wanted = str(datasource_id or "").strip()
+        if not wanted:
+            return []
+        statement = (
+            select(
+                FIELD_MAPPINGS.c.datasource_id,
+                FIELD_MAPPINGS.c.schema_name,
+                FIELD_MAPPINGS.c.table_name,
+                FIELD_MAPPINGS.c.project_field,
+                FIELD_MAPPINGS.c.contract_field,
+                FIELD_MAPPINGS.c.updated_by_username_snapshot,
+                FIELD_MAPPINGS.c.updated_at,
+            )
+            .where(FIELD_MAPPINGS.c.datasource_id == wanted)
+            .order_by(FIELD_MAPPINGS.c.table_name.asc(), FIELD_MAPPINGS.c.schema_name.asc())
+        )
+        with self.database.connect() as connection:
+            return [_field_mapping_row(row) for row in _rows(connection.execute(statement))]
+
+    def get_field_mapping(self, datasource_id: str, schema_name: str, table_name: str) -> dict[str, Any] | None:
+        statement = (
+            select(
+                FIELD_MAPPINGS.c.datasource_id,
+                FIELD_MAPPINGS.c.schema_name,
+                FIELD_MAPPINGS.c.table_name,
+                FIELD_MAPPINGS.c.project_field,
+                FIELD_MAPPINGS.c.contract_field,
+            )
+            .where(
+                and_(
+                    FIELD_MAPPINGS.c.datasource_id == str(datasource_id or "").strip(),
+                    FIELD_MAPPINGS.c.schema_name == str(schema_name or "").strip(),
+                    FIELD_MAPPINGS.c.table_name == str(table_name or "").strip(),
+                )
+            )
+        )
+        with self.database.connect() as connection:
+            row = _row(connection.execute(statement))
+        return _field_mapping_row(row) if row else None
+
+    def upsert_field_mapping(
+        self,
+        datasource_id: str,
+        schema_name: str,
+        table_name: str,
+        project_field: str,
+        contract_field: str,
+        *,
+        user_id: str,
+        username: str,
+    ) -> dict[str, Any]:
+        datasource_id = str(datasource_id or "").strip()
+        schema_name = str(schema_name or "").strip()
+        table_name = str(table_name or "").strip()
+        project_field = str(project_field or "").strip()[:128]
+        contract_field = str(contract_field or "").strip()[:128]
+        now = datetime.now(SHANGHAI)
+        with self.database.transaction() as connection:
+            existing = _row(
+                connection.execute(
+                    select(FIELD_MAPPINGS.c.id).where(
+                        and_(
+                            FIELD_MAPPINGS.c.datasource_id == datasource_id,
+                            FIELD_MAPPINGS.c.schema_name == schema_name,
+                            FIELD_MAPPINGS.c.table_name == table_name,
+                        )
+                    )
+                )
+            )
+            if existing is None:
+                connection.execute(
+                    insert(FIELD_MAPPINGS).values(
+                        datasource_id=datasource_id,
+                        schema_name=schema_name,
+                        table_name=table_name,
+                        project_field=project_field,
+                        contract_field=contract_field,
+                        updated_by_user_id=str(user_id or "").strip()[:64],
+                        updated_by_username_snapshot=str(username or "").strip()[:100],
+                        updated_at=_db_value(now),
+                    )
+                )
+            else:
+                connection.execute(
+                    update(FIELD_MAPPINGS)
+                    .where(FIELD_MAPPINGS.c.id == existing["id"])
+                    .values(
+                        project_field=project_field,
+                        contract_field=contract_field,
+                        updated_by_user_id=str(user_id or "").strip()[:64],
+                        updated_by_username_snapshot=str(username or "").strip()[:100],
+                        updated_at=_db_value(now),
+                    )
+                )
+        return self.get_field_mapping(datasource_id, schema_name, table_name) or {
+            "datasource_id": datasource_id,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "project_field": project_field,
+            "contract_field": contract_field,
+        }
 
     @staticmethod
     def _record_attachment_metadata(row: Mapping[str, Any]) -> dict[str, Any]:

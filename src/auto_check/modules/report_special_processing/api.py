@@ -163,6 +163,47 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
         ("GET", "/records/{id}/attachments/{attachment_id}", lambda service, request, rid: _record_attachment_response(service.get_record_attachment(_id(request), _attachment_id(request), request.current_user)), detail, 0, 200),
         ("GET", "/records/{id}/audit", lambda service, request, rid: service.audit(_id(request), request.query), detail, 0, 200),
         ("GET", "/summary", lambda service, request, rid: service.summary(request.query), detail, 0, 200),
+        ("GET", "/datasources", lambda service, request, rid: service.list_datasources(), page_view, 0, 200),
+        (
+            "GET",
+            "/datasources/{datasource_id}/tables",
+            lambda service, request, rid: service.list_datasource_tables(
+                request.path_params.get("datasource_id") or "", request.query,
+            ),
+            page_view, 0, 200,
+        ),
+        (
+            "GET",
+            "/datasources/{datasource_id}/tables/{table_name}/columns",
+            lambda service, request, rid: service.list_datasource_columns(
+                request.path_params.get("datasource_id") or "",
+                request.path_params.get("table_name") or "",
+                request.query,
+            ),
+            page_view, 0, 200,
+        ),
+        (
+            "GET",
+            "/datasources/{datasource_id}/field-mappings",
+            lambda service, request, rid: service.list_field_mappings(
+                request.path_params.get("datasource_id") or "", request.current_user,
+            ),
+            detail, 0, 200,
+        ),
+        (
+            "PUT",
+            "/datasources/{datasource_id}/field-mappings",
+            lambda service, request, rid: service.upsert_field_mapping(
+                request.path_params.get("datasource_id") or "", _body(request), request.current_user,
+            ),
+            edit, MAX_REQUEST_BYTES, 200,
+        ),
+        (
+            "POST",
+            "/script/generate",
+            lambda service, request, rid: service.generate_script(_body(request), request.current_user),
+            edit, MAX_REQUEST_BYTES, 200,
+        ),
     )
     for method, path, callback, permission, maximum, status in routes:
         router.add(

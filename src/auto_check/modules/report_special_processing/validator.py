@@ -18,6 +18,15 @@ from .contracts import (
     RecordStatus,
     ValidationError,
 )
+from .structured_content import (
+    StructuredContentError,
+    derive_field_name,
+    derive_table_name,
+    derive_value_after,
+    derive_value_before,
+    parse_structured_content,
+    validate_formal_values,
+)
 
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
@@ -84,11 +93,14 @@ _RECORD_FIELDS = frozenset(
         "handler_user_id",
         "row_version",
         "dimension",
+        "business_system_code",
         "governance_owner_user_id",
         "table_name",
         "field_name",
         "value_before",
         "value_after",
+        "structured_content",
+        "datasource_name_snapshot",
         "record_attachments",
     }
 )
@@ -200,6 +212,36 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
     row_version = payload.get("row_version")
     if row_version is not None and (type(row_version) is not int or row_version < 1):
         raise _error("row_version")
+    # 结构化内容（数据源→表→字段→修改前/后）：存在时以它为准派生兼容字符串，
+    # 客户端自报的 table_name/field_name/value_before/value_after 不再生效；
+    # 不存在时保持历史手工录入路径的全部既有校验。
+    structured = None
+    structured_raw = payload.get("structured_content")
+    if structured_raw is not None:
+        try:
+            structured = parse_structured_content(structured_raw)
+            if formal:
+                # 正式保存：每个字段的修改前/修改后必填，错误定位到具体字段。
+                validate_formal_values(structured)
+        except StructuredContentError as exc:
+            raise ValidationError(fields=exc.fields) from None
+    datasource_name_snapshot = _optional_text_field(
+        payload.get("datasource_name_snapshot"), "datasource_name_snapshot", 200, required=False
+    )
+    if structured is not None:
+        table_name = derive_table_name(structured)
+        field_name = derive_field_name(structured)
+        value_before = derive_value_before(structured)
+        value_after = derive_value_after(structured)
+    else:
+        table_name = _optional_text_field(payload.get("table_name"), "table_name", 4096, required=True)
+        field_name = _optional_text_field(payload.get("field_name"), "field_name", 4096, required=True)
+        value_before = _optional_text_field(
+            payload.get("value_before"), "value_before", 128, required=formal
+        )
+        value_after = _optional_text_field(
+            payload.get("value_after"), "value_after", 128, required=formal
+        )
     return RecordInput(
         save_mode=save_mode,
         report_process_codes=process_codes,
@@ -214,20 +256,21 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         handler_user_id=handler,
         row_version=row_version,
         dimension=_optional_dimension(payload.get("dimension"), required=formal),
+        business_system_code=_optional_text_field(
+            payload.get("business_system_code"), "business_system_code", 64, required=formal
+        ),
         governance_owner_user_id=_optional_text_field(
             payload.get("governance_owner_user_id"),
             "governance_owner_user_id",
             64,
             required=formal,
         ),
-        table_name=_optional_text_field(payload.get("table_name"), "table_name", 128, required=True),
-        field_name=_optional_text_field(payload.get("field_name"), "field_name", 128, required=True),
-        value_before=_optional_text_field(
-            payload.get("value_before"), "value_before", 128, required=formal
-        ),
-        value_after=_optional_text_field(
-            payload.get("value_after"), "value_after", 128, required=formal
-        ),
+        table_name=table_name,
+        field_name=field_name,
+        value_before=value_before,
+        value_after=value_after,
+        structured_content=structured,
+        datasource_name_snapshot=datasource_name_snapshot,
     )
 
 

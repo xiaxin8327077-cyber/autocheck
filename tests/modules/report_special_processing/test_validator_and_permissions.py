@@ -14,6 +14,7 @@ def _payload(**overrides):
         "special_handling_at": "2026-08-01T15:32:18+08:00",
         "handler_user_id": "12",
         "dimension": "project",
+        "business_system_code": "valuation",
         "governance_owner_user_id": "owner-1",
         "table_name": "t_asset",
         "field_name": "amount",
@@ -96,6 +97,10 @@ def test_validate_record_input_requires_dimension_fields_for_formal_save():
             "summary": "s" * 10,
             "handler_user_id": "u1",
             "special_handling_at": "2026-07-31T10:00:00+08:00",
+            "table_name": "t_demo",
+            "field_name": "f_demo",
+            "value_before": "a",
+            "value_after": "b",
         })
     assert "dimension" in exc.value.fields
 
@@ -118,8 +123,8 @@ def test_summary_allows_128_chars_rejects_129():
         _payload(special_handling_at="2026-08-01T15:32:18"),
         _payload(summary="x" * 129),
         _payload(dimension="unknown"),
-        _payload(table_name="t" * 129),
-        _payload(field_name="f" * 129),
+        _payload(table_name="t" * 4097),
+        _payload(field_name="f" * 4097),
         _payload(value_before="b" * 129),
         _payload(value_after="a" * 129),
         {**_payload(), "creator_user_id": "forged"},

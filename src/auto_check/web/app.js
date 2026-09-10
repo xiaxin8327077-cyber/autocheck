@@ -1307,7 +1307,7 @@ function applyVisualEffectsSetting() {
 
 /* ===== Navigation ===== */
 const smartReconcilePages = new Set(["home", "auto-check", "history"]);
-const systemMgmtPages = new Set(["settings", "role-permissions", "users"]);
+const systemMgmtPages = new Set(["settings", "role-permissions", "users", "dictionaries"]);
 
 function setNavGroupOpen(group, open) {
   if (!group) return;
@@ -1494,6 +1494,10 @@ async function switchPage(name, options = {}) {
     showToast("无权访问系统设置", "error");
     name = "report-navigation";
   }
+  if (name === "dictionaries" && !hasCapability("sys.dictionaries")) {
+    showToast("无权访问字典管理", "error");
+    name = "report-navigation";
+  }
   const pageMenuCapability = {
     "report-navigation": "menu.report_navigation",
     home: "menu.home",
@@ -1522,6 +1526,7 @@ async function switchPage(name, options = {}) {
   }
   if (name === "role-permissions") await loadRolePermissions();
   if (name === "users") await loadUsers();
+  if (name === "dictionaries") await loadDictionaries();
   if (name === "report-navigation") await loadReportNavigation();
   if (name === "home") {
     const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();
@@ -2683,7 +2688,9 @@ function renderReportNavigationStatCard(card, processes = [], period = "month") 
   const interaction = maintainable
     ? ` data-maintenance-card="${escapeHtml(card.card_code || "")}" role="button" tabindex="0"`
     : "";
-  const countMarkup = unavailable ? "--" : reportNavigationCountText(card.total_count);
+  const countMarkup = unavailable
+    ? "--"
+    : reportNavigationCountText(card.card_code === "report_check" ? card.incomplete_count : card.total_count);
   const rateMarkup = unavailable ? "--" : `${rate.toFixed(rate % 1 ? 1 : 0)}%`;
   const tagsMarkup = unavailable
     ? '<div class="report-nav-stat-tags"><span class="warn"><b>--</b> 统计暂不可用</span></div>'
@@ -4345,6 +4352,379 @@ userTableBody?.addEventListener("click", (event) => {
   if (button.classList.contains("toggle-user")) toggleUserEnabled(targetUser);
   if (button.classList.contains("delete-user")) deleteUser(targetUser);
 });
+
+// ================= 系统管理：字典管理 =================
+const dictionaryCategoryBody = document.getElementById("dictionaryCategoryBody");
+const dictionaryItemBody = document.getElementById("dictionaryItemBody");
+const dictionaryItemsModal = document.getElementById("dictionaryItemsModal");
+const dictionaryItemsTitle = document.getElementById("dictionaryItemsModalTitle");
+const dictionaryItemsCount = document.getElementById("dictionaryItemsCount");
+const newDictionaryItemBtn = document.getElementById("newDictionaryItemBtn");
+
+let dictionaryData = [];
+let dictionarySelectedCode = "";
+let dictionaryItemDrafts = [];
+let dictionaryDeletedItemIds = [];
+let dictionaryCategoryFilter = "";
+let dictionaryConfigurationEntry = null;
+let dictionaryConfigurationIsNew = false;
+
+function dictionarySelectedEntries() {
+  return dictionaryConfigurationEntry
+    || dictionaryData.find((entry) => entry.code === dictionarySelectedCode)
+    || null;
+}
+
+function dictionaryStatusCell(active) {
+  const cell = document.createElement("td");
+  const tag = document.createElement("span");
+  tag.className = `dictionary-status ${active ? "dictionary-status--on" : "dictionary-status--off"}`;
+  tag.textContent = active ? "启用" : "停用";
+  cell.appendChild(tag);
+  return cell;
+}
+
+function dictionaryTextCell(value, className) {
+  const cell = document.createElement("td");
+  if (className) cell.className = className;
+  cell.textContent = String(value ?? "");
+  return cell;
+}
+
+function dictionaryActionButton(label, className, listener) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `dictionary-action-btn ${className}`;
+  button.textContent = label;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    listener();
+  });
+  return button;
+}
+
+function dictionaryEmptyRow(text, colSpan = 6) {
+  const row = document.createElement("tr");
+  row.className = "dictionary-empty-row";
+  const cell = document.createElement("td");
+  cell.colSpan = colSpan;
+  cell.textContent = text;
+  row.appendChild(cell);
+  return row;
+}
+
+async function loadDictionaries() {
+  try {
+    const payload = await api("/api/system/dictionaries", { method: "GET" });
+    dictionaryData = Array.isArray(payload.dictionaries) ? payload.dictionaries : [];
+  } catch (error) {
+    dictionaryData = [];
+    dictionarySelectedCode = "";
+    showToast(`字典加载失败：${error.message}`, "error");
+  }
+  if (!dictionaryData.some((entry) => entry.code === dictionarySelectedCode)) {
+    dictionarySelectedCode = dictionaryData.length ? dictionaryData[0].code : "";
+  }
+  renderDictionaryCategories();
+  renderDictionaryItems();
+}
+
+function renderDictionaryCategories() {
+  if (!dictionaryCategoryBody) return;
+  dictionaryCategoryBody.innerHTML = "";
+  if (!dictionaryData.length) {
+    dictionaryCategoryBody.appendChild(dictionaryEmptyRow("暂无字典分类，请点击「新建字典」"));
+    return;
+  }
+  const normalizedFilter = dictionaryCategoryFilter.trim().toLocaleLowerCase();
+  const visibleEntries = dictionaryData.filter((entry) => !normalizedFilter
+    || String(entry.name || "").toLocaleLowerCase().includes(normalizedFilter)
+    || String(entry.code || "").toLocaleLowerCase().includes(normalizedFilter));
+  if (!visibleEntries.length) {
+    dictionaryCategoryBody.appendChild(dictionaryEmptyRow("未找到匹配的字典"));
+    return;
+  }
+  visibleEntries.forEach((entry) => {
+    const row = document.createElement("tr");
+    row.dataset.dictionaryCode = entry.code;
+    row.appendChild(dictionaryTextCell(entry.name, "dictionary-cell-name"));
+    row.appendChild(dictionaryTextCell(entry.code, "dictionary-cell-code"));
+    row.appendChild(dictionaryTextCell(Array.isArray(entry.items) ? entry.items.length : 0, "dictionary-cell-count"));
+    row.appendChild(dictionaryStatusCell(entry.enabled !== false));
+    row.appendChild(dictionaryTextCell(entry.description, "dictionary-cell-description"));
+    const actions = document.createElement("td");
+    actions.appendChild(dictionaryActionButton("配置", "dictionary-config-btn", () => openDictionaryItemsModal(entry)));
+    actions.appendChild(dictionaryActionButton(
+      entry.enabled === false ? "启用" : "停用",
+      entry.enabled === false ? "dictionary-toggle-btn" : "dictionary-toggle-btn is-warning",
+      () => toggleDictionaryCategory(entry),
+    ));
+    const deleteButton = dictionaryActionButton("删除", "dictionary-delete-btn", () => deleteDictionaryCategory(entry));
+    if (entry.system_locked) {
+      deleteButton.disabled = true;
+      deleteButton.title = "系统预置字典不可删除";
+    }
+    actions.appendChild(deleteButton);
+    row.appendChild(actions);
+    dictionaryCategoryBody.appendChild(row);
+  });
+}
+
+function renderDictionaryItems() {
+  if (!dictionaryItemBody) return;
+  dictionaryItemBody.innerHTML = "";
+  const entry = dictionarySelectedEntries();
+  if (dictionaryItemsTitle) {
+    dictionaryItemsTitle.textContent = dictionaryConfigurationIsNew
+      ? "新建字典"
+      : (entry ? `修改字典 · ${entry.name}` : "修改字典");
+  }
+  if (dictionaryItemsCount) {
+    dictionaryItemsCount.textContent = entry ? `共 ${dictionaryItemDrafts.length} 个键值` : "";
+  }
+  if (newDictionaryItemBtn) newDictionaryItemBtn.disabled = !entry;
+  if (!entry) {
+    dictionaryItemBody.appendChild(dictionaryEmptyRow("请先选择字典分类", 4));
+    return;
+  }
+  if (!dictionaryItemDrafts.length) {
+    dictionaryItemBody.appendChild(dictionaryEmptyRow(
+      entry.code === "business_system" ? "暂无业务系统，请新增字典项" : "暂无字典项，请点击「新建字典项」",
+      4,
+    ));
+    return;
+  }
+  dictionaryItemDrafts.forEach((item, index) => {
+    const row = document.createElement("tr");
+    row.appendChild(dictionaryTextCell(index + 1, "dictionary-cell-index"));
+    const codeCell = document.createElement("td");
+    const codeInput = document.createElement("input");
+    codeInput.className = "dictionary-item-input";
+    codeInput.maxLength = 64;
+    codeInput.placeholder = "大小写字母、数字或下划线";
+    codeInput.value = item.code;
+    codeInput.addEventListener("input", () => { item.code = codeInput.value; });
+    codeCell.appendChild(codeInput);
+    row.appendChild(codeCell);
+    const nameCell = document.createElement("td");
+    const nameInput = document.createElement("input");
+    nameInput.className = "dictionary-item-input";
+    nameInput.maxLength = 100;
+    nameInput.placeholder = "请输入键值名称";
+    nameInput.value = item.name;
+    nameInput.addEventListener("input", () => { item.name = nameInput.value; });
+    nameCell.appendChild(nameInput);
+    row.appendChild(nameCell);
+    const actions = document.createElement("td");
+    actions.appendChild(dictionaryActionButton("删除", "dictionary-delete-btn", () => removeDictionaryItemDraft(index)));
+    row.appendChild(actions);
+    dictionaryItemBody.appendChild(row);
+  });
+}
+
+function openDictionaryItemsModal(entry) {
+  if (!dictionaryItemsModal || !entry) return;
+  dictionaryConfigurationEntry = entry;
+  dictionaryConfigurationIsNew = false;
+  dictionarySelectedCode = entry.code;
+  dictionaryItemDrafts = (entry.items || []).map((item) => ({ ...item, isNew: false }));
+  dictionaryDeletedItemIds = [];
+  const configCode = document.getElementById("dictionaryConfigCode");
+  const configName = document.getElementById("dictionaryConfigName");
+  const configDescription = document.getElementById("dictionaryConfigDescription");
+  if (configCode) configCode.value = entry.code || "";
+  if (configName) configName.value = entry.name || "";
+  if (configDescription) configDescription.value = entry.description || "";
+  if (configCode) configCode.disabled = true;
+  setModalStatus(document.getElementById("dictionaryItemsResult"), "");
+  renderDictionaryItems();
+  dictionaryItemsModal.hidden = false;
+}
+
+function openNewDictionaryConfiguration() {
+  if (!dictionaryItemsModal) return;
+  dictionaryConfigurationEntry = { code: "", name: "", description: "", items: [] };
+  dictionaryConfigurationIsNew = true;
+  dictionaryItemDrafts = [];
+  dictionaryDeletedItemIds = [];
+  const configCode = document.getElementById("dictionaryConfigCode");
+  const configName = document.getElementById("dictionaryConfigName");
+  const configDescription = document.getElementById("dictionaryConfigDescription");
+  if (configCode) {
+    configCode.value = "";
+    configCode.disabled = false;
+  }
+  if (configName) configName.value = "";
+  if (configDescription) configDescription.value = "";
+  setModalStatus(document.getElementById("dictionaryItemsResult"), "");
+  renderDictionaryItems();
+  dictionaryItemsModal.hidden = false;
+  configCode?.focus();
+}
+
+function closeDictionaryItemsModal() {
+  if (dictionaryItemsModal) dictionaryItemsModal.hidden = true;
+  dictionaryItemDrafts = [];
+  dictionaryDeletedItemIds = [];
+  dictionaryConfigurationEntry = null;
+  dictionaryConfigurationIsNew = false;
+}
+
+function setModalStatus(element, message) {
+  if (!element) return;
+  element.textContent = message || "";
+  element.classList.toggle("is-error", Boolean(message));
+}
+
+async function toggleDictionaryCategory(entry) {
+  const nextEnabled = entry.enabled === false;
+  try {
+    await api(`/api/system/dictionaries/${encodeURIComponent(entry.code)}`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled: nextEnabled }),
+    });
+    showToast(nextEnabled ? "字典分类已启用" : "字典分类已停用", "success");
+    await loadDictionaries();
+  } catch (error) {
+    showToast(userFriendlyError(error.message), "error");
+  }
+}
+
+async function deleteDictionaryCategory(entry) {
+  if (!entry || entry.system_locked) return;
+  const confirmed = await showConfirm(
+    "删除字典",
+    `确定删除字典“${entry.name}”及其全部键值吗？`,
+    { tone: "danger" },
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/system/dictionaries/${encodeURIComponent(entry.code)}`, { method: "DELETE" });
+    showToast("字典已删除", "success");
+    await loadDictionaries();
+  } catch (error) {
+    showToast(userFriendlyError(error.message), "error");
+  }
+}
+
+function appendDictionaryItemDraftRow() {
+  const entry = dictionarySelectedEntries();
+  if (!entry) return;
+  dictionaryItemDrafts.push({ id: null, code: "", name: "", isNew: true });
+  renderDictionaryItems();
+  dictionaryItemBody?.querySelector("tr:last-child input")?.focus();
+}
+
+function removeDictionaryItemDraft(index) {
+  const item = dictionaryItemDrafts[index];
+  if (!item) return;
+  if (item.id != null) dictionaryDeletedItemIds.push(item.id);
+  dictionaryItemDrafts.splice(index, 1);
+  renderDictionaryItems();
+}
+
+function validateDictionaryItemDrafts() {
+  const seen = new Set();
+  dictionaryItemDrafts.forEach((item, index) => {
+    item.code = String(item.code || "").trim();
+    item.name = String(item.name || "").trim();
+    if (!item.code) throw new Error(`第 ${index + 1} 行键值编码必填`);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_]{0,63}$/.test(item.code)) {
+      throw new Error(`第 ${index + 1} 行键值编码格式不正确`);
+    }
+    if (!item.name) throw new Error(`第 ${index + 1} 行键值名称必填`);
+    if (seen.has(item.code)) throw new Error(`同一个字典中键值编码不得重复：${item.code}`);
+    seen.add(item.code);
+  });
+}
+
+async function saveDictionaryConfiguration() {
+  const entry = dictionarySelectedEntries();
+  if (!entry) return;
+  const saveButton = document.getElementById("dictionaryItemsSave");
+  const status = document.getElementById("dictionaryItemsResult");
+  const code = String(document.getElementById("dictionaryConfigCode")?.value || "").trim();
+  const name = String(document.getElementById("dictionaryConfigName")?.value || "").trim();
+  const description = String(document.getElementById("dictionaryConfigDescription")?.value || "").trim();
+  if (!name) {
+    setModalStatus(status, "字典名称必填");
+    return;
+  }
+  if (dictionaryConfigurationIsNew && !/^[a-z0-9][a-z0-9_]{0,63}$/.test(code)) {
+    setModalStatus(status, "字典编码格式不正确：仅允许小写字母、数字和下划线");
+    return;
+  }
+  try {
+    validateDictionaryItemDrafts();
+  } catch (error) {
+    setModalStatus(status, error.message);
+    return;
+  }
+  if (saveButton) saveButton.disabled = true;
+  try {
+    const dictionaryCode = dictionaryConfigurationIsNew ? code : entry.code;
+    if (dictionaryConfigurationIsNew) {
+      await api("/api/system/dictionaries", {
+        method: "POST",
+        body: JSON.stringify({ code: dictionaryCode, name, description }),
+      });
+    } else {
+      await api(`/api/system/dictionaries/${encodeURIComponent(dictionaryCode)}`, {
+        method: "PUT",
+        body: JSON.stringify({ name, description }),
+      });
+    }
+    for (const itemId of dictionaryDeletedItemIds) {
+      await api(`/api/system/dictionaries/${encodeURIComponent(dictionaryCode)}/items/${encodeURIComponent(itemId)}`, {
+        method: "DELETE",
+      });
+    }
+    for (let index = 0; index < dictionaryItemDrafts.length; index += 1) {
+      const item = dictionaryItemDrafts[index];
+      const payload = { code: item.code, name: item.name, sort_order: index };
+      if (item.id != null) {
+        await api(`/api/system/dictionaries/${encodeURIComponent(dictionaryCode)}/items/${encodeURIComponent(item.id)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      } else {
+        await api(`/api/system/dictionaries/${encodeURIComponent(dictionaryCode)}/items`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
+    }
+    closeDictionaryItemsModal();
+    showToast("字典项已保存", "success");
+    await loadDictionaries();
+  } catch (error) {
+    setModalStatus(status, userFriendlyError(error.message));
+  } finally {
+    if (saveButton) saveButton.disabled = false;
+  }
+}
+
+document.getElementById("newDictionaryBtn")?.addEventListener("click", openNewDictionaryConfiguration);
+document.getElementById("dictionaryCategoryFilter")?.addEventListener("input", (event) => {
+  dictionaryCategoryFilter = String(event.target?.value || "");
+  setFilterClearButtonVisible(document.getElementById("clearDictionaryCategoryFilter"), dictionaryCategoryFilter.trim());
+  renderDictionaryCategories();
+});
+document.getElementById("clearDictionaryCategoryFilter")?.addEventListener("click", () => {
+  const input = document.getElementById("dictionaryCategoryFilter");
+  if (input) input.value = "";
+  dictionaryCategoryFilter = "";
+  setFilterClearButtonVisible(document.getElementById("clearDictionaryCategoryFilter"), false);
+  renderDictionaryCategories();
+  input?.focus();
+});
+document.getElementById("newDictionaryItemBtn")?.addEventListener("click", appendDictionaryItemDraftRow);
+document.getElementById("dictionaryItemsModalClose")?.addEventListener("click", closeDictionaryItemsModal);
+document.getElementById("dictionaryItemsCancel")?.addEventListener("click", closeDictionaryItemsModal);
+document.getElementById("dictionaryItemsSave")?.addEventListener("click", () => {
+  saveDictionaryConfiguration().catch((error) => setModalStatus(document.getElementById("dictionaryItemsResult"), userFriendlyError(error.message)));
+});
+// 点击遮罩空白不关闭，仅通过关闭/取消按钮退出（与报表校验口径弹窗一致）。
 
 function setStatus(t) {
   const nextText = String(t || "");
@@ -6219,6 +6599,7 @@ const CAPABILITY_MENU_TREE = [
       },
       { code: "sys.role_permissions", label: "角色权限", type: "menu" },
       { code: "sys.users", label: "用户管理", type: "menu" },
+      { code: "sys.dictionaries", label: "字典管理", type: "menu" },
     ],
   },
 ];
@@ -6724,7 +7105,17 @@ async function deleteRoleDefinition(role) {
 
 document.getElementById("rolePermissionsSearch")?.addEventListener("input", () => {
   rolePermissionsCurrentPage = 1;
+  const input = document.getElementById("rolePermissionsSearch");
+  setFilterClearButtonVisible(document.getElementById("clearRolePermissionsSearch"), input?.value.trim());
   renderRolePermissionsList();
+});
+document.getElementById("clearRolePermissionsSearch")?.addEventListener("click", () => {
+  const input = document.getElementById("rolePermissionsSearch");
+  if (input) input.value = "";
+  rolePermissionsCurrentPage = 1;
+  setFilterClearButtonVisible(document.getElementById("clearRolePermissionsSearch"), false);
+  renderRolePermissionsList();
+  input?.focus();
 });
 document.getElementById("rolePermissionsPrevPage")?.addEventListener("click", () => {
   if (rolePermissionsCurrentPage <= 1) return;
@@ -13955,6 +14346,30 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.26</span>
+        <span class="changelog-date">2026-09-09</span>
+      </div>
+      <ul>
+        <li>系统管理新增字典管理页：支持即时筛选、自定义字典删除，并在配置弹窗批量维护键值，入口受角色权限“字典管理”控制。</li>
+        <li>报表特殊处理录入模块：基本信息新增所属业务系统单选下拉（取自字典管理“业务系统”，保存名称快照）。</li>
+        <li>报表特殊处理录入模块：处理表名、处理字段名支持中英文双语多项录入；台账仅显示修改字段名，双语条目分行，历史字段名保持原样。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.25</span>
+        <span class="changelog-date">2026-09-09</span>
+      </div>
+      <ul>
+        <li>报送导航“报表校验”统计卡主数字改为显示剩余个数。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.24</span>

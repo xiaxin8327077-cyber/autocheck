@@ -113,6 +113,7 @@
             <a class="top-nav-item top-nav-subitem" data-page="settings" data-capability="sys.settings" href="#">系统设置</a>
             <a class="top-nav-item top-nav-subitem" data-page="role-permissions" data-capability="sys.role_permissions" href="#">角色权限</a>
             <a class="top-nav-item top-nav-subitem" data-page="users" data-capability="sys.users" href="#">用户管理</a>
+            <a class="top-nav-item top-nav-subitem" data-page="dictionaries" data-capability="sys.dictionaries" href="#">字典管理</a>
           </div>
         </div>
       </nav>
@@ -1098,7 +1099,42 @@
         </div>
       </div>
 
-      <!-- 角色权限 -->
+      <section class="page" id="page-dictionaries">
+        <div class="page-header">
+          <h2>字典管理</h2>
+        </div>
+        <section class="card result-card">
+          <div class="card-title card-title--spread">
+            <div class="card-title-left">
+              <span class="card-title-icon">&#128218;</span>
+              <span>字典管理</span>
+            </div>
+            <div class="history-toolbar">
+              <span class="filter-clear-shell filter-clear-shell--text management-toolbar-filter-shell">
+                <input id="dictionaryCategoryFilter" class="prompt-input management-toolbar-filter" placeholder="筛选字典名称或编码" />
+                <button id="clearDictionaryCategoryFilter" class="filter-clear-button" type="button" aria-label="清除字典筛选">&times;</button>
+              </span>
+              <button id="newDictionaryBtn" type="button" class="btn-primary btn-sm management-toolbar-add" data-action-tone="primary" data-action-variant="solid">＋ 新建字典</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="result-table dictionary-main-table">
+              <thead>
+                <tr>
+                  <th>字典名称</th>
+                  <th>字典编码</th>
+                  <th>键值数量</th>
+                  <th>状态</th>
+                  <th>说明</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="dictionaryCategoryBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
       <section class="page" id="page-role-permissions">
         <div class="page-header">
           <h2>角色权限</h2>
@@ -1110,8 +1146,11 @@
               <span>角色权限</span>
             </div>
             <div class="history-toolbar">
-              <input id="rolePermissionsSearch" class="filter-input history-filter-input" type="search" placeholder="🔍 搜索角色名称 / 英文 / 备注" />
-              <button type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid" id="rolePermissionsAddBtn" title="新增自定义角色">+ 新增角色</button>
+              <span class="filter-clear-shell filter-clear-shell--text management-toolbar-filter-shell">
+                <input id="rolePermissionsSearch" class="filter-input management-toolbar-filter" type="text" placeholder="搜索角色名称 / 英文 / 备注" />
+                <button id="clearRolePermissionsSearch" class="filter-clear-button" type="button" aria-label="清除角色筛选">&times;</button>
+              </span>
+              <button id="rolePermissionsAddBtn" class="btn-primary btn-sm management-toolbar-add" type="button" data-action-tone="primary" data-action-variant="solid" title="新增自定义角色">+ 新增角色</button>
             </div>
           </div>
           <div class="table-wrap">
@@ -1843,6 +1882,43 @@
             <button class="btn-outline btn-sm" id="reportCheckConfigTest" type="button" data-action-tone="primary" data-action-variant="weak">测试执行</button>
             <button class="btn-outline btn-sm" id="reportCheckConfigCancel" type="button" data-action-tone="neutral" data-action-variant="weak">取消</button>
             <button class="btn-primary btn-sm" id="reportCheckConfigSave" type="button" data-action-tone="primary" data-action-variant="solid">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 字典项配置弹窗 -->
+      <div class="app-modal-overlay modal-overlay" id="dictionaryItemsModal" hidden>
+        <div class="app-modal-shell modal dictionary-items-modal">
+          <div class="app-modal-header modal-header">
+            <h3 id="dictionaryItemsModalTitle">修改字典</h3>
+            <button class="app-modal-close btn-close" id="dictionaryItemsModalClose" type="button">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body dictionary-config-body">
+            <div class="dictionary-config-summary">
+              <label>字典编码</label>
+              <input id="dictionaryConfigCode" class="prompt-input" disabled />
+              <label>字典名称</label>
+              <input id="dictionaryConfigName" class="prompt-input" maxlength="100" placeholder="请输入字典名称" />
+              <label>字典说明</label>
+              <textarea id="dictionaryConfigDescription" class="prompt-input" maxlength="255" rows="5" placeholder="请输入字典说明（选填）"></textarea>
+            </div>
+            <div class="dictionary-config-items">
+              <div class="dictionary-items-toolbar">
+                <button id="newDictionaryItemBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">新建</button>
+                <span class="dictionary-panel-hint" id="dictionaryItemsCount"></span>
+              </div>
+              <div class="table-wrap dictionary-items-wrap">
+                <table class="result-table dictionary-items-table">
+                  <thead><tr><th>序号</th><th>键值编码</th><th>键值名称</th><th>操作</th></tr></thead>
+                  <tbody id="dictionaryItemBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <p class="modal-status dictionary-edit-result" id="dictionaryItemsResult" role="status" aria-live="polite"></p>
+            <button class="btn-outline btn-sm" id="dictionaryItemsCancel" type="button" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button class="btn-primary btn-sm" id="dictionaryItemsSave" type="button" data-action-tone="primary" data-action-variant="solid">保存</button>
           </div>
         </div>
       </div>

@@ -810,11 +810,16 @@
   -webkit-backdrop-filter: blur(2px);
 }
 
+/* 删除处理表时，共享确认弹窗必须位于当前编辑弹窗之上。 */
+#confirmModal.rsp-confirm-above-record {
+  z-index: 3300;
+}
+
 .auto-check-module[data-module="report_special_processing"] .rsp-record-modal {
   position: relative;
-  width: clamp(720px, 70vw, 860px);
+  width: min(900px, calc(100vw - 72px));
   max-width: 100%;
-  max-height: min(85vh, 920px);
+  max-height: calc(100vh - 30px);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -979,6 +984,9 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) {
   overflow: visible;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label.rsp-span-all {
+  grid-column: 1 / -1;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > label:not(.rsp-span-two) input,
@@ -1704,7 +1712,7 @@
   }
 
   .auto-check-module[data-module="report_special_processing"] .rsp-record-modal {
-    width: min(680px, 100%);
+    width: min(900px, calc(100vw - 48px));
     max-height: 90vh;
   }
 }
@@ -1985,4 +1993,996 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-conflict-bar-text {
   flex: 1;
   min-width: 0;
+}
+
+/* ===== 双语表/字段多项录入 ===== */
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-row .rsp-bilingual-zh,
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-row .rsp-bilingual-en {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 30px;
+  border: 1px solid var(--outline-variant, #c4c7cc);
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
+  background: var(--surface-container-lowest, #fff);
+  color: var(--on-surface, #181c1e);
+  box-sizing: border-box;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-sep {
+  flex: 0 0 auto;
+  color: var(--on-surface-variant, #43474b);
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-remove {
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--action-danger, #BA1A1A);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-remove:hover {
+  border-color: var(--action-danger, #BA1A1A);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-remove[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-add {
+  border: 1px dashed var(--theme-accent-readable, #3466D9);
+  background: none;
+  color: var(--theme-accent-readable, #3466D9);
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-add:disabled {
+  border-color: var(--outline-variant, #c4c7cc);
+  color: var(--on-surface-variant, #43474b);
+  cursor: not-allowed;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-helper {
+  font-size: 12px;
+  color: var(--on-surface-variant, #43474b);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-helper[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-field {
+  align-items: start;
+  padding-top: 2px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic > .rsp-span-two > :is(input, textarea, .rsp-bilingual-list) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-summary-field {
+  align-items: start;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-summary {
+  box-sizing: border-box;
+  height: 56px;
+  min-height: 56px;
+  max-height: none;
+  padding: 6px 8px;
+  line-height: 18px;
+  resize: vertical;
+  color: var(--rsp-text);
+  background: #fbfcff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-list[aria-invalid="true"] .rsp-bilingual-zh,
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-list[aria-invalid="true"] .rsp-bilingual-en {
+  border-color: var(--action-danger, #BA1A1A);
+}
+
+/* 新格式按每个双语字段换行展示；历史字段仍用原有单行样式。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-cell-clamp-multiline {
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+/* ===== 表-字段关联分组录入（特殊处理内容区域） ===== */
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field {
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-head-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card {
+  padding: 8px 10px;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  background: #fff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-head {
+  display: grid;
+  grid-template-columns: 24px 112px minmax(0, 1fr) 16px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-toggle {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--rsp-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-toggle:hover {
+  color: var(--rsp-brand);
+  background: #f3f5f8;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-title {
+  overflow: hidden;
+  color: #526078;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  user-select: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-remove-table {
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-body {
+  margin-top: 8px;
+  padding: 8px 0;
+  border-radius: var(--ui-radius);
+  background: var(--rsp-soft);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-body[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-fields-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-left: 24px;
+  color: var(--rsp-muted);
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-fields-title {
+  font-weight: 600;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 字段行与表名行共用同一栅格，列宽固定、左右边界严格对齐。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-bilingual-row.rsp-tf-field-row {
+  grid-template-columns: 24px 112px minmax(0, 1fr) 16px minmax(0, 1fr) 56px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-zh { grid-column: 3; }
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-sep { grid-column: 4; }
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-en { grid-column: 5; }
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-remove { grid-column: 6; }
+/* 固定列标题：与卡片内栅格同模板对齐；全局表列标题补偿卡片边框+内边距 11px。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-cols-head {
+  display: grid;
+  grid-template-columns: 24px 112px minmax(0, 1fr) 16px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 0 11px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-col-label {
+  color: var(--rsp-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-col-zh { grid-column: 3; }
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-col-en { grid-column: 5; }
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-cols-head {
+  margin: 0 0 6px;
+  padding: 0;
+}
+/* 分隔符居中，删除操作固定行尾不随内容漂移 */
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-head .rsp-bilingual-sep,
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-sep {
+  justify-self: center;
+}
+/* 删除操作轻度弱化：浅危险色，hover 加深 */
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-head .rsp-bilingual-remove,
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-remove {
+  justify-self: end;
+  color: #d97a7a;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-card-head .rsp-bilingual-remove:hover:not(:disabled),
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-field-row .rsp-bilingual-remove:hover:not(:disabled) {
+  border-color: #e0a3a3;
+  color: #cf3d3d;
+  background: #fff5f5;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-groups[aria-invalid="true"] .rsp-bilingual-zh,
+.auto-check-module[data-module="report_special_processing"] .rsp-tf-groups[aria-invalid="true"] .rsp-bilingual-en {
+  border-color: #cf3d3d;
+}
+/* 修改前 / 修改后左右并排对比 */
+.auto-check-module[data-module="report_special_processing"] .rsp-value-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+/* 处理编号：系统生成的只读元信息，展示在“基本信息”标题行右侧 */
+.auto-check-module[data-module="report_special_processing"] .rsp-record-no-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-record-no-label {
+  color: var(--rsp-muted);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-record-no-value {
+  color: #334157;
+  font-size: 13px;
+  font-weight: 600;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-record-no-copy {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--rsp-brand);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-record-no-copy:hover {
+  background: #edf4ff;
+}
+@media (max-width: 900px) {
+  .auto-check-module[data-module="report_special_processing"] .rsp-value-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== 特殊处理内容：行内表单式编辑器（数据源/表/字段/修改前/后，无二级弹窗） ===== */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-editor {
+  --action-width: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field {
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tables-head {
+  display: grid;
+  grid-template-columns: 1fr var(--action-width);
+  align-items: center;
+  column-gap: 12px;
+  height: 0;
+  margin: 0;
+  padding-right: 17px;
+  overflow: visible;
+  transform: translateY(-42px);
+  box-sizing: border-box;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-special-content-section {
+  position: relative;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-special-content-section > h3 {
+  margin-bottom: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-add-table:disabled {
+  border-color: var(--rsp-line);
+  color: var(--rsp-muted);
+  cursor: not-allowed;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-add-action {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--rsp-brand);
+  font-size: 12px;
+  line-height: 28px;
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-add-action:hover:not(:disabled) {
+  background: #edf4ff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-add-action:disabled {
+  border: 0;
+  background: transparent;
+  color: var(--rsp-muted);
+}
+/* 表卡片：轻边框、小圆角、无阴影；候选面板悬浮于卡片之上不受裁剪 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card {
+  padding: 16px;
+  overflow: visible;
+  box-shadow: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card-body {
+  margin: 0;
+  padding: 0;
+  background: #fff;
+}
+/* 多张表之间相同列严格对齐：表行与字段行各自使用统一 Grid 模板 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-row {
+  display: grid;
+  align-items: center;
+  column-gap: 12px;
+  min-width: 0;
+}
+/* 表信息：表头与输入行严格复用同一套四列 Grid。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-row {
+  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr) var(--action-width);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-row {
+  min-height: 32px;
+}
+/* 修改字段：表头与输入行严格复用同一套五列 Grid。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-row {
+  grid-template-columns: minmax(170px, 1.05fr) minmax(170px, 1.05fr) minmax(140px, 0.85fr) minmax(140px, 0.85fr) var(--action-width);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-row {
+  min-height: 32px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 修改字段作为处理表卡片内的轻量分区，仅用分割线和留白建立层级。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-fields-area {
+  margin: 14px 0 0;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid #eef1f5;
+  border-radius: 0;
+  background: transparent;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-fields-head {
+  margin: 0 0 12px;
+}
+/* 处理范围与修改字段共用同一标题 Grid 和统一操作容器。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-section-head {
+  display: grid;
+  grid-template-columns: 1fr var(--action-width);
+  align-items: center;
+  column-gap: 12px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-section-head-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-title-row .rsp-sc-section-head-main {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr);
+  align-items: center;
+  column-gap: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-controls {
+  grid-column: 1 / 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-header-action {
+  width: var(--action-width);
+  flex: 0 0 var(--action-width);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tables-head .rsp-sc-header-action {
+  grid-column: 2;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head > :last-child,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head > :last-child,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head > :last-child {
+  width: var(--action-width);
+  flex: 0 0 var(--action-width);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-row > *,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row > *,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-row > * {
+  min-width: 0;
+}
+/* 可搜索输入 + 候选面板 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo {
+  position: relative;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  color: var(--rsp-text);
+  font-size: 12px;
+  line-height: 30px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-input:focus {
+  border-color: var(--rsp-brand);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-panel {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  min-width: 220px;
+  padding: 4px;
+  background: #ffffff;
+  border: 1px solid #d5dde8;
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
+  box-shadow: 0 6px 18px rgba(31, 46, 71, 0.12);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-panel[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-list {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--rsp-text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-option:hover {
+  background: #f0f5ff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  color: #334157;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-secondary {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--rsp-muted);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-more {
+  width: 100%;
+  min-height: 28px;
+  margin-top: 2px;
+  border: 1px dashed var(--rsp-line);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--rsp-brand);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-more:hover {
+  border-color: var(--rsp-brand);
+  background: #f0f5ff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-status {
+  padding: 8px;
+  color: var(--rsp-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-status.is-error {
+  color: #cf3d3d;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-status[hidden] {
+  display: none;
+}
+/* 中文名/修改前/修改后输入框：与全局 32px 控件体系一致 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cn-input,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  color: var(--rsp-text);
+  font-size: 12px;
+  line-height: 30px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cn-input:focus,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input:focus {
+  border-color: var(--rsp-brand);
+}
+
+/* 处理范围作为处理表卡片内的轻量分区，仅保留顶部浅分割线。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope {
+  margin: 14px 0 0;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid #eef1f5;
+  border-radius: 0;
+  background: transparent;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-title-row {
+  margin: 0 0 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-head {
+  margin: 0 0 6px;
+  color: var(--rsp-muted);
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-row {
+  display: grid;
+  grid-template-columns: var(--rsp-field-label-width) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--rsp-field-gap);
+  min-width: 0;
+  min-height: 32px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-label {
+  color: var(--rsp-text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-row + .rsp-sc-scope-row {
+  margin-top: 6px;
+}
+
+/* 处理范围：限制报送期开关 + 通用条件（条件字段/条件值） */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-rp-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 30px;
+  margin: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-rp-label {
+  color: var(--rsp-text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-date-label {
+  color: var(--rsp-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-rp-options {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  min-height: 30px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-rp-options label.rsp-sc-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  line-height: 24px;
+  color: var(--rsp-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-date-field-picker {
+  grid-column: 3;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-date-field-picker[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-rp-options input[type="radio"] {
+  width: 14px !important;
+  height: 14px !important;
+  max-height: 14px !important;
+  min-height: 0 !important;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  appearance: auto;
+  accent-color: var(--rsp-brand, #3466D9);
+}
+/* 处理条件：表头与输入行严格复用同一套三列 Grid。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row {
+  grid-template-columns: minmax(260px, 0.85fr) minmax(360px, 1.35fr) var(--action-width);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head {
+  margin: 0 0 6px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row {
+  min-height: 32px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-condition-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 三组表头完全复用字号、行高、颜色和间距。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head {
+  margin-bottom: 6px;
+  color: var(--rsp-muted);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-ds-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-cell .rsp-sc-value-input {
+  flex: 1 1 auto;
+}
+/* 三类删除操作统一为固定 88px 操作列中的轻量危险文字。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-table,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-condition,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-field {
+  width: var(--action-width);
+  min-width: var(--action-width);
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: nowrap;
+  color: var(--danger-light, #d97a7a);
+  font-size: 12px;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-table:hover:not(:disabled),
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-condition:hover:not(:disabled),
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-field:hover:not(:disabled) {
+  color: var(--danger, #cf3d3d);
+  border: 0;
+  background: transparent;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-editor[aria-invalid="true"] .rsp-sc-cn-input,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-editor[aria-invalid="true"] .rsp-sc-value-input,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-editor[aria-invalid="true"] .rsp-sc-combo-input,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-editor[aria-invalid="true"] .rsp-sc-ds-select {
+  border-color: #cf3d3d;
+}
+
+/* ===== 数据源元数据选择弹窗（选择处理表 / 选择字段） ===== */
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.32);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 100%);
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-head {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 48px 12px 18px;
+  border-bottom: 1px solid var(--rsp-line);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-subtitle {
+  overflow: hidden;
+  color: var(--rsp-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-head .rsp-modal-close {
+  top: 10px;
+  right: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-search-row {
+  display: flex;
+  gap: 8px;
+  padding: 12px 18px 4px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-search-row .rsp-button {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 160px;
+  padding: 8px 18px;
+  overflow: hidden;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  scrollbar-width: thin;
+  scrollbar-color: #c5d0e0 transparent;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-list::-webkit-scrollbar {
+  width: 6px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #c5d0e0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e8eef6;
+  font-size: 12px;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row-multi {
+  grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1.2fr) auto;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row:last-child {
+  border-bottom: 0;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row:hover:not(.is-added) {
+  background: #f2f7ff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row.is-active,
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row.is-selected {
+  background: #eaf1ff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row.is-added {
+  color: var(--rsp-muted);
+  background: #f7f9fc;
+  cursor: not-allowed;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-row-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f3f5f8;
+  color: #526078;
+  font-weight: 600;
+  cursor: default;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-cell {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-cell-mono {
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-cell-empty {
+  color: var(--rsp-muted);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--rsp-line);
+  border-radius: 3px;
+  background: #fff;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-check.is-checked {
+  border-color: var(--rsp-brand);
+  background: var(--rsp-brand);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-added {
+  justify-self: end;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--rsp-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-status {
+  padding: 18px 4px;
+  color: var(--rsp-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-status.is-error {
+  color: #cf3d3d;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-status[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--rsp-line);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--rsp-muted);
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-page {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-actions {
+  display: flex;
+  gap: 8px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-picker-actions .rsp-button {
+  min-height: 32px;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-row,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-field-row,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head,
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head {
+    display: none;
+  }
+  .auto-check-module[data-module="report_special_processing"] .rsp-picker-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+  .auto-check-module[data-module="report_special_processing"] .rsp-picker-row-multi {
+    grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
 }

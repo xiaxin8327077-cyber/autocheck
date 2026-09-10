@@ -78,6 +78,18 @@ class InvalidTransitionError(DomainError):
     message = "处理状态流转无效"
 
 
+class DataSourceConnectionError(DomainError):
+    status = 502
+    code = "datasource_connection_failed"
+    message = "数据源连接失败，请检查数据源配置"
+
+
+class DataSourceMetadataError(DomainError):
+    status = 502
+    code = "datasource_metadata_read_failed"
+    message = "表信息获取失败，请稍后重试"
+
+
 class PlatformUnavailableError(DomainError):
     status = 503
     code = "platform_service_unavailable"
@@ -97,11 +109,15 @@ class RecordInput:
     handler_user_id: str | None = None
     row_version: int | None = None
     dimension: str | None = None
+    business_system_code: str | None = None
     governance_owner_user_id: str | None = None
     table_name: str | None = None
     field_name: str | None = None
     value_before: str | None = None
     value_after: str | None = None
+    # 新结构的解析结果（StructuredContent）；历史手工录入记录为 None。
+    structured_content: Any = None
+    datasource_name_snapshot: str | None = None
 
     @property
     def report_process_code(self) -> str:

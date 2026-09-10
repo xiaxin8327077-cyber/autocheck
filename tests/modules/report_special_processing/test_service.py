@@ -53,6 +53,7 @@ class MemoryStorage:
         self.record_attachments = []
         self.calls = []
         self.create_reports_args = []
+        self.field_mappings = {}
         self._next_id = 1
         self._next_audit_id = 1
         self._next_attachment_id = 1
@@ -91,6 +92,32 @@ class MemoryStorage:
             "created_at": meta["created_at"],
             "removed": meta["removed_at"] is not None,
         }
+
+    def list_field_mappings(self, datasource_id):
+        wanted = str(datasource_id or "").strip()
+        return [
+            dict(value)
+            for (ds, _schema, _table), value in self.field_mappings.items()
+            if ds == wanted
+        ]
+
+    def get_field_mapping(self, datasource_id, schema_name, table_name):
+        row = self.field_mappings.get((str(datasource_id or "").strip(), str(schema_name or "").strip(), str(table_name or "").strip()))
+        return dict(row) if row is not None else None
+
+    def upsert_field_mapping(self, datasource_id, schema_name, table_name, project_field, contract_field, *, user_id, username):
+        key = (str(datasource_id or "").strip(), str(schema_name or "").strip(), str(table_name or "").strip())
+        row = {
+            "datasource_id": key[0],
+            "schema": key[1],
+            "table_name": key[2],
+            "project_field": str(project_field or ""),
+            "contract_field": str(contract_field or ""),
+            "updated_by_username_snapshot": str(username or ""),
+            "updated_at": NOW,
+        }
+        self.field_mappings[key] = row
+        return dict(row)
 
     def create(self, record, reports, processes, audit, *, record_attachment_change=None, attachment_actor=None):
         self.calls.append("create")
@@ -250,7 +277,29 @@ class MemoryStorage:
         self.calls.append("delete")
 
 
-def _service(reports=None, directory=None, role_label_resolver=None):
+class Dictionary:
+    """platform.dictionary v1 测试替身：仅含一个启用业务系统。"""
+
+    def __init__(self, items=None, disabled=()):
+        from auto_check.app.platform_services import PublicDictionaryItem
+
+        defaults = [PublicDictionaryItem(code="valuation", label="估值系统", sort_order=10)]
+        self.items = list(items) if items is not None else defaults
+        self.disabled = set(disabled)
+
+    def list_active_items(self, dictionary_code):
+        if dictionary_code != "business_system":
+            return ()
+        return tuple(item for item in self.items if item.code not in self.disabled)
+
+    def get_active_item(self, dictionary_code, item_code):
+        return next(
+            (item for item in self.list_active_items(dictionary_code) if item.code == str(item_code)),
+            None,
+        )
+
+
+def _service(reports=None, directory=None, role_label_resolver=None, dictionary=None, metadata=None):
     from auto_check.modules.report_special_processing.service import SpecialProcessingService
     return SpecialProcessingService(
         MemoryStorage(),
@@ -258,6 +307,8 @@ def _service(reports=None, directory=None, role_label_resolver=None):
         reports or Reports(),
         now=lambda: NOW,
         role_label_resolver=role_label_resolver,
+        dictionary_service=dictionary if dictionary is not None else Dictionary(),
+        metadata_service=metadata,
     )
 
 
@@ -273,9 +324,10 @@ def _payload(save_mode="record", **updates):
         "special_handling_at": "2026-08-01T15:32:18+08:00",
         "handler_user_id": "2",
         "dimension": "project",
+        "business_system_code": "valuation",
         "governance_owner_user_id": "1",
-        "table_name": "t_demo",
-        "field_name": "amt",
+        "table_name": "演示表｜t_demo",
+        "field_name": "金额｜amt",
         "value_before": "1",
         "value_after": "2",
     }
@@ -308,8 +360,8 @@ def test_create_formal_record_persists_dimension_governance_fields_and_skips_rep
     assert record["governance_owner_user_id"] == "owner"
     assert record["governance_owner_username_snapshot"] == "gov_owner"
     assert record["governance_owner_display_name_snapshot"] == "治理负责人甲"
-    assert record["table_name"] == "t_demo"
-    assert record["field_name"] == "amt"
+    assert record["table_name"] == "演示表｜t_demo"
+    assert record["field_name"] == "金额｜amt"
     assert record["value_before"] == "1"
     assert record["value_after"] == "2"
     assert record["processing_content"] in {"", None}
@@ -320,8 +372,8 @@ def test_create_formal_record_persists_dimension_governance_fields_and_skips_rep
     item = listed["items"][0]
     assert item["dimension"] == "project"
     assert item["governance_owner_display_name_snapshot"] == "治理负责人甲"
-    assert item["table_name"] == "t_demo"
-    assert item["field_name"] == "amt"
+    assert item["table_name"] == "演示表｜t_demo"
+    assert item["field_name"] == "金额｜amt"
 
 
 def test_create_accepts_governance_owner_outside_dimension_candidates():
@@ -551,8 +603,8 @@ def test_draft_can_be_partial_but_completion_requires_complete_data():
         {
             "save_mode": "draft",
             "report_process_code": "pbc",
-            "table_name": "t_draft",
-            "field_name": "col_a",
+            "table_name": "草稿表｜t_draft",
+            "field_name": "列A｜col_a",
         },
         {"id": "1", "username": "creator", "role": "user"},
         request_id="req",
@@ -625,8 +677,8 @@ def test_draft_create_and_update_audit_summary():
             "save_mode": "draft",
             "report_process_code": "pbc",
             "summary": "草稿摘要",
-            "table_name": "t_draft",
-            "field_name": "col_a",
+            "table_name": "草稿表｜t_draft",
+            "field_name": "列A｜col_a",
         },
         actor,
         request_id="req-draft",
@@ -639,8 +691,8 @@ def test_draft_create_and_update_audit_summary():
             "report_process_code": "pbc",
             "row_version": draft["row_version"],
             "summary": "新草稿摘要",
-            "table_name": "t_draft",
-            "field_name": "col_a",
+            "table_name": "草稿表｜t_draft",
+            "field_name": "列A｜col_a",
         },
         actor,
         request_id="req-draft-update",
@@ -657,8 +709,8 @@ def test_draft_can_be_voided_by_admin():
             "save_mode": "draft",
             "report_process_code": "pbc",
             "summary": "草稿",
-            "table_name": "t_draft",
-            "field_name": "col_a",
+            "table_name": "草稿表｜t_draft",
+            "field_name": "列A｜col_a",
         },
         {"id": "1", "username": "creator", "role": "user"},
         request_id="req-draft",
@@ -933,6 +985,7 @@ def service_with_publisher():
         Reports(),
         now=lambda: NOW,
         notification_publisher=publisher,
+        dictionary_service=Dictionary(),
     )
     return service, publisher
 
@@ -1054,7 +1107,7 @@ class TestNotificationTriggerMatrix:
         assert request.category == "task"
         assert request.level == "success"
         assert request.title == "您提交的报表特殊处理已完成确认"
-        assert request.content == "项目端 · amt"
+        assert request.content == "项目端 · 金额"
         assert request.dedupe_key == (
             f"rsp-completed:{completed['id']}:"
             f"{completed['row_version']}:1"
@@ -1435,3 +1488,472 @@ def test_reopen_then_reconfirm_keeps_old_and_new_attachment_sets():
     assert complete_audits[1]["confirm_attachments"]["count"] == 2
     assert complete_audits[0]["confirm_attachments"]["ids"] != complete_audits[1]["confirm_attachments"]["ids"]
     assert len(service.storage.attachments) == 3
+
+
+# ================= 业务系统字典与双语表字段（v1.2.14） =================
+
+ACTOR = {"id": "1", "username": "creator", "display_name": "创建人", "role": "user"}
+
+
+class MultiDictionary(Dictionary):
+    def __init__(self):
+        from auto_check.app.platform_services import PublicDictionaryItem
+
+        super().__init__(items=[
+            PublicDictionaryItem(code="valuation", label="估值系统", sort_order=10),
+            PublicDictionaryItem(code="ta", label="TA估值", sort_order=20),
+        ], disabled={"off"})
+
+
+def test_catalog_exposes_active_business_systems():
+    service = _service(dictionary=MultiDictionary())
+    catalog = service.catalog(ACTOR)
+    assert catalog["business_systems"] == [
+        {"code": "valuation", "name": "估值系统"},
+        {"code": "ta", "name": "TA估值"},
+    ]
+
+
+def test_catalog_exposes_report_period_field_matchers_from_dictionary():
+    from auto_check.app.platform_services import PublicDictionaryItem
+
+    class ReportPeriodDictionary(MultiDictionary):
+        def list_active_items(self, dictionary_code):
+            if dictionary_code == "report_period_field":
+                return (
+                    PublicDictionaryItem(code="cldate", label="cldate", sort_order=10),
+                    PublicDictionaryItem(code="caldate", label="caldate", sort_order=20),
+                )
+            return super().list_active_items(dictionary_code)
+
+    catalog = _service(dictionary=ReportPeriodDictionary()).catalog(ACTOR)
+    assert catalog["report_period_fields"] == [
+        {"code": "cldate", "name": "cldate"},
+        {"code": "caldate", "name": "caldate"},
+    ]
+
+
+def test_create_formal_requires_known_business_system():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    with pytest.raises(ValidationError) as exc:
+        service.create(_payload(business_system_code="ghost"), ACTOR, request_id="r1")
+    assert "business_system_code" in exc.value.fields
+    with pytest.raises(ValidationError):
+        service.create(_payload(business_system_code="off"), ACTOR, request_id="r2")
+    with pytest.raises(ValidationError):
+        service.create(_payload(business_system_code=None), ACTOR, request_id="r3")
+
+
+def test_create_draft_allows_empty_business_system_but_known_code_still_validated():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    record = service.create(_payload(save_mode="draft", business_system_code=None), ACTOR, request_id="d1")
+    assert record["business_system_code"] is None
+    with pytest.raises(ValidationError):
+        service.create(_payload(save_mode="draft", business_system_code="ghost"), ACTOR, request_id="d2")
+
+
+def test_create_snapshots_business_system_name():
+    service = _service(dictionary=MultiDictionary())
+    record = service.create(_payload(business_system_code="ta"), ACTOR, request_id="s1")
+    assert record["business_system_code"] == "ta"
+    assert record["business_system_name_snapshot"] == "TA估值"
+    listed = service.storage.records[record["id"]]
+    assert listed["business_system_name_snapshot"] == "TA估值"
+
+
+def test_create_enforces_bilingual_table_and_field():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    with pytest.raises(ValidationError) as exc:
+        service.create(_payload(table_name="legacy_table"), ACTOR, request_id="b1")
+    assert "table_name" in exc.value.fields
+    with pytest.raises(ValidationError) as exc:
+        service.create(_payload(field_name="只有中文"), ACTOR, request_id="b2")
+    assert "field_name" in exc.value.fields
+    ok = service.create(
+        _payload(table_name="资产表｜fa_balance；估值表｜valuation"),
+        ACTOR,
+        request_id="b3",
+    )
+    assert ok["table_name"] == "资产表｜fa_balance；估值表｜valuation"
+
+
+def test_update_legacy_values_unchanged_allowed_but_modified_must_upgrade():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    # 直接种入历史遗留记录（旧 create 不受双语约束），再验证编辑兼容规则
+    legacy = service.create(_payload(save_mode="draft", table_name="资产表｜fa", field_name="金额｜amt"), ACTOR, request_id="l0")
+    record_id = legacy["id"]
+    service.storage.records[record_id]["table_name"] = "legacy_t"
+    service.storage.records[record_id]["field_name"] = "legacy_f"
+    row_version = legacy["row_version"]
+    updated = service.update(
+        record_id,
+        {**_payload(save_mode="draft", table_name="legacy_t", field_name="legacy_f", summary="新摘要"), "row_version": row_version},
+        ACTOR,
+        request_id="l1",
+    )
+    assert updated["table_name"] == "legacy_t"
+    with pytest.raises(ValidationError):
+        service.update(
+            record_id,
+            {**_payload(save_mode="draft", table_name="changed_t", field_name="legacy_f"), "row_version": updated["row_version"]},
+            ACTOR,
+            request_id="l2",
+        )
+
+
+def test_update_keeps_disabled_business_system_when_unchanged():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    created = service.create(_payload(business_system_code="ta"), ACTOR, request_id="o1")
+    stored = service.storage.records[created["id"]]
+    stored["business_system_code"] = "off"
+    stored["business_system_name_snapshot"] = "历史停用项"
+    updated = service.update(
+        created["id"],
+        {**_payload(business_system_code="off", summary="编辑其他"), "row_version": created["row_version"]},
+        ACTOR,
+        request_id="o2",
+    )
+    assert updated["business_system_code"] == "off"
+    assert updated["business_system_name_snapshot"] == "历史停用项"
+    with pytest.raises(ValidationError):
+        service.update(
+            created["id"],
+            {**_payload(business_system_code="ghost"), "row_version": updated["row_version"]},
+            ACTOR,
+            request_id="o3",
+        )
+
+
+def test_create_field_group_alignment_with_tables():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    # 分组字段串：第 N 组对应第 N 张表，允许空组
+    ok = service.create(
+        _payload(table_name="资产表｜fa；估值表｜va", field_name="金额｜amt；；汇率｜rate；利率｜ir"),
+        ACTOR,
+        request_id="g1",
+    )
+    assert ok["field_name"] == "金额｜amt；；汇率｜rate；利率｜ir"
+    # 组数与表数不一致 → 拒绝
+    with pytest.raises(ValidationError) as exc:
+        service.create(
+            _payload(table_name="资产表｜fa", field_name="金额｜amt；；汇率｜rate"),
+            ACTOR,
+            request_id="g2",
+        )
+    assert "field_name" in exc.value.fields
+    # 表名非规范但字段用分组格式 → 要求先升级表名
+    with pytest.raises(ValidationError) as exc:
+        service.create(
+            _payload(table_name="legacy_table", field_name="金额｜amt；；汇率｜rate"),
+            ACTOR,
+            request_id="g3",
+        )
+    assert "table_name" in exc.value.fields
+    # 表名不允许使用分组分隔符
+    with pytest.raises(ValidationError) as exc:
+        service.create(
+            _payload(table_name="资产表｜fa；；估值表｜va"),
+            ACTOR,
+            request_id="g4",
+        )
+    assert "table_name" in exc.value.fields
+    # 所有分组均为空 → 字段名视为未填写
+    with pytest.raises(ValidationError) as exc:
+        service.create(
+            _payload(table_name="资产表｜fa；估值表｜va", field_name="；；"),
+            ACTOR,
+            request_id="g5",
+        )
+    assert "field_name" in exc.value.fields
+
+
+def test_update_table_count_change_realigns_grouped_fields():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary())
+    created = service.create(
+        _payload(table_name="资产表｜fa；估值表｜va", field_name="金额｜amt；；汇率｜rate"),
+        ACTOR,
+        request_id="g6",
+    )
+    # 仅修改表名导致分组数不一致 → 拒绝（字段名仍为分组格式）
+    with pytest.raises(ValidationError) as exc:
+        service.update(
+            created["id"],
+            {
+                **_payload(table_name="资产表｜fa", field_name="金额｜amt；；汇率｜rate"),
+                "row_version": created["row_version"],
+            },
+            ACTOR,
+            request_id="g7",
+        )
+    assert "field_name" in exc.value.fields
+    # 同步调整分组后可保存
+    updated = service.update(
+        created["id"],
+        {
+            **_payload(table_name="合并表｜fa_all", field_name="金额｜amt；汇率｜rate"),
+            "row_version": created["row_version"],
+        },
+        ACTOR,
+        request_id="g8",
+    )
+    assert updated["table_name"] == "合并表｜fa_all"
+    assert updated["field_name"] == "金额｜amt；汇率｜rate"
+
+
+# ===== 数据源 → 表 → 字段 → 修改前/后 结构化内容 =====
+
+from types import SimpleNamespace
+
+
+def _structured_payload(**updates):
+    value = {
+        "datasource_id": "ds1",
+        "datasource_type": "postgresql",
+        "tables": [{
+            "schema": "public",
+            "table_name": "t_customer",
+            "chinese_table_name": "客户信息表",
+            "table_name_source": "DATABASE",
+            "projects": ["金牛1号", "金牛2号"],
+            "contracts": ["HT001"],
+            "fields": [
+                {"column_name": "customer_status", "chinese_column_name": "客户状态",
+                 "column_name_source": "DATABASE", "value_before": "正常", "value_after": "冻结"},
+                {"column_name": "customer_type", "chinese_column_name": "客户类型",
+                 "column_name_source": "MANUAL", "value_before": "A", "value_after": "B"},
+            ],
+        }],
+    }
+    value.update(updates)
+    return value
+
+
+def test_field_mapping_upsert_list_and_get():
+    service = _service(metadata=FakeMetadata())
+    # 显式空 capabilities 的用户应被拒绝（绕过角色矩阵）
+    from auto_check.modules.report_special_processing.contracts import PermissionDeniedError
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+    with pytest.raises(PermissionDeniedError):
+        service.list_field_mappings("ds1", {"id": "9", "role": "admin", "capabilities": []})
+    result = service.upsert_field_mapping("ds1", {"schema": "public", "table_name": "t_customer", "project_field": "project_code", "contract_field": "contract_no"}, ACTOR)
+    assert result["project_field"] == "project_code"
+    assert result["contract_field"] == "contract_no"
+    listed = service.list_field_mappings("ds1", ACTOR)["items"]
+    assert any(item["table_name"] == "t_customer" for item in listed)
+    # 覆盖更新
+    service.upsert_field_mapping("ds1", {"schema": "public", "table_name": "t_customer", "project_field": "p_code"}, ACTOR)
+    listed = service.list_field_mappings("ds1", ACTOR)["items"]
+    item = next(item for item in listed if item["table_name"] == "t_customer")
+    assert item["project_field"] == "p_code"
+    assert item["contract_field"] == "", "覆盖更新为整体替换，未传字段清空"
+    # 两个定位字段都为空不允许保存
+    with pytest.raises(ValidationError):
+        service.upsert_field_mapping("ds1", {"schema": "public", "table_name": "t_other"}, ACTOR)
+
+
+def test_generate_script_success_with_mappings():
+    service = _service(metadata=FakeMetadata())
+    service.upsert_field_mapping("ds1", {"schema": "public", "table_name": "t_customer", "project_field": "project_code", "contract_field": "contract_no"}, ACTOR)
+    result = service.generate_script({"structured_content": _structured_payload()}, ACTOR)
+    script = result["script"]
+    assert "UPDATE t_customer" in script
+    assert "WHERE project_code IN ('金牛1号', '金牛2号')" in script
+    assert "AND contract_no IN ('HT001')" in script
+    assert "SET customer_status = '冻结'" in script
+    assert "AND customer_status = '正常'" in script
+
+
+def test_generate_script_rejects_missing_mapping():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+    service = _service(metadata=FakeMetadata())
+    with pytest.raises(ValidationError) as exc:
+        service.generate_script({"structured_content": _structured_payload()}, ACTOR)
+    message = exc.value.fields.get("processing_script", "")
+    assert "未配置项目定位字段" in message
+    # 只配置项目字段、未配置合同字段时，合同侧单独报错
+    service.upsert_field_mapping(
+        "ds1", {"schema": "public", "table_name": "t_customer", "project_field": "project_code"}, ACTOR,
+    )
+    with pytest.raises(ValidationError) as exc2:
+        service.generate_script({"structured_content": _structured_payload()}, ACTOR)
+    assert "未配置合同定位字段" in exc2.value.fields.get("processing_script", "")
+
+
+def test_generate_script_rejects_missing_scope():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+    service = _service(metadata=FakeMetadata())
+    payload = _structured_payload(tables=[{
+        "schema": "public",
+        "table_name": "t_customer",
+        "chinese_table_name": "客户信息表",
+        "table_name_source": "MANUAL",
+        "projects": [],
+        "contracts": [],
+        "fields": [{"column_name": "customer_status", "chinese_column_name": "客户状态",
+                     "column_name_source": "MANUAL", "value_before": "正常", "value_after": "冻结"}],
+    }])
+    with pytest.raises(ValidationError) as exc:
+        service.generate_script({"structured_content": payload}, ACTOR)
+    assert "请填写项目或合同处理范围" in exc.value.fields.get("processing_script", "")
+
+
+def test_generate_script_requires_structured_content():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+    service = _service(metadata=FakeMetadata())
+    with pytest.raises(ValidationError) as exc:
+        service.generate_script({}, ACTOR)
+    assert "structured_content" in exc.value.fields
+
+
+class FakeMetadata:
+    def __init__(self, entries=None):
+        self.entries = entries if entries is not None else {
+            "ds1": SimpleNamespace(name="TCMP生产库", config=SimpleNamespace(db_type="postgresql")),
+        }
+        self.table_calls = []
+        self.column_calls = []
+
+    def resolve(self, datasource_id):
+        return self.entries.get(str(datasource_id))
+
+    def list_datasources(self):
+        return [{"id": key, "name": entry.name, "db_type": entry.config.db_type} for key, entry in self.entries.items()]
+
+    def list_tables(self, datasource_id, *, keyword="", page=1, page_size=20):
+        self.table_calls.append((datasource_id, keyword, page, page_size))
+        return {"items": [{"table_name": "t_customer", "table_comment": "客户信息表", "schema": "public"}],
+                "total": 1, "page": page, "page_size": page_size, "total_pages": 1, "schema": "public"}
+
+    def list_columns(self, datasource_id, table_name, *, keyword="", page=1, page_size=50):
+        self.column_calls.append((datasource_id, table_name, keyword, page, page_size))
+        return {"items": [{"column_name": "customer_status", "column_comment": "客户状态", "data_type": "varchar"}],
+                "total": 1, "page": page, "page_size": page_size, "total_pages": 1}
+
+
+def test_create_structured_persists_content_and_derives_strings():
+    metadata = FakeMetadata()
+    service = _service(dictionary=MultiDictionary(), metadata=metadata)
+    record = service.create(_payload(structured_content=_structured_payload()), ACTOR, request_id="s1")
+    assert record["datasource_id"] == "ds1"
+    assert record["datasource_name_snapshot"] == "TCMP生产库"
+    assert record["datasource_type"] == "postgresql"
+    assert record["table_name"] == "客户信息表｜t_customer"
+    assert record["field_name"] == "客户状态｜customer_status；客户类型｜customer_type"
+    assert record["value_before"] == "正常\nA"
+    assert record["value_after"] == "冻结\nB"
+    stored = service.storage.records[record["id"]]
+    assert "customer_status" in stored["structured_content_json"]
+
+
+def test_create_structured_pins_backend_datasource_type_over_client():
+    metadata = FakeMetadata({
+        "ds1": SimpleNamespace(name="核算库", config=SimpleNamespace(db_type="mysql")),
+    })
+    service = _service(dictionary=MultiDictionary(), metadata=metadata)
+    record = service.create(
+        _payload(structured_content=_structured_payload(datasource_type="postgresql")),
+        ACTOR, request_id="s2",
+    )
+    assert record["datasource_type"] == "mysql"
+    assert record["datasource_name_snapshot"] == "核算库"
+
+
+def test_create_structured_rejects_unknown_datasource():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary(), metadata=FakeMetadata(entries={}))
+    with pytest.raises(ValidationError) as exc:
+        service.create(_payload(structured_content=_structured_payload()), ACTOR, request_id="s3")
+    assert "datasource_id" in exc.value.fields
+
+
+def test_create_structured_formal_requires_field_values():
+    from auto_check.modules.report_special_processing.contracts import ValidationError
+
+    service = _service(dictionary=MultiDictionary(), metadata=FakeMetadata())
+    payload = _structured_payload()
+    payload["tables"][0]["fields"][0]["value_before"] = ""
+    with pytest.raises(ValidationError) as exc:
+        service.create(_payload(structured_content=payload), ACTOR, request_id="s4")
+    assert exc.value.fields["value_before"] == "客户状态：请输入修改前内容"
+    # 草稿允许字段级修改前/后为空
+    draft = service.create(
+        _payload(save_mode="draft", structured_content=payload), ACTOR, request_id="s5",
+    )
+    assert draft["status"] == "draft"
+
+
+def test_legacy_payload_still_uses_bilingual_strings():
+    service = _service(dictionary=MultiDictionary(), metadata=FakeMetadata())
+    record = service.create(
+        _payload(table_name="资产表｜fa_balance", field_name="金额｜amt", value_before="1", value_after="2"),
+        ACTOR, request_id="s6",
+    )
+    assert record.get("structured_content_json") is None
+    assert record["datasource_id"] is None
+    assert record["table_name"] == "资产表｜fa_balance"
+
+
+def test_structured_update_roundtrip_echoes_content():
+    service = _service(dictionary=MultiDictionary(), metadata=FakeMetadata())
+    created = service.create(_payload(structured_content=_structured_payload()), ACTOR, request_id="s7")
+    updated = service.update(
+        created["id"],
+        {
+            **_payload(structured_content=_structured_payload(tables=[{
+                "schema": "public",
+                "table_name": "t_customer",
+                "chinese_table_name": "客户主表",
+                "table_name_source": "MANUAL",
+                "projects": ["P1"],
+                "fields": [{
+                    "column_name": "customer_id", "chinese_column_name": "客户编号",
+                    "column_name_source": "DATABASE", "value_before": "x", "value_after": "y",
+                }],
+            }])), "row_version": created["row_version"],
+        },
+        ACTOR, request_id="s8",
+    )
+    assert json.loads(updated["structured_content_json"])["tables"][0]["chinese_table_name"] == "客户主表"
+    assert updated["table_name"] == "客户主表｜t_customer"
+    audit = service.storage.audits[-1]
+    changed = json.loads(audit["changed_fields_json"])
+    assert "structured_content_json" not in changed
+    assert changed["table_name"]["new"] == "客户主表｜t_customer"
+
+
+def test_metadata_passthrough_and_query_limits():
+    from auto_check.modules.report_special_processing.contracts import (
+        PlatformUnavailableError,
+        ValidationError,
+    )
+
+    service = _service(dictionary=MultiDictionary())
+    with pytest.raises(PlatformUnavailableError):
+        service.list_datasources()
+
+    metadata = FakeMetadata()
+    service = _service(dictionary=MultiDictionary(), metadata=metadata)
+    assert service.list_datasources()["items"][0]["id"] == "ds1"
+    result = service.list_datasource_tables("ds1", {"keyword": "客户", "page": "2", "page_size": "999"})
+    assert metadata.table_calls == [("ds1", "客户", 2, 100)]
+    assert result["items"][0]["table_name"] == "t_customer"
+    columns = service.list_datasource_columns("ds1", "t_customer", {})
+    assert metadata.column_calls == [("ds1", "t_customer", "", 1, 50)]
+    assert columns["items"][0]["column_name"] == "customer_status"
+    with pytest.raises(ValidationError):
+        service.list_datasource_tables("ds1", {"page": "abc"})

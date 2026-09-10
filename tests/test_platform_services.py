@@ -5,7 +5,12 @@ from dataclasses import fields
 import pytest
 
 from auto_check.app.module_system.services import ServiceRegistry
-from auto_check.app.platform_services import PublicUser, create_user_directory_service
+from auto_check.app.platform_services import (
+    PublicDictionaryItem,
+    PublicUser,
+    create_dictionary_service,
+    create_user_directory_service,
+)
 from auto_check.app.security import AuthManager
 from mysql_config_test_support import MemoryApplicationDatabase
 
@@ -104,3 +109,74 @@ def test_public_user_includes_role(tmp_path):
     )
     admin = next(user for user in users if user.username == "admin")
     assert admin.role == "admin"
+
+
+def _seed_dictionary_db():
+    from auto_check.app.storage_dictionaries import create_dictionary, create_dictionary_item
+
+    database = MemoryApplicationDatabase()
+    with database.transaction() as connection:
+        create_dictionary(connection, code="business_system", name="业务系统", updated_by="admin")
+        create_dictionary_item(
+            connection, dictionary_code="business_system", item_code="valuation",
+            item_name="估值系统", sort_order=20, updated_by="admin",
+        )
+        create_dictionary_item(
+            connection, dictionary_code="business_system", item_code="ta",
+            item_name="TA估值", sort_order=10, updated_by="admin",
+        )
+        create_dictionary_item(
+            connection, dictionary_code="business_system", item_code="off",
+            item_name="停用项", enabled=False, updated_by="admin",
+        )
+    return database
+
+
+def test_dictionary_service_lists_active_items_in_order_and_is_revocable():
+    registry = ServiceRegistry()
+    registry.register_platform(create_dictionary_service(_seed_dictionary_db()))
+    services = registry.for_module("alpha", service_dependencies={"platform.dictionary": 1})
+    dictionary = services.resolve("platform.dictionary", 1)
+
+    items = dictionary.list_active_items("business_system")
+    assert [item.code for item in items] == ["ta", "valuation"]
+    assert all(isinstance(item, PublicDictionaryItem) for item in items)
+    assert items[0].label == "TA估值"
+    assert items[0].sort_order == 10
+    hit = dictionary.get_active_item("business_system", "valuation")
+    assert hit is not None and hit.label == "估值系统"
+    assert dictionary.get_active_item("business_system", "off") is None
+    assert dictionary.get_active_item("business_system", "ghost") is None
+    assert dictionary.list_active_items("unknown_dict") == ()
+
+    services.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        dictionary.list_active_items("business_system")
+
+
+def test_dictionary_service_hides_items_of_disabled_dictionary():
+    from auto_check.app.storage_dictionaries import update_dictionary
+
+    database = _seed_dictionary_db()
+    with database.transaction() as connection:
+        update_dictionary(connection, "business_system", enabled=False, updated_by="admin")
+    registry = ServiceRegistry()
+    registry.register_platform(create_dictionary_service(database))
+    services = registry.for_module("alpha", service_dependencies={"platform.dictionary": 1})
+    dictionary = services.resolve("platform.dictionary", 1)
+    assert dictionary.list_active_items("business_system") == ()
+    assert dictionary.get_active_item("business_system", "ta") is None
+
+
+def test_dictionary_service_binds_independent_facades_per_owner():
+    registry = ServiceRegistry()
+    registry.register_platform(create_dictionary_service(_seed_dictionary_db()))
+    first = registry.for_module("alpha", service_dependencies={"platform.dictionary": 1})
+    second = registry.for_module("beta", service_dependencies={"platform.dictionary": 1})
+    facade_a = first.resolve("platform.dictionary", 1)
+    facade_b = second.resolve("platform.dictionary", 1)
+    assert facade_a is not facade_b
+    first.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        facade_a.list_active_items("business_system")
+    assert facade_b.list_active_items("business_system")

@@ -64,7 +64,7 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
-from auto_check.app.platform_services import create_user_directory_service
+from auto_check.app.platform_services import create_dictionary_service, create_user_directory_service
 from auto_check.app.report_navigation_platform import (
     ProviderManagedCardError,
     create_report_navigation_service,
@@ -539,6 +539,116 @@ class ApiRouter:
         role = str((current_user or {}).get("role", "") or "user")
         return has_capability(role, code, self._current_capability_matrix())
 
+    def _handle_dictionaries(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        current_user: dict[str, Any] | None,
+    ) -> tuple[int, dict[str, Any]]:
+        """字典管理 API：仅 ``sys.dictionaries`` 能力可用。"""
+        from auto_check.app.storage_dictionaries import (
+            create_dictionary,
+            create_dictionary_item,
+            delete_dictionary,
+            delete_dictionary_item,
+            list_dictionaries,
+            update_dictionary,
+            update_dictionary_item,
+        )
+
+        if not self._user_has_capability(current_user, "sys.dictionaries"):
+            return 403, {"error": "需要字典管理权限"}
+        user_id = str((current_user or {}).get("id") or "")
+        body = body or {}
+
+        def map_value_error(exc: ValueError) -> tuple[int, dict[str, Any]]:
+            message = str(exc)
+            if "已存在" in message:
+                return 409, {"error": message}
+            if "不存在" in message:
+                return 404, {"error": message}
+            return 400, {"error": message}
+
+        try:
+            if method == "GET" and path == "/api/system/dictionaries":
+                with self.application_database.connect() as connection:
+                    return 200, {"dictionaries": list_dictionaries(connection)}
+            if method == "POST" and path == "/api/system/dictionaries":
+                with self.application_database.transaction() as connection:
+                    created = create_dictionary(
+                        connection,
+                        code=body.get("code"),
+                        name=body.get("name"),
+                        description=body.get("description", ""),
+                        enabled=bool(body.get("enabled", True)),
+                        sort_order=body.get("sort_order", 0),
+                        updated_by=user_id,
+                    )
+                return 201, {"dictionary": created}
+            dictionary_match = re.fullmatch(r"/api/system/dictionaries/([a-z0-9_]+)", path)
+            if method == "DELETE" and dictionary_match:
+                with self.application_database.transaction() as connection:
+                    delete_dictionary(connection, dictionary_match.group(1))
+                return 200, {"deleted": True}
+            if method == "PUT" and dictionary_match:
+                with self.application_database.transaction() as connection:
+                    updated = update_dictionary(
+                        connection,
+                        dictionary_match.group(1),
+                        name=body.get("name"),
+                        description=body.get("description"),
+                        enabled=body.get("enabled"),
+                        sort_order=body.get("sort_order"),
+                        updated_by=user_id,
+                    )
+                return 200, {"dictionary": updated}
+            item_create_match = re.fullmatch(r"/api/system/dictionaries/([a-z0-9_]+)/items", path)
+            if method == "POST" and item_create_match:
+                with self.application_database.transaction() as connection:
+                    created = create_dictionary_item(
+                        connection,
+                        dictionary_code=item_create_match.group(1),
+                        item_code=body.get("code"),
+                        item_name=body.get("name"),
+                        description=body.get("description", ""),
+                        enabled=bool(body.get("enabled", True)),
+                        sort_order=body.get("sort_order", 0),
+                        updated_by=user_id,
+                    )
+                return 201, {"item": created}
+            item_update_match = re.fullmatch(
+                r"/api/system/dictionaries/([a-z0-9_]+)/items/([^/]+)", path
+            )
+            if method in {"PUT", "DELETE"} and item_update_match:
+                raw_id = item_update_match.group(2)
+                if not raw_id.isdigit():
+                    return 400, {"error": "字典项标识无效"}
+                if method == "DELETE":
+                    with self.application_database.transaction() as connection:
+                        delete_dictionary_item(
+                            connection,
+                            item_update_match.group(1),
+                            int(raw_id),
+                        )
+                    return 200, {"deleted": True}
+                with self.application_database.transaction() as connection:
+                    updated = update_dictionary_item(
+                        connection,
+                        item_update_match.group(1),
+                        int(raw_id),
+                        item_code=body.get("code"),
+                        item_name=body.get("name"),
+                        description=body.get("description"),
+                        enabled=body.get("enabled"),
+                        sort_order=body.get("sort_order"),
+                        updated_by=user_id,
+                    )
+                return 200, {"item": updated}
+        except ValueError as exc:
+            return map_value_error(exc)
+        return 404, {"error": "not found"}
+
     def session_user_payload(self, session: AuthSession | None) -> dict[str, Any] | None:
         payload = _session_user(session)
         if payload is None:
@@ -659,6 +769,8 @@ class ApiRouter:
                             return 200, {"ok": True}
                 except ValueError as exc:
                     return 400, {"error": str(exc)}
+            if path == "/api/system/dictionaries" or path.startswith("/api/system/dictionaries/"):
+                return self._handle_dictionaries(method, path, body, current_user)
             if path == "/api/settings/interface/theme-colors":
                 user_id = str((current_user or {}).get("id") or "").strip()
                 if method == "GET":
@@ -4917,6 +5029,7 @@ def run_server(
             ),
             platform_services=(
                 create_user_directory_service(auth_manager),
+                create_dictionary_service(application_database),
                 create_report_navigation_service(report_navigation_service),
                 _notification_platform_module.create_notification_platform_service(notification_service),
             ),

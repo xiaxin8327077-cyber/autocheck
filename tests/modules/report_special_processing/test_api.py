@@ -33,6 +33,23 @@ class Service:
     def reopen(self, record_id, body, user, request_id): return {"id": record_id}
     def audit(self, record_id, query): return {"items": [], "page": 1, "page_size": 20, "total": 0, "total_pages": 0}
     def summary(self, query): return {"total": 0}
+    def list_datasources(self): return {"items": [{"id": "ds1", "name": "TCMP生产库", "db_type": "postgresql"}]}
+    def list_datasource_tables(self, datasource_id, query):
+        return {"items": [{"table_name": "t_customer", "table_comment": "客户信息表", "schema": "public"}],
+                "total": 1, "page": 1, "page_size": 20, "total_pages": 1, "datasource_id": datasource_id, "query": dict(query)}
+    def list_datasource_columns(self, datasource_id, table_name, query):
+        return {"items": [{"column_name": "customer_status", "column_comment": "客户状态", "data_type": "varchar"}],
+                "total": 1, "page": 1, "page_size": 50, "total_pages": 1,
+                "datasource_id": datasource_id, "table_name": table_name, "query": dict(query)}
+    def list_field_mappings(self, datasource_id, user):
+        return {"items": [{"datasource_id": datasource_id, "schema": "public",
+                           "table_name": "t_customer", "project_field": "project_code", "contract_field": "contract_no"}]}
+    def upsert_field_mapping(self, datasource_id, body, user):
+        return {"datasource_id": datasource_id, "schema": body.get("schema", ""),
+                "table_name": body.get("table_name", ""), "project_field": body.get("project_field", ""),
+                "contract_field": body.get("contract_field", "")}
+    def generate_script(self, body, user):
+        return {"script": "-- 数据源：ds1\nUPDATE t_customer SET status = '终止' WHERE project_code IN ('P001');"}
 
 
 def _router(service=None):
@@ -118,3 +135,58 @@ def test_api_maps_domain_and_unknown_errors_without_leaking_details():
     rendered = str(response.body)
     assert "secret" not in rendered and "DROP TABLE" not in rendered
     assert response.body["meta"]["error_id"]
+
+
+def test_datasource_metadata_routes_registered_and_scoped():
+    router = _router()
+    response = _dispatch(router, "GET", "/datasources")
+    assert response.status == 200
+    assert response.body["data"]["items"][0]["id"] == "ds1"
+
+    response = _dispatch(
+        router, "GET", "/datasources/ds1/tables",
+        body=None,
+    )
+    assert response.status == 200
+    assert response.body["data"]["items"][0]["table_name"] == "t_customer"
+    assert response.body["data"]["datasource_id"] == "ds1"
+
+    response = _dispatch(router, "GET", "/datasources/ds1/tables/t_customer/columns")
+    assert response.status == 200
+    assert response.body["data"]["items"][0]["column_name"] == "customer_status"
+    assert response.body["data"]["table_name"] == "t_customer"
+
+
+def test_field_mapping_and_script_generate_routes():
+    router = _router()
+    response = _dispatch(router, "GET", "/datasources/ds1/field-mappings")
+    assert response.status == 200
+    assert response.body["data"]["items"][0]["project_field"] == "project_code"
+
+    response = _dispatch(
+        router, "PUT", "/datasources/ds1/field-mappings",
+        body={"schema": "public", "table_name": "t_customer",
+              "project_field": "project_code", "contract_field": "contract_no"},
+    )
+    assert response.status == 200
+    assert response.body["data"]["table_name"] == "t_customer"
+
+    response = _dispatch(
+        router, "POST", "/script/generate",
+        body={"structured_content": {"datasource_id": "ds1", "datasource_type": "postgresql", "tables": []}},
+    )
+    assert response.status == 200
+    assert "UPDATE t_customer" in response.body["data"]["script"]
+    # 无编辑能力用户生成脚本被拒
+    response = router.dispatch(request=ModuleRequest(
+        "POST", _manifest().api_prefix + "/script/generate", {}, {}, {}, {"role": "none", "capabilities": []},
+    ), body_size=0)
+    assert response.status == 403
+
+
+def test_datasource_metadata_routes_require_view_permission():
+    router = _router()
+    response = router.dispatch(request=ModuleRequest(
+        "GET", _manifest().api_prefix + "/datasources", {}, {}, None, {"role": "none", "capabilities": []},
+    ), body_size=0)
+    assert response.status == 403

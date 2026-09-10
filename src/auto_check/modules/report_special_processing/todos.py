@@ -6,6 +6,7 @@ from typing import Any, Mapping, Sequence
 from auto_check.app.report_navigation_platform import TodoAction, TodoItem, TodoListRequest
 
 from .contracts import DIMENSION_LABELS
+from .bilingual_names import bilingual_summary
 
 MODULE_ID = "report_special_processing"
 TODO_TITLE = "报表特殊处理待确认"
@@ -37,7 +38,7 @@ class PendingConfirmTodoProvider:
             return None
         dimension = str(record.get("dimension") or "").strip()
         dimension_label = DIMENSION_LABELS.get(dimension, dimension or "未分维度")
-        field_name = str(record.get("field_name") or "").strip() or "未填字段"
+        field_name = bilingual_summary(record.get("field_name"), which="字段") or "未填字段"
         created_at = record.get("special_handling_at") or record.get("created_at")
         if created_at is not None and not isinstance(created_at, datetime):
             created_at = None

@@ -66,8 +66,8 @@ class UserFacade:
 
 
 class Services:
-    def __init__(self): self.report = ReportFacade(); self.user = UserFacade(); self.calls = []
-    def resolve(self, name, version): self.calls.append((name, version)); return self.user if name == "platform.user_directory" else self.report
+    def __init__(self): self.report = ReportFacade(); self.user = UserFacade(); self.dictionary = object(); self.calls = []
+    def resolve(self, name, version): self.calls.append((name, version)); return self.user if name == "platform.user_directory" else (self.dictionary if name == "platform.dictionary" else self.report)
 
 
 class Context:
@@ -79,7 +79,7 @@ def test_module_binds_owner_scoped_directories_and_closes_report_provider(monkey
     from auto_check.modules.report_special_processing import module as module_file
     monkeypatch.setattr(module_file, "SpecialProcessingStorage", lambda database: StatsStorage())
     module = module_file.create_module(); context = Context(); module.start(context)
-    assert context.services.calls == [("platform.user_directory", 1), ("platform.report_navigation", 1), ("platform.notification", 1)]
+    assert context.services.calls == [("platform.user_directory", 1), ("platform.report_navigation", 1), ("platform.notification", 1), ("platform.dictionary", 1)]
     registration = context.services.report.registration
     assert registration["card_code"] == "special_governance"
     assert registration["semantics_version"] == 1

@@ -13,6 +13,7 @@ from .history import (
     HISTORY_SEMANTICS_VERSION,
     ConfirmedHistoryProvider,
 )
+from .metadata import DatasourceMetadataService
 from .service import SpecialProcessingService
 from .statistics import SEMANTICS_VERSION, SpecialHandlingStatistics
 from .storage import SpecialProcessingStorage
@@ -45,7 +46,9 @@ class ReportSpecialProcessingModule:
             "report_special_processing_records",
             {
                 "id", "record_no", "report_process_code", "report_process_name_snapshot",
-                "report_period", "dimension", "summary", "table_name", "field_name",
+                "report_period", "dimension", "business_system_code", "business_system_name_snapshot",
+                "datasource_id", "datasource_name_snapshot", "datasource_type", "structured_content_json",
+                "summary", "table_name", "field_name",
                 "value_before", "value_after", "processing_content", "processing_script",
                 "script_sha256", "status", "special_handling_at", "handler_user_id",
                 "handler_username_snapshot", "handler_display_name_snapshot",
@@ -92,11 +95,20 @@ class ReportSpecialProcessingModule:
                 "removed_by_username_snapshot", "removed_at",
             },
         )
+        registry.add(
+            "report_special_processing_field_mappings",
+            {
+                "id", "datasource_id", "schema_name", "table_name", "project_field",
+                "contract_field", "updated_by_user_id", "updated_by_username_snapshot",
+                "updated_at",
+            },
+        )
 
     def start(self, context: Any) -> None:
         user_directory = context.services.resolve("platform.user_directory", 1)
         report_navigation = context.services.resolve("platform.report_navigation", 1)
         notification_publisher = context.services.resolve("platform.notification", 1)
+        dictionary_service = context.services.resolve("platform.dictionary", 1)
         storage = SpecialProcessingStorage(context.application_database)
 
         def role_label_resolver() -> dict[str, str]:
@@ -118,6 +130,8 @@ class ReportSpecialProcessingModule:
             now=context.now,
             role_label_resolver=role_label_resolver,
             notification_publisher=notification_publisher,
+            dictionary_service=dictionary_service,
+            metadata_service=DatasourceMetadataService(context.application_database),
         )
         try:
             storage.backfill_processes_from_records()

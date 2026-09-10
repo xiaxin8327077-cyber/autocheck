@@ -82,6 +82,8 @@ class MySqlContractConnection:
             "report_nav_card_provider_states": [],
             "system_notifications": [],
             "system_notification_recipients": [],
+            "system_dictionaries": [],
+            "system_dictionary_items": [],
         }
 
     def execute(self, statement: Any, parameters: dict[str, Any] | None = None) -> MemoryResult:
@@ -174,6 +176,8 @@ class MySqlContractConnection:
                         "source_module",
                         "event_type",
                         "dedupe_hash",
+                        "dictionary_code",
+                        "item_code",
                     ),
                 )
                 self.tables[table_name] = [
@@ -217,6 +221,8 @@ class MySqlContractConnection:
                         "source_module",
                         "event_type",
                         "dedupe_hash",
+                        "dictionary_code",
+                        "item_code",
                     ),
                 )
                 # Handle IS NULL conditions that don't generate params
@@ -267,6 +273,8 @@ class MySqlContractConnection:
                     "event_type",
                     "dedupe_hash",
                     "read_at",
+                    "dictionary_code",
+                    "item_code",
                 ),
             )
             # Handle IS NULL conditions that don't generate params
@@ -472,6 +480,7 @@ class MySqlContractConnection:
             "report_nav_monthly_schedules": ("report_month", "process_code"),
             "report_nav_card_provider_states": ("card_code",),
             "system_notification_recipients": ("notification_id", "user_id"),
+            "system_dictionary_items": ("dictionary_code", "item_code"),
         }
         if table_name in composite_keys:
             return composite_keys[table_name]

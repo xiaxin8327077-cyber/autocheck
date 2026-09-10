@@ -159,10 +159,14 @@ export function createApi(context) {
     createRecord: (payload) => request("/records", bodyOptions("POST", payload)),
     updateRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}`, bodyOptions("PUT", payload)),
     changeStatus: (id, payload) => request(`/records/${encodeURIComponent(id)}${STATUS_PATH}`, bodyOptions("POST", payload)),
+    generateScript: (payload) => request("/script/generate", bodyOptions("POST", payload)),
     voidRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}${VOID_PATH}`, bodyOptions("POST", payload)),
     deleteRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}`, bodyOptions("DELETE", payload)),
     reopenRecord: (id, payload) => request(`/records/${encodeURIComponent(id)}${REOPEN_PATH}`, bodyOptions("POST", payload)),
     audit: (id, parameters) => request(`/records/${encodeURIComponent(id)}${AUDIT_PATH}${queryString(parameters)}`),
+    listDatasources: () => request("/datasources"),
+    listTables: (datasourceId, parameters) => request(`/datasources/${encodeURIComponent(datasourceId)}/tables${queryString(parameters)}`),
+    listColumns: (datasourceId, tableName, parameters) => request(`/datasources/${encodeURIComponent(datasourceId)}/tables/${encodeURIComponent(tableName)}/columns${queryString(parameters)}`),
     cancelAll() {
       controllers.forEach((controller) => controller.abort());
       controllers.clear();

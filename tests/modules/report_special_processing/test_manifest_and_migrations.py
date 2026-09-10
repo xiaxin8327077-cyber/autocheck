@@ -16,7 +16,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.id == "report_special_processing"
     assert manifest.required is False
     assert manifest.api_prefix == "/api/modules/report-special-processing"
-    assert manifest.schema_version == 6
+    assert manifest.schema_version == 8
     assert manifest.permissions == (
         "report_special_processing.view",
         "report_special_processing.detail",
@@ -31,13 +31,15 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
         ("platform.user_directory", 1),
         ("platform.report_navigation", 1),
         ("platform.notification", 1),
+        ("platform.dictionary", 1),
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.13"
-    assert manifest.release_notes.version == "1.2.13"
+    assert manifest.version == "1.2.15"
+    assert manifest.release_notes.version == "1.2.15"
     assert manifest.release_notes.items == (
-        "支持为报表特殊处理记录粘贴或上传图片、Excel、Word、ZIP 附件，并在修改记录中查看新旧附件",
+        "特殊处理内容升级为数据源→处理表→处理字段→修改前/修改后：表与字段从系统已配置数据源（PostgreSQL/MySQL）的真实元数据搜索选择，物理名只读，无中文注释时可在记录内补充中文名；修改前/后改为字段级数据，默认留空，与上一字段值相等时显示“同上”标记",
+        "台账修改前/后与修改字段名逐行对齐并对连续相同值去重显示“同上”；处理编号改为基本信息标题行右侧只读元信息（可复制）；历史手工记录保留原录入方式编辑（方案 A 兼容）",
     )
 
 
@@ -48,8 +50,8 @@ def test_module_is_discovered_without_central_registration():
 
 def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 6
-    assert [item.version for item in migrations] == [1, 2, 3, 4, 5, 6]
+    assert len(migrations) == 9
+    assert [item.version for item in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     sql = "\n".join(migrations[0].statements)
     assert sql.count("CREATE TABLE report_special_processing_") == 3
     for table in ("records", "reports", "audit_logs"):
@@ -66,7 +68,7 @@ def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
 
 def test_migration_003_adds_dimension_governance_columns():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 6
+    assert len(migrations) == 9
     assert migrations[2].version == 3
     sql = "\n".join(migrations[2].statements).upper()
     for col in (
@@ -238,3 +240,33 @@ def test_module_registers_only_its_schema_tables():
             "report_special_processing_record_attachments",
         }
     )
+
+
+def test_migration_007_adds_business_system_and_widens_bilingual_columns():
+    from auto_check.app.module_system.schema import load_module_migrations
+
+    migrations = load_module_migrations("auto_check.modules.report_special_processing")
+    assert migrations[6].version == 7
+    sql = "\n".join(migrations[6].statements)
+    assert "business_system_code VARCHAR(64)" in sql
+    assert "business_system_name_snapshot VARCHAR(100)" in sql
+    assert "AFTER dimension" in sql
+    assert "MODIFY COLUMN table_name TEXT" in sql
+    assert "MODIFY COLUMN field_name TEXT" in sql
+    assert "DROP" not in sql.upper()
+
+
+def test_migration_008_adds_datasource_and_structured_content_columns():
+    from auto_check.app.module_system.schema import load_module_migrations
+
+    migrations = load_module_migrations("auto_check.modules.report_special_processing")
+    assert migrations[7].version == 8
+    sql = "\n".join(migrations[7].statements)
+    assert "datasource_id VARCHAR(64)" in sql
+    assert "datasource_name_snapshot VARCHAR(200)" in sql
+    assert "datasource_type VARCHAR(32)" in sql
+    assert "structured_content_json LONGTEXT" in sql
+    assert "MODIFY COLUMN value_before TEXT" in sql
+    assert "MODIFY COLUMN value_after TEXT" in sql
+    assert "DROP" not in sql.upper()
+    assert "DELETE" not in sql.upper()
