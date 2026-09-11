@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Iterable, Sequence
 
 BILINGUAL_PART_SEPARATOR = "｜"
@@ -158,3 +159,60 @@ def bilingual_summary(value: str | None, *, which: str = "项") -> str:
     if len(items) == 1:
         return items[0][0]
     return f"{items[0][0]} 等 {len(items)} {which}"
+
+
+def _display_width(value: str) -> int:
+    """按页面近似视觉宽度计数：ASCII/半角为 1，其余字符为 2。"""
+    return sum(1 if ord(char) <= 0x00FF else 2 for char in value)
+
+
+def _bilingual_display_labels(value: str | None) -> tuple[str, ...]:
+    """提取字段显示名序列，保留原字段数量与顺序。"""
+    text = str(value or "").strip()
+    if not text:
+        return ()
+
+    labels: list[str] = []
+    try:
+        groups = parse_bilingual_groups(text)
+        labels = [
+            str(chinese or english or "").strip()
+            for chinese, english in flatten_bilingual_groups(groups)
+        ]
+    except BilingualNameError:
+        for chunk in re.split(r"[\r\n；、，,]+", text):
+            item = chunk.strip()
+            if not item:
+                continue
+            chinese, separator, english = item.partition(BILINGUAL_PART_SEPARATOR)
+            labels.append((chinese if separator else item).strip() or english.strip())
+
+    return tuple(label for label in labels if label)
+
+
+def shortest_bilingual_name(value: str | None) -> str:
+    """返回最短的字段显示名，规范双语串优先中文，旧串保守兼容。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    labels = _bilingual_display_labels(text)
+
+    unique_labels = list(dict.fromkeys(label for label in labels if label))
+    if not unique_labels:
+        return text
+    return min(
+        enumerate(unique_labels),
+        key=lambda item: (_display_width(item[1]), item[0]),
+    )[1]
+
+
+def shortest_bilingual_summary(value: str | None, *, which: str = "字段") -> str:
+    """最短字段名作为摘要主文案，多字段时保留原“等 N 字段”总数提示。"""
+    name = shortest_bilingual_name(value)
+    if not name:
+        return ""
+    field_count = len(_bilingual_display_labels(value))
+    if field_count <= 1:
+        return name
+    return f"{name} 等 {field_count} {which}"

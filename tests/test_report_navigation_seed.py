@@ -82,6 +82,7 @@ def test_seed_contains_complete_relational_configuration_without_existing_table_
     assert "INSERT INTO `report_nav_step_values`" in sql
     assert "INSERT INTO `report_nav_monthly_schedules`" in sql
     assert "INSERT INTO `report_nav_scheduler_state`" in sql
+    assert "(1, 1, 30, NULL" in sql
     assert len(re.findall(r"\('2026-(?:01|04|07|10)', 'five_articles',", sql)) == 4
     for process_code in (
         "pbc_central",

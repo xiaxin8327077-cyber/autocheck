@@ -786,7 +786,10 @@ def test_update_audit_stores_full_script_and_display_preview():
     long_script = ("select col\n" * 20) + marker + ("x" * 80)
     service.update(
         created["id"],
-        {**_payload(processing_script=long_script), "row_version": created["row_version"]},
+        {
+            **_payload(processing_script=long_script, processing_script_mode="MANUAL"),
+            "row_version": created["row_version"],
+        },
         actor,
         request_id="req-script",
     )
@@ -794,6 +797,7 @@ def test_update_audit_stores_full_script_and_display_preview():
     script_meta = payload["processing_script"]
     assert script_meta["old"] == "select 1;"
     assert script_meta["new"] == long_script
+    assert script_meta["mode"] == "MANUAL"
     assert script_meta["old_preview"] == "select 1;"
     assert script_meta["old_truncated"] is False
     assert script_meta["new_truncated"] is True
@@ -1107,7 +1111,7 @@ class TestNotificationTriggerMatrix:
         assert request.category == "task"
         assert request.level == "success"
         assert request.title == "您提交的报表特殊处理已完成确认"
-        assert request.content == "项目端 · 金额"
+        assert request.content == "项目端 · 估值系统 · 金额"
         assert request.dedupe_key == (
             f"rsp-completed:{completed['id']}:"
             f"{completed['row_version']}:1"
@@ -1120,6 +1124,50 @@ class TestNotificationTriggerMatrix:
             "period": "07-31",
         }
         assert "open" not in request.action.query
+
+    def test_pending_and_completion_notifications_use_shortest_field_with_system(
+        self,
+        service_with_publisher,
+    ):
+        service, publisher = service_with_publisher
+        record = service.create(
+            _payload(
+                governance_owner_user_id="owner",
+                field_name=(
+                    "法人金融机构名称｜jrname；短字段｜short_col；"
+                    "数据管理机构｜datejg"
+                ),
+            ),
+            {
+                "id": "1",
+                "username": "creator",
+                "display_name": "创建人",
+                "role": "user",
+            },
+            request_id="req-create",
+        )
+
+        pending = _requests_for(publisher, "pending_confirmation_created")
+        assert pending[-1].content == "项目端 · 估值系统 · 短字段 等 3 字段"
+
+        service.change_status(
+            record["id"],
+            {
+                "target_status": "completed",
+                "row_version": record["row_version"],
+            },
+            {
+                "id": "owner",
+                "username": "gov_owner",
+                "display_name": "治理负责人甲",
+                "role": "custom_pa",
+                "capabilities": ["rsp.confirm"],
+            },
+            request_id="req-complete",
+        )
+
+        completed = _requests_for(publisher, "confirmation_completed")
+        assert completed[-1].content == "项目端 · 估值系统 · 短字段 等 3 字段"
 
     def test_denied_or_conflicting_completion_does_not_publish(
         self,
@@ -1727,12 +1775,17 @@ def _structured_payload(**updates):
             "schema": "public",
             "table_name": "t_customer",
             "chinese_table_name": "客户信息表",
-            "table_name_source": "DATABASE",
-            "projects": ["金牛1号", "金牛2号"],
-            "contracts": ["HT001"],
+            "table_name_source": "MANUAL",
+            "limit_report_period": False,
+            "conditions": [
+                {"column_name": "project_no", "operator": "IN", "operator_mode": "AUTO",
+                 "values": ["金牛1号", "金牛2号"]},
+                {"column_name": "contract_no", "operator": "=", "operator_mode": "AUTO",
+                 "values": ["HT001"]},
+            ],
             "fields": [
                 {"column_name": "customer_status", "chinese_column_name": "客户状态",
-                 "column_name_source": "DATABASE", "value_before": "正常", "value_after": "冻结"},
+                 "column_name_source": "MANUAL", "value_before": "正常", "value_after": "冻结"},
                 {"column_name": "customer_type", "chinese_column_name": "客户类型",
                  "column_name_source": "MANUAL", "value_before": "A", "value_after": "B"},
             ],
@@ -1763,52 +1816,6 @@ def test_field_mapping_upsert_list_and_get():
     # 两个定位字段都为空不允许保存
     with pytest.raises(ValidationError):
         service.upsert_field_mapping("ds1", {"schema": "public", "table_name": "t_other"}, ACTOR)
-
-
-def test_generate_script_success_with_mappings():
-    service = _service(metadata=FakeMetadata())
-    service.upsert_field_mapping("ds1", {"schema": "public", "table_name": "t_customer", "project_field": "project_code", "contract_field": "contract_no"}, ACTOR)
-    result = service.generate_script({"structured_content": _structured_payload()}, ACTOR)
-    script = result["script"]
-    assert "UPDATE t_customer" in script
-    assert "WHERE project_code IN ('金牛1号', '金牛2号')" in script
-    assert "AND contract_no IN ('HT001')" in script
-    assert "SET customer_status = '冻结'" in script
-    assert "AND customer_status = '正常'" in script
-
-
-def test_generate_script_rejects_missing_mapping():
-    from auto_check.modules.report_special_processing.contracts import ValidationError
-    service = _service(metadata=FakeMetadata())
-    with pytest.raises(ValidationError) as exc:
-        service.generate_script({"structured_content": _structured_payload()}, ACTOR)
-    message = exc.value.fields.get("processing_script", "")
-    assert "未配置项目定位字段" in message
-    # 只配置项目字段、未配置合同字段时，合同侧单独报错
-    service.upsert_field_mapping(
-        "ds1", {"schema": "public", "table_name": "t_customer", "project_field": "project_code"}, ACTOR,
-    )
-    with pytest.raises(ValidationError) as exc2:
-        service.generate_script({"structured_content": _structured_payload()}, ACTOR)
-    assert "未配置合同定位字段" in exc2.value.fields.get("processing_script", "")
-
-
-def test_generate_script_rejects_missing_scope():
-    from auto_check.modules.report_special_processing.contracts import ValidationError
-    service = _service(metadata=FakeMetadata())
-    payload = _structured_payload(tables=[{
-        "schema": "public",
-        "table_name": "t_customer",
-        "chinese_table_name": "客户信息表",
-        "table_name_source": "MANUAL",
-        "projects": [],
-        "contracts": [],
-        "fields": [{"column_name": "customer_status", "chinese_column_name": "客户状态",
-                     "column_name_source": "MANUAL", "value_before": "正常", "value_after": "冻结"}],
-    }])
-    with pytest.raises(ValidationError) as exc:
-        service.generate_script({"structured_content": payload}, ACTOR)
-    assert "请填写项目或合同处理范围" in exc.value.fields.get("processing_script", "")
 
 
 def test_generate_script_requires_structured_content():
@@ -1919,10 +1926,11 @@ def test_structured_update_roundtrip_echoes_content():
                 "table_name": "t_customer",
                 "chinese_table_name": "客户主表",
                 "table_name_source": "MANUAL",
-                "projects": ["P1"],
+                "limit_report_period": False,
+                "conditions": [{"column_name": "customer_id", "operator": "=", "operator_mode": "AUTO", "values": ["P1"]}],
                 "fields": [{
                     "column_name": "customer_id", "chinese_column_name": "客户编号",
-                    "column_name_source": "DATABASE", "value_before": "x", "value_after": "y",
+                    "column_name_source": "MANUAL", "value_before": "x", "value_after": "y",
                 }],
             }])), "row_version": created["row_version"],
         },
@@ -1933,7 +1941,76 @@ def test_structured_update_roundtrip_echoes_content():
     audit = service.storage.audits[-1]
     changed = json.loads(audit["changed_fields_json"])
     assert "structured_content_json" not in changed
-    assert changed["table_name"]["new"] == "客户主表｜t_customer"
+    assert "table_name" not in changed
+    assert changed["structured_content"]["affected_tables"] == 1
+    assert changed["structured_content"]["tables"][0]["change"] == "modified"
+
+
+def test_structured_update_audits_basic_and_multi_table_changes_semantically():
+    service = _service(dictionary=MultiDictionary(), metadata=FakeMetadata())
+    initial = _structured_payload(tables=[{
+        "item_id": "table-1",
+        "schema": "public",
+        "table_name": "t_customer",
+        "chinese_table_name": "客户信息表",
+        "table_name_source": "MANUAL",
+        "limit_report_period": False,
+        "conditions": [{
+            "item_id": "condition-1", "column_name": "project_no",
+            "operator": "=", "values": ["江苏信托"],
+        }],
+        "fields": [{
+            "item_id": "field-1", "column_name": "customer_status",
+            "chinese_column_name": "客户状态", "column_name_source": "MANUAL",
+            "value_before": "正常", "value_after": "冻结",
+        }],
+    }])
+    created = service.create(_payload(structured_content=initial), ACTOR, request_id="audit-1")
+    changed_content = _structured_payload(tables=[{
+        **initial["tables"][0],
+        "conditions": [{
+            "item_id": "condition-1", "column_name": "project_no",
+            "operator": "IN", "values": ["江苏信托", "33"],
+        }],
+        "fields": [{
+            "item_id": "field-1", "column_name": "customer_status",
+            "chinese_column_name": "客户状态", "column_name_source": "MANUAL",
+            "value_before": "正常", "value_after": "注销",
+        }],
+    }, {
+        "item_id": "table-2",
+        "schema": "public",
+        "table_name": "table_a",
+        "chinese_table_name": "新增表",
+        "table_name_source": "MANUAL",
+        "limit_report_period": False,
+        "conditions": [{
+            "item_id": "condition-2", "column_name": "contract_no",
+            "operator": "=", "values": ["HT001"],
+        }],
+        "fields": [{
+            "item_id": "field-2", "column_name": "customer_type",
+            "chinese_column_name": "客户类型", "column_name_source": "MANUAL",
+            "value_before": "A", "value_after": "B",
+        }],
+    }])
+
+    service.update(
+        created["id"],
+        {**_payload(summary="新摘要", structured_content=changed_content), "row_version": created["row_version"]},
+        ACTOR,
+        request_id="audit-2",
+    )
+    changed = json.loads(service.storage.audits[-1]["changed_fields_json"])
+
+    assert changed["summary"] == {"changed": True, "old": "摘要", "new": "新摘要"}
+    assert changed["structured_content"]["change_count"] == 4
+    assert changed["structured_content"]["affected_tables"] == 2
+    assert changed["structured_content"]["added_tables"] == 1
+    for duplicate_key in ("datasource_name_snapshot", "table_name", "field_name", "value_before", "value_after"):
+        assert duplicate_key not in changed
+    assert "基本信息1项" in service.storage.audits[-1]["action_summary"]
+    assert "特殊处理内容4项" in service.storage.audits[-1]["action_summary"]
 
 
 def test_metadata_passthrough_and_query_limits():

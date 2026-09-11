@@ -319,5 +319,5 @@ INSERT INTO `report_nav_monthly_schedules` (`report_month`, `process_code`, `rep
 ON DUPLICATE KEY UPDATE `report_date`=VALUES(`report_date`), `source_type`=VALUES(`source_type`), `source_year`=VALUES(`source_year`), `updated_by`=VALUES(`updated_by`), `updated_at`=VALUES(`updated_at`);
 
 INSERT INTO `report_nav_scheduler_state` (`id`, `enabled`, `interval_minutes`, `next_run_at`, `lock_owner`, `lock_until`, `last_started_at`, `last_finished_at`, `last_status`, `last_error`, `updated_at`) VALUES
-  (1, 1, 10, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2026-07-16 00:00:00')
+  (1, 1, 30, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2026-07-16 00:00:00')
 ON DUPLICATE KEY UPDATE `enabled`=VALUES(`enabled`), `interval_minutes`=VALUES(`interval_minutes`), `updated_at`=VALUES(`updated_at`);

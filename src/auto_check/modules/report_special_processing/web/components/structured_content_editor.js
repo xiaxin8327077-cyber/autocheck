@@ -26,6 +26,42 @@ const MAX_SCOPE_CHARS = 1000;
 const MAX_CONDITIONS = 20;
 const SEARCH_DEBOUNCE_MS = 300;
 const FIELD_META_PAGE_SIZE = 100;
+let itemIdSequence = 0;
+
+function createItemId(prefix) {
+  itemIdSequence += 1;
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+  const suffix = randomUuid || `${Date.now().toString(36)}-${itemIdSequence.toString(36)}`;
+  return `${prefix}-${suffix}`.slice(0, 64);
+}
+
+/* 行尾操作图标（与项目现有 SVG 图标风格一致：24×24 viewBox、stroke-based） */
+const ICON_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+const ICON_MINUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+/* 表级删除图标（与行级减号区分） */
+const ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>';
+
+/* 条件运算符：页面展示中文名，内部保存 SQL 运算符。 */
+const CONDITION_OPERATORS = [
+  { value: "=", label: "等于" },
+  { value: "<>", label: "不等于" },
+  { value: ">", label: "大于" },
+  { value: ">=", label: "大于等于" },
+  { value: "<", label: "小于" },
+  { value: "<=", label: "小于等于" },
+  { value: "LIKE", label: "模糊匹配" },
+  { value: "IN", label: "属于多个值（IN）" },
+  { value: "IS NULL", label: "为空" },
+  { value: "IS NOT NULL", label: "不为空" },
+];
+const CONDITION_OPERATORS_REQUIRING_VALUE = new Set(["=", "<>", ">", ">=", "<", "<=", "LIKE", "IN"]);
+const CONDITION_OPERATOR_NO_VALUE = new Set(["IS NULL", "IS NOT NULL"]);
+
+/* 条件运算符智能匹配：AUTO 模式下 1 个有效值 → 等于，多个有效值 → 属于多个值；
+ * 用户主动选择运算符后进入 MANUAL，不再被自动覆盖。 */
+function autoOperator(values) {
+  return (values || []).length > 1 ? "IN" : "=";
+}
 
 function parseScopeText(text) {
   const seen = [];
@@ -48,6 +84,30 @@ function columnDisplayLabel(item) {
   return chineseName ? `${chineseName}（${englishName}）` : englishName;
 }
 
+/* 弹窗滚动时，平台增强的定制下拉（数据源/条件类型等）直接关闭，
+ * 避免 fixed 下拉停留在原坐标造成漂移/覆盖（需求允许“关闭或重定位”二选一）。 */
+let platformSelectCloseRaf = 0;
+function schedulePlatformSelectClose(documentRef) {
+  if (platformSelectCloseRaf) return;
+  const view = documentRef?.defaultView;
+  const run = () => {
+    platformSelectCloseRaf = 0;
+    const closeFn = typeof view?.closeCustomSelect === "function" ? view.closeCustomSelect : null;
+    const opens = documentRef.querySelectorAll(".custom-select-open .custom-select-native");
+    for (let i = 0; i < opens.length; i += 1) {
+      try {
+        if (closeFn) closeFn(opens[i]);
+        else opens[i].closest?.(".custom-select-shell")?.classList.remove("custom-select-open");
+      } catch (_) {
+        // 平台下拉状态异常时忽略。
+      }
+    }
+  };
+  platformSelectCloseRaf = view?.requestAnimationFrame
+    ? view.requestAnimationFrame(run)
+    : setTimeout(run, 16);
+}
+
 export function createStructuredContentEditor(documentRef, options = {}) {
   const {
     api,
@@ -58,6 +118,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     getHost = null,
     datasourceNameSnapshot = "",
     reportPeriodFieldMatchers = [],
+    onChange = null,
   } = options;
 
   const state = {
@@ -83,12 +144,79 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     cardsBox,
   ]);
 
+  // 配置变更通知：输入、选择、增删等任意交互变化都触发 onChange
+  // （由抽屉侧做 debounce 后实时重新生成处理脚本）。
+  if (!disabled && typeof onChange === "function") {
+    ["input", "change", "click"].forEach((type) => {
+      root.addEventListener(type, onChange, true);
+    });
+  }
+
+  // 编辑器级滚动守护：弹窗滚动时关闭平台定制下拉（数据源/条件类型等），
+  // 与 combo 面板解耦，确保未打开过组合框时同样生效，避免下拉漂移。
+  (function attachEditorScrollGuard() {
+    const attach = () => {
+      try {
+        getHost?.()?.addEventListener?.("scroll", (event) => {
+          if (event?.target && root.contains(event.target)) return;
+          schedulePlatformSelectClose(documentRef);
+        }, true);
+      } catch (_) {
+        // 宿主容器尚未就绪时忽略。
+      }
+    };
+    attach();
+  })();
+
+  // 平台定制下拉打开后的贴紧校正：平台按可用空间预留高度可能导致
+  // 向上展开时面板底部悬空（数据源项少时尤其明显），统一校正为
+  // 向下贴选择框底部、向上贴选择框顶部。
+  root.addEventListener("click", (event) => {
+    const shellEl = event.target?.closest?.(".custom-select-shell");
+    if (!shellEl) return;
+    if (!(shellEl.classList.contains("rsp-sc-ds-select") || shellEl.classList.contains("rsp-sc-cond-op"))) return;
+    const view = documentRef?.defaultView;
+    const run = () => {
+      const select = shellEl.querySelector("select.custom-select-native");
+      if (!select) return;
+      const dropdowns = documentRef.querySelectorAll(".custom-select-dropdown");
+      let dropdown = null;
+      for (let i = 0; i < dropdowns.length; i += 1) {
+        if (!dropdowns[i].hidden) { dropdown = dropdowns[i]; break; }
+      }
+      if (!dropdown) return;
+      const s = shellEl.getBoundingClientRect();
+      const d = dropdown.getBoundingClientRect();
+      if (!s.width || !d.width) return;
+      const gap = 8;
+      const height = Math.min(320, Math.round(d.height));
+      if (d.bottom <= s.top) {
+        // 向上展开：底部贴选择框顶部
+        dropdown.style.top = String(Math.round(Math.max(16, s.top - gap - height))) + "px";
+        dropdown.style.maxHeight = height + "px";
+      } else {
+        // 向下展开：顶部贴选择框底部
+        dropdown.style.top = String(Math.round(s.bottom + gap)) + "px";
+      }
+    };
+    if (view?.requestAnimationFrame) view.requestAnimationFrame(run);
+    else setTimeout(run, 16);
+  });
+
   // ===== 数据源（每张表独立下拉） =====
 
-  function fillDatasourceSelect(select, selectedId) {
+  function fillDatasourceSelect(select, selectedId, selectedName = "", selectedType = "") {
+    const items = [...state.loadedDatasources];
+    if (selectedId && !items.some((item) => item.id === selectedId)) {
+      items.push({
+        id: selectedId,
+        name: selectedName || selectedId,
+        db_type: selectedType || "",
+      });
+    }
     select.replaceChildren(
       element(documentRef, "option", { value: "", text: "请选择数据源" }),
-      ...state.loadedDatasources.map((item) => element(documentRef, "option", {
+      ...items.map((item) => element(documentRef, "option", {
         value: item.id,
         text: item.name,
       })),
@@ -115,7 +243,14 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         }
       });
       state.tables.forEach((table) => {
-        if (table.dsSelect) fillDatasourceSelect(table.dsSelect, table.datasourceId);
+        if (table.dsSelect) {
+          fillDatasourceSelect(
+            table.dsSelect,
+            table.datasourceId,
+            table.datasourceName,
+            table.datasourceType,
+          );
+        }
       });
     } catch (error) {
       notify(error?.message || "数据源列表加载失败", "error");
@@ -143,13 +278,20 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     renderConditions(table);
     renderFields(table);
     if (table.renderReportPeriodRow) table.renderReportPeriodRow();
+    if (table.updateCardTitle) table.updateCardTitle();
+  }
+
+  function updateCardTitles() {
+    state.tables.forEach((table) => {
+      if (table.updateCardTitle) table.updateCardTitle();
+    });
   }
 
   // ===== 可搜索输入 + 候选面板（表/字段/条件共用） =====
 
   function makeCombo({ placeholder, pageSize, fetchPage, onPick }) {
     const input = element(documentRef, "input", {
-      type: "text",
+      type: "search",
       className: "rsp-sc-combo-input",
       placeholder,
       autocomplete: "off",
@@ -167,15 +309,46 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     let items = [];
     let timer = null;
     let scrollListenerAttached = false;
+    let scrollRaf = 0;
     let requestId = 0;
+    let loading = false;
 
-    function anchorPanel() {
+    // 面板 fixed 定位（不被弹窗滚动容器/底部按钮裁切，层级最高）。
+    // 展开方向在打开时锚定一次：下方空间不足且上方够时向上展开；
+    // 弹窗滚动时 rAF 节流跟随输入框重定位，方向保持不变，避免漂移与跳动。
+    let openUp = null; // null=未锚定 | true=向上 | false=向下
+
+    function positionPanel() {
       if (typeof input.getBoundingClientRect !== "function") return;
       const rect = input.getBoundingClientRect();
       if (!rect || typeof rect.top !== "number") return;
-      panel.style.top = String(rect.bottom + 4) + "px";
-      panel.style.left = String(rect.left) + "px";
-      panel.style.width = String(rect.width) + "px";
+      const viewportHeight = documentRef.defaultView?.innerHeight || 800;
+      const gap = 6;
+      const panelHeight = Math.min(260, panel.scrollHeight || 260);
+      if (openUp === null) {
+        // 仅当上方空间能完整容纳面板时才向上展开（底部贴输入框顶部）；
+        // 否则保持向下展开并限制在视口内，避免面板漂移到上方覆盖表单区域。
+        const spaceBelow = viewportHeight - rect.bottom - gap;
+        const spaceAbove = rect.top - gap;
+        openUp = spaceBelow < panelHeight && spaceAbove >= panelHeight;
+      }
+      panel.style.left = String(Math.max(8, Math.round(rect.left))) + "px";
+      panel.style.width = String(Math.round(rect.width)) + "px";
+      if (openUp) {
+        panel.style.top = String(Math.round(rect.top - gap - panelHeight)) + "px";
+      } else {
+        const top = rect.bottom + gap;
+        const maxTop = viewportHeight - panelHeight - 8;
+        panel.style.top = String(Math.round(Math.min(top, Math.max(8, maxTop)))) + "px";
+      }
+    }
+
+    function open() {
+      attachScrollClose();
+      openUp = null;
+      positionPanel();
+      panel.hidden = false;
+      load(1);
     }
 
     function close() {
@@ -183,6 +356,8 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     }
 
     async function load(requestedPage = 1) {
+      if (loading) return; // 防连点：一次只允许一个在途请求
+      loading = true;
       const activeRequestId = ++requestId;
       const previousScrollTop = listBox.scrollTop;
       page = requestedPage;
@@ -212,6 +387,11 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         status.className = "rsp-sc-combo-status is-error";
         status.textContent = error?.message || "读取失败，请稍后重试";
         panel.hidden = false;
+      } finally {
+        loading = false;
+        // 内容高度可能变化（加载完成/错误态）：重新锚定，确保向上展开时
+        // 面板底部始终贴输入框顶部，向下展开时顶部贴输入框底部。
+        if (!panel.hidden) positionPanel();
       }
     }
 
@@ -251,18 +431,11 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       }
     }
 
-    function open() {
-      attachScrollClose();
-      anchorPanel();
-      panel.hidden = false;
-      load(1);
-    }
-
     function scheduleSearch() {
       clearTimeout(timer);
       timer = setTimeout(() => {
         attachScrollClose();
-        anchorPanel();
+        positionPanel();
         load(1);
       }, SEARCH_DEBOUNCE_MS);
     }
@@ -270,16 +443,54 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     function attachScrollClose() {
       if (scrollListenerAttached) return;
       scrollListenerAttached = true;
+      const host = getHost?.();
+      if (!host) return;
       try {
-        getHost?.()?.addEventListener?.("scroll", closeOnHostScroll, true);
+        host.addEventListener?.("scroll", closeOnHostScroll, true);
+        // 点击弹窗任意非本下拉区域（基本信息/处理脚本/空白处等）时收起候选面板。
+        host.addEventListener?.("click", onOverlayClick);
       } catch (_) {
-        // 宿主容器尚未就绪时忽略；滚动关闭为渐进增强。
+        // 宿主容器尚未就绪时忽略；滚动跟随与失焦关闭为渐进增强。
       }
     }
 
-    function closeOnHostScroll(event) {
-      if (event?.target && shell.contains(event.target)) return;
+    function onOverlayClick(event) {
+      if (panel.hidden) return;
+      if (event?.target === shell || shell.contains(event.target)) return;
       close();
+    }
+
+    // 弹窗内容区（.rsp-modal-body）滚动后，锚点输入框可能滚到表头之上或底部操作栏之后。
+    // 此时面板是 fixed 定位，必须收起而不是继续跟随，否则会浮在表头之上、溢出弹窗边界。
+    function anchorVisibleInScroller() {
+      if (typeof input.getBoundingClientRect !== "function") return true;
+      const rect = input.getBoundingClientRect();
+      if (!rect || typeof rect.top !== "number") return true;
+      const host = getHost?.();
+      const scroller = host?.querySelector?.(".rsp-modal-body");
+      if (!scroller || typeof scroller.getBoundingClientRect !== "function") return true;
+      const box = scroller.getBoundingClientRect();
+      if (!box || typeof box.top !== "number" || !(Number(box.height) > 0)) return true;
+      // 完全滚出内容区可视范围（含被表头遮挡）时视为不可见。
+      return rect.bottom > box.top && rect.top < box.bottom;
+    }
+
+    function closeOnHostScroll(event) {
+      // 弹窗滚动时：锚点仍在可视区则跟随输入框重定位（方向锚定不翻转）；
+      // 锚点滚出可视区（如滚到表头之后）则直接收起，避免面板溢出弹窗；
+      // 平台定制下拉（数据源/条件类型等）直接关闭，避免漂移覆盖。
+      if (event?.target && shell.contains(event.target)) return;
+      if (scrollRaf) return;
+      const raf = documentRef.defaultView?.requestAnimationFrame;
+      const step = () => {
+        scrollRaf = 0;
+        if (!panel.hidden) {
+          if (anchorVisibleInScroller()) positionPanel();
+          else close();
+        }
+        schedulePlatformSelectClose(documentRef);
+      };
+      scrollRaf = raf ? raf(step) : setTimeout(step, 16);
     }
 
     input.addEventListener("input", scheduleSearch);
@@ -369,15 +580,29 @@ export function createStructuredContentEditor(documentRef, options = {}) {
   // ===== 表/条件/字段模型 =====
 
   function emptyField() {
-    return { physical: "", chinese: "", before: "", after: "", comboInput: null, cnInput: null };
+    return {
+      itemId: createItemId("field"),
+      physical: "", chinese: "", before: "", after: "", comboInput: null, cnInput: null,
+    };
   }
 
-  function emptyCondition() {
-    return { column: "", values: [], comboInput: null, valueInput: null };
-  }
+function emptyCondition() {
+  return {
+    itemId: createItemId("condition"),
+    column: "",
+    chinese: "",
+    values: [],
+    operator: "=",
+    operatorMode: "AUTO",
+    comboInput: null,
+    operatorSelect: null,
+    valueInput: null,
+  };
+}
 
   function emptyTable() {
     return {
+      itemId: createItemId("table"),
       datasourceId: "",
       datasourceType: "",
       datasourceName: "",
@@ -417,13 +642,15 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     const card = renderTableCard(table);
     cardsBox.append(card);
     updateTableRemoveButtons();
+    updateCardTitles();
   }
 
   function updateTableRemoveButtons() {
+    // 单张处理表时不显示删除按钮（系统始终至少保留一张表）
+    const visible = !disabled && state.tables.length > 1;
     state.tables.forEach((table) => {
       if (!table.removeButton) return;
-      table.removeButton.disabled = disabled || state.tables.length <= 1;
-      table.removeButton.title = state.tables.length <= 1 ? "至少保留一张处理表" : "";
+      table.removeButton.hidden = !visible;
     });
   }
 
@@ -438,6 +665,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       if (index >= 0) state.tables.splice(index, 1);
       if (table.card) table.card.remove();
       updateTableRemoveButtons();
+      updateCardTitles();
     };
     if (table.fields.some((field) => field.physical) && typeof confirm === "function") {
       const confirmModal = documentRef.getElementById?.("confirmModal");
@@ -460,28 +688,14 @@ export function createStructuredContentEditor(documentRef, options = {}) {
   }
 
   function removeCondition(table, condition) {
-    const filled = table.conditions.filter(
-      (item) => item.column || (item.valueInput && String(item.valueInput.value || "").trim()),
-    );
-    if (filled.length <= 1) {
-      const index = table.conditions.indexOf(condition);
-      if (index >= 0) table.conditions[index] = emptyCondition();
-      renderConditions(table);
-      return;
-    }
+    // 删除按钮仅在行数>1时可用，直接移除即可
     const index = table.conditions.indexOf(condition);
     if (index >= 0) table.conditions.splice(index, 1);
     renderConditions(table);
   }
 
   function removeField(table, field) {
-    const filled = table.fields.filter((item) => item.physical);
-    if (filled.length <= 1) {
-      const index = table.fields.indexOf(field);
-      if (index >= 0) table.fields[index] = emptyField();
-      renderFields(table);
-      return;
-    }
+    // 删除按钮仅在行数>1时可用，直接移除即可
     const index = table.fields.indexOf(field);
     if (index >= 0) table.fields.splice(index, 1);
     renderFields(table);
@@ -531,7 +745,12 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       "aria-label": "数据源",
       disabled: disabled || null,
     });
-    fillDatasourceSelect(dsSelect, table.datasourceId);
+    fillDatasourceSelect(
+      dsSelect,
+      table.datasourceId,
+      table.datasourceName,
+      table.datasourceType,
+    );
     table.dsSelect = dsSelect;
     dsSelect.addEventListener("change", () => {
       const matched = state.loadedDatasources.find((item) => item.id === dsSelect.value);
@@ -562,6 +781,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
             }
             renderConditions(table);
             if (table.renderReportPeriodRow) table.renderReportPeriodRow();
+            if (table.updateCardTitle) table.updateCardTitle();
           })
           .catch((error) => {
             notify(error?.message || "字段信息获取失败，请稍后重试", "error");
@@ -571,6 +791,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     table.comboInput = combo.input;
     combo.input.value = table.physical;
     const cnInput = element(documentRef, "input", {
+      type: "search",
       className: "rsp-sc-cn-input",
       value: table.chinese,
       maxlength: String(MAX_NAME_LEN),
@@ -583,12 +804,37 @@ export function createStructuredContentEditor(documentRef, options = {}) {
 
     const removeButton = element(documentRef, "button", {
       type: "button",
-      className: "rsp-bilingual-remove rsp-sc-remove-table",
-      text: "删除表",
+      className: "rsp-sc-icon-btn rsp-sc-remove-table",
+      title: "删除处理表",
+      "aria-label": "删除处理表",
       disabled: disabled || null,
       onClick: () => removeTable(table),
     });
+    removeButton.innerHTML = ICON_TRASH;
     table.removeButton = removeButton;
+
+    // ===== 处理表标题栏（表级操作与边界标识） =====
+    const titleIndex = element(documentRef, "span", {
+      className: "rsp-sc-card-title-index",
+      text: "处理表",
+    });
+    const titleMeta = element(documentRef, "span", { className: "rsp-sc-card-title-meta" });
+    function updateCardTitle() {
+      const index = state.tables.indexOf(table) + 1;
+      titleIndex.textContent = `处理表 ${index}`;
+      const meta = table.datasourceName && table.physical
+        ? `${table.datasourceName} / ${table.physical}`
+        : "";
+      titleMeta.textContent = meta;
+      titleMeta.hidden = !meta;
+    }
+    table.updateCardTitle = updateCardTitle;
+    // 表级删除按钮位于“处理表 N”标题之前，单表时隐藏（不占用布局）
+    const titleBar = element(documentRef, "div", { className: "rsp-sc-card-title" }, [
+      disabled ? null : removeButton,
+      titleIndex,
+      titleMeta,
+    ]);
 
     // ===== 处理范围区 =====
     const radioName = `rsp-rp-${Math.random().toString(36).slice(2, 10)}`;
@@ -686,20 +932,11 @@ export function createStructuredContentEditor(documentRef, options = {}) {
           ]),
           periodFieldCombo.shell,
         ]),
-        disabled ? null : element(documentRef, "div", { className: "rsp-sc-header-action" }, [
-          element(documentRef, "button", {
-            type: "button",
-            className: "rsp-bilingual-add rsp-sc-add-action",
-            text: "＋ 添加条件",
-            disabled: disabled || table.conditions.length >= MAX_CONDITIONS || null,
-            onClick: () => addConditionRow(table),
-          }),
-        ]),
       ]),
       element(documentRef, "div", { className: "rsp-sc-row rsp-sc-cond-head" }, [
         element(documentRef, "span", { text: "条件字段" }),
+        element(documentRef, "span", { text: "条件类型" }),
         element(documentRef, "span", { text: "条件值" }),
-        element(documentRef, "span", { text: "操作" }),
       ]),
       conditionRowsBox,
     ]);
@@ -713,13 +950,13 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         element(documentRef, "span", { text: "数据源" }),
         element(documentRef, "span", { text: "英文表名" }),
         element(documentRef, "span", { text: "中文表名" }),
-        element(documentRef, "span", { text: "操作" }),
+        element(documentRef, "span"),
       ]),
       element(documentRef, "div", { className: "rsp-sc-row rsp-sc-tbl-row" }, [
         dsSelect,
         combo.shell,
         cnInput,
-        removeButton,
+        element(documentRef, "span"),
       ]),
       scopeZone,
       element(documentRef, "div", { className: "rsp-sc-fields-area" }, [
@@ -727,32 +964,23 @@ export function createStructuredContentEditor(documentRef, options = {}) {
           element(documentRef, "div", { className: "rsp-sc-section-head-main" }, [
             element(documentRef, "span", { className: "rsp-tf-fields-title", text: "修改字段" }),
           ]),
-          disabled ? null : element(documentRef, "div", { className: "rsp-sc-header-action" }, [
-            element(documentRef, "button", {
-              type: "button",
-              className: "rsp-bilingual-add rsp-sc-add-action",
-              text: "＋ 添加字段",
-              disabled: disabled || table.fields.length >= MAX_SC_FIELDS || null,
-              onClick: () => addFieldRow(table),
-            }),
-          ]),
         ]),
         element(documentRef, "div", { className: "rsp-sc-row rsp-sc-field-head" }, [
           element(documentRef, "span", { text: "英文字段名" }),
           element(documentRef, "span", { text: "中文字段名" }),
           element(documentRef, "span", { text: "修改前" }),
           element(documentRef, "span", { text: "修改后" }),
-          element(documentRef, "span", { text: "操作" }),
         ]),
         fieldsBox,
       ]),
     ]);
 
-    const card = element(documentRef, "div", { className: "rsp-tf-card rsp-sc-card" }, [cardBody]);
+    const card = element(documentRef, "div", { className: "rsp-tf-card rsp-sc-card" }, [titleBar, cardBody]);
     table.card = card;
     renderConditions(table);
     renderFields(table);
     renderReportPeriodRow();
+    updateCardTitle();
     return card;
   }
 
@@ -780,21 +1008,25 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     return tableColumnDisplayLabel(table, table.reportPeriodField);
   }
 
-  function tableColumnDisplayLabel(table, columnName) {
+  function tableColumnDisplayLabel(table, columnName, fallbackChinese = "") {
     const field = (table.fieldMeta || []).find(
       (item) => String(item?.column_name || "") === columnName,
     );
-    return columnDisplayLabel({ column_name: columnName, column_comment: field?.column_comment || "" });
+    return columnDisplayLabel({
+      column_name: columnName,
+      column_comment: field?.column_comment || fallbackChinese,
+    });
   }
 
   function renderConditions(table) {
     if (!table.conditionRowsBox) return;
+    const lastIndex = table.conditions.length - 1;
     table.conditionRowsBox.replaceChildren(
-      ...table.conditions.map((condition) => renderConditionRow(table, condition)),
+      ...table.conditions.map((condition, index) => renderConditionRow(table, condition, index === lastIndex)),
     );
   }
 
-  function renderConditionRow(table, condition) {
+  function renderConditionRow(table, condition, isLast) {
     const combo = makeCombo({
       placeholder: "请选择字段",
       pageSize: 10,
@@ -810,13 +1042,27 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       },
       onPick: (item) => {
         condition.column = String(item.primary || item.column_name || "");
+        condition.chinese = String(item.column_comment || item.secondary || "");
         combo.input.value = columnDisplayLabel(item);
         if (condition.valueInput) condition.valueInput.focus?.();
       },
     });
     condition.comboInput = combo.input;
-    combo.input.value = tableColumnDisplayLabel(table, condition.column);
+    combo.input.value = tableColumnDisplayLabel(table, condition.column, condition.chinese);
+
+    // 条件类型：用户主动选择后进入 MANUAL，不再被单值/多值智能匹配覆盖。
+    const operatorSelect = element(documentRef, "select", {
+      className: "rsp-compact-select rsp-sc-cond-op",
+      "aria-label": "条件类型",
+      disabled: disabled || null,
+    });
+    CONDITION_OPERATORS.forEach((item) => {
+      operatorSelect.append(element(documentRef, "option", { value: item.value, text: item.label }));
+    });
+    condition.operatorSelect = operatorSelect;
+
     const valueInput = element(documentRef, "input", {
+      type: "search",
       className: "rsp-sc-cn-input",
       value: scopeText(condition.values),
       maxlength: String(MAX_SCOPE_CHARS),
@@ -825,30 +1071,70 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       disabled: disabled || null,
     });
     condition.valueInput = valueInput;
-    valueInput.addEventListener("input", () => {
-      condition.values = parseScopeText(valueInput.value);
+    function syncOperatorState() {
+      operatorSelect.value = condition.operator;
+      const noValue = CONDITION_OPERATOR_NO_VALUE.has(condition.operator);
+      valueInput.disabled = disabled || noValue;
+      valueInput.placeholder = noValue ? "无需填写" : "请输入条件值";
+      if (noValue) {
+        condition.values = [];
+        if (valueInput.value !== "") valueInput.value = "";
+      }
+    }
+    // 程序化切换（智能匹配）也会派发 change 以刷新平台定制下拉的显示文本；
+    // 用标志位区分，避免把程序切换误判为用户主动选择而进入 MANUAL。
+    let suppressOperatorChange = false;
+    operatorSelect.addEventListener("change", () => {
+      if (suppressOperatorChange) {
+        suppressOperatorChange = false;
+        return;
+      }
+      condition.operatorMode = "MANUAL"; // 用户主动选择即锁定，后续不自动覆盖
+      condition.operator = operatorSelect.value;
+      syncOperatorState();
     });
+    function applyOperatorProgrammatically(nextOperator) {
+      condition.operator = nextOperator;
+      suppressOperatorChange = true;
+      operatorSelect.value = nextOperator;
+      operatorSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    valueInput.addEventListener("input", () => {
+      // 实时智能切换：编辑条件值时即时解析并按有效值数量切换条件类型
+      // （1 个值 → 等于，多个值 → 属于多个值（IN）），不受此前手动选择锁定影响；
+      // 用户手动修改条件类型时仍允许覆盖（下一次输入重新智能切换）。
+      condition.values = parseScopeText(valueInput.value);
+      applyOperatorProgrammatically(autoOperator(condition.values));
+    });
+    syncOperatorState();
+
+    const canRemove = !disabled && table.conditions.length > 1;
     return element(documentRef, "div", { className: "rsp-sc-row rsp-sc-cond-row" }, [
       combo.shell,
+      operatorSelect,
       valueInput,
-      disabled ? element(documentRef, "span") : element(documentRef, "button", {
-        type: "button",
-        className: "rsp-bilingual-remove rsp-sc-remove-condition",
-        text: "删除",
-        disabled: disabled || null,
-        onClick: () => removeCondition(table, condition),
-      }),
+      disabled
+        ? element(documentRef, "span")
+        : rowActions({
+            isLast,
+            canRemove,
+            onRemove: () => removeCondition(table, condition),
+            onAdd: () => addConditionRow(table),
+            addLabel: "添加条件",
+            removeLabel: "删除条件",
+          }),
     ]);
   }
 
   function renderFields(table) {
     if (!table.fieldsBox) return;
+    const lastIndex = table.fields.length - 1;
     table.fieldsBox.replaceChildren(
-      ...table.fields.map((field) => renderFieldRow(table, field)),
+      ...table.fields.map((field, index) => renderFieldRow(table, field, index === lastIndex)),
     );
   }
 
-  function renderFieldRow(table, field) {
+  function renderFieldRow(table, field, isLast) {
     const combo = makeCombo({
       placeholder: "请选择字段",
       pageSize: 10,
@@ -867,6 +1153,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     field.comboInput = combo.input;
     combo.input.value = field.physical;
     const cnInput = element(documentRef, "input", {
+      type: "search",
       className: "rsp-sc-cn-input",
       value: field.chinese,
       maxlength: String(MAX_NAME_LEN),
@@ -878,6 +1165,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     cnInput.addEventListener("input", () => { field.chinese = cnInput.value.trim(); });
 
     const beforeInput = element(documentRef, "input", {
+      type: "search",
       className: "rsp-sc-value-input",
       value: field.before,
       maxlength: String(MAX_VALUE_LEN),
@@ -886,6 +1174,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       disabled: disabled || null,
     });
     const afterInput = element(documentRef, "input", {
+      type: "search",
       className: "rsp-sc-value-input",
       value: field.after,
       maxlength: String(MAX_VALUE_LEN),
@@ -898,19 +1187,52 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     beforeInput.addEventListener("input", () => { field.before = beforeInput.value; });
     afterInput.addEventListener("input", () => { field.after = afterInput.value; });
 
+    const canRemove = !disabled && table.fields.length > 1;
     return element(documentRef, "div", { className: "rsp-sc-row rsp-sc-field-row" }, [
       combo.shell,
       cnInput,
       element(documentRef, "div", { className: "rsp-sc-value-cell" }, [beforeInput]),
       element(documentRef, "div", { className: "rsp-sc-value-cell" }, [afterInput]),
-      disabled ? element(documentRef, "span") : element(documentRef, "button", {
-        type: "button",
-        className: "rsp-bilingual-remove rsp-sc-remove-field",
-        text: "删除",
-        disabled: disabled || null,
-        onClick: () => removeField(table, field),
-      }),
+      disabled
+        ? element(documentRef, "span")
+        : rowActions({
+            isLast,
+            canRemove,
+            onRemove: () => removeField(table, field),
+            onAdd: () => addFieldRow(table),
+            addLabel: "添加字段",
+            removeLabel: "删除字段",
+          }),
     ]);
+  }
+
+  // ===== 行级操作按钮：左对齐 [-]（始终），最后一行追加 [+]，无假占位 =====
+  function rowActions({ isLast, canRemove, onRemove, onAdd, addLabel, removeLabel }) {
+    const wrap = element(documentRef, "div", { className: "rsp-sc-row-actions" });
+    // 删除（减号）：每一行都作为固定操作锚点，位于最左
+    const removeBtn = element(documentRef, "button", {
+      type: "button",
+      className: "rsp-sc-icon-btn rsp-sc-icon-minus",
+      title: removeLabel,
+      "aria-label": removeLabel,
+      disabled: !canRemove || null,
+      onClick: onRemove,
+    });
+    removeBtn.innerHTML = ICON_MINUS;
+    wrap.append(removeBtn);
+    // 新增（加号）：仅最后一行，紧跟在减号右侧
+    if (isLast && onAdd) {
+      const addBtn = element(documentRef, "button", {
+        type: "button",
+        className: "rsp-sc-icon-btn rsp-sc-icon-add",
+        title: addLabel,
+        "aria-label": addLabel,
+        onClick: onAdd,
+      });
+      addBtn.innerHTML = ICON_PLUS;
+      wrap.append(addBtn);
+    }
+    return wrap;
   }
 
   // ===== 对外接口 =====
@@ -932,16 +1254,24 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     const tables = state.tables
       .filter((table) => table.datasourceId && table.physical)
       .map((table) => ({
+        item_id: table.itemId,
         schema: table.schema,
         table_name: table.physical,
         chinese_table_name: table.chinese,
         table_name_source: "MANUAL",
         datasource_id: table.datasourceId,
         datasource_type: table.datasourceType,
+        datasource_name: table.datasourceName,
+        // 脚本预览需要在条件字段刚选中、条件值尚未输入时也看到 WHERE；
+        // 保存前 validate() 仍按原规则拦截缺少必填值的条件，不放宽保存校验。
         conditions: table.conditions
-          .filter((condition) => condition.column && condition.values.length)
+          .filter((condition) => condition.column)
           .map((condition) => ({
+            item_id: condition.itemId,
             column_name: condition.column,
+            chinese_column_name: condition.chinese,
+            operator: condition.operator,
+            operator_mode: condition.operatorMode,
             values: condition.values,
           })),
         limit_report_period: table.limitReportPeriod,
@@ -950,6 +1280,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         fields: table.fields
           .filter((field) => field.physical)
           .map((field) => ({
+            item_id: field.itemId,
             column_name: field.physical,
             chinese_column_name: field.chinese,
             column_name_source: "MANUAL",
@@ -1014,7 +1345,9 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       }
       // 处理范围条件：逐行定位（空行忽略）
       const effectiveConditions = table.conditions.filter(
-        (condition) => condition.column || (condition.valueInput && String(condition.valueInput.value || "").trim()),
+        (condition) => condition.column
+          || (condition.valueInput && String(condition.valueInput.value || "").trim())
+          || CONDITION_OPERATOR_NO_VALUE.has(condition.operator),
       );
       if (formal && !effectiveConditions.length) {
         return {
@@ -1026,7 +1359,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         if (!condition.column) {
           return { message: "请选择处理范围字段", control: condition.comboInput || null };
         }
-        if (!condition.values.length) {
+        if (CONDITION_OPERATORS_REQUIRING_VALUE.has(condition.operator) && !condition.values.length) {
           return { message: "请输入处理范围条件值", control: condition.valueInput || null };
         }
       }
@@ -1064,9 +1397,10 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     const initialTables = Array.isArray(initial.tables) ? initial.tables : [];
     initialTables.forEach((rawTable) => {
       const table = emptyTable();
+      table.itemId = String(rawTable?.item_id || table.itemId);
       table.datasourceId = String(rawTable?.datasource_id || initial.datasource_id || "");
       table.datasourceType = String(rawTable?.datasource_type || initial.datasource_type || "");
-      table.datasourceName = datasourceNameSnapshot || "";
+      table.datasourceName = String(rawTable?.datasource_name || datasourceNameSnapshot || "");
       table.schema = String(rawTable?.schema || "");
       table.physical = String(rawTable?.table_name || "");
       table.chinese = String(rawTable?.chinese_table_name || "");
@@ -1075,7 +1409,11 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       table.reportPeriodFieldSource = String(rawTable?.report_period_field_source || "");
       table.conditions = (Array.isArray(rawTable?.conditions) ? rawTable.conditions : []).map((item) => {
         const condition = emptyCondition();
+        condition.itemId = String(item?.item_id || condition.itemId);
         condition.column = String(item?.column_name || "");
+        condition.chinese = String(item?.chinese_column_name || "");
+        condition.operator = String(item?.operator || "=").trim().toUpperCase() || "=";
+        condition.operatorMode = String(item?.operator_mode || "AUTO").trim().toUpperCase() === "MANUAL" ? "MANUAL" : "AUTO";
         condition.values = Array.isArray(item?.values)
           ? item.values.map((value) => String(value || "").trim()).filter(Boolean)
           : [];
@@ -1084,6 +1422,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       if (!table.conditions.length) table.conditions.push(emptyCondition());
       table.fields = (Array.isArray(rawTable?.fields) ? rawTable.fields : []).map((field) => {
         const item = emptyField();
+        item.itemId = String(field?.item_id || item.itemId);
         item.physical = String(field?.column_name || "");
         item.chinese = String(field?.chinese_column_name || "");
         item.before = String(field?.value_before || "");

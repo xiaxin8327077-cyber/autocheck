@@ -48,6 +48,37 @@ def test_parse_and_derive_strings():
     assert structured_from_json(json_text).datasource_id == "ds1"
 
 
+def test_parse_preserves_stable_item_ids_for_semantic_audit_matching():
+    payload = _content()
+    payload["tables"][0]["item_id"] = "table-audit-1"
+    payload["tables"][0]["conditions"] = [{
+        "item_id": "condition-audit-1",
+        "column_name": "customer_id",
+        "chinese_column_name": "客户编号",
+        "operator": "=",
+        "values": ["C001"],
+    }]
+    payload["tables"][0]["fields"][0]["item_id"] = "field-audit-1"
+
+    content = parse_structured_content(payload)
+    serialized = content.to_dict()
+
+    assert serialized["tables"][0]["item_id"] == "table-audit-1"
+    assert serialized["tables"][0]["conditions"][0]["item_id"] == "condition-audit-1"
+    assert serialized["tables"][0]["conditions"][0]["chinese_column_name"] == "客户编号"
+    assert serialized["tables"][0]["fields"][0]["item_id"] == "field-audit-1"
+
+
+def test_parse_rejects_invalid_stable_item_id():
+    payload = _content()
+    payload["tables"][0]["item_id"] = "bad id with spaces"
+
+    with pytest.raises(StructuredContentError) as exc:
+        parse_structured_content(payload)
+
+    assert exc.value.fields["structured_content"] == "内部条目标识无效"
+
+
 def test_derive_none_for_legacy():
     assert derive_table_name(None) is None
     assert derive_field_name(None) is None

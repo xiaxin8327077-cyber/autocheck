@@ -520,6 +520,21 @@ EXPECTED_APP_SCHEMA: Mapping[str, frozenset[str]] = MappingProxyType(
             "updated_by",
             "updated_at",
         ),
+        "scheduled_tasks": _columns(
+            "task_code",
+            "task_name",
+            "schedule_type",
+            "interval_minutes",
+            "daily_time",
+            "enabled",
+            "next_run_at",
+            "last_started_at",
+            "last_finished_at",
+            "last_status",
+            "last_error",
+            "created_at",
+            "updated_at",
+        ),
     }
 )
 

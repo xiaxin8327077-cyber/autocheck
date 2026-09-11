@@ -114,6 +114,7 @@
             <a class="top-nav-item top-nav-subitem" data-page="role-permissions" data-capability="sys.role_permissions" href="#">角色权限</a>
             <a class="top-nav-item top-nav-subitem" data-page="users" data-capability="sys.users" href="#">用户管理</a>
             <a class="top-nav-item top-nav-subitem" data-page="dictionaries" data-capability="sys.dictionaries" href="#">字典管理</a>
+            <a class="top-nav-item top-nav-subitem" data-page="scheduled-tasks" data-capability="sys.scheduled_tasks" href="#">定时任务管理</a>
           </div>
         </div>
       </nav>
@@ -1118,7 +1119,7 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table class="result-table dictionary-main-table">
+            <table class="result-table management-list-table dictionary-main-table">
               <thead>
                 <tr>
                   <th>字典名称</th>
@@ -1134,6 +1135,87 @@
           </div>
         </section>
       </section>
+
+      <section class="page" id="page-scheduled-tasks">
+        <div class="page-header">
+          <h2>定时任务管理</h2>
+        </div>
+        <section class="card result-card">
+          <div class="card-title card-title--spread">
+            <div class="card-title-left">
+              <span class="card-title-icon">&#9201;</span>
+              <span>定时任务管理</span>
+            </div>
+            <div class="history-toolbar">
+              <span class="filter-clear-shell filter-clear-shell--text management-toolbar-filter-shell">
+                <input id="scheduledTaskFilter" class="prompt-input management-toolbar-filter" placeholder="筛选任务名称或编码" />
+                <button id="clearScheduledTaskFilter" class="filter-clear-button" type="button" aria-label="清除定时任务筛选">&times;</button>
+              </span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="result-table management-list-table dictionary-main-table scheduled-task-table">
+              <thead>
+                <tr>
+                  <th>任务名称</th>
+                  <th>执行规则</th>
+                  <th>状态</th>
+                  <th>最近执行</th>
+                  <th>执行状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="scheduledTaskBody"></tbody>
+            </table>
+          </div>
+          <nav class="management-list-pagination" id="scheduledTaskPagination" aria-label="定时任务分页" hidden>
+            <span class="management-list-pagination-summary" id="scheduledTaskPageSummary">共 0 条</span>
+            <div class="management-list-pagination-controls">
+              <button class="page-btn" id="scheduledTaskPrevPage" type="button" aria-label="上一页">&#9664;</button>
+              <span class="page-current" id="scheduledTaskPageInfo">1 / 1</span>
+              <button class="page-btn" id="scheduledTaskNextPage" type="button" aria-label="下一页">&#9654;</button>
+            </div>
+          </nav>
+        </section>
+      </section>
+
+      <div class="app-modal-overlay modal-overlay" id="scheduledTaskModal" hidden>
+        <div class="app-modal-shell modal scheduled-task-modal">
+          <div class="app-modal-header modal-header">
+            <h3 id="scheduledTaskModalTitle">配置定时任务</h3>
+            <button class="app-modal-close btn-close" id="scheduledTaskModalClose" type="button">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body">
+            <div class="scheduled-task-form">
+              <label class="dictionary-edit-row">
+                <span>任务名称</span>
+                <input id="scheduledTaskName" class="prompt-input" type="text" readonly />
+              </label>
+              <label class="dictionary-edit-row">
+                <span>执行方式</span>
+                <select id="scheduledTaskScheduleType" class="filter-select">
+                  <option value="interval">按间隔执行</option>
+                  <option value="daily">每天定时执行</option>
+                </select>
+              </label>
+              <label class="dictionary-edit-row" id="scheduledTaskIntervalRow">
+                <span>执行间隔（分钟）</span>
+                <input id="scheduledTaskIntervalMinutes" class="prompt-input" type="number" min="1" max="10080" step="1" />
+                <small>允许 1 至 10080 分钟。</small>
+              </label>
+              <label class="dictionary-edit-row" id="scheduledTaskDailyRow" hidden>
+                <span>每天执行时间</span>
+                <input id="scheduledTaskDailyTime" class="prompt-input" type="time" step="60" />
+              </label>
+            </div>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <span class="modal-status" id="scheduledTaskModalStatus"></span>
+            <button id="scheduledTaskModalCancel" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="scheduledTaskModalSave" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存</button>
+          </div>
+        </div>
+      </div>
 
       <section class="page" id="page-role-permissions">
         <div class="page-header">

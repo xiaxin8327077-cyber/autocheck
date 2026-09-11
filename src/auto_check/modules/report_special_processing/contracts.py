@@ -104,6 +104,8 @@ class RecordInput:
     summary: str = ""
     processing_content: str = ""
     processing_script: str | None = None
+    # 仅用于当次审计标记脚本来源，不写入记录主表。
+    processing_script_mode: str = "AUTO"
     report_period: date | None = None
     special_handling_at: datetime | None = None
     handler_user_id: str | None = None

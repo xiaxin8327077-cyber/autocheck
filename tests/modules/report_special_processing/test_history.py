@@ -29,6 +29,7 @@ def _history_row(**overrides):
         "status": "completed",
         "operator_user_id": "owner-a",
         "dimension": "project",
+        "business_system_name_snapshot": "TCMP",
         "field_name": "余额字段",
         "handler_display_name_snapshot": "王五",
         "handler_username_snapshot": "wangwu",
@@ -59,7 +60,7 @@ def test_history_provider_returns_only_my_completed_confirms():
     item = items[0]
     assert item.id == "rsp-confirmed-1"
     assert item.title == "报表特殊处理"
-    assert item.summary == f"{DIMENSION_LABELS['project']} · 余额字段"
+    assert item.summary == f"{DIMENSION_LABELS['project']} · TCMP · 余额字段"
     assert item.actor_user_id == "owner-a"
     assert item.module_id == "report_special_processing"
     assert item.processed_at == datetime(2026, 8, 10, 15, 0, tzinfo=TZ)
@@ -68,6 +69,35 @@ def test_history_provider_returns_only_my_completed_confirms():
     assert item.action.route == "report-special-processing"
     assert item.action.query == {"record_id": "1", "open": "detail"}
     assert "confirm" not in item.action.query.values()
+
+
+def test_history_summary_uses_shortest_field_and_keeps_total_count():
+    storage = FakeStorage([_history_row(
+        business_system_name_snapshot="估值系统",
+        field_name="法人金融机构名称｜jrname；短字段｜short_col；；数据管理机构｜datejg",
+    )])
+    items = ConfirmedHistoryProvider(storage).list_history(
+        HistoryListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 16, 0, tzinfo=TZ),
+        )
+    )
+    assert items[0].summary == "项目端 · 估值系统 · 短字段 等 3 字段"
+
+
+def test_history_summary_keeps_legacy_format_when_system_is_missing():
+    storage = FakeStorage([_history_row(
+        business_system_name_snapshot="",
+        business_system_code="",
+        field_name="旧字段｜legacy_field；短项｜short",
+    )])
+    items = ConfirmedHistoryProvider(storage).list_history(
+        HistoryListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 16, 0, tzinfo=TZ),
+        )
+    )
+    assert items[0].summary == "项目端 · 短项 等 2 字段"
 
 
 def test_history_provider_initiator_falls_back_to_handler_username():

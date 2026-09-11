@@ -58,6 +58,7 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "sys.users",
         "sys.role_permissions",
         "sys.dictionaries",
+        "sys.scheduled_tasks",
         "history.delete",
         "report_navigation.edit_schedule",
         "report_navigation.edit_stats",
@@ -94,6 +95,8 @@ def test_is_required_and_is_admin_only():
     assert is_admin_only("sys.users") is True
     assert is_admin_only("sys.role_permissions") is True
     assert is_admin_only("sys.settings.admin") is True
+    assert is_admin_only("sys.dictionaries") is False
+    assert is_admin_only("sys.scheduled_tasks") is True
     assert is_admin_only("history.delete") is False
     assert is_admin_only("report_navigation.edit_schedule") is False
     assert is_admin_only("report_navigation.edit_stats") is False

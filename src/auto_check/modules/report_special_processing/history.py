@@ -9,8 +9,7 @@ from auto_check.app.report_navigation_platform import (
     TodoAction,
 )
 
-from .contracts import DIMENSION_LABELS
-from .bilingual_names import bilingual_summary
+from .display_summary import ownership_system_field_summary
 
 MODULE_ID = "report_special_processing"
 HISTORY_PROVIDER_ID = "rsp_confirmed_history"
@@ -40,9 +39,6 @@ class ConfirmedHistoryProvider:
         record_id = row.get("id")
         if record_id is None:
             return None
-        dimension = str(row.get("dimension") or "").strip()
-        dimension_label = DIMENSION_LABELS.get(dimension, dimension or "未分维度")
-        field_name = bilingual_summary(row.get("field_name"), which="字段") or "未填字段"
         processed_at = row.get("confirmed_at")
         if processed_at is not None and not isinstance(processed_at, datetime):
             processed_at = None
@@ -57,7 +53,7 @@ class ConfirmedHistoryProvider:
         return HistoryItem(
             id=f"rsp-confirmed-{record_id}",
             title=HISTORY_TITLE,
-            summary=f"{dimension_label} · {field_name}",
+            summary=ownership_system_field_summary(row),
             actor_user_id=user_id,
             module_id=MODULE_ID,
             processed_at=processed_at,

@@ -28,6 +28,7 @@ NAME_SOURCE_MANUAL = "MANUAL"
 
 # 物理对象名限制为常规标识符字符，禁止混入双语规范串/分组串的分隔符。
 _PHYSICAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]{0,127}$")
+_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class StructuredContentError(ValueError):
@@ -54,6 +55,13 @@ def _physical_name(value: Any, *, label: str) -> str:
     return name
 
 
+def _item_id(value: Any) -> str:
+    item_id = str(value or "").strip()
+    if item_id and not _ITEM_ID_RE.fullmatch(item_id):
+        raise StructuredContentError({"structured_content": "内部条目标识无效"})
+    return item_id
+
+
 @dataclass(frozen=True)
 class StructuredField:
     column_name: str
@@ -61,9 +69,11 @@ class StructuredField:
     column_name_source: str  # DATABASE | MANUAL
     value_before: str = ""
     value_after: str = ""
+    item_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "item_id": self.item_id,
             "column_name": self.column_name,
             "chinese_column_name": self.chinese_column_name,
             "column_name_source": self.column_name_source,
@@ -78,14 +88,24 @@ class StructuredField:
 
 @dataclass(frozen=True)
 class StructuredCondition:
-    """处理范围条件：条件字段 + 解析后的条件值列表（“、”“；”分隔，去空去重）。"""
+    """处理范围条件：条件字段 + 条件运算符 + 解析后的条件值列表。
+
+    operator 保存 SQL 运算符（=、<>、>、>=、<、<=、LIKE、IN、IS NULL、IS NOT NULL）；
+    历史数据无 operator 时按“等于”处理。IS NULL / IS NOT NULL 不需要条件值。
+    """
 
     column_name: str
     values: tuple[str, ...]
+    chinese_column_name: str = ""
+    operator: str = "="
+    item_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "item_id": self.item_id,
             "column_name": self.column_name,
+            "chinese_column_name": self.chinese_column_name,
+            "operator": self.operator,
             "values": list(self.values),
         }
 
@@ -99,6 +119,8 @@ class StructuredTable:
     # 表级数据源：不同处理表可来自不同数据源；为空时继承 StructuredContent 顶层。
     datasource_id: str = ""
     datasource_type: str = ""
+    # 数据源名称快照：仅用于生成脚本注释展示；后端保存时按系统配置钉牢。
+    datasource_name: str = ""
     # 处理范围：通用数据条件（条件字段 + 条件值），默认至少一条有效条件。
     conditions: tuple[StructuredCondition, ...] = ()
     # 限制报送期：仅该表为 True 时生成报送期 WHERE 条件；
@@ -110,15 +132,18 @@ class StructuredTable:
     projects: tuple[str, ...] = ()
     contracts: tuple[str, ...] = ()
     fields: tuple[StructuredField, ...] = ()
+    item_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "item_id": self.item_id,
             "schema": self.schema,
             "table_name": self.table_name,
             "chinese_table_name": self.chinese_table_name,
             "table_name_source": self.table_name_source,
             "datasource_id": self.datasource_id,
             "datasource_type": self.datasource_type,
+            "datasource_name": self.datasource_name,
             "conditions": [item.to_dict() for item in self.conditions],
             "limit_report_period": self.limit_report_period,
             "report_period_field": self.report_period_field,
@@ -171,6 +196,21 @@ def _require_chinese_name(chinese: str, source: str, *, label: str, field_key: s
 
 
 MAX_SCOPE_VALUES = 200
+
+# 处理范围条件支持的 SQL 运算符（页面显示中文名，内部保存 SQL 运算符）。
+CONDITION_OPERATORS = frozenset({
+    "=", "<>", ">", ">=", "<", "<=", "LIKE", "IN", "IS NULL", "IS NOT NULL",
+})
+# 需要条件值的运算符；IS NULL / IS NOT NULL 无需填写条件值。
+CONDITION_OPERATORS_REQUIRING_VALUE = frozenset({"=", "<>", ">", ">=", "<", "<=", "LIKE", "IN"})
+
+
+def _condition_operator(value: Any, *, field_key: str) -> str:
+    operator = str(value or "=").strip().upper()
+    if operator not in CONDITION_OPERATORS:
+        raise StructuredContentError({field_key: "条件运算符无效"})
+    return operator
+
 
 def parse_scope_values(value: Any, *, label: str, field_key: str) -> tuple[str, ...]:
     """解析处理范围（项目/合同）：支持“、”“；”“,”分隔，去除首尾空格、空值与重复项。"""
@@ -268,6 +308,13 @@ def parse_structured_content(payload: Any) -> StructuredContent:
                     raw_condition.get("column_name"), max_len=MAX_PHYSICAL_NAME_LEN,
                     message="处理范围字段名过长",
                 )
+                condition_chinese_column = _text(
+                    raw_condition.get("chinese_column_name"), max_len=MAX_CHINESE_NAME_LEN,
+                    message="处理范围中文字段名过长",
+                )
+                condition_operator = _condition_operator(
+                    raw_condition.get("operator"), field_key="table_name",
+                )
                 condition_values = parse_scope_values(
                     raw_condition.get("values"), label="处理范围条件值", field_key="table_name",
                 )
@@ -275,13 +322,21 @@ def parse_structured_content(payload: Any) -> StructuredContent:
                     continue  # 未使用的空条件行
                 if not condition_column:
                     raise StructuredContentError({"table_name": "请选择处理范围字段"})
-                if not condition_values:
+                requires_value = condition_operator in CONDITION_OPERATORS_REQUIRING_VALUE
+                if requires_value and not condition_values:
                     raise StructuredContentError({"table_name": "请输入处理范围条件值"})
+                if not requires_value:
+                    # IS NULL / IS NOT NULL 不需要条件值：清除避免保存无效数据。
+                    condition_values = ()
                 if condition_column in seen_condition_columns:
                     raise StructuredContentError({"table_name": f"处理范围字段 {condition_column} 重复"})
                 seen_condition_columns.add(condition_column)
                 conditions.append(StructuredCondition(
-                    column_name=condition_column, values=condition_values,
+                    column_name=condition_column,
+                    chinese_column_name=condition_chinese_column,
+                    operator=condition_operator,
+                    values=condition_values,
+                    item_id=_item_id(raw_condition.get("item_id")),
                 ))
         # 限制报送期：仅 limit_report_period=True 时需要报送期字段。
         limit_report_period = bool(raw_table.get("limit_report_period", True))
@@ -333,6 +388,7 @@ def parse_structured_content(payload: Any) -> StructuredContent:
                 column_name_source=column_source,
                 value_before=value_before,
                 value_after=value_after,
+                item_id=_item_id(raw_field.get("item_id")),
             ))
         tables.append(StructuredTable(
             table_name=table_name,
@@ -341,11 +397,15 @@ def parse_structured_content(payload: Any) -> StructuredContent:
             schema=schema,
             datasource_id=table_datasource_id,
             datasource_type=table_datasource_type,
+            datasource_name=_text(
+                raw_table.get("datasource_name"), max_len=200, message="数据源名称过长",
+            ),
             conditions=tuple(conditions),
             limit_report_period=limit_report_period,
             report_period_field=report_period_field,
             report_period_field_source=report_period_field_source,
             fields=tuple(fields),
+            item_id=_item_id(raw_table.get("item_id")),
         ))
 
     if not tables:

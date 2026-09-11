@@ -197,13 +197,14 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
     assert 'labeledField(documentRef, "修改后", fields.valueAfter)' in drawer
     # 修改前/修改后左右并排对比
     assert 'className: "rsp-span-two rsp-value-pair"' in drawer
-    assert 'labeledField(documentRef, "处理缘由", fields.summary, "rsp-span-all rsp-summary-field")' in drawer
+    assert 'labeledField(documentRef, "处理摘要", fields.summary, "rsp-span-all rsp-summary-field")' in drawer
     assert "源系统已确认" in drawer
     assert 'mode === "confirm"' in drawer or 'mode === "confirm"' in ledger
 
     assert 'pending: "待确认"' in table
-    assert '["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"]' in table
-    assert 'colspan: "8"' in table
+    assert '"修改字段", "修改前", "修改后", "所属业务系统", "关联报送", "状态", "处理人", "处理时间", "操作"' in table
+    assert "变更摘要" not in table
+    assert 'colspan: "9"' in table
     assert "clampedTextCell" in table
     assert "rsp-cell-clamp" in table
     assert "rsp-cell-tip" in table
@@ -339,7 +340,7 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert "rsp-form-error" not in source
     assert "showSummaryHint" not in source
     assert 'maxlength: String(SUMMARY_MAX_LENGTH)' in source
-    assert 'aria-label": "处理缘由"' in source
+    assert 'aria-label": "处理摘要"' in source
     assert "rsp-field-hint" in read("styles.css")
     assert "rsp-modal-actions-right" in read("styles.css")
     assert "rsp-audit-summary" in read("styles.css")
@@ -424,6 +425,20 @@ def test_audit_diff_panel_preserves_long_values_and_operation_semantics():
     assert "if (!hasDetails && !entry.hasStructuredAuditData)" in drawer
 
 
+def test_audit_detail_uses_semantic_basic_and_per_table_groups():
+    drawer = read("components/record_drawer.js")
+    detail = read("components/audit_detail.js")
+    css = read("styles.css")
+
+    assert 'import { buildSemanticAuditViewModel, renderSemanticAuditDetail } from "./audit_detail.js"' in drawer
+    assert 'key === "structured_content"' in drawer
+    assert "renderSemanticAuditDetail" in drawer
+    for text in ("基本信息", "特殊处理内容", "表信息变更", "处理范围变更", "修改字段变更", "查看删除前配置", "脚本变更"):
+        assert text in detail
+    for selector in (".rsp-audit-semantic", ".rsp-audit-table-card", ".rsp-audit-event-added", ".rsp-audit-event-removed"):
+        assert selector in css
+
+
 def test_ledger_row_actions_include_status_operations():
     table_source = read("components/record_table.js")
     ledger_source = read("pages/ledger.js")
@@ -462,8 +477,8 @@ def test_ledger_row_actions_include_status_operations():
     assert ".rsp-row-actions-inner" in css
     assert "rsp-text-action-danger" in css
     assert "rsp-text-action-success" in css
-    assert 'width: 20%' in css
-    assert "min-width: calc(20em + 62px)" in css
+    assert 'width: 26%' in css
+    assert "grid-template-columns: minmax(0, 5fr) minmax(0, 3fr)" not in css
     assert "padding-left: 40px" in css
     assert "padding-left: 22px" in css
     assert "padding-left: 8px" in css
@@ -478,7 +493,7 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     scope = '.auto-check-module[data-module="report_special_processing"]'
 
     assert 'className: "rsp-empty-row"' in table_source
-    assert 'colspan: "8"' in table_source
+    assert 'colspan: "9"' in table_source
     assert "没有符合条件的特殊处理记录" in table_source
     assert "wrap.append(element(documentRef, \"div\", { className: \"rsp-empty\"" not in table_source
     assert "formatDisplayDateTime" in table_source
@@ -504,9 +519,9 @@ def test_ledger_table_empty_state_and_list_layout_align_with_system_lists():
     assert "scheduleProcessNameFit" not in table_source
     assert "rsp-cell-fit" not in table_source
     assert '(record.reports || []).join("、")' not in table_source
-    assert '["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"]' in table_source
+    assert '"修改字段", "修改前", "修改后", "所属业务系统", "关联报送", "状态", "处理人", "处理时间", "操作"' in table_source
     assert "th:nth-child(1)" in css
-    assert "th:nth-child(8)" in css
+    assert "th:nth-child(9)" in css
     assert "td.rsp-process-names" in css
     assert "rsp-process-name-line" in css
     assert "text-align: center" in css
@@ -763,13 +778,17 @@ def test_drawer_and_table_use_grouped_table_field_component():
     assert "createTableFieldGroups(documentRef" in drawer
     assert 'confirm: options.confirm' in drawer
     assert 'className: "rsp-span-two rsp-tf-field" }, [tableFieldGroups]' in drawer
-    # 处理缘由保留在基本信息区并恢复默认 56px 多行高度
+    # 处理摘要保留在基本信息区并使用默认 56px 多行高度
     assert 'className: "rsp-summary",\n      rows: "3",' in drawer
-    assert 'labeledField(documentRef, "处理缘由", fields.summary, "rsp-span-all rsp-summary-field")' in drawer
-    # 台账仅显示处理字段，分组串按组摊平逐字段分行，历史值保持原样。
+    assert 'labeledField(documentRef, "处理摘要", fields.summary, "rsp-span-all rsp-summary-field")' in drawer
+    # 台账使用修改字段/修改前/修改后三列；新旧记录都按完整值对分组。
     assert 'import { parseBilingualItems, parseBilingualGroups, BILINGUAL_PART_SEPARATOR } from "./bilingual_name_list.js"' in table
-    assert 'function fieldNameCell(documentRef, value)' in table
-    assert 'fieldNameCell(documentRef, record.field_name)' in table
+    assert "function structuredChangeGroups(record)" in table
+    assert "function legacyChangeGroups(record)" in table
+    assert "function recordChangeGroups(record)" in table
+    assert "function changeGridCell(documentRef, groups)" in table
+    assert "groupByValuePair" in table
+    assert 'cell(documentRef, record.business_system_name_snapshot, "rsp-business-system")' in table
     assert 'tableFieldCell' not in table
     assert 'record.table_name' not in table
 
@@ -785,7 +804,7 @@ def test_bilingual_styles_are_scoped():
         assert f".auto-check-module[data-module=\"report_special_processing\"] {selector}" in css
     # 列宽固定：表行与字段行共用同一栅格模板，删除列固定宽不漂移
     assert css.count("grid-template-columns: 24px 112px minmax(0, 1fr) 16px minmax(0, 1fr) 56px") >= 3
-    # 处理缘由恢复默认多行高度
+    # 处理摘要使用默认多行高度
     assert "min-height: 56px" in css
 
 
@@ -830,12 +849,59 @@ def test_structured_content_editor_contract():
     assert "caldate" not in source.lower()
 
 
+def test_disabled_structured_editor_keeps_each_tables_saved_datasource_visible():
+    source = read("components/structured_content_editor.js")
+
+    assert 'table.datasourceName = String(rawTable?.datasource_name || datasourceNameSnapshot || "");' in source
+    assert "function fillDatasourceSelect(select, selectedId, selectedName" in source
+    assert "name: selectedName || selectedId" in source
+    assert "fillDatasourceSelect(" in source
+    assert "table.datasourceName," in source
+
+
+def test_readonly_drawer_uses_preview_content_instead_of_disabled_form_controls():
+    drawer = read("components/record_drawer.js")
+    css = read("styles.css")
+
+    assert 'import { createLegacyContentPreview, createStructuredContentPreview, readonlyField, readonlyTextBlock } from "./record_preview.js"' in drawer
+    assert "const readOnly = !canEdit;" in drawer
+    assert "createStructuredContentPreview(documentRef" in drawer
+    assert "createLegacyContentPreview(documentRef" in drawer
+    assert 'className: "rsp-readonly-basic-preview"' in drawer
+    assert 'className: "rsp-readonly-basic-grid"' in drawer
+    assert '"rsp-readonly-related-reports"' in drawer
+    assert drawer.index('className: "rsp-readonly-basic-grid"') < drawer.index('readonlyField(documentRef, "关联报送"')
+    assert '"rsp-readonly-script"' in drawer
+    for selector in (
+        ".rsp-readonly-info-item",
+        ".rsp-readonly-info-label",
+        ".rsp-readonly-info-value",
+        ".rsp-readonly-basic-preview",
+        ".rsp-readonly-related-reports",
+        ".rsp-readonly-summary",
+        ".rsp-config-preview-card",
+        ".rsp-preview-table",
+    ):
+        assert selector in css
+    preview_wrap = css.split(
+        '.auto-check-module[data-module="report_special_processing"] .rsp-preview-table-wrap {', 1
+    )[1].split("}", 1)[0]
+    assert "overflow: hidden;" in preview_wrap
+    assert "overflow-x: auto" not in preview_wrap
+    preview_table = css.split(
+        '.auto-check-module[data-module="report_special_processing"] .rsp-preview-table {', 1
+    )[1].split("}", 1)[0]
+    assert "min-width: 0;" in preview_table
+    assert "max-width: 100%;" in preview_table
+
+
 
 def test_condition_field_selection_displays_chinese_and_english_names():
     source = read("components/structured_content_editor.js")
-    condition_source = source[source.index("function renderConditionRow(table, condition) {"):source.index("function renderFields(table) {")]
+    condition_source = source[source.index("function renderConditionRow(table, condition, isLast) {"):source.index("function renderFields(table) {")]
     assert "combo.input.value = columnDisplayLabel(item);" in condition_source
-    assert "combo.input.value = tableColumnDisplayLabel(table, condition.column);" in condition_source
+    assert "condition.chinese = String(item.column_comment || item.secondary || \"\");" in condition_source
+    assert "combo.input.value = tableColumnDisplayLabel(table, condition.column, condition.chinese);" in condition_source
 
 
 def test_structured_combobox_focus_search_and_selection_contract():
@@ -877,11 +943,12 @@ def test_structured_table_delete_keeps_one_table_and_stacks_confirmation():
     source = read("components/structured_content_editor.js")
     css = read("styles.css")
 
-    # 特殊处理内容至少保留一张表；按钮状态在增删后统一刷新。
+    # 特殊处理内容至少保留一张表；单表时隐藏表级删除按钮，增删后统一刷新。
     assert "if (state.tables.length <= 1)" in source
     assert "function updateTableRemoveButtons()" in source
     assert "table.removeButton = removeButton;" in source
-    assert "table.removeButton.disabled = disabled || state.tables.length <= 1;" in source
+    assert "const visible = !disabled && state.tables.length > 1;" in source
+    assert "table.removeButton.hidden = !visible;" in source
 
     # 模块内删除确认临时提升到编辑弹窗（3200）之上，结束后清理层级类。
     assert 'confirmModal?.classList.add("rsp-confirm-above-record")' in source
@@ -889,6 +956,15 @@ def test_structured_table_delete_keeps_one_table_and_stacks_confirmation():
     assert "#confirmModal.rsp-confirm-above-record" in css
     confirm_rule = css.split("#confirmModal.rsp-confirm-above-record {", 1)[1].split("}", 1)[0]
     assert "z-index: 3300;" in confirm_rule
+
+
+def test_structured_editor_persists_stable_item_ids_for_audit_matching():
+    source = read("components/structured_content_editor.js")
+
+    assert "createItemId" in source
+    assert "item_id: table.itemId" in source
+    assert "item_id: condition.itemId" in source
+    assert "item_id: field.itemId" in source
 
 
 def test_metadata_picker_contract():
@@ -914,19 +990,52 @@ def test_drawer_switches_between_structured_and_legacy_modes():
     # 正式保存才要求字段级修改前/后；草稿可空
     assert "validateForm({ formal: true })" in drawer
     assert "validateForm({ formal: false })" in drawer
+    # 脚本预览由前端纯函数渐进生成，不复用或放宽正式保存校验。
+    assert 'import { buildScriptPreview } from "./script_preview.js"' in drawer
+    assert "buildScriptPreview(" in drawer
+    assert "actions.generateScript(" not in drawer
+    assert "validateForm({ formal: true, focus: false })" not in drawer
+    assert 'fields.period.addEventListener("change", scheduleAutoGenerate);' in drawer
+    assert "function validateForm({ formal = false, focus = true } = {})" in drawer
+    assert "function showFormHint(message, focusControl = null, { focus = true } = {})" in drawer
+    assert "if (focus) focusControl?.focus?.();" in drawer
+    assert 'documentRef, "手动编辑", "rsp-button-secondary", null,' in drawer
+    assert drawer.count('manualEditButton.addEventListener("click"') == 1
     # 结构化模式不再渲染全局修改前/后
     assert "rsp-sc-field" in drawer
     # 审计标签补充数据源
     assert 'datasource_name_snapshot: "数据源"' in drawer
 
 
-def test_ledger_value_columns_align_with_fields_and_dedupe():
+def test_ledger_change_columns_align_and_group_exact_value_pairs():
     table = read("components/record_table.js")
-    assert "function valueLinesCell(documentRef, value)" in table
-    assert 'valueLinesCell(documentRef, record.value_before)' in table
-    assert 'valueLinesCell(documentRef, record.value_after)' in table
-    assert '"同上"' in table
-    assert "rsp-cell-clamp-multiline" in table
+    css = read("styles.css")
+    assert 'className: "rsp-change-grid-cell"' in table
+    assert 'className: "rsp-change-grid-row"' in table
+    assert 'className: "rsp-change-grid-item rsp-change-grid-field"' in table
+    assert 'className: "rsp-change-grid-item rsp-change-grid-value"' in table
+    assert '"修改字段", "修改前", "修改后"' in table
+    assert "变更摘要" not in table
+    assert "rsp-change-index" not in table
+    assert 'role: "row"' not in table
+    assert 'const key = JSON.stringify([before, after]);' in table
+    assert "deduplicateFieldParts" in table
+    assert "groups.length === 1" in table
+    assert "is-stacked" in table
+    assert "rsp-record-row" in table
+    assert "rowspan" not in table
+    assert 'colspan: "3"' in table
+    assert "rsp-change-field-list" in table
+    assert "structuredFieldParts" in table
+    assert "fieldLabelTextNode" in table
+    assert "rsp-change-field-name" in table
+    assert "title: parts.english" not in table
+    assert "rsp-change-field-english" not in table
+    assert "rsp-change-field-english" not in css
+    assert ".rsp-change-paired-grid" not in css
+    assert ".rsp-change-table-name" not in css
+    assert ".rsp-change-field-list" in css
+    assert ".rsp-business-system" in css
 
 
 def test_structured_and_picker_styles_are_scoped():
@@ -945,9 +1054,9 @@ def test_new_record_drawer_matches_compact_reason_and_structured_content_layout(
     editor = read("components/structured_content_editor.js")
     css = read("styles.css")
 
-    # 处理缘由恢复默认 56px 多行控件。
+    # 处理摘要使用默认 56px 多行控件。
     assert 'className: "rsp-summary",\n      rows: "3",' in drawer
-    assert '"aria-label": "处理缘由"' in drawer
+    assert '"aria-label": "处理摘要"' in drawer
     summary_rule = css.split(
         '.auto-check-module[data-module="report_special_processing"] .rsp-summary {', 1
     )[1].split("}", 1)[0]
@@ -961,23 +1070,30 @@ def test_new_record_drawer_matches_compact_reason_and_structured_content_layout(
     assert "calc(100vw - 72px)" in modal_rule
     assert "900px" in modal_rule
     assert 'className: "rsp-modal-section rsp-special-content-section"' in drawer
-    assert editor.count("rsp-sc-add-action") == 3
-    assert editor.count("rsp-sc-header-action") == 3
+    # 添加操作已移至行尾图标按钮，标题栏不再有添加按钮
+    assert editor.count("rsp-sc-add-action") == 1  # 仅表级添加保留
+    assert editor.count("rsp-sc-header-action") == 1  # 仅表级操作区保留
     assert editor.count('className: "rsp-sc-section-head ') == 2
-    for label in ("＋ 添加处理表", "＋ 添加条件", "＋ 添加字段"):
-        assert f'text: "{label}"' in editor
+    assert 'text: "＋ 添加处理表"' in editor
     assert 'text: "指定数据日期"' in editor
     assert 'text: "修改字段"' in editor
     for selector in (".rsp-special-content-section", ".rsp-sc-scope", ".rsp-sc-fields-area"):
         assert f'.auto-check-module[data-module="report_special_processing"] {selector}' in css
 
-    # 三个添加入口使用同一轻量操作样式，不显示虚线框。
-    add_rule = css.split(
-        '.auto-check-module[data-module="report_special_processing"] .rsp-sc-add-action {', 1
-    )[1].split("}", 1)[0]
-    assert "border: 0;" in add_rule
-    assert "min-height: 28px;" in add_rule
-    assert "background: transparent;" in add_rule
+    # 行级操作：左对齐 [-] / [-][+]，使用 Minus/Plus 图标，无假占位
+    assert "rsp-sc-row-actions" in editor
+    assert "rsp-sc-icon-btn" in editor
+    assert "rsp-sc-icon-add" in editor
+    assert "rsp-sc-icon-minus" in editor
+    assert "rsp-sc-action-slot" not in editor
+    assert "ICON_MINUS" in editor
+    assert "ICON_PLUS" in editor
+    # 删除“操作”表头文字
+    assert 'text: "操作"' not in editor
+    # 表级删除按钮位于标题前，单表隐藏
+    title_bar = editor.split('className: "rsp-sc-card-title" }', 1)[1].split("]);", 1)[0]
+    assert title_bar.index("removeButton") < title_bar.index("titleIndex")
+    assert "table.removeButton.hidden = !visible;" in editor
 
     # 一个处理表只保留一个外层卡片，内部区块以浅分割线和留白建立层级。
     for selector in (".rsp-sc-scope", ".rsp-sc-fields-area"):
@@ -993,10 +1109,9 @@ def test_new_record_drawer_matches_compact_reason_and_structured_content_layout(
     assert "font-size: 12px;" in date_rule
     assert "font-weight: 400;" in date_rule
 
-    # 三组内容使用明确 Grid，并共享固定 88px 操作列及 12px 列间距。
-    assert "--action-width: 88px;" in css
+    # 三组内容使用明确 Grid，并共享固定 52px 紧凑操作列及 12px 列间距。
+    assert "--action-width: 52px;" in css
     assert "minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr) var(--action-width)" in css
-    assert "minmax(260px, 0.85fr) minmax(360px, 1.35fr) var(--action-width)" in css
     assert "minmax(170px, 1.05fr) minmax(170px, 1.05fr) minmax(140px, 0.85fr) minmax(140px, 0.85fr) var(--action-width)" in css
     assert "column-gap: 12px;" in css
     action_rule = css.split(
@@ -1029,21 +1144,89 @@ def test_new_record_drawer_matches_compact_reason_and_structured_content_layout(
     assert 'text: "报送期字段"' not in editor
     assert "未能自动匹配到报送期字段，请输入" not in editor
 
-    # 日期字段选择器固定占据与上方“中文表名”相同的第三列。
+    # 日期字段选择器与条件值列严格同列：标题行复用条件行完全相同的四列 Grid，
+    # 除以栅格外不得使用 margin/transform/absolute 手工偏移。
     scope_main_rule = css.split(
         '.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-title-row .rsp-sc-section-head-main {', 1
     )[1].split("}", 1)[0]
     assert "display: grid;" in scope_main_rule
-    assert "minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr)" in scope_main_rule
+    assert (
+        "grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.3fr) "
+        "minmax(240px, 1.15fr) var(--action-width);" in scope_main_rule
+    )
+    # 与条件行单行模板完全一致（含固定操作列），并铺满卡片宽度。
+    cond_template = (
+        "minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr) var(--action-width)"
+    )
+    cond_rule = css.split(
+        '.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head,\n'
+        '.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row {', 1
+    )[1].split("}", 1)[0]
+    assert cond_template in cond_rule
+    assert cond_template in scope_main_rule
+    assert "column-gap: 12px;" in scope_main_rule
+    assert "width: 100%;" in scope_main_rule
     controls_rule = css.split(
         '.auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-controls {', 1
     )[1].split("}", 1)[0]
     assert "grid-column: 1 / 3;" in controls_rule
+    # 控件行与 32px 表单等高：选择器显示/隐藏都不改变标题行高度与位置。
+    assert "min-height: 32px;" in controls_rule
     picker_rule = css.split(
         '.auto-check-module[data-module="report_special_processing"] .rsp-sc-date-field-picker {', 1
     )[1].split("}", 1)[0]
     assert "grid-column: 3;" in picker_rule
     assert "width: 100%;" in picker_rule
+    assert "min-width: 0;" in picker_rule
+    # 禁止用固定宽度或手工偏移凑位置。
+    assert "margin-left" not in picker_rule
+    assert "transform" not in picker_rule
+    assert "position: absolute" not in picker_rule
+
+
+def test_row_action_icons_follow_semantic_colors():
+    css = read("styles.css")
+    scope = '.auto-check-module[data-module="report_special_processing"]'
+
+    # 添加（＋）默认主题蓝、hover 浅蓝底；删除（－）默认 danger 红、hover 加深并配极浅红底。
+    add_rule = css.split(f"{scope} .rsp-sc-icon-add {{", 1)[1].split("}", 1)[0]
+    assert "var(--rsp-brand)" in add_rule
+    add_hover = css.split(f"{scope} .rsp-sc-icon-add:hover:not(:disabled) {{", 1)[1].split("}", 1)[0]
+    assert "background:" in add_hover
+
+    minus_rule = css.split(f"{scope} .rsp-sc-icon-minus {{", 1)[1].split("}", 1)[0]
+    assert "var(--action-danger" in minus_rule
+    assert "#9ca3af" not in minus_rule
+    minus_hover = css.split(f"{scope} .rsp-sc-icon-minus:hover:not(:disabled) {{", 1)[1].split("}", 1)[0]
+    assert "var(--action-danger" in minus_hover
+    assert "background:" in minus_hover
+
+    # 仅剩一条条件/字段时减号是禁用态，不能被通用灰色禁用样式盖掉；
+    # 仍使用危险色并降透明度表达不可用。
+    disabled_generic = css.index(f"{scope} .rsp-sc-icon-btn:disabled {{")
+    disabled_minus = css.index(f"{scope} .rsp-sc-icon-minus:disabled {{")
+    assert disabled_minus > disabled_generic, "减号禁用规则必须在通用禁用规则之后才能生效"
+    disabled_rule = css.split(f"{scope} .rsp-sc-icon-minus:disabled {{", 1)[1].split("}", 1)[0]
+    assert "var(--action-danger" in disabled_rule
+    assert "opacity: 0.6;" in disabled_rule
+
+    # 行级操作区：左对齐紧凑操作组（减号为固定锚点、加号仅最后一行追加），无假占位。
+    actions_rule = css.split(f"{scope} .rsp-sc-row-actions {{", 1)[1].split("}", 1)[0]
+    assert "display: flex;" in actions_rule
+    assert "justify-content: flex-start;" in actions_rule
+    assert "gap: 4px;" in actions_rule
+    assert "width: 52px;" in actions_rule
+    assert "grid-template-columns" not in actions_rule
+    assert "rsp-sc-action-slot" not in css, "不得保留空占位元素"
+    icon_rule = css.split(f"{scope} .rsp-sc-icon-btn {{", 1)[1].split("}", 1)[0]
+    assert "border: 0;" in icon_rule
+    assert "border-radius: 4px;" in icon_rule
+    assert "width: 28px;" in icon_rule
+    assert "height: 28px;" in icon_rule
+    editor = read("components/structured_content_editor.js")
+    assert "ICON_MINUS" in editor
+    assert "ICON_TRASH" in editor
+    assert "removeBtn.innerHTML = ICON_MINUS;" in editor
 
 
 def test_record_metadata_backend_surface():
@@ -1066,3 +1249,22 @@ def test_record_metadata_backend_surface():
     assert "pg_description" in metadata
     assert "load_data_sources" in metadata
     assert "数据源连接失败，请检查数据源配置" in metadata or "DataSourceConnectionError" in metadata
+
+
+def test_plain_change_columns_have_no_inner_grid_or_decorative_summary_styles():
+    css = read("styles.css")
+    scope = '.auto-check-module[data-module="report_special_processing"] '
+    assert ".rsp-change-table-head" not in css
+    assert ".rsp-change-index" not in css
+    assert ".rsp-change-table-name" not in css
+    assert scope + ".rsp-ledger-table th:not(:last-child)" not in css
+    assert scope + ".rsp-ledger-table td:not(:last-child)" not in css
+    assert "border-right: 1px solid #e4eaf2;" not in css
+    grid = css.split(scope + ".rsp-change-grid {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: 26fr 11fr 11fr;" in grid
+    assert "row-gap: 10px;" in grid
+    fields = css.split(scope + ".rsp-change-grid-item {", 1)[1].split("}", 1)[0]
+    assert "text-align: center;" in fields
+    assert "align-items: center;" in fields
+    assert "justify-content: center;" in fields
+    assert "white-space: pre-wrap;" in fields

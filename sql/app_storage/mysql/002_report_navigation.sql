@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS `report_nav_stat_runs` (
 CREATE TABLE IF NOT EXISTS `report_nav_scheduler_state` (
   `id` TINYINT NOT NULL COMMENT '固定主键',
   `enabled` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用',
-  `interval_minutes` INT NOT NULL DEFAULT 10 COMMENT '执行间隔（分钟）',
+  `interval_minutes` INT NOT NULL DEFAULT 30 COMMENT '执行间隔（分钟）',
   `next_run_at` DATETIME(6) NULL COMMENT '下次计划时间',
   `lock_owner` VARCHAR(64) NULL COMMENT '租约锁持有者',
   `lock_until` DATETIME(6) NULL COMMENT '租约锁到期时间',

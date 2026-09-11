@@ -1347,7 +1347,7 @@ class ReportNavigationStore:
         with self.database.connect() as connection:
             rows = _rows(connection, REPORT_NAV_SCHEDULER_STATE)
         row = next((item for item in rows if int(item.get("id") or 0) == 1), None)
-        return max(1, int((row or {}).get("interval_minutes") or 10))
+        return max(1, int((row or {}).get("interval_minutes") or 30))
 
     def load_process_snapshot(
         self, report_month: str, process_code: str

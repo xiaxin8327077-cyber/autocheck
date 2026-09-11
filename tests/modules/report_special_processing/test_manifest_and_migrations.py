@@ -16,7 +16,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.id == "report_special_processing"
     assert manifest.required is False
     assert manifest.api_prefix == "/api/modules/report-special-processing"
-    assert manifest.schema_version == 8
+    assert manifest.schema_version == 9
     assert manifest.permissions == (
         "report_special_processing.view",
         "report_special_processing.detail",
@@ -35,11 +35,15 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.15"
-    assert manifest.release_notes.version == "1.2.15"
+    assert manifest.version == "1.2.16"
+    assert manifest.release_notes.version == "1.2.16"
     assert manifest.release_notes.items == (
         "特殊处理内容升级为数据源→处理表→处理字段→修改前/修改后：表与字段从系统已配置数据源（PostgreSQL/MySQL）的真实元数据搜索选择，物理名只读，无中文注释时可在记录内补充中文名；修改前/后改为字段级数据，默认留空，与上一字段值相等时显示“同上”标记",
         "台账修改前/后与修改字段名逐行对齐并对连续相同值去重显示“同上”；处理编号改为基本信息标题行右侧只读元信息（可复制）；历史手工记录保留原录入方式编辑（方案 A 兼容）",
+        "处理脚本按表、修改字段和条件字段在前端渐进式实时生成，报送期统一使用 YYYY-MM-DD；手动编辑模式保留当前脚本并暂停自动覆盖，正式保存校验保持不变",
+        "操作记录按基本信息与特殊处理内容分层，多处理表独立展示语义变更；新增/删除表可展开完整配置，条件保留中文字段名快照，自动/手动脚本作为次级审计信息按需查看 Diff",
+        "台账恢复修改字段/修改前/修改后三列，按完全相同的修改前/后跨表聚合并对字段显示名去重；单值对字段逐行显示，多值对按字段行长度从短到长排列，主列表隐藏技术信息并消除合并行空档",
+        "确认与只读查看弹窗改为信息预览：基本信息、处理摘要、数据源、处理范围、修改字段和处理脚本均使用纯文本或只读表格展示，短字段保持三列，关联报送固定在其后独占全宽，长内容自动换行且不出现横向滚动条，仅确认说明保留可输入控件；待办、处理记录及通知统一为所属维度·所属业务系统·最短字段名，多字段保留总数提示，旧记录缺少系统时保持原摘要格式",
     )
 
 
@@ -238,6 +242,7 @@ def test_module_registers_only_its_schema_tables():
             "report_special_processing_audit_logs",
             "report_special_processing_confirm_attachments",
             "report_special_processing_record_attachments",
+            "report_special_processing_field_mappings",
         }
     )
 

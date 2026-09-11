@@ -1,4 +1,4 @@
-﻿from contextlib import contextmanager
+from contextlib import contextmanager
 from decimal import Decimal
 from io import BytesIO
 from datetime import date
@@ -491,6 +491,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
             class FakeResult:
                 def first(self): return None
                 def all(self): return []
+                def mappings(self): return self
             return FakeResult()
 
     class FakeApplicationDatabase:
@@ -569,6 +570,16 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         def stop(self):
             events.append("scheduler_stop")
 
+    class FakeScheduledTaskManager:
+        def __init__(self, database, **kwargs):
+            events.append(("scheduled_task_manager", database))
+
+        def start(self):
+            events.append("scheduled_task_start")
+
+        def stop(self):
+            events.append("scheduled_task_stop")
+
     class FakeAuthManager:
         def __init__(self, path, *, database):
             events.append(("auth", Path(path), database))
@@ -636,7 +647,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
             or report_navigation_service
         ),
     )
-    monkeypatch.setattr(server_module, "ReportNavigationScheduler", FakeReportNavigationScheduler)
+    monkeypatch.setattr(server_module, "ScheduledTaskManager", FakeScheduledTaskManager)
     monkeypatch.setattr(server_module, "_is_tcp_port_active", lambda _host, _port: False)
     monkeypatch.setattr(
         server_module.ApplicationDatabase,
@@ -694,7 +705,6 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         ("notification_storage", application_database),
         ("notification_stream_hub", {"max_per_user": 5, "max_total": 200, "queue_size": 100}),
         "notification_service",
-        "notification_cleanup_start",
         "notification_http_api",
         ("user_directory", handler_types[0].auth_manager),
         ("dictionary_platform", application_database),
@@ -708,10 +718,10 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         ),
         "module_start",
         ("router", application_database, report_navigation_service),
-        ("scheduler", report_navigation_service),
-        "scheduler_start",
+        ("scheduled_task_manager", application_database),
+        "scheduled_task_start",
         "serve_forever",
-        "scheduler_stop",
+        "scheduled_task_stop",
         "notification_stop",
         "notification_stream_hub_close",
         "module_stop",
@@ -728,6 +738,7 @@ def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path
             class FakeResult:
                 def first(self): return None
                 def all(self): return []
+                def mappings(self): return self
             return FakeResult()
 
     class FakeApplicationDatabase:
@@ -783,7 +794,17 @@ def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path
 
         def stop(self):
             events.append("scheduler_stop")
-            raise RuntimeError("scheduler cleanup failed")
+
+    class FakeScheduledTaskManager:
+        def __init__(self, database, **kwargs):
+            events.append("scheduled_task_manager")
+
+        def start(self):
+            events.append("scheduled_task_start")
+
+        def stop(self):
+            events.append("scheduled_task_stop")
+            raise RuntimeError("scheduled task cleanup failed")
 
     monkeypatch.setattr(
         server_module.ApplicationDatabase,
@@ -811,7 +832,7 @@ def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path
         "ReportNavigationService",
         lambda *_args, **_kwargs: FakeReportNavigationService(),
     )
-    monkeypatch.setattr(server_module, "ReportNavigationScheduler", FakeScheduler)
+    monkeypatch.setattr(server_module, "ScheduledTaskManager", FakeScheduledTaskManager)
     monkeypatch.setattr(
         server_module.ModuleRuntime,
         "build",
@@ -819,10 +840,10 @@ def test_run_server_runs_every_cleanup_after_stop_failures(monkeypatch, tmp_path
     )
     monkeypatch.setattr(server_module, "_is_tcp_port_active", lambda _host, _port: False)
 
-    with pytest.raises(RuntimeError, match="scheduler cleanup failed"):
+    with pytest.raises(RuntimeError, match="scheduled task cleanup failed"):
         server_module.run_server(open_browser=False, config_path=tmp_path / "config.json")
 
-    assert events[-4:] == ["scheduler_stop", "runtime_stop", "server_close", "database_close"]
+    assert events[-4:] == ["scheduled_task_stop", "runtime_stop", "server_close", "database_close"]
 
 
 def test_previous_month_end_uses_beijing_today(monkeypatch):

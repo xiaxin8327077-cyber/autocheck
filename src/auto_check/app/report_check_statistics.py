@@ -58,7 +58,7 @@ def bind_report_period(sql: str, report_date: date) -> tuple[str, tuple[str, ...
     bound_sql, replacements = REPORT_PERIOD_PLACEHOLDER.subn("%s", sql)
     if replacements <= 0:
         raise ValueError(f"剩余 SQL 必须包含报送期占位符 {REPORT_PERIOD_TOKEN}")
-    value = format_business_report_date(report_date, "date")
+    value = format_business_report_date(report_date, "underscore")
     return bound_sql, (value,) * replacements
 
 

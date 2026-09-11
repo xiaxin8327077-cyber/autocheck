@@ -14,6 +14,7 @@ from auto_check.modules.report_special_processing.bilingual_names import (
     parse_bilingual_items,
     serialize_bilingual_groups,
     serialize_bilingual_items,
+    shortest_bilingual_summary,
 )
 
 
@@ -82,6 +83,14 @@ def test_bilingual_summary():
     assert bilingual_summary("legacy") == "legacy"
     assert bilingual_summary("") == ""
     assert bilingual_summary(None) == ""
+
+
+def test_shortest_bilingual_summary_keeps_total_field_count():
+    assert shortest_bilingual_summary(
+        "法人金融机构名称｜jrname；短字段｜short_col；；数据管理机构｜datejg"
+    ) == "短字段 等 3 字段"
+    assert shortest_bilingual_summary("余额字段｜balance") == "余额字段"
+    assert shortest_bilingual_summary("long_legacy_field、short") == "short 等 2 字段"
 
 
 # ===== 分组格式（表→字段关联，组间“；；”） =====

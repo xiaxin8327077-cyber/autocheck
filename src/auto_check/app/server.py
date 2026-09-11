@@ -139,10 +139,10 @@ from auto_check.app.report_check_statistics import (
     resolve_report_check_entry,
 )
 from auto_check.app.report_navigation import (
-    ReportNavigationScheduler,
     ReportNavigationService,
     report_navigation_business_report_date,
 )
+from auto_check.app.scheduled_tasks import ScheduledTaskManager
 from auto_check.app.module_system import ModuleRuntime
 from auto_check.app.module_system.contracts import ModuleBootstrapContext, ModuleHttpResponse
 from auto_check.app.notifications.http_api import NotificationHttpApi
@@ -409,6 +409,7 @@ class ApiRouter:
         report_navigation_service: ReportNavigationService | None = None,
         module_runtime: ModuleRuntime | None = None,
         start_field_mapping_auto_refresh: bool = False,
+        scheduled_task_manager: ScheduledTaskManager | None = None,
         max_upload_bytes: int = MAX_UPLOAD_BYTES,
         max_archive_member_bytes: int = MAX_ARCHIVE_MEMBER_BYTES,
     ):
@@ -446,6 +447,7 @@ class ApiRouter:
         self._db_validation_mapping_service = DbValidationMappingService(self.application_database)
         self._field_mapping_auto_refresh_stop = threading.Event()
         self._field_mapping_auto_refresh_thread: threading.Thread | None = None
+        self._scheduled_task_manager = scheduled_task_manager
         self.transport_password_decryptor: PasswordDecryptor | None = None
         self._run_jobs: dict[str, RunJob] = {}
         self._run_jobs_lock = threading.Lock()
@@ -649,6 +651,63 @@ class ApiRouter:
             return map_value_error(exc)
         return 404, {"error": "not found"}
 
+    def _handle_scheduled_tasks(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        current_user: dict[str, Any] | None,
+    ) -> tuple[int, dict[str, Any]]:
+        """定时任务管理 API：要求 sys.scheduled_tasks 能力（ADMIN_ONLY）。"""
+        if not self._user_has_capability(current_user, "sys.scheduled_tasks"):
+            return 403, {"error": "需要定时任务管理权限"}
+        if self._scheduled_task_manager is None:
+            return 503, {"error": "定时任务管理服务尚未启动"}
+
+        if method == "GET" and path == "/api/system/scheduled-tasks":
+            tasks = self._scheduled_task_manager.list_tasks()
+            missing = self._scheduled_task_manager.missing_template_details()
+            return 200, {"tasks": to_jsonable(tasks), "missing_templates": missing}
+
+        run_match = re.fullmatch(
+            r"/api/system/scheduled-tasks/([a-z0-9_]+)/run", path
+        )
+        if run_match and method == "POST":
+            try:
+                result = self._scheduled_task_manager.request_run_now(run_match.group(1))
+                return 202, result
+            except ValueError as exc:
+                return 400, {"error": str(exc)}
+
+        task_match = re.fullmatch(r"/api/system/scheduled-tasks/([a-z0-9_]+)", path)
+        if task_match:
+            task_code = task_match.group(1)
+            if method == "POST":
+                try:
+                    updated = self._scheduled_task_manager.update_task(task_code, **(body or {}))
+                    return 200, {"task": to_jsonable(updated)}
+                except ValueError as exc:
+                    return 400, {"error": str(exc)}
+            if method == "DELETE":
+                try:
+                    deleted = self._scheduled_task_manager.delete_task(task_code)
+                    return 200, {"deleted": deleted}
+                except ValueError as exc:
+                    return 400, {"error": str(exc)}
+
+        restore_match = re.fullmatch(
+            r"/api/system/scheduled-tasks/([a-z0-9_]+)/restore", path
+        )
+        if restore_match and method == "POST":
+            task_code = restore_match.group(1)
+            try:
+                restored = self._scheduled_task_manager.restore_template(task_code)
+                return 200, {"task": to_jsonable(restored)}
+            except ValueError as exc:
+                return 400, {"error": str(exc)}
+
+        return 404, {"error": "not found"}
+
     def session_user_payload(self, session: AuthSession | None) -> dict[str, Any] | None:
         payload = _session_user(session)
         if payload is None:
@@ -771,6 +830,8 @@ class ApiRouter:
                     return 400, {"error": str(exc)}
             if path == "/api/system/dictionaries" or path.startswith("/api/system/dictionaries/"):
                 return self._handle_dictionaries(method, path, body, current_user)
+            if path == "/api/system/scheduled-tasks" or path.startswith("/api/system/scheduled-tasks/"):
+                return self._handle_scheduled_tasks(method, path, body, current_user)
             if path == "/api/settings/interface/theme-colors":
                 user_id = str((current_user or {}).get("id") or "").strip()
                 if method == "GET":
@@ -4448,6 +4509,10 @@ def _table_ref_key(table: TableRef) -> tuple[str, ...]:
 def to_jsonable(value: Any) -> Any:
     if isinstance(value, Decimal):
         return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds")
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, ReconcileResult):
         payload = to_jsonable(asdict(value))
         payload["display_details"] = build_display_details(value)
@@ -4970,7 +5035,7 @@ def run_server(
 
     resolved_config_path = Path(config_path) if config_path is not None else default_config_path()
     application_database = ApplicationDatabase.from_config_path(resolved_config_path)
-    report_navigation_scheduler: ReportNavigationScheduler | None = None
+    scheduled_task_manager: ScheduledTaskManager | None = None
     report_check_provider_handle = None
     module_runtime: ModuleRuntime | None = None
     server: ThreadingHTTPServer | None = None
@@ -4993,8 +5058,8 @@ def run_server(
             card_code="report_check",
             provider=ReportCheckStatistics(application_database),
             semantics_version=REPORT_CHECK_SEMANTICS_VERSION,
-            include_in_collect=False,
-            refresh_on_dashboard=True,
+            include_in_collect=True,
+            refresh_on_dashboard=False,
         )
         try:
             server = ThreadingHTTPServer((host, port), Handler)
@@ -5017,7 +5082,6 @@ def run_server(
             notification_stream_hub,
             now=beijing_now,
         )
-        notification_service.start_cleanup()
         notification_http_api = NotificationHttpApi(notification_service, notification_stream_hub)
 
         module_runtime = ModuleRuntime.build(
@@ -5041,9 +5105,16 @@ def run_server(
             application_database=application_database,
             report_navigation_service=report_navigation_service,
             module_runtime=module_runtime,
-            start_field_mapping_auto_refresh=True,
+            start_field_mapping_auto_refresh=False,
         )
-        report_navigation_scheduler = ReportNavigationScheduler(router.report_navigation)
+
+        scheduled_task_manager = ScheduledTaskManager(
+            application_database,
+            report_navigation_service=router.report_navigation,
+            notification_service=notification_service,
+            api_router=router,
+        )
+        router._scheduled_task_manager = scheduled_task_manager
 
         Handler.router = router
         Handler.auth_manager = auth_manager
@@ -5054,7 +5125,7 @@ def run_server(
         print(f"Auto Check running at {url}")
         if open_browser:
             webbrowser.open(url)
-        report_navigation_scheduler.start()
+        scheduled_task_manager.start()
         try:
             server.serve_forever()
         except KeyboardInterrupt:
@@ -5073,8 +5144,8 @@ def run_server(
                 cleanup_errors.append(error)
 
         try:
-            if report_navigation_scheduler is not None:
-                cleanup(report_navigation_scheduler.stop)
+            if scheduled_task_manager is not None:
+                cleanup(scheduled_task_manager.stop)
             if report_check_provider_handle is not None:
                 cleanup(report_check_provider_handle.close)
         finally:

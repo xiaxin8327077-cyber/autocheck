@@ -48,7 +48,7 @@ def test_dictionary_page_structure_present(index_html):
     assert 'id="dictionaryItemsModal"' in index_html
     assert 'class="card result-card"' in index_html
     assert 'class="table-wrap"' in index_html
-    assert 'class="result-table dictionary-main-table"' in index_html
+    assert 'class="result-table management-list-table dictionary-main-table"' in index_html
     assert 'id="newDictionaryBtn" type="button" class="btn-primary btn-sm management-toolbar-add"' in index_html
     assert 'id="dictionaryCategoryFilter" class="prompt-input management-toolbar-filter"' in index_html
     assert 'id="clearDictionaryCategoryFilter" class="filter-clear-button"' in index_html
@@ -56,7 +56,7 @@ def test_dictionary_page_structure_present(index_html):
     assert 'id="newDictionaryItemBtn"' in index_html
     assert "字典名称" in index_html and "字典编码" in index_html
     assert "键值数量" in index_html
-    main_table = index_html[index_html.index('class="result-table dictionary-main-table"'):index_html.index('id="dictionaryCategoryBody"')]
+    main_table = index_html[index_html.index('class="result-table management-list-table dictionary-main-table"'):index_html.index('id="dictionaryCategoryBody"')]
     assert "<th>说明</th>" in main_table
     assert "<th>排序</th>" not in main_table
 
@@ -84,7 +84,7 @@ def test_dictionary_item_list_has_only_required_columns(index_html):
 
 
 def test_dictionary_page_wired_into_system_management(app_js):
-    assert 'const systemMgmtPages = new Set(["settings", "role-permissions", "users", "dictionaries"]);' in app_js
+    assert 'const systemMgmtPages = new Set(["settings", "role-permissions", "users", "dictionaries", "scheduled-tasks"]);' in app_js
     assert 'if (name === "dictionaries" && !hasCapability("sys.dictionaries"))' in app_js
     assert 'showToast("无权访问字典管理", "error");' in app_js
     assert 'if (name === "dictionaries") await loadDictionaries();' in app_js

@@ -42,13 +42,14 @@ from .bilingual_names import (
     parse_bilingual_groups,
     parse_bilingual_items,
     serialize_bilingual_items,
-    bilingual_summary,
 )
+from .display_summary import ownership_system_field_summary
 from .structured_content import (
     StructuredContentError,
     SUPPORTED_DATASOURCE_TYPES,
     parse_structured_content,
 )
+from .audit_diff import build_structured_audit_diff
 from .sql_builder import ScriptGenerationError, generate_script
 
 _RE_PHYSICAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]{0,127}$")
@@ -114,6 +115,9 @@ _AUDIT_SKIP_KEYS = frozenset(
         "row_version",
     }
 )
+_STRUCTURED_DERIVED_AUDIT_KEYS = frozenset({
+    "datasource_name_snapshot", "table_name", "field_name", "value_before", "value_after",
+})
 
 _GOVERNANCE_ROLE_DISPLAY_PROJECT_ASSET = "数据治理_项目资产"
 _GOVERNANCE_ROLE_DISPLAY_FUND_FINANCE = "数据治理_资金财务"
@@ -464,12 +468,12 @@ class SpecialProcessingService:
         """结构化内容的数据源类型/名称以系统已配置数据源为准，防前端伪造。
 
         每个表都可能使用不同数据源：记录级标识取第一条表的（顶层），
-        其余表的数据源逐个校验存在性与类型，并把类型修正为配置实际值。
+        其余表的数据源逐个校验存在性与类型，并把类型与名称修正为配置实际值。
         """
         content = value.structured_content
         if content is None or self._metadata is None:
             return value
-        resolved: dict[str, str] = {}
+        resolved: dict[str, tuple[str, str]] = {}
         for wanted in [content.datasource_id, *(table.datasource_id for table in content.tables)]:
             key = str(wanted or "").strip()
             if not key or key in resolved:
@@ -484,12 +488,16 @@ class SpecialProcessingService:
                 raise ValidationError(fields={
                     "datasource_id": "该数据源类型暂不支持处理表字段自动读取（仅支持 PostgreSQL / MySQL）",
                 })
-            resolved[key] = db_type
-        pinned_type = resolved.get(content.datasource_id, content.datasource_type)
+            resolved[key] = (db_type, str(getattr(entry, "name", "") or "")[:200])
+        pinned_type = resolved.get(content.datasource_id, (content.datasource_type, ""))[0]
+        pinned_name = resolved.get(
+            content.datasource_id, ("", value.datasource_name_snapshot or ""),
+        )[1]
         pinned_tables = tuple(
             _dataclass_replace(
                 table,
-                datasource_type=resolved.get(table.datasource_id, table.datasource_type),
+                datasource_type=resolved.get(table.datasource_id, (table.datasource_type, ""))[0],
+                datasource_name=resolved.get(table.datasource_id, ("", table.datasource_name))[1],
             )
             for table in content.tables
         )
@@ -500,7 +508,7 @@ class SpecialProcessingService:
                 datasource_type=pinned_type,
                 tables=pinned_tables,
             ),
-            datasource_name_snapshot=str(getattr(self._metadata.resolve(content.datasource_id), "name", "") or "")[:200] or None,
+            datasource_name_snapshot=pinned_name or None,
         )
 
     # ===== 数据源元数据透传（表/字段选择器） =====
@@ -583,7 +591,7 @@ class SpecialProcessingService:
         payload: {structured_content, report_period, field_types}
         - report_period: 基本信息“所属报送期”（YYYY-MM-DD），参与报送期 WHERE 条件；
         - field_types: {datasource_id: {table_name: {column: data_type}}}，来源为前端已缓存
-          的表字段元数据，仅用于报送期日期字面量格式判断（不影响生成权限与内容安全）。
+          的表字段元数据，仅用于条件值字面量格式判断（不影响生成权限与内容安全）。
         """
         if not user_has_capability(self._actor(current_user), "rsp.edit"):
             raise PermissionDeniedError()
@@ -725,7 +733,12 @@ class SpecialProcessingService:
             updated_by_username_snapshot=actor.username,
             updated_at=now,
         )
-        changed = self._changed_fields(current, changes, value.processing_script)
+        changed = self._changed_fields(
+            current,
+            changes,
+            value.processing_script,
+            value.processing_script_mode,
+        )
         attachment_change = None
         attachment_actor = None
         attachment_added = 0
@@ -1021,9 +1034,6 @@ class SpecialProcessingService:
         owner_id = str(record.get("governance_owner_user_id") or "").strip()
         if not owner_id:
             return
-        dimension = str(record.get("dimension") or "").strip()
-        dimension_label = DIMENSION_LABELS.get(dimension, dimension or "未分维度")
-        field_name = bilingual_summary(record.get("field_name"), which="字段") or "未填字段"
         record_id = int(record["id"])
         row_version = int(record["row_version"])
         from auto_check.app.notifications.contracts import (
@@ -1037,7 +1047,7 @@ class SpecialProcessingService:
             category="todo",
             level="info",
             title="有报表特殊处理请您确认",
-            content=f"{dimension_label} · {field_name}",
+            content=ownership_system_field_summary(record),
             action=NotificationAction(
                 type="navigate",
                 route="report-special-processing",
@@ -1066,12 +1076,6 @@ class SpecialProcessingService:
         if not creator_id:
             return
 
-        dimension = str(record.get("dimension") or "").strip()
-        dimension_label = DIMENSION_LABELS.get(
-            dimension,
-            dimension or "未分维度",
-        )
-        field_name = bilingual_summary(record.get("field_name"), which="字段") or "未填字段"
         record_id = int(record["id"])
         row_version = int(record["row_version"])
         report_period = str(record.get("report_period") or "").strip()
@@ -1096,7 +1100,7 @@ class SpecialProcessingService:
             category="task",
             level="success",
             title="您提交的报表特殊处理已完成确认",
-            content=f"{dimension_label} · {field_name}",
+            content=ownership_system_field_summary(record),
             action=NotificationAction(
                 type="navigate",
                 route="report-special-processing",
@@ -1235,6 +1239,39 @@ class SpecialProcessingService:
         *,
         draft_save: bool = False,
     ) -> str:
+        structured_change = changed.get("structured_content")
+        if isinstance(structured_change, Mapping):
+            basic_count = sum(
+                1 for key in changed
+                if key not in {"structured_content", "processing_script", "status"}
+                and key in _AUDIT_FIELD_LABELS
+            )
+            parts: list[str] = []
+            if basic_count:
+                parts.append(f"基本信息{basic_count}项")
+            special_count = int(structured_change.get("change_count") or 0)
+            affected_tables = int(structured_change.get("affected_tables") or 0)
+            parts.append(f"特殊处理内容{special_count}项（涉及{affected_tables}张处理表）")
+            if "processing_script" in changed:
+                parts.append("脚本同步更新")
+            if "status" in changed or (from_status and to_status and from_status != to_status):
+                parts.append(
+                    f"状态由{cls._format_audit_value(from_status, field='status')}"
+                    f"改为{cls._format_audit_value(to_status, field='status')}"
+                )
+            if action == "void" or to_status == "voided":
+                header = "作废记录："
+            elif action == "reopen":
+                header = "重开记录："
+            elif action == "status_change" and to_status == "completed":
+                header = "完成记录："
+            elif draft_save or to_status == "draft":
+                header = "保存草稿："
+            else:
+                header = "更新记录："
+            return (header + "\n" + "\n".join(
+                f"{index}.{text}" for index, text in enumerate(parts, 1)
+            ))[:1000]
         parts: list[str] = []
         for key, meta in changed.items():
             label = _AUDIT_FIELD_LABELS.get(key)
@@ -1311,8 +1348,24 @@ class SpecialProcessingService:
         current: Mapping[str, Any],
         changes: Mapping[str, Any],
         script: str | None,
+        script_mode: str = "AUTO",
     ) -> dict[str, Any]:
         result: dict[str, Any] = {}
+        old_structured = current.get("structured_content")
+        if not isinstance(old_structured, Mapping):
+            try:
+                old_structured = json.loads(str(current.get("structured_content_json") or ""))
+            except (TypeError, ValueError):
+                old_structured = None
+        try:
+            new_structured = json.loads(str(changes.get("structured_content_json") or ""))
+        except (TypeError, ValueError):
+            new_structured = None
+        structured_change = build_structured_audit_diff(
+            old_structured if isinstance(old_structured, Mapping) else None,
+            new_structured if isinstance(new_structured, Mapping) else None,
+        )
+        structured_mode = isinstance(old_structured, Mapping) and isinstance(new_structured, Mapping)
         for key, value in changes.items():
             if key in _AUDIT_SKIP_KEYS or key in {
                 "processing_script",
@@ -1321,6 +1374,8 @@ class SpecialProcessingService:
                 "governance_owner_user_id",
                 "governance_owner_username_snapshot",
             }:
+                continue
+            if structured_mode and key in _STRUCTURED_DERIVED_AUDIT_KEYS:
                 continue
             if current.get(key) == value:
                 continue
@@ -1337,6 +1392,8 @@ class SpecialProcessingService:
                 result[key] = {"changed": True}
                 continue
             result[key] = {"changed": True, "old": current.get(key), "new": value}
+        if structured_change is not None:
+            result["structured_content"] = structured_change
         if current.get("processing_script") != script:
             old_script = current.get("processing_script") or ""
             new_script = script or ""
@@ -1344,6 +1401,7 @@ class SpecialProcessingService:
             new_preview, new_truncated = SpecialProcessingService._script_audit_preview(new_script)
             result["processing_script"] = {
                 "changed": True,
+                "mode": script_mode,
                 "old_sha256": current.get("script_sha256"),
                 "new_sha256": changes.get("script_sha256"),
                 "old_chars": len(old_script),

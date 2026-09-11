@@ -93,53 +93,162 @@ function clampedTextCell(documentRef, text) {
   return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
 }
 
-function fieldNameCell(documentRef, value) {
-  const text = String(value || "").trim();
-  const items = parseBilingualItems(text);
-  const groups = items ? null : parseBilingualGroups(text);
-  // 历史值直接沿用既有单元格渲染，不插入表名、标签或任何格式标记。
-  if (!items && !groups) return clampedTextCell(documentRef, text);
-  const lines = bilingualCellLines(text);
-  const fullText = lines.join("\n");
-  const content = element(documentRef, "div", {
-    className: "rsp-cell-clamp rsp-cell-clamp-multiline",
-    text: fullText || "—",
-  });
-  if (fullText) {
-    content.addEventListener("mouseenter", () => showCellTip(documentRef, content, fullText));
-    content.addEventListener("mouseleave", () => hideCellTip(documentRef));
-    content.addEventListener("focus", () => showCellTip(documentRef, content, fullText));
-    content.addEventListener("blur", () => hideCellTip(documentRef));
-    content.tabIndex = 0;
-  }
-  return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
+function displayChangeValue(value) {
+  const text = String(value ?? "");
+  return text.trim() ? text : "—";
 }
 
-/* 修改前/修改后：每个关联字段一行，与“修改字段名”逐行对应；
- * 连续相同值去重显示“同上”，真实值仍完整保存在记录中。 */
-function valueLinesCell(documentRef, value) {
-  const raw = String(value ?? "");
-  const text = raw.trim();
-  if (!text) return cell(documentRef, "");
-  const rawLines = raw.split("\n");
-  if (rawLines.length <= 1) return clampedTextCell(documentRef, text);
-  const shown = rawLines.map((line, index) => {
-    const current = String(line || "");
-    if (!current.trim()) return "—";
-    if (index > 0 && current === String(rawLines[index - 1] || "")) return "同上";
-    return current;
+function structuredFieldParts(field) {
+  return {
+    english: String(field?.column_name || "").trim(),
+    chinese: String(field?.chinese_column_name || "").trim(),
+  };
+}
+
+function fieldLabelTextNode(documentRef, parts) {
+  return element(documentRef, "span", {
+    className: "rsp-change-field-name",
+    text: parts.chinese || parts.english || "未设置字段",
   });
-  const fullText = shown.join("\n");
-  const content = element(documentRef, "div", {
-    className: "rsp-cell-clamp rsp-cell-clamp-multiline",
-    text: fullText,
+}
+
+function fieldListNode(documentRef, partsList, className, stacked = false) {
+  const list = element(documentRef, "div", {
+    className: `${className}${stacked ? " is-stacked" : ""}`,
   });
-  content.addEventListener("mouseenter", () => showCellTip(documentRef, content, rawLines.join("\n")));
-  content.addEventListener("mouseleave", () => hideCellTip(documentRef));
-  content.addEventListener("focus", () => showCellTip(documentRef, content, rawLines.join("\n")));
-  content.addEventListener("blur", () => hideCellTip(documentRef));
-  content.tabIndex = 0;
-  return element(documentRef, "td", { className: "rsp-clamp-cell" }, [content]);
+  partsList.forEach((parts, index) => {
+    if (index > 0 && !stacked) {
+      list.append(element(documentRef, "span", { className: "rsp-change-field-sep", text: "、" }));
+    }
+    list.append(fieldLabelTextNode(documentRef, parts));
+  });
+  return list;
+}
+
+function groupByValuePair(items) {
+  const groups = [];
+  const indexes = new Map();
+  items.forEach((item) => {
+    const before = String(item?.before ?? "");
+    const after = String(item?.after ?? "");
+    // 使用 JSON.stringify 避免拼接碰撞（如 ["ab","c"] 与 ["a","bc"]）和 trim 合并。
+    const key = JSON.stringify([before, after]);
+    const existing = indexes.get(key);
+    if (existing !== undefined) {
+      groups[existing].items.push(item);
+      return;
+    }
+    indexes.set(key, groups.length);
+    groups.push({ before, after, items: [item] });
+  });
+  return groups;
+}
+
+function deduplicateFieldParts(partsList) {
+  const seen = new Set();
+  const unique = partsList.filter((parts) => {
+    const label = parts.chinese || parts.english || "未设置字段";
+    if (seen.has(label)) return false;
+    seen.add(label);
+    return true;
+  });
+  return unique;
+}
+
+// 结构化记录只按 value_before+value_after 跨表分组，再按列表显示名称去重字段。
+function structuredChangeGroups(record) {
+  const tables = Array.isArray(record?.structured_content?.tables)
+    ? record.structured_content.tables : [];
+  const allItems = [];
+  tables.forEach((table) => {
+    const fields = Array.isArray(table?.fields) ? table.fields : [];
+    fields.forEach((field) => {
+      allItems.push({
+        parts: structuredFieldParts(field),
+        before: field?.value_before,
+        after: field?.value_after,
+      });
+    });
+  });
+
+  return groupByValuePair(allItems).map((group) => ({
+    before: group.before,
+    after: group.after,
+    parts: deduplicateFieldParts(group.items.map((item) => item.parts)),
+  }));
+}
+
+function rawValueLines(value) {
+  return String(value ?? "").split("\n");
+}
+
+function legacyChangeGroups(record) {
+  const fields = bilingualCellLines(record?.field_name);
+  const fieldLabels = fields.length ? fields : [String(record?.field_name || "").trim() || "未设置字段"];
+  const beforeLines = rawValueLines(record?.value_before);
+  const afterLines = rawValueLines(record?.value_after);
+  let items;
+  if (beforeLines.length === 1 && afterLines.length === 1) {
+    items = [{ fields: fieldLabels, before: beforeLines[0], after: afterLines[0] }];
+  } else if (fieldLabels.length === beforeLines.length && fieldLabels.length === afterLines.length) {
+    items = fieldLabels.map((field, index) => ({
+      fields: [field], before: beforeLines[index], after: afterLines[index],
+    }));
+  } else {
+    // 旧数据无法可靠逐字段对应时，宁可保留完整原文，也不猜测字段归属。
+    items = [{
+      fields: fieldLabels,
+      before: String(record?.value_before ?? ""),
+      after: String(record?.value_after ?? ""),
+    }];
+  }
+  return groupByValuePair(items).map((group) => ({
+    before: group.before,
+    after: group.after,
+    parts: deduplicateFieldParts(group.items.flatMap((item) => item.fields.map((field) => {
+        const names = parseBilingualItems(field);
+        return names?.length === 1
+          ? { chinese: names[0].zh, english: names[0].en }
+          : { chinese: field, english: "" };
+      }))),
+  }));
+}
+
+function recordChangeGroups(record) {
+  const structured = Array.isArray(record?.structured_content?.tables);
+  const groups = structured ? structuredChangeGroups(record) : legacyChangeGroups(record);
+  const nonempty = groups.length ? groups : [{
+    before: "",
+    after: "",
+    parts: [{ chinese: "暂无修改字段", english: "" }],
+  }];
+  return nonempty.sort((left, right) => compareByDisplayWidth(
+    left.parts.map((parts) => parts.chinese || parts.english || "未设置字段").join("、"),
+    right.parts.map((parts) => parts.chinese || parts.english || "未设置字段").join("、"),
+  ));
+}
+
+function changeGridCell(documentRef, groups) {
+  const grid = element(documentRef, "div", { className: "rsp-change-grid" });
+  groups.forEach((group) => {
+    grid.append(element(documentRef, "div", { className: "rsp-change-grid-row" }, [
+      element(documentRef, "div", { className: "rsp-change-grid-item rsp-change-grid-field" }, [
+        fieldListNode(documentRef, group.parts, "rsp-change-field-list", groups.length === 1),
+      ]),
+      element(documentRef, "div", {
+        className: "rsp-change-grid-item rsp-change-grid-value",
+        text: displayChangeValue(group.before),
+      }),
+      element(documentRef, "div", {
+        className: "rsp-change-grid-item rsp-change-grid-value",
+        text: displayChangeValue(group.after),
+      }),
+    ]));
+  });
+  return element(documentRef, "td", {
+    className: "rsp-change-grid-cell",
+    colspan: "3",
+  }, [grid]);
 }
 
 function displayWidth(text) {
@@ -238,7 +347,9 @@ function buildRowActions(documentRef, record, { onOpen, onAction }) {
 
 export function createRecordTable(documentRef, records, { selectedId, highlightId, onOpen, onAction }) {
   const head = element(documentRef, "thead", {}, [
-    element(documentRef, "tr", {}, ["修改字段名", "修改前", "修改后", "关联报送", "状态", "处理人", "处理时间", "操作"].map((label) => element(documentRef, "th", { text: label, scope: "col" }))),
+    element(documentRef, "tr", {}, [
+      "修改字段", "修改前", "修改后", "所属业务系统", "关联报送", "状态", "处理人", "处理时间", "操作",
+    ].map((label) => element(documentRef, "th", { text: label, scope: "col" }))),
   ]);
   const body = element(documentRef, "tbody");
   records.forEach((record) => {
@@ -249,21 +360,23 @@ export function createRecordTable(documentRef, records, { selectedId, highlightI
       selected ? "is-selected" : "",
       highlighted ? "is-highlighted" : "",
     ].filter(Boolean).join(" ");
-    const row = element(documentRef, "tr", {
-      className: rowClass,
-      dataset: { recordId: String(record.id) },
-      "aria-label": `${record.record_no || "记录"}，${record.field_name || record.summary || "未填写字段"}`,
-    }, [
-      fieldNameCell(documentRef, record.field_name),
-      valueLinesCell(documentRef, record.value_before),
-      valueLinesCell(documentRef, record.value_after),
+    const groups = recordChangeGroups(record);
+    const metadataCells = [
+      cell(documentRef, record.business_system_name_snapshot, "rsp-business-system"),
       processNamesCell(documentRef, record),
       element(documentRef, "td", {}, [element(documentRef, "span", { className: `rsp-status rsp-status-${record.status}`, text: STATUS_LABELS[record.status] || record.status })]),
       cell(documentRef, record.handler_display_name_snapshot || record.handler_username_snapshot),
       cell(documentRef, handledAt),
       buildRowActions(documentRef, record, { onOpen: (item) => onOpen(item), onAction }),
-    ]);
-    body.append(row);
+    ];
+    body.append(element(documentRef, "tr", {
+      className: ["rsp-record-row", rowClass].filter(Boolean).join(" "),
+      dataset: { recordId: String(record.id) },
+      "aria-label": `${record.record_no || "记录"}，${groups.flatMap((group) => group.parts).map((parts) => parts.chinese || parts.english || "未设置字段").join("、")}`,
+    }, [
+      changeGridCell(documentRef, groups),
+      ...metadataCells,
+    ]));
   });
 
   const table = element(documentRef, "table", { className: "rsp-ledger-table", "aria-label": "报表特殊处理台账" }, [head, body]);
@@ -272,7 +385,7 @@ export function createRecordTable(documentRef, records, { selectedId, highlightI
       element(documentRef, "tr", { className: "rsp-empty-row" }, [
         element(documentRef, "td", {
           className: "rsp-empty",
-          colspan: "8",
+          colspan: "9",
           text: "没有符合条件的特殊处理记录",
         }),
       ]),

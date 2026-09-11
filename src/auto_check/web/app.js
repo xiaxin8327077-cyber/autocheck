@@ -1307,7 +1307,7 @@ function applyVisualEffectsSetting() {
 
 /* ===== Navigation ===== */
 const smartReconcilePages = new Set(["home", "auto-check", "history"]);
-const systemMgmtPages = new Set(["settings", "role-permissions", "users", "dictionaries"]);
+const systemMgmtPages = new Set(["settings", "role-permissions", "users", "dictionaries", "scheduled-tasks"]);
 
 function setNavGroupOpen(group, open) {
   if (!group) return;
@@ -1498,6 +1498,10 @@ async function switchPage(name, options = {}) {
     showToast("无权访问字典管理", "error");
     name = "report-navigation";
   }
+  if (name === "scheduled-tasks" && !hasCapability("sys.scheduled_tasks")) {
+    showToast("定时任务管理仅限管理员访问", "error");
+    name = "report-navigation";
+  }
   const pageMenuCapability = {
     "report-navigation": "menu.report_navigation",
     home: "menu.home",
@@ -1527,6 +1531,7 @@ async function switchPage(name, options = {}) {
   if (name === "role-permissions") await loadRolePermissions();
   if (name === "users") await loadUsers();
   if (name === "dictionaries") await loadDictionaries();
+  if (name === "scheduled-tasks") await loadScheduledTasks();
   if (name === "report-navigation") await loadReportNavigation();
   if (name === "home") {
     const refreshData = options.forceHomeRefresh || shouldAutoRefreshHome();
@@ -4378,7 +4383,7 @@ function dictionarySelectedEntries() {
 function dictionaryStatusCell(active) {
   const cell = document.createElement("td");
   const tag = document.createElement("span");
-  tag.className = `dictionary-status ${active ? "dictionary-status--on" : "dictionary-status--off"}`;
+  tag.className = `management-list-status ${active ? "management-list-status--on dictionary-status--on" : "management-list-status--off dictionary-status--off"}`;
   tag.textContent = active ? "启用" : "停用";
   cell.appendChild(tag);
   return cell;
@@ -4391,15 +4396,59 @@ function dictionaryTextCell(value, className) {
   return cell;
 }
 
-function dictionaryActionButton(label, className, listener) {
+function managementListActionButton(label, className, listener) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `dictionary-action-btn ${className}`;
+  button.className = `management-list-action-btn ${className}`;
   button.textContent = label;
   button.addEventListener("click", (event) => {
     event.stopPropagation();
     listener();
   });
+  return button;
+}
+
+function managementListPaginationState(totalItems, currentPage, pageSize = 10) {
+  const total = Math.max(0, Number(totalItems) || 0);
+  const size = Math.max(1, Number(pageSize) || 10);
+  const totalPages = Math.max(1, Math.ceil(total / size));
+  const page = Math.min(totalPages, Math.max(1, Number(currentPage) || 1));
+  const start = (page - 1) * size;
+  return {
+    total,
+    page,
+    pageSize: size,
+    totalPages,
+    start,
+    end: Math.min(total, start + size),
+  };
+}
+
+function renderManagementListPagination({ container, summary, pageInfo, previous, next, totalItems, currentPage, pageSize, onPageChange }) {
+  const state = managementListPaginationState(totalItems, currentPage, pageSize);
+  if (!container) return state;
+  container.hidden = state.total <= state.pageSize;
+  if (summary) summary.textContent = `共 ${state.total} 条`;
+  if (pageInfo) pageInfo.textContent = `${state.page} / ${state.totalPages}`;
+  if (previous) {
+    previous.disabled = state.page <= 1;
+    previous.onclick = () => onPageChange?.(state.page - 1);
+  }
+  if (next) {
+    next.disabled = state.page >= state.totalPages;
+    next.onclick = () => onPageChange?.(state.page + 1);
+  }
+  return state;
+}
+
+function dictionaryActionButton(label, className, listener) {
+  const toneClass = className.includes("dictionary-delete-btn")
+    ? "management-list-action--danger"
+    : (className.includes("dictionary-toggle-btn")
+      ? (className.includes("is-warning") ? "management-list-action--warning" : "management-list-action--success")
+      : "management-list-action--primary");
+  const button = managementListActionButton(label, `${toneClass} ${className}`, listener);
+  button.classList.add("dictionary-action-btn");
   return button;
 }
 
@@ -4453,6 +4502,7 @@ function renderDictionaryCategories() {
     row.appendChild(dictionaryStatusCell(entry.enabled !== false));
     row.appendChild(dictionaryTextCell(entry.description, "dictionary-cell-description"));
     const actions = document.createElement("td");
+    actions.className = "management-list-actions";
     actions.appendChild(dictionaryActionButton("配置", "dictionary-config-btn", () => openDictionaryItemsModal(entry)));
     actions.appendChild(dictionaryActionButton(
       entry.enabled === false ? "启用" : "停用",
@@ -4516,6 +4566,7 @@ function renderDictionaryItems() {
     nameCell.appendChild(nameInput);
     row.appendChild(nameCell);
     const actions = document.createElement("td");
+    actions.className = "management-list-actions";
     actions.appendChild(dictionaryActionButton("删除", "dictionary-delete-btn", () => removeDictionaryItemDraft(index)));
     row.appendChild(actions);
     dictionaryItemBody.appendChild(row);
@@ -4725,6 +4776,329 @@ document.getElementById("dictionaryItemsSave")?.addEventListener("click", () => 
   saveDictionaryConfiguration().catch((error) => setModalStatus(document.getElementById("dictionaryItemsResult"), userFriendlyError(error.message)));
 });
 // 点击遮罩空白不关闭，仅通过关闭/取消按钮退出（与报表校验口径弹窗一致）。
+
+// ================= 系统管理：定时任务管理 =================
+const scheduledTaskBody = document.getElementById("scheduledTaskBody");
+const scheduledTaskModal = document.getElementById("scheduledTaskModal");
+const scheduledTaskPagination = document.getElementById("scheduledTaskPagination");
+const scheduledTaskPageSize = 10;
+const scheduledTaskPendingRuns = new Map();
+let scheduledTaskData = [];
+let scheduledTaskMissingTemplates = [];
+let scheduledTaskFilter = "";
+let scheduledTaskPage = 1;
+let scheduledTaskEditing = null;
+let scheduledTaskPollTimer = null;
+
+function scheduledTaskRuleText(task) {
+  if (task.schedule_type === "daily") return `每天 ${task.daily_time || "00:00"}`;
+  const minutes = Number(task.interval_minutes || 0);
+  if (minutes > 0 && minutes % 1440 === 0) return `每 ${minutes / 1440} 天`;
+  if (minutes > 0 && minutes % 60 === 0) return `每 ${minutes / 60} 小时`;
+  return `每 ${minutes || "—"} 分钟`;
+}
+
+function scheduledTaskStatusCell(task) {
+  const cell = document.createElement("td");
+  const tag = document.createElement("span");
+  const status = task.deleted ? "deleted" : String(task.last_status || "idle");
+  const labels = {
+    running: "执行中",
+    success: "成功",
+    failed: "失败",
+    idle: "未执行",
+    deleted: "已删除",
+  };
+  tag.className = `management-list-status scheduled-task-status scheduled-task-status--${status}`;
+  tag.textContent = labels[status] || "未执行";
+  if (status === "failed" && task.last_error) tag.title = task.last_error;
+  cell.appendChild(tag);
+  return cell;
+}
+
+function scheduledTaskNameCell(task) {
+  const cell = document.createElement("td");
+  const name = document.createElement("strong");
+  name.className = "scheduled-task-name";
+  name.textContent = task.task_name || task.task_code;
+  const code = document.createElement("small");
+  code.className = "scheduled-task-code";
+  code.textContent = task.task_code || "";
+  cell.append(name, code);
+  return cell;
+}
+
+function scheduledTaskActionButton(label, className, listener) {
+  const button = managementListActionButton(label, className, listener);
+  button.classList.add("scheduled-task-action");
+  return button;
+}
+
+function reconcileScheduledTaskPendingRuns() {
+  const now = Date.now();
+  scheduledTaskPendingRuns.forEach((pending, taskCode) => {
+    const task = scheduledTaskData.find((item) => item.task_code === taskCode);
+    if (!task) {
+      scheduledTaskPendingRuns.delete(taskCode);
+      return;
+    }
+    if (task.last_status === "running") pending.seenRunning = true;
+    const startedChanged = String(task.last_started_at || "") !== pending.previousStartedAt;
+    if ((pending.seenRunning && task.last_status !== "running")
+      || (!pending.seenRunning && startedChanged && task.last_status !== "running")
+      || now >= pending.deadline) {
+      scheduledTaskPendingRuns.delete(taskCode);
+    }
+  });
+}
+
+function scheduleScheduledTaskPolling() {
+  if (scheduledTaskPollTimer) window.clearTimeout(scheduledTaskPollTimer);
+  scheduledTaskPollTimer = null;
+  if (!scheduledTaskPendingRuns.size) return;
+  if (document.documentElement.getAttribute("data-page") !== "scheduled-tasks") return;
+  scheduledTaskPollTimer = window.setTimeout(async () => {
+    scheduledTaskPollTimer = null;
+    await loadScheduledTasks({ silent: true });
+    scheduleScheduledTaskPolling();
+  }, 1000);
+}
+
+async function loadScheduledTasks({ silent = false } = {}) {
+  try {
+    const payload = await api("/api/system/scheduled-tasks", { method: "GET" });
+    scheduledTaskData = Array.isArray(payload.tasks) ? payload.tasks : [];
+    scheduledTaskMissingTemplates = Array.isArray(payload.missing_templates) ? payload.missing_templates : [];
+    reconcileScheduledTaskPendingRuns();
+  } catch (error) {
+    scheduledTaskData = [];
+    scheduledTaskMissingTemplates = [];
+    if (!silent) showToast(`定时任务加载失败：${userFriendlyError(error.message)}`, "error");
+  }
+  renderScheduledTasks();
+}
+
+function renderScheduledTasks() {
+  if (!scheduledTaskBody) return;
+  scheduledTaskBody.innerHTML = "";
+  const allRows = [
+    ...scheduledTaskData,
+    ...scheduledTaskMissingTemplates.map((task) => ({ ...task, deleted: true })),
+  ];
+  const keyword = scheduledTaskFilter.trim().toLocaleLowerCase();
+  const visibleRows = allRows.filter((task) => !keyword
+    || String(task.task_name || "").toLocaleLowerCase().includes(keyword)
+    || String(task.task_code || "").toLocaleLowerCase().includes(keyword));
+  const pagination = renderManagementListPagination({
+    container: scheduledTaskPagination,
+    summary: document.getElementById("scheduledTaskPageSummary"),
+    pageInfo: document.getElementById("scheduledTaskPageInfo"),
+    previous: document.getElementById("scheduledTaskPrevPage"),
+    next: document.getElementById("scheduledTaskNextPage"),
+    totalItems: visibleRows.length,
+    currentPage: scheduledTaskPage,
+    pageSize: scheduledTaskPageSize,
+    onPageChange: (page) => {
+      scheduledTaskPage = page;
+      renderScheduledTasks();
+    },
+  });
+  scheduledTaskPage = pagination.page;
+  if (!visibleRows.length) {
+    scheduledTaskBody.appendChild(dictionaryEmptyRow(keyword ? "未找到匹配的定时任务" : "暂无定时任务"));
+    return;
+  }
+  visibleRows.slice(pagination.start, pagination.end).forEach((task) => {
+    const row = document.createElement("tr");
+    if (task.deleted) row.classList.add("scheduled-task-row--deleted");
+    row.appendChild(scheduledTaskNameCell(task));
+    row.appendChild(dictionaryTextCell(task.deleted ? "—" : scheduledTaskRuleText(task), "scheduled-task-rule"));
+    row.appendChild(task.deleted ? dictionaryTextCell("—") : dictionaryStatusCell(task.enabled !== false && Number(task.enabled) !== 0));
+    const lastRun = task.deleted
+      ? "—"
+      : (task.last_finished_at || task.last_started_at ? formatDisplayTime(task.last_finished_at || task.last_started_at) : "—");
+    const lastRunCell = dictionaryTextCell(lastRun, "scheduled-task-last-run");
+    if (task.next_run_at) lastRunCell.title = `下次执行：${formatDisplayTime(task.next_run_at)}`;
+    row.appendChild(lastRunCell);
+    row.appendChild(scheduledTaskStatusCell(task));
+    const actions = document.createElement("td");
+    actions.className = "management-list-actions scheduled-task-actions";
+    if (task.deleted) {
+      actions.appendChild(scheduledTaskActionButton("恢复", "management-list-action--primary", () => restoreScheduledTask(task)));
+    } else {
+      const running = task.last_status === "running" || scheduledTaskPendingRuns.has(task.task_code);
+      const enabled = task.enabled !== false && Number(task.enabled) !== 0;
+      const runButton = scheduledTaskActionButton("立即执行", "management-list-action--primary scheduled-task-run-btn", () => runScheduledTask(task));
+      runButton.disabled = running;
+      if (running) runButton.title = "任务正在执行";
+      actions.appendChild(runButton);
+      actions.appendChild(scheduledTaskActionButton("配置", "management-list-action--primary", () => openScheduledTaskModal(task)));
+      actions.appendChild(scheduledTaskActionButton(
+        enabled ? "停用" : "启用",
+        enabled ? "management-list-action--warning" : "management-list-action--success",
+        () => toggleScheduledTaskEnabled(task),
+      ));
+      actions.appendChild(scheduledTaskActionButton("删除", "management-list-action--danger", () => deleteScheduledTask(task)));
+    }
+    row.appendChild(actions);
+    scheduledTaskBody.appendChild(row);
+  });
+}
+
+function syncScheduledTaskRuleFields() {
+  const scheduleType = document.getElementById("scheduledTaskScheduleType")?.value || "interval";
+  const intervalRow = document.getElementById("scheduledTaskIntervalRow");
+  const dailyRow = document.getElementById("scheduledTaskDailyRow");
+  if (intervalRow) intervalRow.hidden = scheduleType !== "interval";
+  if (dailyRow) dailyRow.hidden = scheduleType !== "daily";
+}
+
+function openScheduledTaskModal(task) {
+  if (!scheduledTaskModal || !task) return;
+  scheduledTaskEditing = task;
+  document.getElementById("scheduledTaskModalTitle").textContent = `配置定时任务 · ${task.task_name}`;
+  document.getElementById("scheduledTaskName").value = task.task_name || "";
+  const scheduleTypeSelect = document.getElementById("scheduledTaskScheduleType");
+  scheduleTypeSelect.value = task.schedule_type || "interval";
+  if (typeof syncCustomSelect === "function") syncCustomSelect(scheduleTypeSelect);
+  document.getElementById("scheduledTaskIntervalMinutes").value = task.interval_minutes || 30;
+  document.getElementById("scheduledTaskDailyTime").value = task.daily_time || "00:00";
+  setModalStatus(document.getElementById("scheduledTaskModalStatus"), "");
+  syncScheduledTaskRuleFields();
+  scheduledTaskModal.hidden = false;
+}
+
+function closeScheduledTaskModal() {
+  if (scheduledTaskModal) scheduledTaskModal.hidden = true;
+  scheduledTaskEditing = null;
+  setModalStatus(document.getElementById("scheduledTaskModalStatus"), "");
+}
+
+async function saveScheduledTask() {
+  if (!scheduledTaskEditing) return;
+  const saveButton = document.getElementById("scheduledTaskModalSave");
+  const status = document.getElementById("scheduledTaskModalStatus");
+  const scheduleType = document.getElementById("scheduledTaskScheduleType")?.value || "interval";
+  const body = {
+    schedule_type: scheduleType,
+  };
+  if (scheduleType === "interval") {
+    const intervalMinutes = Number(document.getElementById("scheduledTaskIntervalMinutes")?.value || 0);
+    if (!Number.isInteger(intervalMinutes) || intervalMinutes < 1 || intervalMinutes > 10080) {
+      setModalStatus(status, "执行间隔必须是 1 至 10080 的整数分钟");
+      return;
+    }
+    body.interval_minutes = intervalMinutes;
+  } else {
+    const dailyTime = String(document.getElementById("scheduledTaskDailyTime")?.value || "");
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(dailyTime)) {
+      setModalStatus(status, "请选择每天执行时间");
+      return;
+    }
+    body.daily_time = dailyTime;
+  }
+  if (saveButton) saveButton.disabled = true;
+  try {
+    await api(`/api/system/scheduled-tasks/${encodeURIComponent(scheduledTaskEditing.task_code)}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    closeScheduledTaskModal();
+    showToast("定时任务配置已保存", "success");
+    await loadScheduledTasks();
+  } catch (error) {
+    setModalStatus(status, userFriendlyError(error.message));
+  } finally {
+    if (saveButton) saveButton.disabled = false;
+  }
+}
+
+async function toggleScheduledTaskEnabled(task) {
+  if (!task) return;
+  const enabled = task.enabled !== false && Number(task.enabled) !== 0;
+  try {
+    await api(`/api/system/scheduled-tasks/${encodeURIComponent(task.task_code)}`, {
+      method: "POST",
+      body: JSON.stringify({ enabled: !enabled }),
+    });
+    showToast(`已${enabled ? "停用" : "启用"}：${task.task_name}`, "success");
+    await loadScheduledTasks();
+  } catch (error) {
+    showToast(userFriendlyError(error.message), "error");
+  }
+}
+
+async function runScheduledTask(task) {
+  if (!task || scheduledTaskPendingRuns.has(task.task_code)) return;
+  try {
+    await api(`/api/system/scheduled-tasks/${encodeURIComponent(task.task_code)}/run`, {
+      method: "POST",
+      body: "{}",
+    });
+    scheduledTaskPendingRuns.set(task.task_code, {
+      previousStartedAt: String(task.last_started_at || ""),
+      seenRunning: false,
+      deadline: Date.now() + 10 * 60 * 1000,
+    });
+    renderScheduledTasks();
+    showToast(`已提交执行：${task.task_name}`, "success");
+    scheduleScheduledTaskPolling();
+  } catch (error) {
+    showToast(userFriendlyError(error.message), "error");
+  }
+}
+
+async function deleteScheduledTask(task) {
+  if (!task) return;
+  const confirmed = await showConfirm(
+    "删除定时任务",
+    `确定删除“${task.task_name}”吗？删除后不会再自动执行，可在列表中恢复。`,
+    { tone: "danger" },
+  );
+  if (!confirmed) return;
+  try {
+    await api(`/api/system/scheduled-tasks/${encodeURIComponent(task.task_code)}`, { method: "DELETE" });
+    showToast("定时任务已删除", "success");
+    await loadScheduledTasks();
+  } catch (error) {
+    showToast(userFriendlyError(error.message), "error");
+  }
+}
+
+async function restoreScheduledTask(task) {
+  try {
+    await api(`/api/system/scheduled-tasks/${encodeURIComponent(task.task_code)}/restore`, {
+      method: "POST",
+      body: "{}",
+    });
+    showToast(`已恢复：${task.task_name}`, "success");
+    await loadScheduledTasks();
+  } catch (error) {
+    showToast(userFriendlyError(error.message), "error");
+  }
+}
+
+document.getElementById("scheduledTaskFilter")?.addEventListener("input", (event) => {
+  scheduledTaskFilter = String(event.target?.value || "");
+  scheduledTaskPage = 1;
+  setFilterClearButtonVisible(document.getElementById("clearScheduledTaskFilter"), scheduledTaskFilter.trim());
+  renderScheduledTasks();
+});
+document.getElementById("clearScheduledTaskFilter")?.addEventListener("click", () => {
+  const input = document.getElementById("scheduledTaskFilter");
+  if (input) input.value = "";
+  scheduledTaskFilter = "";
+  scheduledTaskPage = 1;
+  setFilterClearButtonVisible(document.getElementById("clearScheduledTaskFilter"), false);
+  renderScheduledTasks();
+  input?.focus();
+});
+document.getElementById("scheduledTaskScheduleType")?.addEventListener("change", syncScheduledTaskRuleFields);
+document.getElementById("scheduledTaskModalClose")?.addEventListener("click", closeScheduledTaskModal);
+document.getElementById("scheduledTaskModalCancel")?.addEventListener("click", closeScheduledTaskModal);
+document.getElementById("scheduledTaskModalSave")?.addEventListener("click", () => {
+  saveScheduledTask().catch((error) => setModalStatus(document.getElementById("scheduledTaskModalStatus"), userFriendlyError(error.message)));
+});
 
 function setStatus(t) {
   const nextText = String(t || "");
@@ -6600,6 +6974,7 @@ const CAPABILITY_MENU_TREE = [
       { code: "sys.role_permissions", label: "角色权限", type: "menu" },
       { code: "sys.users", label: "用户管理", type: "menu" },
       { code: "sys.dictionaries", label: "字典管理", type: "menu" },
+      { code: "sys.scheduled_tasks", label: "定时任务管理", type: "menu" },
     ],
   },
 ];
@@ -14353,6 +14728,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       </div>
       <ul>
         <li>系统管理新增字典管理页：支持即时筛选、自定义字典删除，并在配置弹窗批量维护键值，入口受角色权限“字典管理”控制。</li>
+        <li>系统管理新增定时任务管理页：支持查看规则和状态，并可立即执行、配置、删除或恢复内置任务。</li>
         <li>报表特殊处理录入模块：基本信息新增所属业务系统单选下拉（取自字典管理“业务系统”，保存名称快照）。</li>
         <li>报表特殊处理录入模块：处理表名、处理字段名支持中英文双语多项录入；台账仅显示修改字段名，双语条目分行，历史字段名保持原样。</li>
         <li>系统优化及BUG修复。</li>
@@ -14461,6 +14837,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       <ul>
         <li>新增系统通知中心，支持未读数量、通知列表和实时提醒。</li>
         <li>报表特殊处理录入模块：待确认事项接入系统通知。</li>
+        <li>报表特殊处理录入模块：处理范围升级为通用条件字段+条件值，支持单值/多值智能匹配运算符。</li>
+        <li>报表特殊处理录入模块：处理脚本随配置实时自动生成，支持手动编辑模式。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
     </div>

@@ -63,7 +63,7 @@ def test_dictionary_routes_require_capability(router):
 def test_admin_default_matrix_allows_dictionaries():
     from auto_check.app.capabilities import ADMIN_ONLY_CAPABILITIES, DEFAULT_MATRIX, has_capability
 
-    assert "sys.dictionaries" in ADMIN_ONLY_CAPABILITIES
+    assert "sys.dictionaries" not in ADMIN_ONLY_CAPABILITIES
     assert has_capability("admin", "sys.dictionaries", DEFAULT_MATRIX)
     assert not has_capability("user", "sys.dictionaries", DEFAULT_MATRIX)
 

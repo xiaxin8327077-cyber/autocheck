@@ -484,20 +484,17 @@
   white-space: nowrap;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(-n+3),
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:nth-child(-n+3) {
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(-n+3) {
   padding-left: 22px;
   padding-right: 22px;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(n+4):nth-child(-n+7),
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:nth-child(n+4):nth-child(-n+7) {
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(n+4):nth-child(-n+8) {
   padding-left: 8px;
   padding-right: 8px;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:first-child,
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:first-child {
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:first-child {
   padding-left: 40px;
 }
 
@@ -520,20 +517,76 @@
   background: #f3f5f8;
 }
 
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) {
-  width: 20%;
-  min-width: calc(20em + 62px);
-}
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td:nth-child(1) {
-  min-width: calc(20em + 62px);
-}
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(1) { width: 26%; }
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(2) { width: 11%; }
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(3) { width: 11%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 12%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 7%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 8%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 13%; }
-.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(8) { width: 13%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(4) { width: 9%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(5) { width: 10%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(6) { width: 7%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(7) { width: 7%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(8) { width: 10%; }
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table th:nth-child(9) { width: 9%; }
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-change-grid-cell {
+  padding: 10px 0;
+  overflow: hidden;
+  vertical-align: middle;
+  white-space: normal;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-grid {
+  display: grid;
+  grid-template-columns: 26fr 11fr 11fr;
+  row-gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-grid-row {
+  display: contents;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-grid-item {
+  display: flex;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 22px;
+  align-items: center;
+  justify-content: center;
+  color: #334157;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-field-list {
+  color: #334157;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-field-name {
+  color: inherit;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-field-list.is-stacked .rsp-change-field-name {
+  display: block;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-change-field-sep {
+  color: #66738a;
+  margin: 0 1px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-business-system {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 
 .auto-check-module[data-module="report_special_processing"] .rsp-ledger-table td.rsp-row-actions {
   overflow: hidden;
@@ -810,7 +863,7 @@
   -webkit-backdrop-filter: blur(2px);
 }
 
-/* 删除处理表时，共享确认弹窗必须位于当前编辑弹窗之上。 */
+/* 模块内删除处理表、恢复自动生成等确认框必须位于当前编辑弹窗之上。 */
 #confirmModal.rsp-confirm-above-record {
   z-index: 3300;
 }
@@ -950,6 +1003,206 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   column-gap: 14px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-basic-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-basic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 24px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-info-item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-info-label {
+  color: var(--rsp-muted);
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-info-value {
+  min-width: 0;
+  color: var(--rsp-text);
+  font-size: 13px;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-related-reports {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-related-reports .rsp-readonly-info-label {
+  font-size: 13px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-related-reports .rsp-readonly-info-value {
+  font-size: 14px;
+  line-height: 22px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-summary {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-text-block {
+  min-height: 22px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: var(--ui-radius, 4px);
+  background: #f5f8fc;
+  color: var(--rsp-text);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-readonly-script {
+  max-height: 240px;
+  overflow: auto;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  background: #f7f9fc;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-card {
+  overflow: hidden;
+  border: 1px solid #dfe7f1;
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
+  background: #fff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e6ecf4;
+  background: #f5f8fc;
+  color: var(--rsp-text);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-card-title strong {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-card-title span {
+  min-width: 0;
+  color: var(--rsp-muted);
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-card-body {
+  padding: 12px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table-info {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table-info .rsp-readonly-info-item {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 3px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-section {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #edf1f6;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-section-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-section-title strong {
+  color: var(--rsp-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-config-preview-section-title span {
+  color: var(--rsp-muted);
+  font-size: 12px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table-wrap {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e4eaf2;
+  border-radius: var(--ui-radius, 4px);
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table th {
+  padding: 7px 10px;
+  border-bottom: 1px solid #e4eaf2;
+  background: #f6f8fb;
+  color: var(--rsp-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf1f6;
+  background: #fff;
+  color: var(--rsp-text);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-preview-empty {
+  padding: 20px;
+  color: var(--rsp-muted);
+  text-align: center;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-form-grid label,
@@ -1261,6 +1514,9 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-field-label {
   color: #526078;
+  font-size: 13px;
+  font-weight: 400;
+  font-family: inherit;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-reports-input {
@@ -1284,12 +1540,35 @@
 
 .auto-check-module[data-module="report_special_processing"] .rsp-section-title h3 {
   margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-script-warning {
   margin-right: auto;
   color: #9a5a08;
   font-size: 12px;
+}
+/* 处理脚本辅助提示条 */
+.auto-check-module[data-module="report_special_processing"] .rsp-script-hint,
+.auto-check-module[data-module="report_special_processing"] .rsp-script-mode-hint {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-radius: var(--ui-radius);
+  font-size: 12px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-script-hint {
+  background: #f3f6fb;
+  color: var(--rsp-muted);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-script-mode-hint {
+  background: #fff7ec;
+  color: #9a5a08;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-script-hint[hidden],
+.auto-check-module[data-module="report_special_processing"] .rsp-script-mode-hint[hidden] {
+  display: none;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-script {
@@ -1409,6 +1688,296 @@
   width: 100%;
   min-width: 0;
   padding: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-section {
+  overflow: hidden;
+  border: 1px solid #dfe7f2;
+  border-radius: var(--ui-radius);
+  background: #fff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-section > h5 {
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e4eaf3;
+  color: #273a56;
+  background: #f5f8fc;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-diff {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-diff > * {
+  min-width: 0;
+  padding: 8px 10px;
+  border-right: 1px solid #e4eaf3;
+  border-bottom: 1px solid #e4eaf3;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-diff > :nth-child(3n) {
+  border-right: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-diff > :nth-last-child(-n + 3) {
+  border-bottom: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-diff-head {
+  color: #526078;
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-field {
+  color: #46566d;
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-before {
+  color: #5f6f84;
+  background: #fafbfc;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-after {
+  color: var(--rsp-brand);
+  background: #f3f7ff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-card {
+  overflow: hidden;
+  border: 1px solid #dfe7f2;
+  border-radius: var(--ui-radius);
+  background: #fff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-card > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 10px;
+  color: #34465f;
+  background: #fbfcfe;
+  cursor: pointer;
+  list-style: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-card[open] > summary {
+  border-bottom: 1px solid #e4eaf3;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-badge {
+  min-width: 38px;
+  padding: 2px 7px;
+  border: 1px solid currentColor;
+  border-radius: var(--ui-radius);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-badge-modified {
+  color: var(--rsp-brand);
+  background: #f2f7ff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-badge-added {
+  color: #1e8d5f;
+  background: #f0faf6;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-badge-removed {
+  color: #b63a3a;
+  background: #fff4f4;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-count,
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-summary {
+  color: #738197;
+  font-size: 12px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-table-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-semantic-section .rsp-audit-semantic-section {
+  border-color: #e4eaf3;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-event {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-left: 3px solid #b8c5d8;
+  border-radius: var(--ui-radius);
+  background: #f8fafc;
+  color: #46566d;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-event-added {
+  border-left-color: #2c9b6b;
+  background: #f1faf6;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-event-removed {
+  border-left-color: #cf4f4f;
+  background: #fff5f5;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-event-modified {
+  border-left-color: var(--rsp-brand);
+  background: #f5f8ff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #526078;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-summary {
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-info {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  padding: 8px 10px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-info-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-label {
+  color: #738197;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-value {
+  min-width: 0;
+  color: #34465f;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-list {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-snapshot-item {
+  padding: 7px 9px;
+  border-left: 3px solid #b8c5d8;
+  border-radius: var(--ui-radius);
+  background: #f7f9fc;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-script-disclosure {
+  overflow: hidden;
+  border: 1px solid #dfe7f2;
+  border-radius: var(--ui-radius);
+  background: #fff;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-script-disclosure > summary {
+  padding: 9px 12px;
+  color: var(--rsp-brand);
+  background: #f7f9fc;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-script-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-script-column {
+  min-width: 0;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-script-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.auto-check-module[data-module="report_special_processing"] .rsp-audit-script-column pre {
+  margin: 0;
+  padding: 9px;
+  border-radius: var(--ui-radius);
+  color: #3f3b97;
+  background: #f8f9fd;
+  font: 12px/1.55 Consolas, "Microsoft YaHei UI", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-audit-detail-scroll {
@@ -1729,7 +2298,9 @@
   }
 
   .auto-check-module[data-module="report_special_processing"] .rsp-form-grid,
-  .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic {
+  .auto-check-module[data-module="report_special_processing"] .rsp-form-grid-basic,
+  .auto-check-module[data-module="report_special_processing"] .rsp-readonly-basic-grid,
+  .auto-check-module[data-module="report_special_processing"] .rsp-preview-table-info {
     grid-template-columns: 1fr;
   }
 
@@ -2100,7 +2671,10 @@
   min-height: 56px;
   max-height: none;
   padding: 6px 8px;
-  line-height: 18px;
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 400;
+  font-family: inherit;
   resize: vertical;
   color: var(--rsp-text);
   background: #fbfcff;
@@ -2139,13 +2713,52 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-tf-cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
+  padding: 14px;
+  background: #f7f9fc;
+  border: 1px solid #e6ecf4;
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-tf-card {
   padding: 8px 10px;
-  border: 1px solid var(--rsp-line);
-  border-radius: var(--ui-radius);
+  border: 1px solid #d9e2ec;
+  border-radius: calc(var(--ui-radius, 4px) + 2px);
   background: #fff;
+}
+/* 处理表标题栏：浅灰蓝底，明确卡片边界与表级操作归属 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -8px -10px 10px;
+  padding: 7px 10px;
+  background: #f5f8fc;
+  border-bottom: 1px solid #e6ecf4;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card-title-index {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rsp-text);
+  white-space: nowrap;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card-title-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: Consolas, "Microsoft YaHei UI", monospace;
+  font-size: 12px;
+  color: var(--rsp-muted);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card-title-meta[hidden] {
+  display: none;
+}
+/* 表级删除按钮：位于“处理表 N”标题之前，收紧内边距使其紧贴标题 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-card-title .rsp-sc-remove-table {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-tf-card-head {
   display: grid;
@@ -2280,12 +2893,17 @@
   white-space: nowrap;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-record-no-label {
-  color: var(--rsp-muted);
+  color: #526078;
+  font-size: 13px;
+  font-weight: 400;
+  font-family: inherit;
 }
+/* 处理编号值：保持加粗不变 */
 .auto-check-module[data-module="report_special_processing"] .rsp-record-no-value {
   color: #334157;
   font-size: 13px;
   font-weight: 600;
+  font-family: inherit;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-record-no-copy {
   padding: 2px 6px;
@@ -2293,8 +2911,9 @@
   border-radius: var(--ui-radius);
   background: transparent;
   color: var(--rsp-brand);
-  font: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 400;
+  font-family: inherit;
   cursor: pointer;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-record-no-copy:hover {
@@ -2308,7 +2927,7 @@
 
 /* ===== 特殊处理内容：行内表单式编辑器（数据源/表/字段/修改前/后，无二级弹窗） ===== */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-editor {
-  --action-width: 88px;
+  --action-width: 52px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2411,12 +3030,10 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-fields-head {
   margin: 0 0 12px;
 }
-/* 处理范围与修改字段共用同一标题 Grid 和统一操作容器。 */
+/* 处理范围与修改字段标题：单行文本，无行尾添加按钮。 */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-section-head {
-  display: grid;
-  grid-template-columns: 1fr var(--action-width);
+  display: flex;
   align-items: center;
-  column-gap: 12px;
   min-width: 0;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-section-head-main {
@@ -2425,11 +3042,16 @@
   gap: 12px;
   min-width: 0;
 }
+/* 处理范围标题行与条件行复用同一套四列 Grid（含固定操作列），并铺满卡片宽度，
+ * 使“数据日期字段”选择器严格落在“条件值”所在列：左右边界、宽度完全一致；
+ * 列宽由栅格模板与 column-gap 决定，与内容无关，因此选择器隐藏时列宽与标题行位置都不变。 */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-title-row .rsp-sc-section-head-main {
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr);
+  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr) var(--action-width);
   align-items: center;
   column-gap: 12px;
+  width: 100%;
+  min-width: 0;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-controls {
   grid-column: 1 / 3;
@@ -2437,6 +3059,8 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
+  /* 与同行的 32px 表单控件等高：选择器显示/隐藏都不改变标题行高度。 */
+  min-height: 32px;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-header-action {
   width: var(--action-width);
@@ -2448,9 +3072,9 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-tables-head .rsp-sc-header-action {
   grid-column: 2;
 }
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head > :last-child,
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head > :last-child,
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head > :last-child {
+/* 仅表信息行保留第 4 列占位（数据源/英文表名/中文表名后为空列）；
+ * 条件与字段表头已去掉“操作”文字，列宽交由 Grid 模板决定。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-tbl-head > :last-child {
   width: var(--action-width);
   flex: 0 0 var(--action-width);
   display: flex;
@@ -2461,6 +3085,64 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row > *,
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-field-row > * {
   min-width: 0;
+}
+/* 行级操作区：左对齐紧凑操作组，减号为固定锚点、加号仅最后一行追加，无假占位 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  width: 52px;
+  min-width: 52px;
+}
+/* 图标按钮：统一 28×28px，轻量透明，无边框 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+/* hidden 优先于 inline-flex，供单表隐藏表级删除与禁用态使用 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-btn[hidden] {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-btn svg {
+  width: 14px;
+  height: 14px;
+}
+/* 添加按钮：蓝色图标 + 透明背景，hover 浅蓝背景 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-add {
+  color: var(--rsp-brand);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-add:hover:not(:disabled) {
+  background: #edf4ff;
+}
+/* 删除按钮（减号）：默认使用项目危险色（--action-danger），hover 加深并配极浅红背景，
+ * 明确表达删除语义；不描边、不加边框，尺寸与新增按钮保持一致（28×28 固定两槽位）。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-minus {
+  color: var(--action-danger, #BA1A1A);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-minus:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--action-danger, #BA1A1A) 82%, #000);
+  background: color-mix(in srgb, var(--action-danger, #BA1A1A) 8%, #fff);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-btn:disabled {
+  color: #d1d5db;
+  cursor: not-allowed;
+  background: transparent;
+}
+/* 减号的禁用态（仅剩一条条件/字段时不可删除）仍保留危险色识别度：
+ * 用轻微降透明度表达“不可用”，不与中性灰图标混淆，光标仍为 not-allowed。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-icon-minus:disabled {
+  color: var(--action-danger, #BA1A1A);
+  opacity: 0.6;
 }
 /* 可搜索输入 + 候选面板 */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo {
@@ -2480,12 +3162,29 @@
   font-size: 12px;
   line-height: 30px;
 }
+
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-input::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cn-input::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input::-webkit-search-cancel-button {
+  visibility: hidden;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-input:hover::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-input:focus::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cn-input:hover::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cn-input:focus::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input:hover::-webkit-search-cancel-button,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input:focus::-webkit-search-cancel-button {
+  visibility: visible;
+  opacity: 1;
+}
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-input:focus {
   border-color: var(--rsp-brand);
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-panel {
   position: fixed;
-  z-index: 40;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   max-height: 260px;
@@ -2662,6 +3361,8 @@
   font-size: 12px;
   cursor: pointer;
 }
+/* 数据日期字段选择器：不定义独立宽度，直接占满第 3 列（= 条件值列），
+ * 高度与边框/圆角/字号沿用 .rsp-sc-combo-input（32px）等现有表单控件。 */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-date-field-picker {
   grid-column: 3;
   width: 100%;
@@ -2682,16 +3383,25 @@
   appearance: auto;
   accent-color: var(--rsp-brand, #3466D9);
 }
-/* 处理条件：表头与输入行严格复用同一套三列 Grid。 */
+/* 处理条件：表头与输入行与表信息严格复用同一套四列 Grid（条件字段/运算符/条件值/操作）。 */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head,
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row {
-  grid-template-columns: minmax(260px, 0.85fr) minmax(360px, 1.35fr) var(--action-width);
+  grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.3fr) minmax(240px, 1.15fr) var(--action-width);
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head {
   margin: 0 0 6px;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-row {
   min-height: 32px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-op {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-condition-rows {
   display: flex;
@@ -2727,31 +3437,14 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-value-cell .rsp-sc-value-input {
   flex: 1 1 auto;
 }
-/* 三类删除操作统一为固定 88px 操作列中的轻量危险文字。 */
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-table,
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-condition,
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-field {
-  width: var(--action-width);
-  min-width: var(--action-width);
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  white-space: nowrap;
-  color: var(--danger-light, #d97a7a);
-  font-size: 12px;
-  cursor: pointer;
+/* 表级删除（垃圾桶图标）：删除语义统一使用危险色，与行级减号同色；
+ * 层级区分依靠图标形态（垃圾桶 vs 减号）与位置（标题栏 vs 行内），不靠颜色弱化。 */
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-table {
+  color: var(--action-danger, #BA1A1A);
 }
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-table:hover:not(:disabled),
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-condition:hover:not(:disabled),
-.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-field:hover:not(:disabled) {
-  color: var(--danger, #cf3d3d);
-  border: 0;
-  background: transparent;
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-remove-table:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--action-danger, #BA1A1A) 82%, #000);
+  background: color-mix(in srgb, var(--action-danger, #BA1A1A) 8%, #fff);
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-editor[aria-invalid="true"] .rsp-sc-cn-input,
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-editor[aria-invalid="true"] .rsp-sc-value-input,
@@ -2978,6 +3671,17 @@
   .auto-check-module[data-module="report_special_processing"] .rsp-sc-field-head,
   .auto-check-module[data-module="report_special_processing"] .rsp-sc-cond-head {
     display: none;
+  }
+  /* 窄屏回退：标题行同样降为两列，并把选择器放到条件值所在的第 1 列，
+   * 保持“数据日期字段 = 条件值”同列对齐关系。 */
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-title-row .rsp-sc-section-head-main {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-scope-controls {
+    grid-column: 1 / -1;
+  }
+  .auto-check-module[data-module="report_special_processing"] .rsp-sc-date-field-picker {
+    grid-column: 1;
   }
   .auto-check-module[data-module="report_special_processing"] .rsp-picker-row {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;

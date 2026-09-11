@@ -23,10 +23,11 @@
 14a. 执行 `sql/app_storage/mysql/018_system_notifications.sql`，新增系统通知主体和收件状态两张表。该脚本使用 `CREATE TABLE IF NOT EXISTS`，可重复执行，不影响已有数据。
 15. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`；完整应用结构共 45 张表，`app_schema_version` 仍为 `1`。模块业务表不加入全局 `EXPECTED_APP_SCHEMA`。执行 `sql/app_storage/mysql/014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照），不修改 `app_schema_version`。再执行 `sql/app_storage/mysql/015_role_definitions.sql` 新增角色定义表（自定义角色），不修改 `app_schema_version`。
 15a. 执行 `sql/app_storage/mysql/019_dictionary_management.sql`，新增系统字典分类 `system_dictionaries` 与字典项 `system_dictionary_items` 两张表，并预置系统锁定分类 `business_system`（业务系统）；脚本幂等、可重复执行，不影响已有数据，执行后完整应用结构为 47 张表。报表特殊处理模块升级（schema 7）由模块迁移在服务启动时自动执行。
+15b. 依次执行 `sql/app_storage/mysql/020_report_period_field_dictionary.sql`、`021_report_navigation_scheduler_interval.sql` 和 `022_scheduled_tasks.sql`。`021` 将原报送导航统计周期调整为 30 分钟；`022` 新增统一定时任务配置与状态表并预置报送导航统计、通知过期清理和逐笔校验字段映射刷新，执行后完整应用结构为 56 张表。
 15. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
 16. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
 17. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
-18. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 45 张应用存储表结构与配置升级（在备份下人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql`）齐全；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+18. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 56 张应用存储表结构与配置升级齐全，并确认已在备份后由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 及后续脚本至 `022_scheduled_tasks.sql`；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
 
 升级脚本中，`004`、`006`、`008`、`012_module_system.sql` 和 `013_report_navigation_provider_states.sql` 使用 `CREATE TABLE IF NOT EXISTS`，`005` 与 `007` 通过 `information_schema` 判断结构是否存在；`004` 至 `013` 均按可重复执行方式编写。上线前仍须停机、备份并按顺序人工执行。`012`、`013` 不修改全局 schema version，生产环境不得由应用自动执行。
 

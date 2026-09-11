@@ -89,6 +89,7 @@ _RECORD_FIELDS = frozenset(
         "summary",
         "processing_content",
         "processing_script",
+        "processing_script_mode",
         "special_handling_at",
         "handler_user_id",
         "row_version",
@@ -208,6 +209,9 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         script = None
     elif not isinstance(script, str) or len(script.encode("utf-8")) > MAX_SCRIPT_BYTES:
         raise _error("processing_script", "脚本最大 512 KiB")
+    script_mode = str(payload.get("processing_script_mode") or "AUTO").strip().upper()
+    if script_mode not in {"AUTO", "MANUAL"}:
+        raise _error("processing_script_mode")
     handler = _text(payload.get("handler_user_id"), "handler_user_id", 64, required=formal) or None
     row_version = payload.get("row_version")
     if row_version is not None and (type(row_version) is not int or row_version < 1):
@@ -249,6 +253,7 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         summary=_text(payload.get("summary"), "summary", 128, required=formal),
         processing_content="",
         processing_script=script,
+        processing_script_mode=script_mode,
         report_period=_optional_date(payload.get("report_period"), "report_period", required=formal),
         special_handling_at=_optional_datetime(
             payload.get("special_handling_at"), "special_handling_at", required=formal

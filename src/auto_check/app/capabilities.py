@@ -57,6 +57,7 @@ CAPABILITY_DEFINITIONS: dict[str, dict[str, str]] = {
     "sys.users": {"label": "用户管理", "type": TYPE_MENU},
     "sys.role_permissions": {"label": "角色权限配置页", "type": TYPE_MENU},
     "sys.dictionaries": {"label": "字典管理", "type": TYPE_MENU},
+    "sys.scheduled_tasks": {"label": "定时任务管理", "type": TYPE_MENU},
     "history.delete": {"label": "删除对数历史记录", "type": TYPE_FUNCTION},
     "report_navigation.edit_schedule": {"label": "编辑报送日期", "type": TYPE_FUNCTION},
     "report_navigation.edit_stats": {"label": "编辑治理统计", "type": TYPE_FUNCTION},
@@ -89,7 +90,7 @@ ADMIN_ONLY_CAPABILITIES: frozenset[str] = frozenset(
         "sys.settings.admin",
         "sys.users",
         "sys.role_permissions",
-        "sys.dictionaries",
+        "sys.scheduled_tasks",
     }
 )
 

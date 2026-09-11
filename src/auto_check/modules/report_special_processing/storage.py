@@ -463,6 +463,8 @@ class SpecialProcessingStorage:
             select(
                 RECORDS.c.id,
                 RECORDS.c.dimension,
+                RECORDS.c.business_system_code,
+                RECORDS.c.business_system_name_snapshot,
                 RECORDS.c.field_name,
                 RECORDS.c.creator_user_id,
                 RECORDS.c.creator_username_snapshot,

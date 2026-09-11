@@ -1,5 +1,6 @@
 from datetime import datetime
 from dataclasses import replace
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,6 +19,16 @@ from auto_check.app.report_navigation_platform import CardStatisticsRequest
 from mysql_config_test_support import MemoryApplicationDatabase
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def test_server_registers_report_check_for_collection_without_dashboard_refresh():
+    source = Path("src/auto_check/app/server.py").read_text(encoding="utf-8")
+    registration = (
+        "semantics_version=REPORT_CHECK_SEMANTICS_VERSION,\n"
+        "            include_in_collect=True,\n"
+        "            refresh_on_dashboard=False,"
+    )
+    assert registration in source
 
 
 class FakeClient:
@@ -144,7 +155,7 @@ def test_provider_maps_total_and_remaining_for_current_reporting_period():
     assert total_params == ()
     assert client.calls[1] == (
         report_check_statistics.REPORT_PERIOD_PLACEHOLDER.sub("%s", DEFAULT_REPORT_CHECK_REMAINING_SQL),
-        ("2026-06-30",),
+        ("2026_06_30",),
     )
     assert len(client.calls) == 2
 
@@ -226,7 +237,7 @@ def test_report_check_config_api_requires_admin_and_tests_sql(tmp_path):
     )
     seen = []
     calls = []
-    expected_report_date = "2026-06-30"
+    expected_report_date = "2026_06_30"
 
     class FakeClientFactory:
         def __init__(self, config):

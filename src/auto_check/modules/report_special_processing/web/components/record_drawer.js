@@ -3,11 +3,20 @@ import { formatDisplayDateTime } from "./record_table.js";
 import { createProcessMultiSelect } from "./process_multi_select.js";
 import { createTableFieldGroups } from "./table_field_groups.js";
 import { createStructuredContentEditor } from "./structured_content_editor.js";
+import { buildScriptPreview } from "./script_preview.js";
 import { createRecordAttachmentSection, renderRecordAttachmentSnapshot } from "./record_attachments.js";
 import { confirmAttachmentUrl } from "../api.js";
+import { buildSemanticAuditViewModel, renderSemanticAuditDetail } from "./audit_detail.js";
+import { createLegacyContentPreview, createStructuredContentPreview, readonlyField, readonlyTextBlock } from "./record_preview.js";
 
 const SUMMARY_MAX_LENGTH = 128;
 const FIELD_TEXT_MAX_LENGTH = 128;
+const DIMENSION_LABELS = {
+  project: "项目端",
+  fund: "资金端",
+  asset: "资产端",
+  finance: "财务端",
+};
 
 const AUDIT_ACTION_META = {
   create: { label: "创建", tone: "neutral", className: "rsp-audit-action-neutral" },
@@ -177,12 +186,17 @@ function describeAuditEntry(item, recordId) {
   const notes = [];
   const attachments = [];
   let attachmentDiff = null;
+  let structuredDiff = null;
   const changedFields = item?.changed_fields;
   const hasStructuredAuditData = Boolean(
     changedFields && typeof changedFields === "object" && !Array.isArray(changedFields) && Object.keys(changedFields).length,
   );
   Object.entries(changedFields || {}).forEach(([key, meta]) => {
     if (!meta || typeof meta !== "object") return;
+    if (key === "structured_content") {
+      structuredDiff = meta;
+      return;
+    }
     if (["reason", "reopen_reason", "void_reason"].includes(key)) {
       if (hasAuditValue(meta, "new")) {
         notes.push({ label: auditNoteLabel(key, item?.action_code), value: formatAuditValue(meta.new) });
@@ -233,15 +247,38 @@ function describeAuditEntry(item, recordId) {
     });
   }
 
+  const hasLegacyContentDiff = [
+    "datasource_name_snapshot", "table_name", "field_name", "value_before", "value_after",
+  ].some((key) => Object.prototype.hasOwnProperty.call(changedFields || {}, key));
+  const hasBasicSemanticDiff = [
+    "report_process_name_snapshot", "report_period", "dimension", "business_system_name_snapshot",
+    "summary", "special_handling_at", "handler_display_name_snapshot",
+    "governance_owner_display_name_snapshot",
+  ].some((key) => Object.prototype.hasOwnProperty.call(changedFields || {}, key));
+  const hasScriptSemanticDiff = Boolean(
+    changedFields?.processing_script
+    && typeof changedFields.processing_script === "object"
+    && changedFields.processing_script.mode,
+  );
+  const semanticCandidate = structuredDiff || hasBasicSemanticDiff || hasScriptSemanticDiff
+    ? buildSemanticAuditViewModel(item) : null;
+  const semanticModel = !hasLegacyContentDiff && semanticCandidate
+    ? semanticCandidate : null;
+  const visiblePairs = semanticModel
+    ? paired.filter((pair) => pair.key !== "processing_script")
+    : paired;
+
   return {
     ...action,
-    paired,
+    paired: visiblePairs,
     notes,
     attachments,
     attachmentDiff,
+    structuredDiff,
+    semanticModel,
     recordId: Number(recordId || item?.record_id || 0),
     hasStructuredAuditData,
-    status: paired.find((pair) => pair.key === "status") || null,
+    status: visiblePairs.find((pair) => pair.key === "status") || null,
     summary: String(item?.action_summary || item?.action_code || "—"),
   };
 }
@@ -277,7 +314,7 @@ function renderAuditScriptValue(documentRef, pair, side, onCopyScript) {
 
 function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage, attachmentOptions = null) {
   const cells = [];
-  if (entry.paired.length) {
+  if (!entry.semanticModel && entry.paired.length) {
     ["字段", "修改前", "修改后"].forEach((label) => {
       cells.push(element(documentRef, "div", { className: "rsp-audit-diff-header", text: label }));
     });
@@ -326,6 +363,9 @@ function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage, attach
     ]));
   }
   const hasExtras = Boolean(entry.notes.length || entry.attachments?.length);
+  const semanticBlock = entry.semanticModel
+    ? renderSemanticAuditDetail(documentRef, entry.semanticModel, { onCopyScript })
+    : null;
   // 记录附件“修改前 / 修改后”双栏：标签只按该条审计的 old/new 集合渲染。
   let attachmentBlock = null;
   if (entry.attachmentDiff && attachmentOptions) {
@@ -345,14 +385,15 @@ function renderAuditDetail(documentRef, entry, onCopyScript, onOpenImage, attach
     ]);
   }
   return element(documentRef, "div", { className: "rsp-audit-detail" }, [
-    element(documentRef, "div", {
+    semanticBlock,
+    cells.length ? element(documentRef, "div", {
       className: "rsp-audit-detail-scroll",
       "aria-label": "完整变更对照",
     }, [
       element(documentRef, "div", {
         className: `rsp-audit-diff-grid${hasExtras ? " has-notes" : ""}`,
       }, cells),
-    ]),
+    ]) : null,
     attachmentBlock,
   ]);
 }
@@ -363,7 +404,7 @@ function nowHandlingAt() {
   return `${local.toISOString().slice(0, 19)}+08:00`;
 }
 
-function draftPayload(fields, saveMode, rowVersion, specialHandlingAt, structuredContent) {
+function draftPayload(fields, saveMode, rowVersion, specialHandlingAt, structuredContent, processingScriptMode = "AUTO") {
   const payload = {
     save_mode: saveMode,
     report_process_codes: fields.process.value,
@@ -377,6 +418,7 @@ function draftPayload(fields, saveMode, rowVersion, specialHandlingAt, structure
     value_before: fields.valueBefore.value.trim(),
     value_after: fields.valueAfter.value.trim(),
     processing_script: fields.script.value,
+    processing_script_mode: processingScriptMode,
     special_handling_at: specialHandlingAt,
     handler_user_id: fields.handler.value,
   };
@@ -410,6 +452,7 @@ export function createRecordDrawer(documentRef, options) {
   const confirming = mode === "confirm";
   const current = record || {};
   const canEdit = !confirming && (creating || Boolean(current.can_edit));
+  const readOnly = !canEdit;
   const title = creating
     ? "新建报表特殊处理"
     : (confirming ? "确认特殊处理" : (canEdit ? "编辑" : "查看"));
@@ -524,27 +567,52 @@ export function createRecordDrawer(documentRef, options) {
   const useStructured = creating || Boolean(recordStructured);
   let structuredEditor = null;
   let tableFieldGroups = null;
+  let contentPreview = null;
   if (useStructured) {
-    structuredEditor = createStructuredContentEditor(documentRef, {
-      api: actions,
-      initial: recordStructured,
-      disabled: !canEdit,
-      notify: options.notify,
-      confirm: options.confirm,
-      getHost: () => overlayNode,
-      datasourceNameSnapshot: current.datasource_name_snapshot || "",
-      reportPeriodFieldMatchers: catalog?.report_period_fields || [],
-    });
+    if (canEdit) {
+      structuredEditor = createStructuredContentEditor(documentRef, {
+        api: actions,
+        initial: recordStructured,
+        disabled: false,
+        notify: options.notify,
+        confirm: options.confirm,
+        getHost: () => overlayNode,
+        datasourceNameSnapshot: current.datasource_name_snapshot || "",
+        reportPeriodFieldMatchers: catalog?.report_period_fields || [],
+        onChange: () => {
+          if (typeof autoGenerateRef === "function") autoGenerateRef();
+        },
+      });
+    } else {
+      contentPreview = createStructuredContentPreview(documentRef, {
+        initial: recordStructured,
+        datasourceNameSnapshot: current.datasource_name_snapshot || "",
+      });
+    }
   } else {
-    tableFieldGroups = createTableFieldGroups(documentRef, {
-      tableValue: current.table_name || "",
-      fieldValue: current.field_name || "",
-      disabled: !canEdit,
-      confirm: options.confirm,
-    });
+    if (canEdit) {
+      tableFieldGroups = createTableFieldGroups(documentRef, {
+        tableValue: current.table_name || "",
+        fieldValue: current.field_name || "",
+        disabled: false,
+        confirm: options.confirm,
+      });
+    } else {
+      contentPreview = createLegacyContentPreview(documentRef, current);
+    }
   }
   const DERIVED_KEYS = { table: "table_name", field: "field_name", before: "value_before", after: "value_after" };
   function groupControl(kind) {
+    if (readOnly) {
+      return {
+        get value() {
+          return current[DERIVED_KEYS[kind]] || "";
+        },
+        setAttribute: () => {},
+        removeAttribute: () => {},
+        focus: () => {},
+      };
+    }
     if (structuredEditor) {
       return {
         get value() {
@@ -577,7 +645,7 @@ export function createRecordDrawer(documentRef, options) {
       rows: "3",
       value: current.summary || "",
       maxlength: String(SUMMARY_MAX_LENGTH),
-      "aria-label": "处理缘由",
+      "aria-label": "处理摘要",
       placeholder: `最多 ${SUMMARY_MAX_LENGTH} 个字符`,
       disabled: !canEdit,
     }),
@@ -672,11 +740,13 @@ export function createRecordDrawer(documentRef, options) {
       control?.removeAttribute?.("title");
     });
   }
-  function showFormHint(message, focusControl = null) {
+  function showFormHint(message, focusControl = null, { focus = true } = {}) {
     formHint.hidden = false;
     formHint.textContent = message;
     if (focusControl?.setAttribute) focusControl.setAttribute("aria-invalid", "true");
-    focusControl?.focus?.();
+    // 自动生成脚本等非用户主动提交场景传 focus=false：只提示错误、不夺焦，
+    // 避免 combo 输入框因 focus 触发候选面板自动展开。
+    if (focus) focusControl?.focus?.();
   }
   function showError(error) {
     const fieldEntries = Object.entries(error.fields || {});
@@ -726,13 +796,13 @@ export function createRecordDrawer(documentRef, options) {
       if (error?.name !== "AbortError") showError(error);
     }
   }
-  function validateForm({ formal = false } = {}) {
+  function validateForm({ formal = false, focus = true } = {}) {
     clearFormHint();
     if (structuredEditor) {
       // 结构化模式：数据源/表/字段/中文名逐条定位校验；正式保存另验字段级修改前/后。
       const problem = structuredEditor.validate({ formal });
       if (problem) {
-        showFormHint(problem.message, problem.control || structuredEditor);
+        showFormHint(problem.message, problem.control || structuredEditor, { focus });
         return false;
       }
     } else {
@@ -772,6 +842,7 @@ export function createRecordDrawer(documentRef, options) {
       creating ? null : current.row_version,
       resolveHandlingAt(),
       structuredEditor ? structuredEditor.getStructured() : null,
+      scriptMode,
     );
     if (attachmentSection) {
       // 等待附件 Base64 构建完成后一次性提交；无变化时省略字段。
@@ -999,7 +1070,7 @@ export function createRecordDrawer(documentRef, options) {
       const auditId = String(item?.id ?? `${auditPage}-${index}`);
       const entry = describeAuditEntry(item, current.id);
       const hasDetails = entry.paired.length > 0 || entry.notes.length > 0
-        || entry.attachments.length > 0 || Boolean(entry.attachmentDiff);
+        || entry.attachments.length > 0 || Boolean(entry.attachmentDiff) || Boolean(entry.semanticModel);
       const expanded = hasDetails && expandedAuditIds.has(auditId);
       const summaryParts = [
         element(documentRef, "span", {
@@ -1021,7 +1092,22 @@ export function createRecordDrawer(documentRef, options) {
           text: `${note.label}：${note.value}`,
         }));
       });
-      if (entry.paired.length) {
+      if (entry.semanticModel) {
+        if (entry.semanticModel.business_change_count) {
+          summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
+          summaryParts.push(element(documentRef, "span", {
+            className: "rsp-audit-change-count",
+            text: `共 ${entry.semanticModel.business_change_count} 项业务变更`,
+          }));
+        }
+        if (entry.semanticModel.summary_parts.length) {
+          summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
+          summaryParts.push(element(documentRef, "span", {
+            className: "rsp-audit-semantic-summary",
+            text: entry.semanticModel.summary_parts.join(" · "),
+          }));
+        }
+      } else if (entry.paired.length) {
         summaryParts.push(element(documentRef, "span", { className: "rsp-audit-summary-separator", text: "·" }));
         summaryParts.push(element(documentRef, "span", {
           className: "rsp-audit-change-count",
@@ -1112,61 +1198,105 @@ export function createRecordDrawer(documentRef, options) {
     }
   };
 
-  // 生成脚本：以当前特殊处理内容生成 SQL 文本写入处理脚本框，绝不执行。
-  // 若用户已手工修改过脚本内容，重新生成前必须确认覆盖。
-  let generatedScriptText = "";
-  let scriptDirty = false;
+  // 处理脚本：随上方配置实时自动生成（debounce），仅保存留痕，绝不执行。
+  // AUTO：脚本只读，配置有效变化后自动刷新；MANUAL：允许手工编辑并暂停自动覆盖。
+  let scriptMode = "AUTO";
+  let generatedScriptText = fields.script.value || "";
+  let autoGenerateTimer = null;
+  let autoGenerateRef = null;
+  const SCRIPT_DEBOUNCE_MS = 400;
   const copyScriptButton = actionButton(documentRef, "复制脚本", "rsp-button-secondary", copyScript, true);
-  const generateScriptButton = actionButton(documentRef, "生成脚本", "rsp-button-secondary", () => {
-    generateScriptFromForm();
-  }, !canEdit || !catalogAvailable || !structuredEditor);
+  // 模式切换只在下方注册一个 click 监听，避免一次点击先进入 MANUAL 又立即恢复 AUTO。
+  const manualEditButton = actionButton(
+    documentRef, "手动编辑", "rsp-button-secondary", null,
+    !canEdit || !catalogAvailable || !structuredEditor,
+  );
+  const scriptHint = element(documentRef, "div", {
+    className: "rsp-script-hint",
+    role: "status",
+    text: "选择处理表后将自动生成脚本",
+    hidden: true,
+  });
+  const scriptModeHint = element(documentRef, "div", {
+    className: "rsp-script-mode-hint",
+    role: "status",
+    text: "手动编辑模式，自动生成已暂停",
+    hidden: true,
+  });
   function syncScriptActions() {
     const hasText = Boolean(String(fields.script.value || "").trim());
     copyScriptButton.disabled = !hasText;
-    generateScriptButton.textContent = generatedScriptText ? "重新生成" : "生成脚本";
-    generateScriptButton.disabled = !canEdit || !catalogAvailable || !structuredEditor;
+    manualEditButton.textContent = scriptMode === "MANUAL" ? "恢复自动生成" : "手动编辑";
+    manualEditButton.disabled = !canEdit || !catalogAvailable || !structuredEditor;
+    scriptHint.hidden = scriptMode !== "AUTO" || hasText;
+    scriptModeHint.hidden = scriptMode !== "MANUAL";
+    fields.script.readOnly = scriptMode === "AUTO";
   }
-  syncScriptActions();
-  fields.script.addEventListener("input", () => {
-    scriptDirty = String(fields.script.value) !== generatedScriptText;
+  function enterManualScriptMode() {
+    clearTimeout(autoGenerateTimer);
+    autoGenerateTimer = null;
+    scriptMode = "MANUAL";
     syncScriptActions();
-  });
-  async function generateScriptFromForm() {
-    if (!structuredEditor) {
-      options.notify("请先在特殊处理内容中完善处理表与字段", "warning");
-      return;
-    }
-    if (scriptDirty && generatedScriptText && typeof options.confirm === "function") {
-      const ok = await options.confirm(
-        "重新生成脚本",
-        "重新生成将覆盖当前处理脚本内容，是否继续？",
+    options.notify("手动编辑模式，自动生成已暂停", "info");
+  }
+  function enterAutoScriptMode() {
+    scriptMode = "AUTO";
+    autoGenerateScript();
+  }
+  function scheduleAutoGenerate() {
+    if (scriptMode !== "AUTO") return;
+    clearTimeout(autoGenerateTimer);
+    autoGenerateTimer = setTimeout(() => {
+      autoGenerateTimer = null;
+      autoGenerateScript();
+    }, SCRIPT_DEBOUNCE_MS);
+  }
+  autoGenerateRef = scheduleAutoGenerate;
+  fields.period.addEventListener("change", scheduleAutoGenerate);
+  fields.period.addEventListener("input", scheduleAutoGenerate);
+  function autoGenerateScript() {
+    if (!structuredEditor || scriptMode !== "AUTO") return;
+    // 脚本预览与正式保存校验解耦：表/字段刚选中便生成对应片段，
+    // 修改内容区域的 validate() 与后端 create/update 校验保持原样。
+    const script = buildScriptPreview(
+      structuredEditor.getStructured(),
+      structuredEditor.getFieldTypes ? structuredEditor.getFieldTypes() : {},
+      fields.period?.value || "",
+    ).trim();
+    generatedScriptText = script;
+    fields.script.value = script;
+    syncScriptActions();
+  }
+  async function confirmScriptModeRestore() {
+    const confirmModal = documentRef.getElementById?.("confirmModal");
+    confirmModal?.classList.add("rsp-confirm-above-record");
+    try {
+      return await options.confirm(
+        "恢复自动生成",
+        "恢复自动生成后，当前手工修改的脚本将被覆盖，是否继续？",
         { tone: "warning" },
       );
-      if (!ok) return;
-    }
-    if (!validateForm({ formal: true })) return;
-    const payload = {
-      structured_content: structuredEditor.getStructured(),
-      field_types: structuredEditor.getFieldTypes ? structuredEditor.getFieldTypes() : {},
-    };
-    if (fields.period?.value) payload.report_period = String(fields.period.value).slice(0, 16);
-    try {
-      const response = await actions.generateScript(payload);
-      const data = response?.data || response || {};
-      const script = String(data.script || "").trim();
-      if (!script) {
-        options.notify("生成的脚本为空，请检查处理范围与修改字段", "error");
-        return;
-      }
-      generatedScriptText = script;
-      scriptDirty = false;
-      fields.script.value = script;
-      syncScriptActions();
-      options.notify(scriptDirty ? "" : "处理脚本已生成，请检查后保存", "success");
-    } catch (error) {
-      if (error?.name !== "AbortError") showError(error);
+    } finally {
+      // 平台确认框关闭有过渡动画，延后清理可避免退场时重新落到编辑弹窗下层。
+      setTimeout(() => {
+        confirmModal?.classList.remove("rsp-confirm-above-record");
+      }, 220);
     }
   }
+  manualEditButton.addEventListener("click", async () => {
+    if (scriptMode === "AUTO") {
+      enterManualScriptMode();
+      return;
+    }
+    // MANUAL → 恢复自动生成：若脚本被手工修改过，先确认覆盖
+    const changed = String(fields.script.value) !== generatedScriptText;
+    if (changed && typeof options.confirm === "function") {
+      const ok = await confirmScriptModeRestore();
+      if (!ok) return;
+    }
+    enterAutoScriptMode();
+  });
+  syncScriptActions();
 
   // 附件区域：新建/可编辑记录使用编辑组件；查看与确认模式使用只读快照。
   const currentAttachments = Array.isArray(current.record_attachments) ? current.record_attachments : [];
@@ -1260,20 +1390,44 @@ export function createRecordDrawer(documentRef, options) {
   ]);
   const basic = element(documentRef, "section", { className: "rsp-modal-section" }, [
     basicTitle,
-    element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, [
+    readOnly ? element(documentRef, "div", { className: "rsp-readonly-basic-preview" }, [
+      element(documentRef, "div", { className: "rsp-readonly-basic-grid" }, [
+        readonlyField(documentRef, "所处报送期", current.report_period),
+        readonlyField(documentRef, "处理人", current.handler_display_name_snapshot || current.handler_username_snapshot),
+        readonlyField(documentRef, "所属维度", (
+          dimensions.find((item) => String(item.code) === String(current.dimension || ""))?.label
+            || DIMENSION_LABELS[String(current.dimension || "")]
+            || current.dimension
+        )),
+        readonlyField(documentRef, "所属业务系统", current.business_system_name_snapshot || current.business_system_code),
+        readonlyField(documentRef, "数据治理负责人", (
+          current.governance_owner_display_name_snapshot
+            || current.governance_owner_username_snapshot
+        )),
+      ]),
+      readonlyField(documentRef, "关联报送", (
+        Array.isArray(current.report_processes) && current.report_processes.length
+          ? current.report_processes.map((item) => item?.name).filter(Boolean).join("；")
+          : current.report_process_name_snapshot
+      ), "rsp-readonly-related-reports"),
+      element(documentRef, "div", { className: "rsp-readonly-summary" }, [
+        element(documentRef, "span", { className: "rsp-readonly-info-label", text: "处理摘要" }),
+        readonlyTextBlock(documentRef, "处理摘要", current.summary),
+      ]),
+    ]) : element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, [
       labeledField(documentRef, "关联报送", fields.process.root || fields.process, "rsp-process-field"),
       labeledField(documentRef, "所处报送期", fields.period),
       labeledField(documentRef, "处理人", fields.handler),
       labeledField(documentRef, "所属维度", fields.dimension),
       labeledField(documentRef, "所属业务系统", fields.businessSystem),
       labeledField(documentRef, "数据治理负责人", fields.governanceOwner),
-      labeledField(documentRef, "处理缘由", fields.summary, "rsp-span-all rsp-summary-field"),
+      labeledField(documentRef, "处理摘要", fields.summary, "rsp-span-all rsp-summary-field"),
     ]),
   ]);
   const content = element(documentRef, "section", { className: "rsp-modal-section rsp-special-content-section" }, [
     element(documentRef, "h3", { text: "特殊处理内容" }),
-    element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, useStructured ? [
-      // 数据源→表→字段→修改前/后均在编辑器内；处理缘由已移至基本信息区。
+    readOnly ? contentPreview : element(documentRef, "div", { className: "rsp-form-grid rsp-form-grid-basic" }, useStructured ? [
+      // 数据源→表→字段→修改前/后均在编辑器内；处理摘要位于基本信息区。
       element(documentRef, "div", { className: "rsp-span-two rsp-sc-field" }, [structuredEditor]),
     ] : [
       element(documentRef, "div", { className: "rsp-span-two rsp-tf-field" }, [tableFieldGroups]),
@@ -1287,11 +1441,16 @@ export function createRecordDrawer(documentRef, options) {
     element(documentRef, "div", { className: "rsp-section-title" }, [
       element(documentRef, "h3", { text: "处理脚本" }),
       element(documentRef, "strong", { className: "rsp-script-warning", text: "脚本仅保存留痕，不在系统内执行。" }),
-      structuredEditor ? generateScriptButton : null,
+      structuredEditor ? manualEditButton : null,
       copyScriptButton,
     ]),
-    fields.script,
+    scriptHint,
+    scriptModeHint,
+    readOnly
+      ? readonlyTextBlock(documentRef, "处理脚本", fields.script.value, "rsp-readonly-script")
+      : fields.script,
   ]);
+  fields.script.addEventListener("input", syncScriptActions);
   const audit = element(documentRef, "section", { className: "rsp-modal-section rsp-audit", hidden: creating ? "" : null }, [
     element(documentRef, "h3", { text: "操作记录" }),
     element(documentRef, "div", { className: "rsp-audit-table-wrap" }, [element(documentRef, "table", {}, [

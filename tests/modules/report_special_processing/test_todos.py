@@ -28,6 +28,7 @@ def _record(**overrides):
         "id": 1,
         "status": "pending",
         "dimension": "project",
+        "business_system_name_snapshot": "TCMP",
         "field_name": "余额字段",
         "governance_owner_user_id": "owner-a",
         "special_handling_at": datetime(2026, 8, 10, 9, 30, tzinfo=TZ),
@@ -58,7 +59,7 @@ def test_provider_returns_only_current_owner_pending_records():
     item = items[0]
     assert item.id == "rsp-pending-1"
     assert item.title == "报表特殊处理待确认"
-    assert item.summary == f"{DIMENSION_LABELS['project']} · 余额字段"
+    assert item.summary == f"{DIMENSION_LABELS['project']} · TCMP · 余额字段"
     assert item.assignee_user_id == "owner-a"
     assert item.module_id == "report_special_processing"
     assert item.created_at == datetime(2026, 8, 10, 9, 30, tzinfo=TZ)
@@ -123,6 +124,55 @@ def test_todo_provider_initiator_falls_back_to_creator_username_snapshot():
         )
     )
     assert items[0].initiator == "creator_u"
+
+
+def test_todo_summary_uses_shortest_chinese_field_name():
+    storage = FakeStorage([_record(
+        business_system_name_snapshot="TCMP",
+        field_name="法人金融机构名称｜jrname；短字段｜short_col；；数据管理机构｜datejg",
+    )])
+
+    items = PendingConfirmTodoProvider(storage).list_todos(
+        TodoListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 12, 0, tzinfo=TZ),
+        )
+    )
+
+    assert items[0].summary == "项目端 · TCMP · 短字段 等 3 字段"
+
+
+def test_todo_summary_falls_back_for_missing_system_and_legacy_field():
+    storage = FakeStorage([_record(
+        business_system_name_snapshot="",
+        business_system_code="legacy_sys",
+        field_name="long_legacy_field、short",
+    )])
+
+    items = PendingConfirmTodoProvider(storage).list_todos(
+        TodoListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 12, 0, tzinfo=TZ),
+        )
+    )
+
+    assert items[0].summary == "项目端 · legacy_sys · short 等 2 字段"
+
+
+def test_todo_summary_keeps_legacy_format_when_system_is_missing():
+    storage = FakeStorage([_record(
+        business_system_name_snapshot="",
+        business_system_code="",
+        field_name="旧字段｜legacy_field；短项｜short",
+    )])
+    items = PendingConfirmTodoProvider(storage).list_todos(
+        TodoListRequest(
+            current_user={"id": "owner-a"},
+            now=datetime(2026, 8, 10, 12, 0, tzinfo=TZ),
+        )
+    )
+    assert items[0].summary == "项目端 · 短项 等 2 字段"
+    assert "未填系统" not in items[0].summary
 
 
 class Handle:

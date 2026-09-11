@@ -491,6 +491,7 @@
 :root[data-page="local-storage"] #page-local-storage { display: flex !important; }
 :root[data-page="role-permissions"] #page-role-permissions { display: flex !important; }
 :root[data-page="dictionaries"] #page-dictionaries { display: flex !important; }
+:root[data-page="scheduled-tasks"] #page-scheduled-tasks { display: flex !important; }
 
 :root[data-page="home"] .nav-item[data-page="home"],
 :root:not([data-page]) .nav-item[data-page="home"],
@@ -17536,6 +17537,101 @@ input.custom-input-native:disabled {
   transform: none;
 }
 
+/* ================= 系统管理：通用管理列表 ================= */
+.management-list-table tbody tr:hover {
+  background: var(--surface-container);
+}
+.management-list-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--ui-radius) + 2px);
+  font-size: 12px;
+}
+.management-list-status--on {
+  color: var(--success-text);
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+.management-list-status--off {
+  color: var(--on-error-container);
+  background: var(--error-container);
+}
+.management-list-actions {
+  white-space: nowrap;
+}
+.management-list-action-btn {
+  margin-right: 4px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: calc(var(--ui-radius) + 2px);
+  color: var(--theme-accent-readable);
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), transform var(--transition-fast);
+}
+.management-list-action-btn:last-child {
+  margin-right: 0;
+}
+.management-list-action-btn:hover:not(:disabled) {
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.management-list-action-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.management-list-action-btn:focus-visible {
+  outline: 2px solid var(--theme-focus-ring);
+  outline-offset: 1px;
+}
+.management-list-action-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  border-color: transparent;
+  transform: none;
+}
+.management-list-action--primary {
+  color: var(--theme-accent-readable);
+}
+.management-list-action--success {
+  color: var(--action-success);
+}
+.management-list-action--warning {
+  color: var(--action-warning);
+}
+.management-list-action--danger {
+  color: var(--error);
+}
+.management-list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--outline-variant);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+.management-list-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.management-list-pagination .page-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--ui-radius);
+}
+.management-list-pagination .page-current {
+  min-width: 44px;
+  text-align: center;
+}
+
 /* ================= 系统管理：字典管理 ================= */
 #page-dictionaries .dictionary-main-table th:nth-child(3),
 #page-dictionaries .dictionary-main-table td:nth-child(3),
@@ -17552,9 +17648,6 @@ input.custom-input-native:disabled {
 #page-dictionaries .dictionary-main-table tbody tr {
   cursor: pointer;
 }
-#page-dictionaries .dictionary-main-table tbody tr:hover {
-  background: var(--surface-container);
-}
 #page-dictionaries .dictionary-cell-code {
   font-family: Consolas, Menlo, monospace;
   color: var(--on-surface-variant);
@@ -17564,14 +17657,6 @@ input.custom-input-native:disabled {
   color: var(--on-surface-variant);
   padding: 22px 10px;
   cursor: default;
-}
-#page-dictionaries .dictionary-status,
-.dictionary-items-modal .dictionary-status {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: calc(var(--ui-radius) + 2px);
-  font-size: 12px;
-  border: 1px solid transparent;
 }
 #page-dictionaries .dictionary-status--on,
 .dictionary-items-modal .dictionary-status--on {
@@ -17583,38 +17668,6 @@ input.custom-input-native:disabled {
 .dictionary-items-modal .dictionary-status--off {
   color: var(--on-error-container);
   background: var(--error-container);
-}
-#page-dictionaries .dictionary-action-btn,
-.dictionary-items-modal .dictionary-action-btn {
-  border: 1px solid transparent;
-  background: none;
-  padding: 3px 8px;
-  margin-right: 4px;
-  border-radius: calc(var(--ui-radius) + 2px);
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--theme-accent-readable);
-}
-#page-dictionaries .dictionary-action-btn:hover,
-.dictionary-items-modal .dictionary-action-btn:hover {
-  border-color: var(--theme-accent-readable);
-}
-#page-dictionaries .dictionary-action-btn:disabled {
-  opacity: 0.42;
-  cursor: not-allowed;
-  border-color: transparent;
-}
-#page-dictionaries .dictionary-action-btn.dictionary-delete-btn,
-.dictionary-items-modal .dictionary-action-btn.dictionary-delete-btn {
-  color: var(--error);
-}
-#page-dictionaries .dictionary-action-btn.dictionary-toggle-btn,
-.dictionary-items-modal .dictionary-action-btn.dictionary-toggle-btn {
-  color: var(--action-success);
-}
-#page-dictionaries .dictionary-action-btn.dictionary-toggle-btn.is-warning,
-.dictionary-items-modal .dictionary-action-btn.dictionary-toggle-btn.is-warning {
-  color: var(--action-warning);
 }
 .dictionary-edit-modal {
   width: min(420px, 92vw);
@@ -17723,6 +17776,108 @@ input.custom-input-native:disabled {
   align-items: center;
   justify-content: center;
 }
+
+/* ================= 系统管理：定时任务管理 ================= */
+#page-scheduled-tasks .scheduled-task-table th:nth-child(3),
+#page-scheduled-tasks .scheduled-task-table td:nth-child(3),
+#page-scheduled-tasks .scheduled-task-table th:nth-child(4),
+#page-scheduled-tasks .scheduled-task-table td:nth-child(4),
+#page-scheduled-tasks .scheduled-task-table th:nth-child(5),
+#page-scheduled-tasks .scheduled-task-table td:nth-child(5),
+#page-scheduled-tasks .scheduled-task-table th:nth-child(6),
+#page-scheduled-tasks .scheduled-task-table td:nth-child(6) {
+  text-align: center;
+}
+#page-scheduled-tasks .scheduled-task-table th:nth-child(1) { width: 23%; }
+#page-scheduled-tasks .scheduled-task-table th:nth-child(2) { width: 17%; }
+#page-scheduled-tasks .scheduled-task-table th:nth-child(3) { width: 11%; }
+#page-scheduled-tasks .scheduled-task-table th:nth-child(4) { width: 17%; }
+#page-scheduled-tasks .scheduled-task-table th:nth-child(5) { width: 11%; }
+#page-scheduled-tasks .scheduled-task-table th:nth-child(6) { width: 21%; }
+#page-scheduled-tasks .scheduled-task-name,
+#page-scheduled-tasks .scheduled-task-code {
+  display: block;
+}
+#page-scheduled-tasks .scheduled-task-name {
+  color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 500;
+}
+#page-scheduled-tasks .scheduled-task-code {
+  margin-top: 3px;
+  color: var(--on-surface-variant);
+  font-family: Consolas, Menlo, monospace;
+  font-size: 11px;
+}
+#page-scheduled-tasks .scheduled-task-row--deleted {
+  opacity: 0.72;
+}
+#page-scheduled-tasks .scheduled-task-actions {
+  white-space: nowrap;
+}
+#page-scheduled-tasks .scheduled-task-run-btn {
+  color: var(--theme-accent-readable);
+}
+#page-scheduled-tasks .scheduled-task-status--success {
+  color: var(--success-text);
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+#page-scheduled-tasks .scheduled-task-status--running {
+  color: var(--theme-accent-readable);
+  background: color-mix(in srgb, var(--theme-accent) 10%, var(--surface-container-lowest));
+  border-color: color-mix(in srgb, var(--theme-accent) 35%, transparent);
+}
+#page-scheduled-tasks .scheduled-task-status--failed,
+#page-scheduled-tasks .scheduled-task-status--deleted {
+  color: var(--on-error-container);
+  background: var(--error-container);
+}
+#page-scheduled-tasks .scheduled-task-status--idle {
+  color: var(--on-surface-variant);
+  background: var(--surface-container);
+  border-color: var(--outline-variant);
+}
+.scheduled-task-modal {
+  width: min(560px, 92vw);
+}
+.scheduled-task-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 4px 0;
+}
+.scheduled-task-form .dictionary-edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+.scheduled-task-form .dictionary-edit-row:first-child {
+  grid-column: 1 / -1;
+}
+.scheduled-task-form .dictionary-edit-row > span {
+  color: var(--on-surface);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.scheduled-task-form .prompt-input,
+.scheduled-task-form .filter-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  margin: 0;
+}
+.scheduled-task-form .prompt-input[readonly] {
+  color: var(--on-surface-variant);
+  background: var(--surface-container-low);
+  cursor: default;
+}
+.scheduled-task-form .dictionary-edit-row small {
+  line-height: 18px;
+}
 .dictionary-items-wrap {
   width: 100%;
   max-height: min(370px, calc(100vh - 240px));
@@ -17791,9 +17946,6 @@ input.custom-input-native:disabled {
   background: transparent;
   color: var(--on-surface);
   opacity: 1;
-}
-.dictionary-items-modal .dictionary-action-btn.dictionary-delete-btn {
-  color: var(--error);
 }
 @media (max-width: 760px) {
   .dictionary-config-body {
