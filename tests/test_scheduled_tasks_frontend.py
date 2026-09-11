@@ -57,12 +57,13 @@ def test_scheduled_task_page_reuses_dictionary_list_visual_language():
     assert ".management-list-status--off" in css
 
 
-def test_scheduled_task_list_paginates_after_ten_rows(tmp_path):
+def test_scheduled_task_list_uses_configured_page_size(tmp_path):
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
 
     assert 'id="scheduledTaskPagination"' in html
-    assert "const scheduledTaskPageSize = 10;" in app_js
+    assert "pageSize: managementListConfiguredPageSize()" in app_js
+    assert "const scheduledTaskPageSize = 10;" not in app_js
     assert "visibleRows.slice(pagination.start, pagination.end)" in app_js
 
     start = app_js.index("function managementListPaginationState")
@@ -74,9 +75,11 @@ def test_scheduled_task_list_paginates_after_ten_rows(tmp_path):
         + "const first = managementListPaginationState(11, 1, 10);\n"
         + "const second = managementListPaginationState(11, 2, 10);\n"
         + "const clamped = managementListPaginationState(11, 99, 10);\n"
+        + "const configured = managementListPaginationState(11, 1, 20);\n"
         + "if (first.totalPages !== 2 || first.start !== 0 || first.end !== 10) process.exit(1);\n"
         + "if (second.page !== 2 || second.start !== 10 || second.end !== 11) process.exit(2);\n"
-        + "if (clamped.page !== 2) process.exit(3);\n",
+        + "if (clamped.page !== 2) process.exit(3);\n"
+        + "if (configured.pageSize !== 20 || configured.totalPages !== 1) process.exit(4);\n",
         encoding="utf-8",
     )
     result = subprocess.run(["node", str(scenario)], cwd=ROOT, text=True, capture_output=True)

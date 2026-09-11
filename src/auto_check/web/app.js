@@ -4424,6 +4424,11 @@ function managementListPaginationState(totalItems, currentPage, pageSize = 10) {
   };
 }
 
+function managementListConfiguredPageSize() {
+  const configured = parseInt(defaultSettings.pageSize || DEFAULT_SETTINGS.pageSize, 10);
+  return Number.isFinite(configured) ? Math.min(Math.max(configured, 1), 500) : 10;
+}
+
 function renderManagementListPagination({ container, summary, pageInfo, previous, next, totalItems, currentPage, pageSize, onPageChange }) {
   const state = managementListPaginationState(totalItems, currentPage, pageSize);
   if (!container) return state;
@@ -4781,7 +4786,6 @@ document.getElementById("dictionaryItemsSave")?.addEventListener("click", () => 
 const scheduledTaskBody = document.getElementById("scheduledTaskBody");
 const scheduledTaskModal = document.getElementById("scheduledTaskModal");
 const scheduledTaskPagination = document.getElementById("scheduledTaskPagination");
-const scheduledTaskPageSize = 10;
 const scheduledTaskPendingRuns = new Map();
 let scheduledTaskData = [];
 let scheduledTaskMissingTemplates = [];
@@ -4897,7 +4901,7 @@ function renderScheduledTasks() {
     next: document.getElementById("scheduledTaskNextPage"),
     totalItems: visibleRows.length,
     currentPage: scheduledTaskPage,
-    pageSize: scheduledTaskPageSize,
+    pageSize: managementListConfiguredPageSize(),
     onPageChange: (page) => {
       scheduledTaskPage = page;
       renderScheduledTasks();
@@ -11488,6 +11492,7 @@ async function saveSettings() {
     loadSettings();
     loadTheme();
     PAGE_SIZE = parseInt(defaultSettings.pageSize) || 10;
+    renderScheduledTasks();
     currentPage = 1;
     hasReconciled = false;
     resultEmptyState = "";
@@ -11511,6 +11516,7 @@ async function resetSettings() {
     loadSettings();
     loadTheme();
     PAGE_SIZE = 10;
+    renderScheduledTasks();
     currentPage = 1;
     hasReconciled = false;
     resultEmptyState = "";
