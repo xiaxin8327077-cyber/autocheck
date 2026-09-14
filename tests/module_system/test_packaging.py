@@ -422,3 +422,41 @@ def test_legacy_windows_build_collects_modules_in_the_pyinstaller_command():
     data_values = _option_values(arguments, "--add-data")
     assert any(value.endswith(";auto_check/web") for value in data_values)
     assert any(value.endswith(";auto_check/resources") for value in data_values)
+
+
+def test_dashboard_management_manifest_declares_packaged_assets_and_release_note():
+    manifest = json.loads(
+        (ROOT / "src" / "auto_check" / "modules" / "dashboard_management" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert manifest["frontend_entry"] == "/module-assets/dashboard_management/index.js"
+    assert manifest["frontend_style"] == "/module-assets/dashboard_management/styles.css"
+    assert (ROOT / "src" / "auto_check" / "modules" / "dashboard_management" / "web" / "index.js").is_file()
+    assert (ROOT / "src" / "auto_check" / "modules" / "dashboard_management" / "web" / "styles.css").is_file()
+    assert (
+        ROOT
+        / "src"
+        / "auto_check"
+        / "modules"
+        / "dashboard_management"
+        / "web"
+        / "screens"
+        / "financial-report.html"
+    ).is_file()
+    assert (
+        ROOT
+        / "src"
+        / "auto_check"
+        / "modules"
+        / "dashboard_management"
+        / "web"
+        / "screens"
+        / "financial-report-flow.html"
+    ).is_file()
+    assert manifest["release_notes"]["version"] == "1.2.26"
+    assert "看板管理模块：支持固定看板的数据区域、字段与安全 SQL 来源配置" in manifest[
+        "release_notes"
+    ]["items"]
+    assert any("内置看板页面" in item for item in manifest["release_notes"]["items"])

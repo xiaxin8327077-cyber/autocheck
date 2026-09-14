@@ -1133,6 +1133,15 @@
               <tbody id="dictionaryCategoryBody"></tbody>
             </table>
           </div>
+          <div class="pagination role-permissions-pagination" id="dictionaryCategoryPagination">
+            <span class="pagination-info" id="dictionaryCategoryPageSummary">暂无数据</span>
+            <div class="pagination-controls">
+              <button class="page-btn" id="dictionaryCategoryPrevPage" type="button" aria-label="上一页">&#9664;</button>
+              <span class="page-current" id="dictionaryCategoryPageInfo">-</span>
+              <button class="page-btn" id="dictionaryCategoryNextPage" type="button" aria-label="下一页">&#9654;</button>
+              <span class="pagination-jump">跳至 <input id="dictionaryCategoryJumpPage" type="number" min="1" /> 页</span>
+            </div>
+          </div>
         </section>
       </section>
 
@@ -1168,14 +1177,15 @@
               <tbody id="scheduledTaskBody"></tbody>
             </table>
           </div>
-          <nav class="management-list-pagination" id="scheduledTaskPagination" aria-label="定时任务分页" hidden>
-            <span class="management-list-pagination-summary" id="scheduledTaskPageSummary">共 0 条</span>
-            <div class="management-list-pagination-controls">
+          <div class="pagination role-permissions-pagination" id="scheduledTaskPagination">
+            <span class="pagination-info" id="scheduledTaskPageSummary">暂无数据</span>
+            <div class="pagination-controls">
               <button class="page-btn" id="scheduledTaskPrevPage" type="button" aria-label="上一页">&#9664;</button>
-              <span class="page-current" id="scheduledTaskPageInfo">1 / 1</span>
+              <span class="page-current" id="scheduledTaskPageInfo">-</span>
               <button class="page-btn" id="scheduledTaskNextPage" type="button" aria-label="下一页">&#9654;</button>
+              <span class="pagination-jump">跳至 <input id="scheduledTaskJumpPage" type="number" min="1" /> 页</span>
             </div>
-          </nav>
+          </div>
         </section>
       </section>
 
@@ -1419,11 +1429,13 @@
                 </tbody>
               </table>
             </div>
-            <div class="user-pagination" id="userPagination">
-              <span id="userPageInfo">共 0 条</span>
-              <div class="user-pagination-actions">
-                <button id="userPrevPage" type="button" class="btn-outline btn-xs">上一页</button>
-                <button id="userNextPage" type="button" class="btn-outline btn-xs">下一页</button>
+            <div class="pagination role-permissions-pagination" id="userPagination">
+              <span class="pagination-info" id="userPageInfo">暂无数据</span>
+              <div class="pagination-controls">
+                <button class="page-btn" id="userPrevPage" type="button" aria-label="上一页">&#9664;</button>
+                <span class="page-current" id="userPageCurrent">-</span>
+                <button class="page-btn" id="userNextPage" type="button" aria-label="下一页">&#9654;</button>
+                <span class="pagination-jump">跳至 <input id="userJumpPage" type="number" min="1" /> 页</span>
               </div>
             </div>
           </section>

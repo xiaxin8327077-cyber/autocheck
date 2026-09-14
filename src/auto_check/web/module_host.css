@@ -34,7 +34,8 @@
 }
 
 #moduleTopNavigation .module-top-nav-item,
-#moduleTopNavigation .module-top-nav-group-toggle {
+#moduleTopNavigation .module-top-nav-group-toggle,
+[data-nav-group] .module-top-nav-item[data-module-merged-navigation] {
   appearance: none;
   border: 0;
   background: transparent;
@@ -45,14 +46,17 @@
 
 #moduleTopNavigation .module-top-nav-item[aria-current="page"],
 #moduleTopNavigation .module-top-nav-item.active,
-#moduleTopNavigation .module-top-nav-group-toggle.active {
+#moduleTopNavigation .module-top-nav-group-toggle.active,
+[data-nav-group] .module-top-nav-item[data-module-merged-navigation][aria-current="page"],
+[data-nav-group] .module-top-nav-item[data-module-merged-navigation].active {
   color: var(--theme-on-accent);
   background: var(--theme-accent);
   box-shadow: none;
 }
 
 #moduleTopNavigation .module-top-nav-item:focus-visible,
-#moduleTopNavigation .module-top-nav-group-toggle:focus-visible {
+#moduleTopNavigation .module-top-nav-group-toggle:focus-visible,
+[data-nav-group] .module-top-nav-item[data-module-merged-navigation]:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }

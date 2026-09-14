@@ -190,15 +190,46 @@
       applyGroupExpansion();
     }
 
+    function legacyGroupMenus(groupId) {
+      return [...(documentRef?.querySelectorAll?.(`[data-nav-group="${groupId}"]`) || [])]
+        .map((group) => group.querySelector?.(".top-nav-submenu, .nav-submenu"))
+        .filter(Boolean);
+    }
+
+    function clearMergedNavigation() {
+      documentRef?.querySelectorAll?.("[data-module-merged-navigation]").forEach((item) => item.remove());
+    }
+
+    function setLegacyGroupNavigationActive(groupId, active) {
+      documentRef?.querySelectorAll?.(`[data-nav-group="${groupId}"]`).forEach((group) => {
+        group.classList?.toggle("active", active);
+        group.classList?.remove("open");
+        const toggle = group.querySelector?.("[data-nav-group-toggle]");
+        toggle?.classList?.toggle("active", active);
+        toggle?.setAttribute?.("aria-expanded", "false");
+      });
+    }
+
     function setModuleNavigationActive(route) {
       const activeGroup = activeGroupId(route);
       setExpandedGroup("");
       const top = documentRef?.getElementById("moduleTopNavigation");
-      top?.querySelectorAll?.("[data-module-route]").forEach((item) => {
+      const navigationItems = new Set([
+        ...(top?.querySelectorAll?.("[data-module-route]") || []),
+        ...(documentRef?.querySelectorAll?.("[data-module-route]") || []),
+      ]);
+      navigationItems.forEach((item) => {
         const active = item.dataset.moduleRoute === route;
         item.classList?.toggle("active", active);
         if (active) item.setAttribute?.("aria-current", "page");
         else item.removeAttribute?.("aria-current");
+      });
+      const mergedGroupIds = new Set(
+        [...(documentRef?.querySelectorAll?.("[data-module-merged-navigation]") || [])]
+          .map((item) => item.dataset.moduleMergedNavigation),
+      );
+      mergedGroupIds.forEach((groupId) => {
+        setLegacyGroupNavigationActive(groupId, groupId === activeGroup);
       });
       groupControls.forEach(({ toggle }, groupId) => {
         toggle.classList?.toggle("active", groupId === activeGroup);
@@ -421,6 +452,17 @@
       return button;
     }
 
+    function mergeGroupNavigation(group) {
+      const menus = legacyGroupMenus(group.id);
+      if (!menus.length) return false;
+      menus.forEach((menu) => group.children.forEach((entry) => {
+        const item = createNavigationItem(entry, { subitem: true });
+        item.dataset.moduleMergedNavigation = group.id;
+        menu.appendChild(item);
+      }));
+      return true;
+    }
+
     function createGroupNavigation(group) {
       const wrapper = documentRef.createElement("div");
       const toggle = documentRef.createElement("button");
@@ -466,6 +508,7 @@
     function renderNavigation() {
       const top = documentRef?.getElementById("moduleTopNavigation");
       const side = documentRef?.getElementById("moduleSideNavigation");
+      clearMergedNavigation();
       if (!top) return;
       state.navigationTree = normalizedTopNavigation();
       groupControls.clear();
@@ -473,7 +516,7 @@
       top.replaceChildren?.();
       state.navigationTree.forEach((item) => {
         if (item.kind === "group") {
-          top.appendChild(createGroupNavigation(item));
+          if (!mergeGroupNavigation(item)) top.appendChild(createGroupNavigation(item));
           return;
         }
         top.appendChild(createNavigationItem(item));
@@ -486,15 +529,15 @@
       mount.dataset.moduleHostBound = "true";
       const click = (event) => {
         const groupToggle = event.target?.closest?.("[data-module-group-toggle]");
-        if (groupToggle && (!mount.contains || mount.contains(groupToggle))) {
-          event.preventDefault();
-          // 与"悬浮展开、父菜单不跳转"契约一致：点击父菜单只展开、不收起、不跳转。
-          setExpandedGroup(groupToggle.dataset.moduleGroupToggle);
-          if (event.detail > 0) groupToggle.blur?.();
-          return;
-        }
+        if (!groupToggle || (mount.contains && !mount.contains(groupToggle))) return;
+        event.preventDefault();
+        // 与"悬浮展开、父菜单不跳转"契约一致：点击父菜单只展开、不收起、不跳转。
+        setExpandedGroup(groupToggle.dataset.moduleGroupToggle);
+        if (event.detail > 0) groupToggle.blur?.();
+      };
+      const routeClick = (event) => {
         const target = event.target?.closest?.("[data-module-route]");
-        if (!target || (mount.contains && !mount.contains(target))) return;
+        if (!target) return;
         event.preventDefault();
         activate(target.dataset.moduleRoute);
         if (event.detail > 0) target.blur?.();
@@ -514,13 +557,15 @@
         }
       };
       mount.addEventListener("click", click);
+      documentRef?.addEventListener?.("click", routeClick);
       mount.addEventListener("keydown", keydown);
-      navigationListeners.set(mount, { click, keydown });
+      navigationListeners.set(mount, { click, routeClick, keydown });
     }
 
     function removeNavigationListeners() {
-      navigationListeners.forEach(({ click, keydown }, mount) => {
+      navigationListeners.forEach(({ click, routeClick, keydown }, mount) => {
         mount.removeEventListener?.("click", click);
+        documentRef?.removeEventListener?.("click", routeClick);
         mount.removeEventListener?.("keydown", keydown);
         delete mount.dataset.moduleHostBound;
       });
@@ -855,6 +900,7 @@
       styleElements.clear();
       eventListeners.clear();
       removeNavigationListeners();
+      clearMergedNavigation();
       pageHost()?.replaceChildren?.();
       documentRef?.getElementById("moduleSideNavigation")?.replaceChildren?.();
       documentRef?.getElementById("moduleTopNavigation")?.replaceChildren?.();

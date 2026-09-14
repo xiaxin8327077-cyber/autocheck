@@ -1,0 +1,46 @@
+{
+  "id": "dashboard_management",
+  "name": "看板管理",
+  "version": "1.2.26",
+  "platform_api": 1,
+  "required": false,
+  "backend_entry": "auto_check.modules.dashboard_management.module:create_module",
+  "api_prefix": "/api/modules/dashboard-management",
+  "frontend_entry": "/module-assets/dashboard_management/index.js",
+  "frontend_style": "/module-assets/dashboard_management/styles.css",
+  "navigation": [
+    {
+      "id": "dashboard-management",
+      "label": "看板管理",
+      "route": "dashboard-management",
+      "order": 60,
+      "permission": "dashboard_management.view",
+      "group_id": "system-management",
+      "group_label": "系统管理",
+      "group_order": 90
+    }
+  ],
+  "permissions": [
+    "dashboard_management.view",
+    "dashboard_management.manage",
+    "dashboard_management.test_sql"
+  ],
+  "dependencies": [],
+  "schema_version": 1,
+  "release_notes": {
+    "version": "1.2.26",
+    "items": [
+      "看板管理模块：支持固定看板的数据区域、字段与安全 SQL 来源配置",
+      "看板管理模块：系统数据自动生成 AutoCheck 系统库只读 SQL，数据表与字段的中英文名称通过 SQL 注释展示，结果预览使用字段中文名并居中对齐",
+      "看板管理模块：自定义 SQL 支持任意单条 SELECT/WITH 查询、注释、数据库原生函数与不带 schema 的表名，同时保留写入、DDL、多语句和锁表拦截",
+      "看板管理模块：浏览器刷新后恢复当前看板及各看板最后选择的数据区域",
+      "看板管理模块：报表对账完成时间按报送期读取总差异为 0 的最早自动对数历史执行时间，季度报表特殊处理仅统计待确认和已确认记录",
+      "看板管理模块：看板页签支持预览接口 JSON 和内置看板页面，页面按已保存配置聚合展示各数据区域",
+      "看板管理模块：用户新增的数据区域支持删除，编辑前自动刷新区域版本以避免缓存版本冲突",
+      "看板管理模块：三个内置月份字段的字段说明分别标注看板所需格式及示例",
+      "看板管理模块：顶部使用明显的紧凑看板 Tabs，并统一提供当前看板预览入口",
+      "看板管理模块：当月报表报送时间对比统计排除人行大集中",
+      "看板管理模块：顶部切换栏与内容区合并为系统标准外层卡片，统一背景、系统圆角裁切与悬浮描边"
+    ]
+  }
+}

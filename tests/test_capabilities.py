@@ -70,6 +70,9 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "rsp.void",
         "rsp.reopen",
         "rsp.delete",
+        "sys.dashboard_management",
+        "sys.dashboard_management.manage",
+        "sys.dashboard_management.test_sql",
     }
     assert set(CAPABILITY_DEFINITIONS) == expected_codes
     for code in expected_codes:
@@ -352,3 +355,12 @@ def test_required_lock_rejects_custom_role_disabling_required():
     incoming["custom_auditor"]["menu.report_navigation"] = False
     with pytest.raises(ValueError, match="required"):
         assert_required_unchanged(incoming)
+
+
+def test_dashboard_management_capabilities_are_admin_default_only():
+    assert CAPABILITY_DEFINITIONS["sys.dashboard_management"]["type"] == TYPE_MENU
+    assert CAPABILITY_DEFINITIONS["sys.dashboard_management.manage"]["type"] == TYPE_FUNCTION
+    assert CAPABILITY_DEFINITIONS["sys.dashboard_management.test_sql"]["type"] == TYPE_FUNCTION
+    assert DEFAULT_MATRIX["admin"]["sys.dashboard_management"] is True
+    assert DEFAULT_MATRIX["user"]["sys.dashboard_management"] is False
+    assert CUSTOM_ROLE_DEFAULT_MATRIX["sys.dashboard_management.manage"] is False

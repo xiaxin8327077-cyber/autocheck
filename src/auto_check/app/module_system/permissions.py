@@ -15,6 +15,9 @@ _MODULE_PERMISSION_TO_CAPABILITY: dict[str, str] = {
     "report_special_processing.reopen": "rsp.reopen",
     "report_special_processing.void": "rsp.void",
     "report_special_processing.delete": "rsp.delete",
+    "dashboard_management.view": "sys.dashboard_management",
+    "dashboard_management.manage": "sys.dashboard_management.manage",
+    "dashboard_management.test_sql": "sys.dashboard_management.test_sql",
 }
 
 

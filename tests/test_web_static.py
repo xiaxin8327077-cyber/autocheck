@@ -79,6 +79,24 @@ def test_module_host_grouped_top_navigation_keeps_accessibility_and_theme_bounda
     assert "box-shadow: 0 0" not in css
 
 
+def test_module_navigation_merges_existing_system_groups_with_scoped_styles():
+    css = _read(MODULE_HOST_CSS)
+    script = _read(MODULE_HOST_JS)
+
+    for fragment in [
+        "function legacyGroupMenus(groupId)",
+        "function clearMergedNavigation()",
+        "function mergeGroupNavigation(group)",
+        "data-module-merged-navigation",
+        "[data-nav-group=\"${groupId}\"]",
+    ]:
+        assert fragment in script
+    assert "const routeClick = (event) =>" in script
+    assert 'documentRef?.addEventListener?.("click", routeClick)' in script
+    assert 'documentRef?.removeEventListener?.("click", routeClick)' in script
+    assert "#moduleTopNavigation .module-top-nav-item" in css
+
+
 def test_semantic_action_tokens_and_disabled_priority_are_centralized():
     css = _read(STYLES_CSS)
 
@@ -8392,6 +8410,10 @@ def test_user_management_list_uses_display_fields_pagination_and_admin_guards():
     assert 'id="userPagination"' in html
     assert 'id="userPrevPage"' in html
     assert 'id="userNextPage"' in html
+    assert 'class="pagination role-permissions-pagination" id="userPagination"' in html
+    assert 'class="pagination-info" id="userPageInfo"' in html
+    assert 'class="page-current" id="userPageCurrent"' in html
+    assert 'class="pagination-jump">跳至 <input id="userJumpPage"' in html
     assert "user-loading-row" in html
     assert "function renderUsersLoading()" in app_js
     assert "loadUsers({ force = false } = {})" in app_js
@@ -8444,10 +8466,21 @@ def test_user_management_list_uses_display_fields_pagination_and_admin_guards():
     assert table_wrap is not None
     assert "overflow: auto" in table_wrap.group("body")
     assert "min-height: 0" in table_wrap.group("body")
-    pagination = re.search(r"(?m)^\.user-pagination\s*\{(?P<body>.*?)\}", css, re.S)
-    assert pagination is not None
-    assert "flex-shrink: 0" in pagination.group("body")
-    assert ".user-pagination" in css
+    assert ".user-pagination {" not in css
+    assert ".user-pagination-actions {" not in css
+
+
+def test_project_rules_require_consistent_management_list_pages():
+    rules = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "后台管理列表页统一规范" in rules
+    assert "角色权限" in rules
+    assert ".pagination" in rules
+    assert "共 N 条，第 P / T 页" in rules
+    assert "数据不足" in rules and "撑满" in rules
+    assert "不得为新页面另建分页样式" in rules
+    assert "overflow: hidden" in rules
+    assert "悬浮描边" in rules
 
 
 def test_user_display_name_drives_navigation_and_user_export():

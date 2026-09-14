@@ -8,6 +8,7 @@ import pytest
 
 from auto_check.app.module_system.contracts import ModuleContext, ModuleTaskExecutor
 from auto_check.app.module_system.events import EventBus
+from auto_check.app.module_system.permissions import default_permission_evaluator
 from auto_check.app.module_system.services import (
     BoundService,
     PlatformServiceSpec,
@@ -409,3 +410,13 @@ def test_closed_module_event_view_rejects_new_work():
         events.subscribe("system:ready", lambda payload: None)
     with pytest.raises(RuntimeError, match="closed"):
         events.publish("alpha:published", {})
+
+
+def test_dashboard_module_permissions_use_platform_capabilities():
+    user = {
+        "role": "auditor",
+        "capabilities": ["sys.dashboard_management", "sys.dashboard_management.test_sql"],
+    }
+    assert default_permission_evaluator(user, "dashboard_management.view") is True
+    assert default_permission_evaluator(user, "dashboard_management.test_sql") is True
+    assert default_permission_evaluator(user, "dashboard_management.manage") is False

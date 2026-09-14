@@ -360,8 +360,19 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
           removeAttribute(name) { this.attributes.delete(name); }
           querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
           querySelectorAll(selector) {
+            const dataAttribute = selector.match(/^\\[data-([a-z-]+)(?:="([^"]*)")?\\]$/);
+            const dataAttributeMatches = (element) => {
+              if (!dataAttribute) return false;
+              const attributeName = `data-${dataAttribute[1]}`;
+              const datasetName = dataAttribute[1].replace(/-([a-z])/g, (_, character) => character.toUpperCase());
+              const value = element.dataset[datasetName] ?? element.getAttribute(attributeName);
+              return dataAttribute[2] === undefined
+                ? value !== undefined && value !== null
+                : value === dataAttribute[2];
+            };
             const matches = (element) => (
-              (selector === ".page" && element.classList.contains("page"))
+              dataAttributeMatches(element)
+              || (selector === ".page" && element.classList.contains("page"))
               || (selector === "[data-module-host-error]" && element.dataset.moduleHostError)
               || (selector === "[data-module-host-diagnostic]" && element.dataset.moduleHostDiagnostic)
               || (selector === ".nav-item[data-page], .top-nav-item[data-page]" && element.dataset.page)
@@ -377,6 +388,10 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
               || (selector === "[data-nav-group-toggle]" && (
                 Boolean(element.dataset.navGroupToggle)
                 || Boolean(element.getAttribute("data-nav-group-toggle"))
+              ))
+              || (selector === ".top-nav-submenu, .nav-submenu" && (
+                element.classList.contains("top-nav-submenu")
+                || element.classList.contains("nav-submenu")
               ))
             );
             const result = [];
@@ -406,6 +421,8 @@ def _run_module_host_scenario(tmp_path: Path, scenario: str) -> None:
             createElement: (tagName) => new FakeElement(tagName),
             getElementById: (id) => elements[id] || null,
             querySelectorAll: (selector) => root.querySelectorAll(selector),
+            addEventListener: (name, listener) => root.addEventListener(name, listener),
+            removeEventListener: (name) => root.removeEventListener(name),
           };
           const listeners = new Map();
           const windowRef = { addEventListener: (name, listener) => listeners.set(name, listener), removeEventListener: (name) => listeners.delete(name), dispatch: (name) => listeners.get(name)?.() };
@@ -1134,7 +1151,7 @@ def test_module_host_renders_top_grouped_navigation_and_keeps_sidebar_empty(tmp_
         assert.equal(reviewMenu.hidden, true);
         assert.equal(reviewToggle.focused, true);
         top.dispatch("keydown", reviewToggle, { key: " " });
-        top.dispatch("click", reviewMenu.children[0]);
+        env.documentRef.documentElement.dispatch("click", reviewMenu.children[0]);
         await new Promise((resolve) => setImmediate(resolve));
         await flush();
         assert.equal(env.locationRef.hash, "#review-history");
@@ -1155,5 +1172,99 @@ def test_module_host_renders_top_grouped_navigation_and_keeps_sidebar_empty(tmp_
         assert.equal(top.children.length, 0);
         assert.equal(top.listeners.size, 0);
         assert.equal(side.children.length, 0);
+        """,
+    )
+
+
+def test_module_navigation_merges_system_management_group_and_cleans_dynamic_items(tmp_path: Path):
+    _run_module_host_scenario(
+        tmp_path,
+        """
+        const env = makeEnvironment("#dashboard-management");
+        const legacySystemGroup = new FakeElement("div");
+        legacySystemGroup.classList.add("top-nav-group");
+        legacySystemGroup.dataset.navGroup = "system-management";
+        legacySystemGroup.setAttribute("data-nav-group", "system-management");
+        const legacySystemToggle = new FakeElement("button");
+        legacySystemToggle.dataset.navGroupToggle = "system-management";
+        legacySystemToggle.setAttribute("data-nav-group-toggle", "system-management");
+        const legacySystemMenu = new FakeElement("div");
+        legacySystemMenu.classList.add("top-nav-submenu");
+        legacySystemGroup.appendChild(legacySystemToggle);
+        legacySystemGroup.appendChild(legacySystemMenu);
+        env.documentRef.documentElement.appendChild(legacySystemGroup);
+        env.documentRef.documentElement.appendChild(env.elements.moduleTopNavigation);
+
+        const dashboard = {
+          id: "dashboard_management",
+          frontend_entry: "/dashboard.js",
+          frontend_style: "/dashboard.css",
+          navigation: [{
+            id: "dashboard-management",
+            label: "看板管理",
+            route: "dashboard-management",
+            order: 60,
+            group_id: "system-management",
+            group_label: "系统管理",
+            group_order: 90,
+          }],
+        };
+        const standalone = {
+          id: "standalone",
+          frontend_entry: "/standalone.js",
+          frontend_style: "/standalone.css",
+          navigation: [{
+            id: "standalone-entry",
+            label: "Standalone",
+            route: "standalone-entry",
+            order: 10,
+            group_id: "standalone-group",
+            group_label: "Standalone group",
+            group_order: 10,
+          }],
+        };
+        let enabled = true;
+        const host = createModuleHost({
+          ...env,
+          importModule: async () => ({ default: { mount: async () => {}, activate: async () => {}, deactivate: async () => {}, unmount: async () => {} } }),
+        });
+        const platform = {
+          api: async () => ({ modules: enabled ? [dashboard, standalone] : [] }),
+          user: () => ({}), notify: () => {}, confirm: async () => true, legacyNavigate: async () => {},
+        };
+
+        assert.equal(await host.initialize(platform), true);
+        assert.equal(legacySystemMenu.querySelectorAll('[data-module-route="dashboard-management"]').length, 1);
+        assert.equal(env.elements.moduleTopNavigation.querySelectorAll('[data-module-group-toggle="system-management"]').length, 0);
+        assert.equal(env.elements.moduleTopNavigation.querySelectorAll('[data-module-group-toggle="standalone-group"]').length, 1);
+        assert.ok(legacySystemGroup.classList.contains("active"));
+        assert.ok(!legacySystemGroup.classList.contains("open"));
+        assert.ok(legacySystemToggle.classList.contains("active"));
+        assert.equal(legacySystemToggle.getAttribute("aria-expanded"), "false");
+
+        assert.equal(await host.activate("standalone-entry"), true);
+        const mergedItem = legacySystemMenu.querySelector('[data-module-route="dashboard-management"]');
+        env.documentRef.documentElement.dispatch("click", mergedItem);
+        await new Promise((resolve) => setImmediate(resolve));
+        await flush();
+        assert.equal(env.locationRef.hash, "#dashboard-management");
+        assert.ok(legacySystemGroup.classList.contains("active"));
+
+        assert.equal(await host.initialize(platform), true);
+        assert.equal(legacySystemMenu.querySelectorAll('[data-module-route="dashboard-management"]').length, 1);
+
+        await host.unmount();
+        assert.equal(legacySystemMenu.querySelectorAll("[data-module-merged-navigation]").length, 0);
+        assert.equal(env.documentRef.documentElement.listeners.size, 0);
+
+        enabled = true;
+        assert.equal(await host.initialize(platform), true);
+        assert.equal(legacySystemMenu.querySelectorAll("[data-module-merged-navigation]").length, 1);
+        enabled = false;
+        assert.equal(await host.reload(), false);
+        assert.equal(legacySystemMenu.querySelectorAll("[data-module-merged-navigation]").length, 0);
+        assert.equal(env.documentRef.documentElement.listeners.size, 1);
+        await host.unmount();
+        assert.equal(env.documentRef.documentElement.listeners.size, 0);
         """,
     )

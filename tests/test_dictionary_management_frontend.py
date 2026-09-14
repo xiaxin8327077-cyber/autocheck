@@ -52,6 +52,10 @@ def test_dictionary_page_structure_present(index_html):
     assert 'id="newDictionaryBtn" type="button" class="btn-primary btn-sm management-toolbar-add"' in index_html
     assert 'id="dictionaryCategoryFilter" class="prompt-input management-toolbar-filter"' in index_html
     assert 'id="clearDictionaryCategoryFilter" class="filter-clear-button"' in index_html
+    assert 'class="pagination role-permissions-pagination" id="dictionaryCategoryPagination"' in index_html
+    assert 'id="dictionaryCategoryPageSummary"' in index_html
+    assert 'id="dictionaryCategoryPageInfo"' in index_html
+    assert 'class="pagination-jump">跳至 <input id="dictionaryCategoryJumpPage"' in index_html
     assert 'placeholder="筛选字典名称或编码"' in index_html
     assert 'id="newDictionaryItemBtn"' in index_html
     assert "字典名称" in index_html and "字典编码" in index_html
@@ -106,6 +110,15 @@ def test_dictionary_loads_and_saves_via_unified_api(dictionary_section):
     assert 'method: "DELETE"' in dictionary_section
     assert "method: \"PUT\"" in dictionary_section
     assert "method: \"POST\"" in dictionary_section
+
+
+def test_dictionary_main_list_uses_configured_pagination(dictionary_section):
+    assert "let dictionaryCategoryPage = 1;" in dictionary_section
+    assert "container: dictionaryCategoryPagination" in dictionary_section
+    assert "pageSize: managementListConfiguredPageSize()" in dictionary_section
+    assert "visibleEntries.slice(pagination.start, pagination.end)" in dictionary_section
+    assert dictionary_section.count("dictionaryCategoryPage = 1;") >= 3
+    assert 'jump: document.getElementById("dictionaryCategoryJumpPage")' in dictionary_section
 
 
 def test_dictionary_rendering_avoids_innerhtml_user_input(dictionary_section):

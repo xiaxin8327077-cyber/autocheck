@@ -152,7 +152,10 @@ const userRoleFilter = document.getElementById("userRoleFilter");
 const userStatusFilter = document.getElementById("userStatusFilter");
 const userPrevPage = document.getElementById("userPrevPage");
 const userNextPage = document.getElementById("userNextPage");
+const userPagination = document.getElementById("userPagination");
 const userPageInfo = document.getElementById("userPageInfo");
+const userPageCurrent = document.getElementById("userPageCurrent");
+const userJumpPage = document.getElementById("userJumpPage");
 const userModal = document.getElementById("userModal");
 const userModalTitle = document.getElementById("userModalTitle");
 const userModalClose = document.getElementById("userModalClose");
@@ -3967,11 +3970,22 @@ function paginatedUsers(users) {
 }
 
 function updateUserPagination(total) {
-  const pageCount = Math.max(1, Math.ceil(total / USER_PAGE_SIZE));
-  userCurrentPage = Math.min(Math.max(1, userCurrentPage), pageCount);
-  if (userPageInfo) userPageInfo.textContent = `共 ${total} 条 · 第 ${userCurrentPage}/${pageCount} 页`;
-  if (userPrevPage) userPrevPage.disabled = userCurrentPage <= 1;
-  if (userNextPage) userNextPage.disabled = userCurrentPage >= pageCount;
+  const state = renderManagementListPagination({
+    container: userPagination,
+    summary: userPageInfo,
+    pageInfo: userPageCurrent,
+    previous: userPrevPage,
+    next: userNextPage,
+    jump: userJumpPage,
+    totalItems: total,
+    currentPage: userCurrentPage,
+    pageSize: USER_PAGE_SIZE,
+    onPageChange: (page) => {
+      userCurrentPage = page;
+      renderUsers();
+    },
+  });
+  userCurrentPage = state.page;
 }
 
 function renderUsers() {
@@ -4031,8 +4045,10 @@ function renderUsers() {
 function renderUsersLoading() {
   if (!userTableBody) return;
   if (userPageInfo) userPageInfo.textContent = "加载中...";
+  if (userPageCurrent) userPageCurrent.textContent = "-";
   if (userPrevPage) userPrevPage.disabled = true;
   if (userNextPage) userNextPage.disabled = true;
+  if (userJumpPage) userJumpPage.disabled = true;
   const rows = Array.from({ length: Math.min(USER_PAGE_SIZE, 6) }, () => `
     <tr class="user-loading-row">
       <td><span class="user-skeleton user-skeleton-name"></span><span class="user-skeleton user-skeleton-sub"></span></td>
@@ -4337,14 +4353,6 @@ userEnabledSwitch?.addEventListener("click", () => {
   control?.addEventListener("input", () => { userCurrentPage = 1; renderUsers(); });
   control?.addEventListener("change", () => { userCurrentPage = 1; renderUsers(); });
 });
-userPrevPage?.addEventListener("click", () => {
-  userCurrentPage -= 1;
-  renderUsers();
-});
-userNextPage?.addEventListener("click", () => {
-  userCurrentPage += 1;
-  renderUsers();
-});
 document.querySelectorAll("[data-user-filter]").forEach((button) => {
   button.addEventListener("click", () => setUserQuickFilter(button.dataset.userFilter || "all"));
 });
@@ -4360,6 +4368,7 @@ userTableBody?.addEventListener("click", (event) => {
 
 // ================= 系统管理：字典管理 =================
 const dictionaryCategoryBody = document.getElementById("dictionaryCategoryBody");
+const dictionaryCategoryPagination = document.getElementById("dictionaryCategoryPagination");
 const dictionaryItemBody = document.getElementById("dictionaryItemBody");
 const dictionaryItemsModal = document.getElementById("dictionaryItemsModal");
 const dictionaryItemsTitle = document.getElementById("dictionaryItemsModalTitle");
@@ -4371,6 +4380,7 @@ let dictionarySelectedCode = "";
 let dictionaryItemDrafts = [];
 let dictionaryDeletedItemIds = [];
 let dictionaryCategoryFilter = "";
+let dictionaryCategoryPage = 1;
 let dictionaryConfigurationEntry = null;
 let dictionaryConfigurationIsNew = false;
 
@@ -4429,12 +4439,12 @@ function managementListConfiguredPageSize() {
   return Number.isFinite(configured) ? Math.min(Math.max(configured, 1), 500) : 10;
 }
 
-function renderManagementListPagination({ container, summary, pageInfo, previous, next, totalItems, currentPage, pageSize, onPageChange }) {
+function renderManagementListPagination({ container, summary, pageInfo, previous, next, jump, totalItems, currentPage, pageSize, onPageChange }) {
   const state = managementListPaginationState(totalItems, currentPage, pageSize);
   if (!container) return state;
-  container.hidden = state.total <= state.pageSize;
-  if (summary) summary.textContent = `共 ${state.total} 条`;
-  if (pageInfo) pageInfo.textContent = `${state.page} / ${state.totalPages}`;
+  container.hidden = false;
+  if (summary) summary.textContent = state.total ? `共 ${state.total} 条，第 ${state.page} / ${state.totalPages} 页` : "暂无数据";
+  if (pageInfo) pageInfo.textContent = state.total ? String(state.page) : "-";
   if (previous) {
     previous.disabled = state.page <= 1;
     previous.onclick = () => onPageChange?.(state.page - 1);
@@ -4442,6 +4452,15 @@ function renderManagementListPagination({ container, summary, pageInfo, previous
   if (next) {
     next.disabled = state.page >= state.totalPages;
     next.onclick = () => onPageChange?.(state.page + 1);
+  }
+  if (jump) {
+    jump.disabled = state.total === 0;
+    jump.max = String(state.totalPages);
+    jump.onchange = () => {
+      const target = Number(jump.value);
+      if (Number.isFinite(target) && target >= 1) onPageChange?.(Math.floor(target));
+      jump.value = "";
+    };
   }
   return state;
 }
@@ -4486,19 +4505,33 @@ async function loadDictionaries() {
 function renderDictionaryCategories() {
   if (!dictionaryCategoryBody) return;
   dictionaryCategoryBody.innerHTML = "";
-  if (!dictionaryData.length) {
-    dictionaryCategoryBody.appendChild(dictionaryEmptyRow("暂无字典分类，请点击「新建字典」"));
-    return;
-  }
   const normalizedFilter = dictionaryCategoryFilter.trim().toLocaleLowerCase();
   const visibleEntries = dictionaryData.filter((entry) => !normalizedFilter
     || String(entry.name || "").toLocaleLowerCase().includes(normalizedFilter)
     || String(entry.code || "").toLocaleLowerCase().includes(normalizedFilter));
+  const pagination = renderManagementListPagination({
+    container: dictionaryCategoryPagination,
+    summary: document.getElementById("dictionaryCategoryPageSummary"),
+    pageInfo: document.getElementById("dictionaryCategoryPageInfo"),
+    previous: document.getElementById("dictionaryCategoryPrevPage"),
+    next: document.getElementById("dictionaryCategoryNextPage"),
+    jump: document.getElementById("dictionaryCategoryJumpPage"),
+    totalItems: visibleEntries.length,
+    currentPage: dictionaryCategoryPage,
+    pageSize: managementListConfiguredPageSize(),
+    onPageChange: (page) => {
+      dictionaryCategoryPage = page;
+      renderDictionaryCategories();
+    },
+  });
+  dictionaryCategoryPage = pagination.page;
   if (!visibleEntries.length) {
-    dictionaryCategoryBody.appendChild(dictionaryEmptyRow("未找到匹配的字典"));
+    dictionaryCategoryBody.appendChild(dictionaryEmptyRow(
+      dictionaryData.length ? "未找到匹配的字典" : "暂无字典分类，请点击「新建字典」",
+    ));
     return;
   }
-  visibleEntries.forEach((entry) => {
+  visibleEntries.slice(pagination.start, pagination.end).forEach((entry) => {
     const row = document.createElement("tr");
     row.dataset.dictionaryCode = entry.code;
     row.appendChild(dictionaryTextCell(entry.name, "dictionary-cell-name"));
@@ -4763,6 +4796,7 @@ async function saveDictionaryConfiguration() {
 document.getElementById("newDictionaryBtn")?.addEventListener("click", openNewDictionaryConfiguration);
 document.getElementById("dictionaryCategoryFilter")?.addEventListener("input", (event) => {
   dictionaryCategoryFilter = String(event.target?.value || "");
+  dictionaryCategoryPage = 1;
   setFilterClearButtonVisible(document.getElementById("clearDictionaryCategoryFilter"), dictionaryCategoryFilter.trim());
   renderDictionaryCategories();
 });
@@ -4770,6 +4804,7 @@ document.getElementById("clearDictionaryCategoryFilter")?.addEventListener("clic
   const input = document.getElementById("dictionaryCategoryFilter");
   if (input) input.value = "";
   dictionaryCategoryFilter = "";
+  dictionaryCategoryPage = 1;
   setFilterClearButtonVisible(document.getElementById("clearDictionaryCategoryFilter"), false);
   renderDictionaryCategories();
   input?.focus();
@@ -4899,6 +4934,7 @@ function renderScheduledTasks() {
     pageInfo: document.getElementById("scheduledTaskPageInfo"),
     previous: document.getElementById("scheduledTaskPrevPage"),
     next: document.getElementById("scheduledTaskNextPage"),
+    jump: document.getElementById("scheduledTaskJumpPage"),
     totalItems: visibleRows.length,
     currentPage: scheduledTaskPage,
     pageSize: managementListConfiguredPageSize(),

@@ -55,6 +55,19 @@ def test_scheduled_task_page_reuses_dictionary_list_visual_language():
     assert ".management-list-action--danger" in css
     assert ".management-list-status--on" in css
     assert ".management-list-status--off" in css
+    assert 'class="pagination role-permissions-pagination" id="scheduledTaskPagination"' in html
+    assert 'class="pagination-jump">跳至 <input id="scheduledTaskJumpPage"' in html
+    assert 'class="management-list-pagination"' not in html
+
+
+def test_dictionary_and_scheduled_task_pages_fill_available_height():
+    css = _read(STYLES_CSS)
+    selector = "#page-dictionaries,\n#page-scheduled-tasks"
+
+    assert selector in css
+    block = css.split(selector, 1)[1].split("}", 1)[0]
+    assert "height: 100%;" in block
+    assert "min-height: 0;" in block
 
 
 def test_scheduled_task_list_uses_configured_page_size(tmp_path):
@@ -65,6 +78,11 @@ def test_scheduled_task_list_uses_configured_page_size(tmp_path):
     assert "pageSize: managementListConfiguredPageSize()" in app_js
     assert "const scheduledTaskPageSize = 10;" not in app_js
     assert "visibleRows.slice(pagination.start, pagination.end)" in app_js
+    assert "container.hidden = false;" in app_js
+    assert "container.hidden = state.total <= state.pageSize;" not in app_js
+    assert 'jump: document.getElementById("scheduledTaskJumpPage")' in app_js
+    assert 'summary.textContent = state.total ? `共 ${state.total} 条，第 ${state.page} / ${state.totalPages} 页` : "暂无数据";' in app_js
+    assert 'pageInfo.textContent = state.total ? String(state.page) : "-";' in app_js
 
     start = app_js.index("function managementListPaginationState")
     end = app_js.index("\n}\n", start) + 3

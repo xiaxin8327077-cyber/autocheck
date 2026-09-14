@@ -70,6 +70,9 @@ CAPABILITY_DEFINITIONS: dict[str, dict[str, str]] = {
     "rsp.void": {"label": "作废", "type": TYPE_FUNCTION},
     "rsp.reopen": {"label": "重开", "type": TYPE_FUNCTION},
     "rsp.delete": {"label": "删除", "type": TYPE_FUNCTION},
+    "sys.dashboard_management": {"label": "看板管理", "type": TYPE_MENU},
+    "sys.dashboard_management.manage": {"label": "维护看板数据区域、字段与来源", "type": TYPE_FUNCTION},
+    "sys.dashboard_management.test_sql": {"label": "测试看板自定义 SQL", "type": TYPE_FUNCTION},
 }
 
 #: 旧能力码 → 新能力码（读取矩阵时自动继承旧值，落盘后为全新结构）。
