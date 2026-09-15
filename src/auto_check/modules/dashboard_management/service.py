@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import secrets
 from typing import Any, Callable, Mapping
 
@@ -19,6 +20,12 @@ from .validator import (
     validate_update_field,
     validate_update_region,
 )
+from .year_snapshots import (
+    QUARTERLY_SPECIAL_PROCESSING,
+    SNAPSHOT_REGION_CODES,
+    SnapshotValidationError,
+    normalize_snapshot_rows,
+)
 
 
 class SqlRetestRequiredError(DomainError):
@@ -35,11 +42,23 @@ class DashboardManagementService:
         datasource_loader: Callable[[], list[Any]] | None = None,
         sql_executor: SqlPreviewExecutor | None = None,
         system_executor: SystemDataPreviewExecutor | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.storage = storage
         self._datasource_loader = datasource_loader
-        self._sql_executor = sql_executor or SqlPreviewExecutor()
-        self._system_executor = system_executor or SystemDataPreviewExecutor()
+        if sql_executor is None:
+            self._sql_executor = SqlPreviewExecutor()
+            self._snapshot_sql_executor = SqlPreviewExecutor(preview_limit=12)
+        else:
+            self._sql_executor = sql_executor
+            self._snapshot_sql_executor = sql_executor
+        if system_executor is None:
+            self._system_executor = SystemDataPreviewExecutor()
+            self._snapshot_system_executor = SystemDataPreviewExecutor(preview_limit=12)
+        else:
+            self._system_executor = system_executor
+            self._snapshot_system_executor = system_executor
+        self._now = now or (lambda: datetime.now(timezone.utc))
 
     def catalog(self, board_code: str, current_user: Mapping[str, Any]) -> dict[str, Any]:
         del current_user
@@ -72,8 +91,13 @@ class DashboardManagementService:
         selected = validate_board_code(board_code)
         board = next(board for board in BOARD_CATALOG if board.code == selected)
         regions = []
+        request_now = self._now()
         for region in self.storage.list_regions(selected, include_disabled=False):
             fields = self.storage.list_fields(region["id"], include_disabled=False)
+            snapshot_enabled = (
+                bool(region.get("built_in"))
+                and str(region["region_code"]) in SNAPSHOT_REGION_CODES
+            )
             item = {
                 "code": region["region_code"],
                 "name": region["name"],
@@ -87,30 +111,96 @@ class DashboardManagementService:
                     for field in fields
                 ],
             }
+            period_alias = _snapshot_period_alias(str(region["region_code"]))
+            if snapshot_enabled and period_alias not in {
+                str(field["field_alias"]) for field in fields
+            }:
+                item.update(_preview_error(SnapshotValidationError(
+                    f"快照区域必须启用周期字段：{period_alias}"
+                )))
+                regions.append(item)
+                continue
             try:
-                preview = self._execute_saved_region(region, fields)
-                item.update({
-                    "status": "success",
-                    "columns": preview.columns,
-                    "rows": preview.rows,
-                    "has_more": preview.has_more,
-                    "returned_count": preview.returned_count,
-                })
-            except DomainError as error:
-                item.update({
-                    "status": "error",
-                    "error": {"code": error.code, "message": error.message},
-                })
-            except Exception:
-                item.update({
-                    "status": "error",
-                    "error": {"code": "internal_error", "message": "数据读取失败"},
-                })
+                preview = self._execute_saved_region(
+                    region, fields, snapshot_enabled=snapshot_enabled
+                )
+                if snapshot_enabled:
+                    if preview.has_more:
+                        raise SnapshotValidationError(
+                            "快照区域查询结果最多支持 12 个周期"
+                        )
+                    refreshed_at = request_now
+                    normalized = normalize_snapshot_rows(
+                        str(region["region_code"]), preview.rows, refreshed_at
+                    )
+                    snapshots = self.storage.refresh_year_snapshots(
+                        int(region["id"]),
+                        normalized,
+                        period_year=refreshed_at.year,
+                        refreshed_at=refreshed_at,
+                    )
+                    preview = _snapshot_preview(
+                        fields,
+                        snapshots,
+                        region_code=str(region["region_code"]),
+                        request_now=request_now,
+                    )
+                    item.update(_preview_item(preview))
+                    item.update({
+                        "snapshot_status": "fresh",
+                        "snapshot_refreshed_at": _latest_snapshot_refresh(snapshots),
+                    })
+                else:
+                    item.update(_preview_item(preview))
+            except Exception as error:
+                fallback = None
+                if snapshot_enabled:
+                    fallback = self._snapshot_fallback(
+                        region,
+                        fields,
+                        period_year=request_now.year,
+                        request_now=request_now,
+                    )
+                if fallback is not None:
+                    preview, refreshed_at = fallback
+                    item.update(_preview_item(preview))
+                    item.update({
+                        "snapshot_status": "stale",
+                        "snapshot_refreshed_at": refreshed_at,
+                    })
+                else:
+                    item.update(_preview_error(error))
             regions.append(item)
         return {
             "board": {"code": board.code, "name": board.name},
             "regions": regions,
         }
+
+    def _snapshot_fallback(
+        self,
+        region: Mapping[str, Any],
+        fields: list[Mapping[str, Any]],
+        *,
+        period_year: int,
+        request_now: datetime,
+    ) -> tuple[QueryPreview, str | None] | None:
+        try:
+            snapshots = self.storage.list_year_snapshots(
+                int(region["id"]), period_year
+            )
+        except Exception:
+            return None
+        if not snapshots:
+            return None
+        return (
+            _snapshot_preview(
+                fields,
+                snapshots,
+                region_code=str(region["region_code"]),
+                request_now=request_now,
+            ),
+            _latest_snapshot_refresh(snapshots),
+        )
 
     def create_region(
         self, board_code: str, payload: Mapping[str, Any], current_user: Mapping[str, Any]
@@ -304,7 +394,11 @@ class DashboardManagementService:
         raise ValidationError("数据源不存在或已删除", fields={"datasource_id": "数据源不存在或已删除"})
 
     def _execute_saved_region(
-        self, region: Mapping[str, Any], fields: list[Mapping[str, Any]]
+        self,
+        region: Mapping[str, Any],
+        fields: list[Mapping[str, Any]],
+        *,
+        snapshot_enabled: bool = False,
     ) -> QueryPreview:
         source_config = self.storage.get_source_config(int(region["id"]))
         if source_config is None:
@@ -313,7 +407,12 @@ class DashboardManagementService:
         if source_mode == "system":
             if not region["system_supported"]:
                 raise ValidationError("该数据区域暂不支持系统数据")
-            return self._system_executor.execute(
+            executor = (
+                self._snapshot_system_executor
+                if snapshot_enabled
+                else self._system_executor
+            )
+            return executor.execute(
                 self.storage.database,
                 str(region["region_code"]),
                 fields,
@@ -331,7 +430,8 @@ class DashboardManagementService:
         )
         if source_config.get("tested_signature") != expected_signature:
             raise SqlRetestRequiredError()
-        return self._sql_executor.execute(source, sql_text, fields, str(region["shape"]))
+        executor = self._snapshot_sql_executor if snapshot_enabled else self._sql_executor
+        return executor.execute(source, sql_text, fields, str(region["shape"]))
 
 
 def _test_sql_payload(payload: Mapping[str, Any]) -> tuple[str, str]:
@@ -384,3 +484,92 @@ def _preview_response(preview: QueryPreview, source_config: Mapping[str, Any]) -
         "tested_signature": preview.tested_signature,
         "row_version": source_config["row_version"],
     }
+
+
+def _preview_item(preview: QueryPreview) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "columns": preview.columns,
+        "rows": preview.rows,
+        "has_more": preview.has_more,
+        "returned_count": preview.returned_count,
+    }
+
+
+def _preview_error(error: Exception) -> dict[str, Any]:
+    if isinstance(error, DomainError):
+        return {
+            "status": "error",
+            "error": {"code": error.code, "message": error.message},
+        }
+    if isinstance(error, SnapshotValidationError):
+        return {
+            "status": "error",
+            "error": {"code": "invalid_request", "message": str(error)},
+        }
+    return {
+        "status": "error",
+        "error": {"code": "internal_error", "message": "数据读取失败"},
+    }
+
+
+def _snapshot_preview(
+    fields: list[Mapping[str, Any]],
+    snapshots: list[Mapping[str, Any]],
+    *,
+    region_code: str,
+    request_now: datetime,
+) -> QueryPreview:
+    columns = tuple(str(field["field_alias"]) for field in fields)
+    projected_snapshots = list(snapshots)
+    if region_code == QUARTERLY_SPECIAL_PROCESSING:
+        current_quarter = (request_now.month - 1) // 3 + 1
+        existing_quarters = {
+            int(snapshot["period_value"]) for snapshot in projected_snapshots
+        }
+        projected_snapshots.extend(
+            {
+                "period_value": quarter,
+                "row": {
+                    "quarter": f"第{quarter}季度",
+                    "special_processing_count": 0,
+                },
+            }
+            for quarter in range(current_quarter + 1, 5)
+            if quarter not in existing_quarters
+        )
+        projected_snapshots.sort(key=lambda snapshot: int(snapshot["period_value"]))
+    rows = tuple(
+        {alias: snapshot["row"].get(alias) for alias in columns}
+        for snapshot in projected_snapshots
+    )
+    return QueryPreview(
+        columns=columns,
+        rows=rows,
+        has_more=False,
+        returned_count=len(rows),
+        tested_signature="",
+    )
+
+
+def _latest_snapshot_refresh(snapshots: list[Mapping[str, Any]]) -> str | None:
+    refreshed = [
+        value
+        for snapshot in snapshots
+        if (value := snapshot.get("source_refreshed_at")) is not None
+    ]
+    if not refreshed:
+        return None
+    return _datetime_text(max(refreshed))
+
+
+def _snapshot_period_alias(region_code: str) -> str:
+    return "quarter" if region_code == "quarterly_special_processing" else "month"
+
+
+def _datetime_text(value: Any) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.isoformat()
+    return str(value)

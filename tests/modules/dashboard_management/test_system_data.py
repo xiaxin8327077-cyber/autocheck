@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import date
 
+import pytest
+
 
 class _Result:
     def keys(self):
@@ -75,7 +77,8 @@ def test_system_query_catalog_explains_all_six_system_sources():
     assert "status IN ('pending', 'completed')" in quarterly.sql
     submission_comparison = SYSTEM_QUERY_DEFINITIONS["monthly_report_submission_time_comparison"]
     assert "process.enabled = 1" in submission_comparison.sql
-    assert "process.process_name <> '人行大集中'" in submission_comparison.sql
+    assert "process.process_code <> 'pbc_central'" in submission_comparison.sql
+    assert "process.process_name <> '人行大集中'" not in submission_comparison.sql
 
 
 def test_system_preview_executes_generated_sql_on_autocheck_database():
@@ -110,3 +113,27 @@ def test_system_preview_executes_generated_sql_on_autocheck_database():
     assert result.source["feature"] == "报送导航 / 月度报送计划"
     assert result.source["table_details"][0]["display_name"] == "报送导航流程配置"
     assert "report_nav_monthly_schedules" in database.connection.sql
+
+
+def test_system_preview_returns_safe_specific_database_error():
+    from auto_check.modules.dashboard_management.system_data import SystemDataPreviewExecutor
+    from auto_check.modules.dashboard_management.validator import ValidationError
+
+    class BrokenDatabase(_Database):
+        @contextmanager
+        def connect(self):
+            raise RuntimeError("Unknown column 'missing_field' in 'field list'")
+            yield
+
+    fields = [
+        {
+            "field_alias": "reporting_date",
+            "value_type": "date",
+            "nullable": True,
+            "enabled": True,
+        },
+    ]
+    with pytest.raises(ValidationError, match="查询失败：字段不存在：missing_field"):
+        SystemDataPreviewExecutor().execute(
+            BrokenDatabase(), "monthly_regulatory_report_time", fields, "list"
+        )

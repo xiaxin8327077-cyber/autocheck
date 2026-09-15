@@ -1,5 +1,5 @@
 import { createApi } from "./api.js";
-import { activateLifecycle, applyCatalog, beginPending, captureRequest, createState, currentDraft, currentRegion, endPending, hasPermission, isTokenCurrent, markDatasourceChanged, markSaved, markSqlChanged, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode, stopRequests } from "./state.js";
+import { activateLifecycle, applyCatalog, beginPending, captureRequest, createState, currentDraft, currentRegion, endPending, hasPermission, isTokenCurrent, markDatasourceChanged, markPreviewFailed, markSaved, markSqlChanged, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode, stopRequests } from "./state.js";
 import { button, clear, node } from "./components/dom.js";
 import { renderDashboardTabs } from "./components/dashboard_tabs.js";
 import { renderRegionList } from "./components/region_list.js";
@@ -91,7 +91,7 @@ function createPage(context) {
     const token = captureRequest(state); const draft = token && state.drafts.get(token.key); if (!token || !draft) return; if (draft.source_mode === "sql" && (!draft.datasource_id || !draft.sql_text.trim())) { notify("请选择数据源并填写 SQL 后再测试。", "error"); return; }
     const pendingKey = `test:${token.key}`; if (!beginPending(state, pendingKey)) return; draft.testStatus = "running"; if (shouldRender(token)) render();
     try { const preview = draft.source_mode === "system" ? await api.previewSystem(token.regionId) : await api.testSql(token.regionId, { datasource_id: draft.datasource_id, sql_text: draft.sql_text }); if (!state.active || token.generation !== state.lifecycleGeneration) return; if (recordPreview(state, token, preview)) { if (shouldRender(token)) notify(draft.source_mode === "system" ? "系统数据预览已更新。" : "测试通过，结果预览已更新。", "success"); } else if (shouldRender(token)) notify("测试结果已过期", "info"); }
-    catch (error) { if (!aborted(error) && state.active && token.generation === state.lifecycleGeneration) { const original = state.drafts.get(token.key); if (original) original.testStatus = "failed"; if (shouldRender(token)) notify(message(error, draft.source_mode === "system" ? "系统数据读取失败" : "SQL 测试失败"), "error"); } }
+    catch (error) { if (!aborted(error) && state.active && token.generation === state.lifecycleGeneration) { const reason = message(error, draft.source_mode === "system" ? "系统数据读取失败" : "SQL 测试失败"); markPreviewFailed(state, token, reason); if (shouldRender(token)) notify(reason, "error"); } }
     finally { endPending(state, pendingKey); if (shouldRender(token)) render(); }
   };
   const onSave = async () => {

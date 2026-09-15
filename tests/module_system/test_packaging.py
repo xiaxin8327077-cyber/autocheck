@@ -455,7 +455,7 @@ def test_dashboard_management_manifest_declares_packaged_assets_and_release_note
         / "screens"
         / "financial-report-flow.html"
     ).is_file()
-    assert manifest["release_notes"]["version"] == "1.2.26"
+    assert manifest["release_notes"]["version"] == "1.2.27"
     assert "看板管理模块：支持固定看板的数据区域、字段与安全 SQL 来源配置" in manifest[
         "release_notes"
     ]["items"]

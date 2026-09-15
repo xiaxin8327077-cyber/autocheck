@@ -123,7 +123,7 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
     ]
     runtime.start()
     try:
-        assert _MigrationRunner.calls == [("dashboard_management", 1)]
+        assert _MigrationRunner.calls == [("dashboard_management", 2)]
         modules = runtime.public_modules({"role": "admin"})
         assert modules[0]["navigation"][0]["group_id"] == "system-management"
         assert runtime.read_asset("dashboard_management", "index.js").content

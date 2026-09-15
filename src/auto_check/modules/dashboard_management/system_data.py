@@ -6,7 +6,7 @@ from typing import Any, Mapping, Sequence
 
 from sqlalchemy import text
 
-from .sql_executor import QueryPreview, _convert_value, _field_value
+from .sql_executor import QueryPreview, _convert_value, _field_value, _query_failure_message
 from .validator import ValidationError
 
 
@@ -164,7 +164,7 @@ SYSTEM_QUERY_DEFINITIONS: dict[str, SystemQueryDefinition] = {
                    ON schedule.process_code = process.process_code
                   AND schedule.report_month = DATE_FORMAT(CURRENT_DATE, '%Y-%m')
             WHERE process.enabled = 1
-              AND process.process_name <> '人行大集中'
+              AND process.process_code <> 'pbc_central'
             ORDER BY process.display_order, process.process_code
             """
         ),
@@ -233,8 +233,8 @@ class SystemDataPreviewExecutor:
                 raw_rows = list(result.fetchmany(self.preview_limit + 1))
         except ValidationError:
             raise
-        except Exception:
-            raise ValidationError("系统数据读取失败，请确认对应功能及数据表已初始化") from None
+        except Exception as error:
+            raise ValidationError(_query_failure_message(error)) from None
 
         normalized_columns = [column.lower() for column in columns]
         if len(set(normalized_columns)) != len(normalized_columns):

@@ -13,7 +13,7 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     assert payload["id"] == "dashboard_management"
     assert payload["required"] is False
     assert payload["api_prefix"] == "/api/modules/dashboard-management"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["permissions"] == [
         "dashboard_management.view",
         "dashboard_management.manage",
@@ -51,6 +51,19 @@ def test_initial_migration_creates_only_three_dashboard_management_tables() -> N
     assert sql.count("FOREIGN KEY (region_id) REFERENCES dashboard_management_regions (id)") == 2
 
 
+def test_second_migration_creates_year_snapshot_table_with_period_uniqueness() -> None:
+    sql = (MODULE_ROOT / "migrations" / "002_year_snapshots.sql").read_text(encoding="utf-8")
+
+    assert sql.count("CREATE TABLE dashboard_management_year_snapshots") == 1
+    assert "UNIQUE KEY uq_dashboard_management_year_snapshot_period" in sql
+    assert "(region_id, period_year, period_type, period_value)" in sql
+    assert (
+        "FOREIGN KEY (region_id) REFERENCES dashboard_management_regions (id)"
+        in sql
+    )
+    assert "INSERT " not in sql.upper()
+
+
 def test_module_registers_schema_for_all_dashboard_management_tables() -> None:
     from auto_check.app.module_system.schema import ModuleSchemaRegistry
     from auto_check.modules.dashboard_management.module import create_module
@@ -70,6 +83,10 @@ def test_module_registers_schema_for_all_dashboard_management_tables() -> None:
         "dashboard_management_source_configs": {
             "region_id", "source_mode", "datasource_id", "sql_text", "tested_signature",
             "tested_at", "row_version",
+        },
+        "dashboard_management_year_snapshots": {
+            "id", "region_id", "period_year", "period_type", "period_value", "row_json",
+            "source_refreshed_at", "created_at", "updated_at",
         },
     }
     assert registry.declared_table_names == frozenset(expected)

@@ -1,6 +1,7 @@
 import { button, labeledControl, node } from "./dom.js";
 
-function statusText(status, sourceMode) {
+export function sourceTestStatusText(status, sourceMode, errorMessage = "") {
+  if (status === "failed" && errorMessage) return errorMessage;
   if (sourceMode === "system") {
     if (status === "passed") return "系统数据预览已更新";
     if (status === "running") return "正在读取系统数据…";
@@ -51,7 +52,7 @@ export function renderSourceEditor({ region, draft, datasources, canManage, canT
     section.append(generatedSqlControl);
     const actions = node("div", { className: "dm-source-actions" });
     const previewButton = button("预览系统数据", "dm-button dm-button-secondary", onTest, { disabled: !canTest || pending || draft.testStatus === "running" });
-    actions.append(previewButton, node("p", { className: `dm-test-status is-${draft.testStatus}`, text: statusText(draft.testStatus, "system") }));
+    actions.append(previewButton, node("p", { className: `dm-test-status is-${draft.testStatus}`, text: sourceTestStatusText(draft.testStatus, "system", draft.testError) }));
     section.append(actions);
     return section;
   }
@@ -71,11 +72,11 @@ export function renderSourceEditor({ region, draft, datasources, canManage, canT
   section.append(sqlControl);
   const actions = node("div", { className: "dm-source-actions" });
   const testButton = button("测试执行", "dm-button dm-button-secondary", onTest, { disabled: !canTest || pending || draft.testStatus === "running" });
-  const testStatus = node("p", { className: `dm-test-status is-${draft.testStatus}`, text: statusText(draft.testStatus, "sql") });
+  const testStatus = node("p", { className: `dm-test-status is-${draft.testStatus}`, text: sourceTestStatusText(draft.testStatus, "sql", draft.testError) });
   const syncTestState = (nextDraft) => {
     testButton.disabled = !canTest || pending || nextDraft.testStatus === "running";
     testStatus.className = `dm-test-status is-${nextDraft.testStatus}`;
-    testStatus.textContent = statusText(nextDraft.testStatus, "sql");
+    testStatus.textContent = sourceTestStatusText(nextDraft.testStatus, "sql", nextDraft.testError);
   };
   datasource.addEventListener("change", () => syncTestState(onDatasource(datasource.value) || draft));
   sqlText.addEventListener("input", () => {

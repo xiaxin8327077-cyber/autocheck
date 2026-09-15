@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Mapping
+import json
+from typing import Any, Mapping, Sequence
 
 from sqlalchemy import (
     BigInteger,
@@ -19,12 +20,14 @@ from sqlalchemy import (
     delete,
     insert,
     select,
+    or_,
     update,
 )
 from sqlalchemy.exc import IntegrityError
 
 from .catalog import BOARD_CATALOG, BUILTIN_FIELD_SEEDS, BUILTIN_REGION_SEEDS
 from .contracts import VersionConflictError
+from .year_snapshots import INITIAL_2026_SNAPSHOT_ROWS, SnapshotRow
 
 
 class SchemaVersionConflictError(VersionConflictError):
@@ -94,10 +97,47 @@ SOURCE_CONFIGS = Table(
     Column("updated_at", DateTime, nullable=False),
     Column("row_version", BigInteger, nullable=False),
 )
+YEAR_SNAPSHOTS = Table(
+    "dashboard_management_year_snapshots",
+    METADATA,
+    Column("id", IDENTIFIER_TYPE, primary_key=True, autoincrement=True),
+    Column(
+        "region_id",
+        IDENTIFIER_TYPE,
+        ForeignKey("dashboard_management_regions.id"),
+        nullable=False,
+    ),
+    Column("period_year", Integer, nullable=False),
+    Column("period_type", String(16), nullable=False),
+    Column("period_value", Integer, nullable=False),
+    Column("row_json", Text, nullable=False),
+    Column("source_refreshed_at", DateTime),
+    Column("created_at", DateTime, nullable=False),
+    Column("updated_at", DateTime, nullable=False),
+    UniqueConstraint(
+        "region_id",
+        "period_year",
+        "period_type",
+        "period_value",
+        name="uq_dashboard_management_year_snapshot_period",
+    ),
+)
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _database_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _snapshot_json(row: Mapping[str, Any]) -> str:
+    return json.dumps(
+        dict(row), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
 
 
 def _row(result: Any) -> dict[str, Any] | None:
@@ -227,6 +267,214 @@ class DashboardManagementStorage:
                         updated_at=now,
                         row_version=1,
                     ))
+            self._seed_initial_year_snapshots_with_connection(connection, regions_by_code, now)
+
+    def seed_initial_year_snapshots(self) -> None:
+        """Add the confirmed 2026 baseline without replacing collected values."""
+        now = _now()
+        with self.database.transaction() as connection:
+            regions_by_code = {
+                str(row["region_code"]): int(row["id"])
+                for row in _rows(connection.execute(
+                    select(REGIONS.c.id, REGIONS.c.region_code).where(
+                        REGIONS.c.region_code.in_(tuple(INITIAL_2026_SNAPSHOT_ROWS))
+                    )
+                ))
+            }
+            self._seed_initial_year_snapshots_with_connection(
+                connection, regions_by_code, now
+            )
+
+    def upsert_year_snapshots(
+        self,
+        region_id: int,
+        rows: Sequence[SnapshotRow],
+        refreshed_at: datetime,
+    ) -> None:
+        if not rows:
+            return
+        normalized_refreshed_at = _database_datetime(refreshed_at)
+        try:
+            self._upsert_year_snapshots(region_id, rows, normalized_refreshed_at)
+        except IntegrityError:
+            # A concurrent preview can insert the same period after our UPDATE
+            # misses it. Retrying turns that race into an UPDATE.
+            self._upsert_year_snapshots(region_id, rows, normalized_refreshed_at)
+
+    def refresh_year_snapshots(
+        self,
+        region_id: int,
+        rows: Sequence[SnapshotRow],
+        *,
+        period_year: int,
+        refreshed_at: datetime,
+    ) -> list[dict[str, Any]]:
+        """Upsert live rows and read the merged year in one transaction.
+
+        A result collected earlier cannot replace a newer snapshot when two
+        board preview requests finish out of order.
+        """
+        normalized_refreshed_at = _database_datetime(refreshed_at)
+        try:
+            return self._refresh_year_snapshots(
+                region_id, rows, period_year, normalized_refreshed_at
+            )
+        except IntegrityError:
+            # Another request can win the initial INSERT race. Retrying sees
+            # that row and applies the timestamp guard before returning it.
+            return self._refresh_year_snapshots(
+                region_id, rows, period_year, normalized_refreshed_at
+            )
+
+    def list_year_snapshots(
+        self, region_id: int, period_year: int
+    ) -> list[dict[str, Any]]:
+        statement = self._year_snapshot_statement(region_id, period_year)
+        with self.database.connect() as connection:
+            stored = _rows(connection.execute(statement))
+        return self._deserialize_year_snapshots(stored)
+
+    @staticmethod
+    def _year_snapshot_statement(region_id: int, period_year: int) -> Any:
+        return (
+            select(YEAR_SNAPSHOTS)
+            .where(and_(
+                YEAR_SNAPSHOTS.c.region_id == region_id,
+                YEAR_SNAPSHOTS.c.period_year == period_year,
+            ))
+            .order_by(
+                YEAR_SNAPSHOTS.c.period_type.asc(),
+                YEAR_SNAPSHOTS.c.period_value.asc(),
+                YEAR_SNAPSHOTS.c.id.asc(),
+            )
+        )
+
+    @staticmethod
+    def _deserialize_year_snapshots(
+        stored: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        snapshots: list[dict[str, Any]] = []
+        for item in stored:
+            try:
+                row = json.loads(str(item.pop("row_json")))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise ValueError("快照数据无效") from None
+            if not isinstance(row, dict) or any(not isinstance(key, str) for key in row):
+                raise ValueError("快照数据无效")
+            item["row"] = row
+            snapshots.append(item)
+        return snapshots
+
+    def _refresh_year_snapshots(
+        self,
+        region_id: int,
+        rows: Sequence[SnapshotRow],
+        period_year: int,
+        refreshed_at: datetime,
+    ) -> list[dict[str, Any]]:
+        with self.database.transaction() as connection:
+            self._upsert_year_snapshots_with_connection(
+                connection, region_id, rows, refreshed_at
+            )
+            stored = _rows(connection.execute(
+                self._year_snapshot_statement(region_id, period_year)
+            ))
+        return self._deserialize_year_snapshots(stored)
+
+    def _upsert_year_snapshots(
+        self,
+        region_id: int,
+        rows: Sequence[SnapshotRow],
+        refreshed_at: datetime,
+    ) -> None:
+        now = _now()
+        with self.database.transaction() as connection:
+            self._upsert_year_snapshots_with_connection(
+                connection, region_id, rows, refreshed_at, now=now
+            )
+
+    @staticmethod
+    def _upsert_year_snapshots_with_connection(
+        connection: Any,
+        region_id: int,
+        rows: Sequence[SnapshotRow],
+        refreshed_at: datetime,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        written_at = now or _now()
+        for snapshot in rows:
+            key = and_(
+                YEAR_SNAPSHOTS.c.region_id == region_id,
+                YEAR_SNAPSHOTS.c.period_year == snapshot.period_year,
+                YEAR_SNAPSHOTS.c.period_type == snapshot.period_type,
+                YEAR_SNAPSHOTS.c.period_value == snapshot.period_value,
+            )
+            values = {
+                "row_json": _snapshot_json(snapshot.row),
+                "source_refreshed_at": refreshed_at,
+                "updated_at": written_at,
+            }
+            result = connection.execute(
+                update(YEAR_SNAPSHOTS)
+                .where(and_(
+                    key,
+                    or_(
+                        YEAR_SNAPSHOTS.c.source_refreshed_at.is_(None),
+                        YEAR_SNAPSHOTS.c.source_refreshed_at <= refreshed_at,
+                    ),
+                ))
+                .values(**values)
+            )
+            if result.rowcount != 0:
+                continue
+            exists = connection.execute(
+                select(YEAR_SNAPSHOTS.c.id).where(key)
+            ).first()
+            if exists is not None:
+                continue
+            connection.execute(insert(YEAR_SNAPSHOTS).values(
+                region_id=region_id,
+                period_year=snapshot.period_year,
+                period_type=snapshot.period_type,
+                period_value=snapshot.period_value,
+                **values,
+                created_at=written_at,
+            ))
+
+    @staticmethod
+    def _seed_initial_year_snapshots_with_connection(
+        connection: Any,
+        regions_by_code: Mapping[str, int],
+        now: datetime,
+    ) -> None:
+        for region_code, snapshots in INITIAL_2026_SNAPSHOT_ROWS.items():
+            region_id = regions_by_code.get(region_code)
+            if region_id is None:
+                continue
+            existing = {
+                (str(period_type), int(period_value))
+                for period_type, period_value in connection.execute(
+                    select(YEAR_SNAPSHOTS.c.period_type, YEAR_SNAPSHOTS.c.period_value)
+                    .where(and_(
+                        YEAR_SNAPSHOTS.c.region_id == region_id,
+                        YEAR_SNAPSHOTS.c.period_year == 2026,
+                    ))
+                ).all()
+            }
+            for snapshot in snapshots:
+                if (snapshot.period_type, snapshot.period_value) in existing:
+                    continue
+                connection.execute(insert(YEAR_SNAPSHOTS).values(
+                    region_id=region_id,
+                    period_year=snapshot.period_year,
+                    period_type=snapshot.period_type,
+                    period_value=snapshot.period_value,
+                    row_json=_snapshot_json(snapshot.row),
+                    source_refreshed_at=None,
+                    created_at=now,
+                    updated_at=now,
+                ))
 
     def list_regions(
         self, board_code: str, include_disabled: bool = True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -251,3 +252,342 @@ def test_board_preview_returns_each_enabled_region_without_one_failure_blocking_
     assert preview["regions"][0]["fields"] == [{"alias": "value", "name": "指标值", "value_type": "integer"}]
     assert preview["regions"][1]["rows"] == ({"value": 2},)
     assert preview["regions"][2]["error"] == {"code": "invalid_request", "message": "自定义 SQL 尚未完成配置"}
+
+
+def test_snapshot_preview_prefers_sql_rows_and_preserves_unreturned_history(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    trust = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "monthly_trust_projects"
+    )
+    source_config = storage.get_source_config(trust["id"])
+    storage.save_source_config(
+        trust["id"],
+        {
+            "source_mode": "sql",
+            "datasource_id": "safe",
+            "sql_text": "SELECT snapshot rows",
+            "tested_signature": "valid",
+            "tested_at": datetime(2026, 9, 15, 8, 0),
+            "tested_by": "admin",
+        },
+        source_config["row_version"],
+        expected_region_version=trust["row_version"],
+    )
+
+    class SqlExecutor:
+        def signature_for(self, source, sql, active_fields, shape):
+            return "valid"
+
+        def execute(self, source, sql, active_fields, shape):
+            return QueryPreview(
+                columns=tuple(field["field_alias"] for field in active_fields),
+                rows=(
+                    {
+                        "month": "6月",
+                        "single_trust_count": 400,
+                        "collective_trust_count": 500,
+                        "property_trust_count": 600,
+                    },
+                    {
+                        "month": "7月",
+                        "single_trust_count": 1,
+                        "collective_trust_count": 2,
+                        "property_trust_count": 3,
+                    },
+                    {
+                        "month": "10月",
+                        "single_trust_count": 10,
+                        "collective_trust_count": 20,
+                        "property_trust_count": 30,
+                    },
+                ),
+                has_more=False,
+                returned_count=3,
+                tested_signature="valid",
+            )
+
+    now = datetime(2026, 9, 15, 10, 30)
+    result = DashboardManagementService(
+        storage,
+        datasource_loader=lambda: [{"id": "safe", "config": object()}],
+        sql_executor=SqlExecutor(),
+        now=lambda: now,
+    ).preview_board_data("report_submission", {})
+    item = next(region for region in result["regions"] if region["code"] == trust["region_code"])
+
+    assert item["status"] == "success"
+    assert item["snapshot_status"] == "fresh"
+    assert item["snapshot_refreshed_at"] == "2026-09-15T10:30:00"
+    assert item["returned_count"] == 7
+    assert [row["month"] for row in item["rows"]] == [
+        "1月", "2月", "3月", "4月", "5月", "6月", "7月",
+    ]
+    assert item["rows"][0]["single_trust_count"] == 7
+    assert item["rows"][5]["single_trust_count"] == 400
+    assert item["rows"][6]["single_trust_count"] == 1
+    assert [row["period_value"] for row in storage.list_year_snapshots(trust["id"], 2026)] == [
+        1, 2, 3, 4, 5, 6, 7,
+    ]
+
+
+def test_snapshot_preview_falls_back_to_current_year_history_when_live_query_fails(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    class FailingSystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            raise RuntimeError("driver leaked details must not be returned")
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=FailingSystemExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region
+        for region in result["regions"]
+        if region["code"] == "report_reconciliation_completion_time"
+    )
+
+    assert item["status"] == "success"
+    assert item["snapshot_status"] == "stale"
+    assert item["snapshot_refreshed_at"] is None
+    assert item["returned_count"] == 6
+    assert [row["month"] for row in item["rows"]] == [
+        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
+    ]
+    assert "driver" not in str(item)
+
+
+def test_quarterly_snapshot_preview_returns_future_quarter_as_zero_without_persisting(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    quarterly = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+
+    class SystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if region_code != "quarterly_special_processing":
+                raise RuntimeError("unrelated system region")
+            preview = QueryPreview(
+                columns=("quarter", "special_processing_count"),
+                rows=({"quarter": "第3季度", "special_processing_count": 12},),
+                has_more=False,
+                returned_count=1,
+                tested_signature="",
+            )
+            return type("Result", (), {"preview": preview})()
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=SystemExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region
+        for region in result["regions"]
+        if region["code"] == "quarterly_special_processing"
+    )
+
+    assert item["status"] == "success"
+    assert item["rows"] == (
+        {"quarter": "第1季度", "special_processing_count": 31},
+        {"quarter": "第2季度", "special_processing_count": 34},
+        {"quarter": "第3季度", "special_processing_count": 12},
+        {"quarter": "第4季度", "special_processing_count": 0},
+    )
+    assert [
+        row["period_value"]
+        for row in storage.list_year_snapshots(quarterly["id"], 2026)
+    ] == [1, 2, 3]
+
+
+def test_snapshot_preview_without_current_year_history_keeps_existing_error(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    class FailingSystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            raise RuntimeError("database failure")
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=FailingSystemExecutor(),
+        now=lambda: datetime(2027, 1, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region
+        for region in result["regions"]
+        if region["code"] == "report_reconciliation_completion_time"
+    )
+
+    assert item["status"] == "error"
+    assert item["error"] == {"code": "internal_error", "message": "数据读取失败"}
+    assert "snapshot_status" not in item
+
+
+def test_default_snapshot_executors_can_read_all_twelve_months_without_changing_editor_limit(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    service = DashboardManagementService(storage)
+
+    assert service._sql_executor.preview_limit == 10
+    assert service._system_executor.preview_limit == 10
+    assert service._snapshot_sql_executor.preview_limit == 12
+    assert service._snapshot_system_executor.preview_limit == 12
+
+
+def test_snapshot_preview_uses_one_request_time_for_all_regions_and_fallback(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    calls = []
+
+    def changing_clock():
+        calls.append(len(calls))
+        return (
+            datetime(2026, 12, 31, 23, 59)
+            if len(calls) == 1
+            else datetime(2027, 1, 1, 0, 0)
+        )
+
+    class FailingSystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            raise RuntimeError("database failure")
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=FailingSystemExecutor(),
+        now=changing_clock,
+    ).preview_board_data("report_submission", {})
+    completion = next(
+        item
+        for item in result["regions"]
+        if item["code"] == "report_reconciliation_completion_time"
+    )
+
+    assert calls == [0]
+    assert completion["snapshot_status"] == "stale"
+    assert completion["returned_count"] == 6
+
+
+def test_snapshot_preview_rejects_truncated_live_result_without_overwriting_history(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    trust = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "monthly_trust_projects"
+    )
+    source_config = storage.get_source_config(trust["id"])
+    storage.save_source_config(
+        trust["id"],
+        {
+            "source_mode": "sql",
+            "datasource_id": "safe",
+            "sql_text": "SELECT too many snapshot rows",
+            "tested_signature": "valid",
+            "tested_at": datetime(2026, 9, 15, 8, 0),
+            "tested_by": "admin",
+        },
+        source_config["row_version"],
+        expected_region_version=trust["row_version"],
+    )
+
+    class TruncatedSqlExecutor:
+        def signature_for(self, source, sql, active_fields, shape):
+            return "valid"
+
+        def execute(self, source, sql, active_fields, shape):
+            return QueryPreview(
+                columns=tuple(field["field_alias"] for field in active_fields),
+                rows=({"month": "6月", "single_trust_count": 999},),
+                has_more=True,
+                returned_count=1,
+                tested_signature="valid",
+            )
+
+    result = DashboardManagementService(
+        storage,
+        datasource_loader=lambda: [{"id": "safe", "config": object()}],
+        sql_executor=TruncatedSqlExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(region for region in result["regions"] if region["code"] == trust["region_code"])
+
+    assert item["snapshot_status"] == "stale"
+    assert item["rows"][5]["single_trust_count"] == 4
+
+
+def test_snapshot_rows_follow_active_fields_and_fill_new_field_with_null(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    trust = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "monthly_trust_projects"
+    )
+    property_field = next(
+        field
+        for field in storage.list_fields(trust["id"])
+        if field["field_alias"] == "property_trust_count"
+    )
+    storage.update_field(
+        property_field["id"], {"enabled": False}, property_field["row_version"]
+    )
+    storage.create_field(trust["id"], {
+        "field_alias": "new_metric",
+        "name": "新增指标",
+        "value_type": "integer",
+        "nullable": True,
+        "description": "新增后旧快照中尚无值",
+        "display_order": 50,
+    })
+
+    result = DashboardManagementService(
+        storage,
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(region for region in result["regions"] if region["code"] == trust["region_code"])
+
+    assert item["snapshot_status"] == "stale"
+    assert item["columns"] == (
+        "month", "single_trust_count", "collective_trust_count", "new_metric"
+    )
+    assert set(item["rows"][0]) == set(item["columns"])
+    assert item["rows"][0]["new_metric"] is None
+
+
+def test_snapshot_region_does_not_fallback_when_required_period_field_is_disabled(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    completion = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "report_reconciliation_completion_time"
+    )
+    month_field = next(
+        field
+        for field in storage.list_fields(completion["id"])
+        if field["field_alias"] == "month"
+    )
+    storage.update_field(month_field["id"], {"enabled": False}, month_field["row_version"])
+
+    result = DashboardManagementService(
+        storage,
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(region for region in result["regions"] if region["code"] == completion["region_code"])
+
+    assert item["status"] == "error"
+    assert item["error"] == {
+        "code": "invalid_request",
+        "message": "快照区域必须启用周期字段：month",
+    }
+    assert "snapshot_status" not in item

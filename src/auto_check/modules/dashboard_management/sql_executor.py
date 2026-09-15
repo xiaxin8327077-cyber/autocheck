@@ -113,8 +113,8 @@ class SqlPreviewExecutor:
             columns, rows = self._query(source, sql)
         except ValidationError:
             raise
-        except Exception:
-            raise ValidationError("查询执行失败，请检查数据源和查询条件") from None
+        except Exception as error:
+            raise ValidationError(_query_failure_message(error)) from None
         required_aliases = [_field_value(field, "field_alias") for field in active_fields]
         normalized_columns = [str(column).lower() for column in columns]
         if len(set(normalized_columns)) != len(normalized_columns):
@@ -206,6 +206,82 @@ class SqlPreviewExecutor:
                 write_timeout=self.query_timeout_seconds,
             )
         raise ValidationError("不支持的数据源类型")
+
+
+def _query_failure_message(error: Exception) -> str:
+    """Turn driver failures into useful messages without exposing credentials."""
+    detail = str(error)
+    lowered = detail.lower()
+
+    relation = re.search(
+        r"\brelation\s+[\"'`]?([a-z_][a-z0-9_$.]*)[\"'`]?\s+does\s+not\s+exist\b",
+        detail,
+        re.IGNORECASE,
+    )
+    table = re.search(
+        r"\btable\s+[\"'`]([a-z_][a-z0-9_$.]*)[\"'`]\s+doesn?'?t\s+exist\b",
+        detail,
+        re.IGNORECASE,
+    )
+    missing_table = relation or table
+    if missing_table:
+        return f"查询失败：数据表不存在：{missing_table.group(1)}"
+
+    unknown_column = re.search(
+        r"\bunknown\s+column\s+[\"'`]([a-z_][a-z0-9_$.]*)[\"'`]",
+        detail,
+        re.IGNORECASE,
+    )
+    missing_column = re.search(
+        r"\bcolumn\s+[\"'`]?([a-z_][a-z0-9_$.]*)[\"'`]?\s+does\s+not\s+exist\b",
+        detail,
+        re.IGNORECASE,
+    )
+    column = unknown_column or missing_column
+    if column:
+        return f"查询失败：字段不存在：{column.group(1)}"
+
+    if "unknown database" in lowered or re.search(
+        r"\bdatabase\s+[\"'`][^\"'`]+[\"'`]\s+does\s+not\s+exist\b",
+        detail,
+        re.IGNORECASE,
+    ):
+        return "查询失败：指定数据库不存在"
+    if "syntax error" in lowered or "error in your sql syntax" in lowered or "parse error" in lowered:
+        return "查询失败：SQL 语法错误，请检查查询语句"
+    if any(item in lowered for item in (
+        "access denied", "permission denied", "authentication failed",
+        "not authorized", "insufficient privilege",
+    )):
+        return "查询失败：数据库认证或查询权限不足"
+    if any(item in lowered for item in (
+        "timed out", "timeout", "statement timeout", "query execution was interrupted",
+        "lock wait timeout",
+    )):
+        return "查询失败：数据库连接或查询超时"
+    if any(item in lowered for item in (
+        "can't connect", "cannot connect", "connection refused", "connection reset",
+        "lost connection", "server closed the connection", "network is unreachable",
+    )):
+        return "查询失败：无法连接数据源或数据库连接已中断"
+    if any(item in lowered for item in (
+        "invalid input syntax", "invalid datetime format", "date/time field value out of range",
+        "incorrect date value", "incorrect datetime value", "truncated incorrect",
+    )):
+        return "查询失败：查询值或日期格式不符合数据库要求"
+    if "must appear in the group by" in lowered or "isn't in group by" in lowered:
+        return "查询失败：聚合字段与 GROUP BY 不匹配"
+    if "ambiguous" in lowered and "column" in lowered:
+        return "查询失败：查询中存在含义不明确的同名字段"
+    if "division by zero" in lowered:
+        return "查询失败：查询表达式发生除零错误"
+    if "function" in lowered and "does not exist" in lowered:
+        return "查询失败：数据库函数不存在或参数类型不匹配"
+    if any(item in lowered for item in ("operator does not exist", "cannot cast", "type mismatch")):
+        return "查询失败：查询表达式的数据类型不匹配"
+    if "does not exist" in lowered:
+        return "查询失败：查询引用的数据库对象不存在"
+    return "查询执行失败，请检查数据源、查询条件和字段类型"
 
 
 def _active_fields(fields: Sequence[Any]) -> list[Any]:

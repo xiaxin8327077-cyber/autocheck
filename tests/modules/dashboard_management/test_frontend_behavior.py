@@ -29,10 +29,11 @@ import assert from "node:assert/strict";
 import {
   activateLifecycle, applyCatalog, createState, currentDraft, hasPermission, markSqlChanged,
   beginPending, captureRequest, discardDraft, endPending, isTokenCurrent, markSaved,
-  previewRows, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode,
+  markPreviewFailed, previewRows, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode,
   startRequest, stopRequests, SELECTION_STORAGE_KEY,
 } from "./state.mjs";
 import { createApi } from "./api.mjs";
+import { sourceTestStatusText } from "./components/source_editor.mjs";
 await import("./index.mjs");
 
 const catalog = {
@@ -95,6 +96,14 @@ assert.equal(state.selectedRegionByBoard.get("report_submission"), 11);
 assert.equal(currentDraft(state).sql_text, "SELECT month FROM trust");
 markSqlChanged(state, "SELECT changed");
 assert.equal(currentDraft(state).testStatus, "idle");
+assert.equal(currentDraft(state).testError, "");
+const failedToken = captureRequest(state);
+assert.ok(markPreviewFailed(state, failedToken, "查询失败：数据表不存在：missing_table"));
+assert.equal(currentDraft(state).testStatus, "failed");
+assert.equal(currentDraft(state).testError, "查询失败：数据表不存在：missing_table");
+assert.equal(sourceTestStatusText("failed", "sql", currentDraft(state).testError), "查询失败：数据表不存在：missing_table");
+markSqlChanged(state, "SELECT changed again");
+assert.equal(currentDraft(state).testError, "");
 assert.deepEqual(previewRows([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }, { n: 5 }, { n: 6 }, { n: 7 }, { n: 8 }, { n: 9 }, { n: 10 }, { n: 11 }]), Array.from({ length: 10 }, (_, index) => ({ n: index + 1 })));
 assert.equal(await requestLeave(state, async () => false), false);
 assert.equal(await requestLeave(state, async () => true), true);
@@ -117,6 +126,7 @@ assert.equal(isTokenCurrent(state, token), false);
 recordPreview(state, token, { rows: [{ month: "2024-01" }], columns: ["month"], row_version: 9 });
 assert.equal(state.drafts.get("report_submission:11").row_version, 9);
 assert.equal(state.drafts.get("report_submission:11").testStatus, "passed");
+assert.equal(state.drafts.get("report_submission:11").testError, "");
 assert.equal(currentDraft(state).region_id, 22);
 assert.equal(currentDraft(state).preview, null);
 markSaved(state, token, { row_version: 10, source_mode: "sql" });

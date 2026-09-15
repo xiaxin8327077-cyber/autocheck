@@ -221,6 +221,41 @@ def test_preview_desensitizes_driver_errors(monkeypatch):
     assert "secret" not in rendered and "db.internal" not in rendered and "C:/" not in rendered
 
 
+@pytest.mark.parametrize(
+    ("driver_message", "expected"),
+    [
+        ('relation "missing_table" does not exist', "查询失败：数据表不存在：missing_table"),
+        ("Table 'reporting.missing_table' doesn't exist", "查询失败：数据表不存在：reporting.missing_table"),
+        ("Unknown column 'bad_field' in 'field list'", "查询失败：字段不存在：bad_field"),
+        ('column "bad_field" does not exist', "查询失败：字段不存在：bad_field"),
+        ('syntax error at or near "FROM"', "查询失败：SQL 语法错误，请检查查询语句"),
+        ("connection timed out for host db.internal", "查询失败：数据库连接或查询超时"),
+        ("Access denied for user 'reader'@'db.internal'", "查询失败：数据库认证或查询权限不足"),
+        ("invalid input syntax for type date: 2026/99/99", "查询失败：查询值或日期格式不符合数据库要求"),
+    ],
+)
+def test_preview_returns_safe_specific_driver_error(driver_message, expected, monkeypatch):
+    from auto_check.modules.dashboard_management.sql_executor import SqlPreviewExecutor
+    from auto_check.modules.dashboard_management.validator import ValidationError
+
+    class BrokenConnection:
+        def cursor(self):
+            raise RuntimeError(driver_message)
+
+        def close(self):
+            pass
+
+    _install_driver(monkeypatch, "postgresql", BrokenConnection())
+    with pytest.raises(ValidationError) as error:
+        SqlPreviewExecutor().execute(
+            _source(), "SELECT safe", _fields(("value", "integer", True)), "list"
+        )
+
+    rendered = str(error.value)
+    assert rendered == expected
+    assert "db.internal" not in rendered
+
+
 def test_postgresql_plain_string_backslash_cannot_hide_second_dblink_statement(monkeypatch):
     from auto_check.modules.dashboard_management.sql_executor import SqlPreviewExecutor
     from auto_check.modules.dashboard_management.validator import ValidationError

@@ -43,11 +43,15 @@ class DashboardManagementModule:
             "region_id", "source_mode", "datasource_id", "sql_text", "tested_signature", "tested_at",
             "tested_by", "created_at", "updated_at", "row_version",
         })
+        registry.add("dashboard_management_year_snapshots", {
+            "id", "region_id", "period_year", "period_type", "period_value", "row_json",
+            "source_refreshed_at", "created_at", "updated_at",
+        })
 
     def start(self, context: Any) -> None:
         self._storage = DashboardManagementStorage(context.application_database)
         self._storage.seed_builtin_catalog()
-        self._service = DashboardManagementService(self._storage)
+        self._service = DashboardManagementService(self._storage, now=context.now)
 
     def stop(self) -> None:
         self._service = None

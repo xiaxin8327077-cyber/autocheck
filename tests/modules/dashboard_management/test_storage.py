@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -59,6 +60,134 @@ def test_seed_builtin_catalog_is_idempotent_and_preserves_admin_enabled_and_orde
     assert preserved["enabled"] is False
     assert preserved["display_order"] == 999
     assert storage.get_source_config(trust["id"])["source_mode"] == "sql"
+
+
+def test_initial_year_snapshots_use_confirmed_month_and_quarter_cutoffs(storage) -> None:
+    report_regions = {
+        row["region_code"]: row
+        for row in storage.list_regions("report_submission")
+    }
+
+    trust_rows = storage.list_year_snapshots(
+        report_regions["monthly_trust_projects"]["id"], 2026
+    )
+    completion_rows = storage.list_year_snapshots(
+        report_regions["report_reconciliation_completion_time"]["id"], 2026
+    )
+    validation_rows = storage.list_year_snapshots(
+        report_regions["report_validation_issue_handling"]["id"], 2026
+    )
+    quarter_rows = storage.list_year_snapshots(
+        report_regions["quarterly_special_processing"]["id"], 2026
+    )
+
+    assert [row["period_value"] for row in trust_rows] == [1, 2, 3, 4, 5, 6]
+    assert trust_rows[-1]["row"] == {
+        "month": "6月",
+        "single_trust_count": 4,
+        "collective_trust_count": 52,
+        "property_trust_count": 77,
+    }
+    assert [row["row"]["reconciliation_completed_at"] for row in completion_rows] == [
+        "21:00", "20:00", "19:00", "01:00", "23:00", "20:00",
+    ]
+    assert [row["period_value"] for row in validation_rows] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [row["row"]["validation_issue_count"] for row in validation_rows] == [
+        75, 52, 42, 60, 16, 23, 25, 20,
+    ]
+    assert [row["period_value"] for row in quarter_rows] == [1, 2]
+    assert [row["row"]["special_processing_count"] for row in quarter_rows] == [31, 34]
+
+    before = (trust_rows, completion_rows, validation_rows, quarter_rows)
+    storage.seed_initial_year_snapshots()
+    after = tuple(
+        storage.list_year_snapshots(report_regions[code]["id"], 2026)
+        for code in (
+            "monthly_trust_projects",
+            "report_reconciliation_completion_time",
+            "report_validation_issue_handling",
+            "quarterly_special_processing",
+        )
+    )
+    assert after == before
+
+
+def test_year_snapshot_upsert_overwrites_returned_period_and_preserves_missing_period(storage) -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    trust = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "monthly_trust_projects"
+    )
+    refreshed_at = datetime(2026, 7, 15, 9, 30)
+    storage.upsert_year_snapshots(
+        trust["id"],
+        (
+            SnapshotRow(2026, "month", 6, {
+                "month": "6月",
+                "single_trust_count": 400,
+                "collective_trust_count": 500,
+                "property_trust_count": 600,
+            }),
+            SnapshotRow(2026, "month", 7, {
+                "month": "7月",
+                "single_trust_count": 1,
+                "collective_trust_count": 2,
+                "property_trust_count": 3,
+            }),
+        ),
+        refreshed_at,
+    )
+
+    rows = storage.list_year_snapshots(trust["id"], 2026)
+    assert [row["period_value"] for row in rows] == [1, 2, 3, 4, 5, 6, 7]
+    assert rows[0]["row"]["single_trust_count"] == 7
+    assert rows[5]["row"]["single_trust_count"] == 400
+    assert rows[5]["source_refreshed_at"] == refreshed_at
+    assert rows[6]["source_refreshed_at"] == refreshed_at
+    assert storage.list_year_snapshots(trust["id"], 2025) == []
+
+
+def test_year_snapshot_refresh_is_atomic_and_older_refresh_cannot_replace_newer_data(storage) -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    trust = next(
+        row
+        for row in storage.list_regions("report_submission")
+        if row["region_code"] == "monthly_trust_projects"
+    )
+    newer_at = datetime(2026, 8, 15, 10, 0)
+    older_at = datetime(2026, 8, 15, 9, 0)
+
+    refreshed = storage.refresh_year_snapshots(
+        trust["id"],
+        (SnapshotRow(2026, "month", 8, {
+            "month": "8月",
+            "single_trust_count": 800,
+            "collective_trust_count": 801,
+            "property_trust_count": 802,
+        }),),
+        period_year=2026,
+        refreshed_at=newer_at,
+    )
+    assert refreshed[-1]["row"]["single_trust_count"] == 800
+
+    refreshed = storage.refresh_year_snapshots(
+        trust["id"],
+        (SnapshotRow(2026, "month", 8, {
+            "month": "8月",
+            "single_trust_count": 8,
+            "collective_trust_count": 9,
+            "property_trust_count": 10,
+        }),),
+        period_year=2026,
+        refreshed_at=older_at,
+    )
+
+    august = refreshed[-1]
+    assert august["row"]["single_trust_count"] == 800
+    assert august["source_refreshed_at"] == newer_at
 
 
 def test_region_and_field_updates_use_row_version_optimistic_locks(storage) -> None:
