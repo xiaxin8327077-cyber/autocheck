@@ -35,6 +35,7 @@ class _ModuleRoute:
     handler: RouteHandler
     permission: str
     max_body_bytes: int
+    external: bool
 
 
 class ModuleRouter:
@@ -53,6 +54,7 @@ class ModuleRouter:
         *,
         permission: str,
         max_body_bytes: int,
+        external: bool = False,
     ) -> None:
         normalized_method = self._normalize_method(method)
         pattern = self._compile_relative_path(path)
@@ -62,6 +64,10 @@ class ModuleRouter:
             raise ValueError("route handler must be callable")
         if type(max_body_bytes) is not int or max_body_bytes < 0:
             raise ValueError("max_body_bytes must be a non-negative integer")
+        if type(external) is not bool:
+            raise ValueError("external must be a boolean")
+        if external and normalized_method != "GET":
+            raise ValueError("external module routes only support GET")
         if any(route.method == normalized_method and route.path == path for route in self._routes):
             raise ModuleRouteConflict(f"duplicate module route: {normalized_method} {path}")
 
@@ -73,19 +79,34 @@ class ModuleRouter:
                 handler=handler,
                 permission=permission,
                 max_body_bytes=max_body_bytes,
+                external=external,
             )
         )
 
     def dispatch(self, request: ModuleRequest, *, body_size: int = 0) -> ModuleHttpResponse | None:
+        return self._dispatch(request, body_size=body_size, external=False)
+
+    def dispatch_external(self, request: ModuleRequest) -> ModuleHttpResponse | None:
+        """Dispatch only GET routes explicitly published for external read-only use."""
+        return self._dispatch(request, body_size=0, external=True)
+
+    def _dispatch(
+        self,
+        request: ModuleRequest,
+        *,
+        body_size: int,
+        external: bool,
+    ) -> ModuleHttpResponse | None:
         if type(body_size) is not int or body_size < 0:
             return ModuleHttpResponse.json(400, {"error": "invalid request"})
-        relative_path = self._relative_path(request.path)
+        relative_path = self._relative_path(request.path, external=external)
         if relative_path is None:
             return None
 
         path_matches = [
             (route, route.pattern.fullmatch(relative_path))
             for route in self._routes
+            if not external or route.external
         ]
         path_matches = [(route, match) for route, match in path_matches if match is not None]
         if not path_matches:
@@ -108,7 +129,9 @@ class ModuleRouter:
         try:
             if body_size > route.max_body_bytes:
                 return ModuleHttpResponse.json(413, {"error": "request body too large"})
-            if not self._permission_evaluator(request.current_user, route.permission):
+            if not external and not self._permission_evaluator(
+                request.current_user, route.permission
+            ):
                 return ModuleHttpResponse.json(403, {"error": "permission denied"})
             path_params = {
                 name: unquote(value)
@@ -131,11 +154,23 @@ class ModuleRouter:
 
     def preflight(self, method: str, path: str) -> ModuleRoutePreflight | None:
         """Resolve a route's request-size contract without invoking module code."""
-        relative_path = self._relative_path(path)
+        return self._preflight(method, path, external=False)
+
+    def external_preflight(self, method: str, path: str) -> ModuleRoutePreflight | None:
+        """Resolve only routes explicitly published for external read-only use."""
+        return self._preflight(method, path, external=True)
+
+    def _preflight(
+        self, method: str, path: str, *, external: bool
+    ) -> ModuleRoutePreflight | None:
+        relative_path = self._relative_path(path, external=external)
         if relative_path is None:
             return None
         path_matches = [
-            route for route in self._routes if route.pattern.fullmatch(relative_path) is not None
+            route
+            for route in self._routes
+            if (not external or route.external)
+            and route.pattern.fullmatch(relative_path) is not None
         ]
         if not path_matches:
             return ModuleRoutePreflight(status=404)
@@ -148,8 +183,13 @@ class ModuleRouter:
             )
         return ModuleRoutePreflight(status=200, max_body_bytes=method_matches[0].max_body_bytes)
 
-    def _relative_path(self, path: str) -> str | None:
-        prefix = self._manifest.api_prefix
+    def _relative_path(self, path: str, *, external: bool) -> str | None:
+        prefix = (
+            "/api/external/v1/"
+            + self._manifest.api_prefix.removeprefix("/api/modules/")
+            if external
+            else self._manifest.api_prefix
+        )
         if path == prefix:
             return "/"
         if not path.startswith(f"{prefix}/"):

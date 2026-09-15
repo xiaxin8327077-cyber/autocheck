@@ -878,6 +878,71 @@ def test_runtime_returns_404_for_disabled_module_routes(runtime_factory):
     assert response == ModuleHttpResponse.json(404, {"error": "module route not found"})
 
 
+def test_runtime_dispatches_only_enabled_explicit_external_routes(
+    isolated_runtime_factory,
+):
+    calls = []
+
+    class ExternalModule(_LifecycleModule):
+        def register_routes(self, router):
+            router.add(
+                "GET",
+                "/published",
+                lambda request: ModuleHttpResponse.json(
+                    200,
+                    {
+                        "query": dict(request.query),
+                        "current_user": dict(request.current_user),
+                    },
+                ),
+                permission="alpha.view",
+                max_body_bytes=0,
+                external=True,
+            )
+            router.add(
+                "GET",
+                "/internal-only",
+                lambda request: ModuleHttpResponse.json(200, {}),
+                permission="alpha.view",
+                max_body_bytes=0,
+            )
+
+    runtime = isolated_runtime_factory(
+        [ExternalModule(_manifest("alpha"), calls)]
+    )
+    runtime.start()
+
+    assert runtime.external_preflight(
+        method="GET", path="/api/external/v1/alpha/published"
+    ).status == 200
+    assert runtime.external_preflight(
+        method="POST", path="/api/external/v1/alpha/published"
+    ).status == 405
+    assert runtime.external_preflight(
+        method="GET", path="/api/external/v1/alpha/internal-only"
+    ).status == 404
+    response = runtime.dispatch_external(
+        method="GET",
+        path="/api/external/v1/alpha/published",
+        query={"period": "2026-09"},
+    )
+
+    assert response == ModuleHttpResponse.json(
+        200,
+        {"query": {"period": "2026-09"}, "current_user": {}},
+    )
+
+    runtime.set_enabled("alpha", False, {"role": "admin"})
+    assert runtime.external_preflight(
+        method="GET", path="/api/external/v1/alpha/published"
+    ).status == 404
+    assert runtime.dispatch_external(
+        method="GET",
+        path="/api/external/v1/alpha/published",
+        query={},
+    ) == ModuleHttpResponse.json(404, {"error": "module route not found"})
+
+
 def test_runtime_reads_assets_only_for_enabled_modules(runtime_factory):
     runtime, calls = runtime_factory(["alpha"])
     runtime.start()

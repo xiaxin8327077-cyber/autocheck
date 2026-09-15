@@ -8052,6 +8052,7 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.27</span>' in app_js
     assert '<span class="changelog-version">v1.2.22</span>' in app_js
     assert '<span class="changelog-version">v1.2.21</span>' in app_js
     assert '<span class="changelog-version">v1.2.20</span>' in app_js
@@ -8069,6 +8070,9 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "capability-tree-checkbox" in css
     assert "function createCapabilityTree" in app_js
     assert 'label: "页面查看"' in app_js
+    assert '{ code: "sys.dashboard_management", label: "页面查看", type: "menu" }' in app_js
+    assert '{ code: "sys.dashboard_management.manage", label: "维护数据区域、字段与来源", type: "function" }' in app_js
+    assert '{ code: "sys.dashboard_management.test_sql", label: "测试自定义 SQL", type: "function" }' in app_js
     assert 'code: "menu.history", label: "页面查看"' in app_js or (
         'code: "menu.history"' in app_js and 'label: "页面查看"' in app_js
     )

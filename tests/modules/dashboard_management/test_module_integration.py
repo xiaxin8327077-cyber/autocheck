@@ -153,6 +153,49 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
         assert created.status == 201
         region_id = created.body["data"]["id"]
 
+        external_submission = runtime.dispatch_external(
+            method="GET",
+            path=(
+                "/api/external/v1/dashboard-management/boards/"
+                "report_submission/preview"
+            ),
+            query={},
+        )
+        external_process = runtime.dispatch_external(
+            method="GET",
+            path=(
+                "/api/external/v1/dashboard-management/boards/"
+                "reporting_process/preview"
+            ),
+            query={},
+        )
+        assert external_submission.status == external_process.status == 200
+        assert external_submission.body["status"] == "partial"
+        assert external_submission.body["generated_at"]
+        assert external_submission.body["meta"]["request_id"].startswith("req-")
+        assert [
+            region["code"] for region in external_submission.body["data"]["regions"]
+        ] == [
+            "annual_supplement_completed",
+            "monthly_report_validation_remaining",
+            "monthly_trust_projects",
+            "report_reconciliation_completion_time",
+            "report_validation_issue_handling",
+            "quarterly_special_processing",
+            "monthly_report_submission_time_comparison",
+        ]
+        assert [
+            region["code"] for region in external_process.body["data"]["regions"]
+        ] == [
+            "regulatory_report_count",
+            "monthly_regulatory_report_time",
+            "report_validation_statistics",
+        ]
+        assert created.body["data"]["region_code"] not in {
+            region["code"]
+            for region in external_submission.body["data"]["regions"]
+        }
+
         module = runtime._find("dashboard_management").instance
         module._service = DashboardManagementService(
             module._storage,

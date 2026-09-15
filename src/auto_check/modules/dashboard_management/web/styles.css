@@ -37,6 +37,13 @@
 .auto-check-module[data-module="dashboard_management"] .dm-detail-heading { margin-bottom: 12px; }
 .auto-check-module[data-module="dashboard_management"] .dm-detail-heading h2 { margin: 0; font-size: 22px; }
 .auto-check-module[data-module="dashboard_management"] .dm-detail-heading p { margin: 5px 0 0; color: var(--dm-muted); }
+.auto-check-module[data-module="dashboard_management"] .dm-region-context-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.auto-check-module[data-module="dashboard_management"] .dm-region-enabled-switch { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; min-width: 58px; min-height: 26px; padding: 0 8px 0 27px; border: 1px solid var(--dm-border); border-radius: var(--ui-radius); color: #667085; background: #f2f4f7; cursor: pointer; font-size: 12px; line-height: 1; }
+.auto-check-module[data-module="dashboard_management"] .dm-region-enabled-switch::before { position: absolute; left: 4px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .2); content: ""; transition: transform var(--transition-normal, 180ms ease); }
+.auto-check-module[data-module="dashboard_management"] .dm-region-enabled-switch.is-on { padding: 0 27px 0 8px; border-color: var(--dm-brand); color: #fff; background: var(--dm-brand); }
+.auto-check-module[data-module="dashboard_management"] .dm-region-enabled-switch.is-on::before { left: auto; right: 4px; }
+.auto-check-module[data-module="dashboard_management"] .dm-region-enabled-switch:focus-visible { outline: 2px solid var(--dm-brand); outline-offset: 2px; }
+.auto-check-module[data-module="dashboard_management"] .dm-region-enabled-switch:disabled { cursor: not-allowed; opacity: .55; }
 .auto-check-module[data-module="dashboard_management"] .dm-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .auto-check-module[data-module="dashboard_management"] .dm-section-heading h3 { margin: 0; font-size: 16px; }
 .auto-check-module[data-module="dashboard_management"] .dm-field-panel { padding: 12px 0; border-bottom: 1px solid var(--dm-border); }

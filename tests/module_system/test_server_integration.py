@@ -134,6 +134,24 @@ def module_server(monkeypatch, tmp_path):
             permission="alpha.view",
             max_body_bytes=0,
         )
+        router.add(
+            "GET",
+            "/external",
+            lambda request: (
+                route_calls.append(request),
+                ModuleHttpResponse.json(
+                    200,
+                    {
+                        "external": True,
+                        "current_user": dict(request.current_user),
+                        "query": dict(request.query),
+                    },
+                ),
+            )[1],
+            permission="alpha.view",
+            max_body_bytes=0,
+            external=True,
+        )
 
     route_calls = []
     monkeypatch.setattr(alpha_module.AlphaModule, "register_routes", register_routes)
@@ -238,6 +256,131 @@ def test_module_api_uses_current_user(authenticated_module_server):
 
     assert status == 200
     assert json.loads(data)["username"] == "admin"
+
+
+def test_external_module_api_returns_503_when_token_is_not_configured(
+    module_server, monkeypatch
+):
+    server, _ = module_server
+    monkeypatch.delenv("AUTO_CHECK_EXTERNAL_API_TOKEN", raising=False)
+
+    status, data, headers = _request(
+        server,
+        "GET",
+        "/api/external/v1/alpha/external",
+        headers={"Authorization": "Bearer ignored"},
+    )
+
+    assert status == 503
+    assert json.loads(data) == {
+        "error": {
+            "code": "external_api_disabled",
+            "message": "外部接口未配置",
+        }
+    }
+    assert headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [None, "", "Basic external-secret", "Bearer", "Bearer wrong-secret"],
+)
+def test_external_module_api_requires_valid_bearer_token(
+    module_server, monkeypatch, authorization
+):
+    server, _ = module_server
+    monkeypatch.setenv("AUTO_CHECK_EXTERNAL_API_TOKEN", "external-secret")
+    request_headers = {}
+    if authorization is not None:
+        request_headers["Authorization"] = authorization
+
+    status, data, headers = _request(
+        server,
+        "GET",
+        "/api/external/v1/alpha/external",
+        headers=request_headers,
+    )
+
+    assert status == 401
+    assert json.loads(data) == {
+        "error": {
+            "code": "authentication_required",
+            "message": "Bearer Token 缺失或无效",
+        }
+    }
+    assert headers["www-authenticate"] == "Bearer"
+    assert headers["cache-control"] == "no-store"
+
+
+def test_external_module_api_dispatches_without_web_session_and_uses_query(
+    module_server, monkeypatch
+):
+    server, _ = module_server
+    monkeypatch.setenv("AUTO_CHECK_EXTERNAL_API_TOKEN", "external-secret")
+
+    status, data, headers = _request(
+        server,
+        "GET",
+        "/api/external/v1/alpha/external?period=2026-09",
+        headers={"Authorization": "Bearer external-secret"},
+    )
+
+    assert status == 200
+    assert json.loads(data) == {
+        "external": True,
+        "current_user": {},
+        "query": {"period": "2026-09"},
+    }
+    assert headers["cache-control"] == "no-store"
+    assert server.module_route_calls[-1].current_user == {}
+
+
+def test_external_module_api_does_not_publish_internal_routes_and_only_allows_get(
+    module_server, monkeypatch
+):
+    server, _ = module_server
+    monkeypatch.setenv("AUTO_CHECK_EXTERNAL_API_TOKEN", "external-secret")
+    headers = {"Authorization": "Bearer external-secret"}
+
+    hidden_status, hidden_data, hidden_headers = _request(
+        server,
+        "GET",
+        "/api/external/v1/alpha/whoami",
+        headers=headers,
+    )
+    method_status, method_data, method_headers = _request(
+        server,
+        "POST",
+        "/api/external/v1/alpha/external",
+        headers=headers,
+    )
+
+    assert hidden_status == 404
+    assert json.loads(hidden_data) == {"error": "module route not found"}
+    assert hidden_headers["cache-control"] == "no-store"
+    assert method_status == 405
+    assert json.loads(method_data) == {"error": "method not allowed"}
+    assert method_headers["allow"] == "GET"
+    assert method_headers["cache-control"] == "no-store"
+
+
+def test_external_get_framing_error_is_also_marked_no_store(
+    module_server, monkeypatch
+):
+    server, _ = module_server
+    monkeypatch.setenv("AUTO_CHECK_EXTERNAL_API_TOKEN", "external-secret")
+
+    status, data, headers = _request(
+        server,
+        "GET",
+        "/api/external/v1/alpha/external",
+        body={"unexpected": "body"},
+        headers={"Authorization": "Bearer external-secret"},
+    )
+
+    assert status == 400
+    assert json.loads(data) == {"error": "request body not allowed"}
+    assert headers["cache-control"] == "no-store"
 
 
 def test_module_asset_blocks_traversal(module_server):

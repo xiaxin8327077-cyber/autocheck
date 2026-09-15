@@ -1,5 +1,13 @@
 import { node } from "./dom.js";
 
+export function formatPreviewValue(value, field = {}) {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  if ((field.value_type || field.type) !== "datetime") return text;
+  const isoDateTime = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+  return isoDateTime ? `${isoDateTime[1]} ${isoDateTime[2]}` : text.replace("T", " ");
+}
+
 export function renderPreviewTable(preview, sourceMode = "sql", fields = []) {
   const section = node("section", { className: "dm-preview dm-config-section" });
   const heading = node("div", { className: "dm-section-heading" });
@@ -8,6 +16,7 @@ export function renderPreviewTable(preview, sourceMode = "sql", fields = []) {
   const rows = Array.isArray(preview?.rows) ? preview.rows.slice(0, 10) : [];
   const columns = preview?.columns?.length ? preview.columns : Object.keys(rows[0] || {});
   const fieldLabels = new Map(fields.map((field) => [String(field.alias || field.field_alias || "").toLowerCase(), field.name || field.alias || field.field_alias]));
+  const fieldsByAlias = new Map(fields.map((field) => [String(field.alias || field.field_alias || "").toLowerCase(), field]));
   if (!columns.length) {
     section.append(node("p", { className: "dm-empty", text: sourceMode === "system" ? "点击“预览系统数据”后显示结果。" : "执行测试后显示前 10 行结果。" }));
     return section;
@@ -26,7 +35,7 @@ export function renderPreviewTable(preview, sourceMode = "sql", fields = []) {
     const tableRow = node("tr");
     columns.forEach((column) => {
       const key = typeof column === "string" ? column : column.alias || column.name;
-      tableRow.append(node("td", { text: String(entry?.[key] ?? "") }));
+      tableRow.append(node("td", { text: formatPreviewValue(entry?.[key], fieldsByAlias.get(String(key || "").toLowerCase())) }));
     });
     body.append(tableRow);
   });

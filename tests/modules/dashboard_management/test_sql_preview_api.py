@@ -38,11 +38,11 @@ def test_source_save_exposes_sql_retest_conflict_without_sensitive_exception_tex
     assert response.body["error"]["code"] == "sql_retest_required"
 
 
-def test_service_requires_exact_recent_test_signature_before_sql_save():
+def test_service_saves_invalid_sql_with_warning_without_requiring_a_successful_test():
     from auto_check.app.config import DataSourceConfig, DataSourceEntry
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.sql_executor import QueryPreview, SqlPreviewExecutor
-    from auto_check.modules.dashboard_management.validator import DomainError
+    from auto_check.modules.dashboard_management.validator import ValidationError
 
     source = DataSourceEntry("safe", "安全数据源", DataSourceConfig(
         "postgresql", "hidden", 5432, "db", "public", "reader", "secret",
@@ -70,7 +70,7 @@ def test_service_requires_exact_recent_test_signature_before_sql_save():
         def save_source_config(self, region_id, values, expected_version, *, expected_region_version=None):
             assert expected_version == self.config["row_version"]
             assert expected_region_version == 1
-            self.config.update(values, row_version=3)
+            self.config.update(values, row_version=self.config["row_version"] + 1)
             return dict(self.config)
 
     class Executor:
@@ -78,27 +78,33 @@ def test_service_requires_exact_recent_test_signature_before_sql_save():
         def signature_for(source, sql, fields, shape):
             return SqlPreviewExecutor.signature_for(source, sql, fields, shape)
 
+        @staticmethod
+        def validate_query(source, sql):
+            return SqlPreviewExecutor.validate_query(source, sql)
+
         def execute(self, source, sql, fields, shape):
             return QueryPreview(("value",), ({"value": 1},), False, 1, self.signature_for(source, sql, fields, shape))
 
     service = DashboardManagementService(Storage(), datasource_loader=lambda: [source], sql_executor=Executor())
     admin = {"username": "admin"}
-    tested = service.test_sql(1, {"datasource_id": "safe", "sql_text": "SELECT value"}, admin)
-    assert tested["tested_signature"]
-    assert tested["row_version"] == 2
-    assert "source_config" not in tested and "sql_text" not in tested and "datasource_id" not in tested
     saved = service.save_source_config(1, {
-        "source_mode": "sql", "datasource_id": "safe", "sql_text": " SELECT value ", "row_version": 2,
+        "source_mode": "sql", "datasource_id": "safe", "sql_text": " SELECT1 value ", "row_version": 1,
     }, admin)
-    assert saved["sql_text"] == " SELECT value "
-    with pytest.raises(DomainError) as error:
+    assert saved["sql_text"] == " SELECT1 value "
+    assert saved["tested_signature"] is None
+    assert saved["sql_warning"] == "只允许单条只读查询"
+    field_mismatch_saved = service.save_source_config(1, {
+        "source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT wrong_alias", "row_version": 2,
+    }, admin)
+    assert field_mismatch_saved["sql_text"] == "SELECT wrong_alias"
+    assert "sql_warning" not in field_mismatch_saved
+    with pytest.raises(ValidationError, match="只允许保存查询 SQL"):
         service.save_source_config(1, {
-            "source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT changed", "row_version": 3,
+            "source_mode": "sql", "datasource_id": "safe", "sql_text": "DELETE FROM unsafe_table", "row_version": 3,
         }, admin)
-    assert error.value.status == 409 and error.value.code == "sql_retest_required"
 
 
-def test_service_maps_region_snapshot_conflict_to_sql_retest_required():
+def test_service_maps_region_snapshot_conflict_to_version_conflict():
     from auto_check.app.config import DataSourceConfig, DataSourceEntry
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.sql_executor import SqlPreviewExecutor
@@ -130,4 +136,4 @@ def test_service_maps_region_snapshot_conflict_to_sql_retest_required():
         service.save_source_config(1, {
             "source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT value", "row_version": 2,
         }, {"username": "admin"})
-    assert error.value.status == 409 and error.value.code == "sql_retest_required"
+    assert error.value.status == 409 and error.value.code == "version_conflict"

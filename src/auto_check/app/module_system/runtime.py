@@ -440,6 +440,49 @@ class ModuleRuntime:
                 return preflight
         return ModuleRoutePreflight(status=404)
 
+    def dispatch_external(
+        self,
+        *,
+        method: str,
+        path: str,
+        query: Mapping[str, str],
+    ) -> ModuleHttpResponse:
+        """Dispatch an explicitly published external read-only module route."""
+        with self._lifecycle_lock:
+            routers = tuple(
+                loaded.router
+                for loaded in self._loaded
+                if (
+                    loaded.status == ModuleStatus.ENABLED
+                    and loaded.router is not None
+                    and loaded.discovered.manifest.id not in self._transitioning_modules
+                )
+            )
+        request = ModuleRequest(method, path, {}, query, None, {})
+        for router in routers:
+            response = router.dispatch_external(request)
+            if response is not None:
+                return response
+        return ModuleHttpResponse.json(404, {"error": "module route not found"})
+
+    def external_preflight(self, *, method: str, path: str) -> ModuleRoutePreflight:
+        """Resolve an explicitly published external route without invoking module code."""
+        with self._lifecycle_lock:
+            routers = tuple(
+                loaded.router
+                for loaded in self._loaded
+                if (
+                    loaded.status == ModuleStatus.ENABLED
+                    and loaded.router is not None
+                    and loaded.discovered.manifest.id not in self._transitioning_modules
+                )
+            )
+        for router in routers:
+            preflight = router.external_preflight(method, path)
+            if preflight is not None and preflight.status != 404:
+                return preflight
+        return ModuleRoutePreflight(status=404)
+
     def read_asset(self, module_id: str, relative_path: str) -> ModuleAsset:
         with self._lifecycle_lock:
             try:

@@ -62,11 +62,11 @@ export function openRegionDialog(root, { onCreate, notify, trigger = document.ac
 
 export function openManageRegionDialog(root, { region, onSave, onDelete, notify, trigger = document.activeElement }) {
   const shell = dialogShell(root, "编辑区域", trigger); const { dialog, close } = shell; dialog.classList.add("dm-dialog-region"); const builtIn = Boolean(region.built_in);
-  const name = input(region.name || ""); const description = node("textarea"); description.value = region.description || ""; const enabled = checkbox(region.enabled !== false); const shape = select([["scalar", "单值"], ["list", "列表"]], region.shape || "list", { disabled: builtIn });
-  const nameControl = labeledControl("区域名称", name); nameControl.classList.add("dm-control-wide");
+  const name = input(region.name || ""); const description = node("textarea"); description.value = region.description || ""; const shape = select([["scalar", "单值"], ["list", "列表"]], region.shape || "list", { disabled: builtIn });
+  const nameControl = labeledControl("区域名称", name);
   const descriptionControl = labeledControl("区域说明", description); descriptionControl.classList.add("dm-control-wide");
-  const form = node("form", { className: "dm-dialog-form" }); form.append(nameControl, descriptionControl, labeledControl("启用区域", enabled), labeledControl(builtIn ? "数据形态（系统固定）" : "数据形态", shape)); dialog.append(form);
-  const actions = appendActions(dialog, close, "保存区域", async () => { try { await onSave({ name: name.value.trim(), description: description.value.trim(), enabled: enabled.checked, row_version: region.row_version, ...(!builtIn ? { shape: shape.value } : {}) }); close(); } catch (_error) {} });
+  const form = node("form", { className: "dm-dialog-form" }); form.append(nameControl, labeledControl(builtIn ? "数据形态（系统固定）" : "数据形态", shape), descriptionControl); dialog.append(form);
+  const actions = appendActions(dialog, close, "保存区域", async () => { try { await onSave({ name: name.value.trim(), description: description.value.trim(), row_version: region.row_version, ...(!builtIn ? { shape: shape.value } : {}) }); close(); } catch (_error) {} });
   if (!builtIn && onDelete) actions.prepend(button("删除区域", "dm-button dm-button-danger dm-region-delete", async () => { if (await onDelete(region)) close(); }));
   shell.focus();
 }

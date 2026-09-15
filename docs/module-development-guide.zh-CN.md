@@ -97,6 +97,12 @@ src/auto_check/modules/<module_id>/
 
 模块 API 的有请求体方法必须声明 `max_body_bytes`。宿主执行总读取时限和请求大小限制，短读、慢速分段超时或非法 JSON 均不会进入处理器。模块响应只允许 JSON 映射或字节，最大 50 MiB；JSON 在校验时固化为发送快照，后续修改原对象不会改变响应。响应头仅允许 `Allow`、`Content-Disposition`、`ETag`、`Last-Modified`、`Location` 和 `Retry-After`，连接、长度、安全响应头及 `Cache-Control: private, no-store` 由宿主统一生成。模块导入、工厂构造、路由/表结构注册和迁移共享一个启动前有界等待，全部成功前不会向宿主发布模块实例、路由或上下文。后台任务和 `start()`、`stop()`、`health()` 都必须自行支持快速退出；宿主还会执行并发限制、有界等待和故障隔离，但同进程 Python 不能强制终止任意模块代码，超时模块的迟到结果不会发布，未结束前不得重复启用。
 
+### 外部只读路由
+
+模块只有在经过独立平台变更评审且业务确有服务端集成需求时，才能把单条路由登记为 `external=True`。外部路由只允许 `GET`，映射到 `/api/external/v1/<module-prefix>/...`；没有显式标记的普通模块 GET、修改接口、数据源/SQL/用户等管理信息不能通过外部命名空间访问。外部分发不提供网页登录身份，`ModuleRequest.current_user` 固定为空，模块必须在自身 service 中实现固定资源白名单和稳定字段契约，不能依赖前端隐藏或平台内核硬编码业务。
+
+平台从 `AUTO_CHECK_EXTERNAL_API_TOKEN` 读取共享 Bearer Token，未配置时关闭外部接口；使用 `secrets.compare_digest` 校验并统一生成 401 challenge 与 `Cache-Control: no-store`。模块不得读取或记录该 Token，不得自行开放 CORS，也不得建议浏览器直接调用。新增外部路由必须同时测试：GET-only 登记、未标记路由隔离、认证状态、业务白名单、错误脱敏和内部接口兼容性。
+
 ## 4. 数据库迁移与运维
 
 应用库先由运维在备份后人工执行 `sql/app_storage/mysql/012_module_system.sql`，再执行 `013_report_navigation_provider_states.sql`，平台应用表共 43 张，`app_schema_version` 仍为 `1`。前者建立模块注册、模块 schema 版本和迁移历史，后者建立带注册 token 的报送导航统计提供方持久状态并为统计运行记录补充 `failed_providers`；生产环境禁止由应用自动执行。模块业务表**不加入**全局 `EXPECTED_APP_SCHEMA`，而由模块自己的 `migrations/` 和清单 `schema_version` 管理。

@@ -7,6 +7,18 @@ function copyDraft(region, { forceIdle = false, revision = 1 } = {}) {
 }
 function cloneDraft(draft) { return { ...draft, preview: draft.preview ? { ...draft.preview, rows: [...(draft.preview.rows || [])] } : null }; }
 function keyForToken(token) { return token?.key || draftKey(token?.boardCode, token?.regionId); }
+function samePersistedSource(left, right) {
+  return Boolean(left && right)
+    && left.source_mode === right.source_mode
+    && String(left.datasource_id || "") === String(right.datasource_id || "")
+    && String(left.sql_text || "") === String(right.sql_text || "");
+}
+function syncDirtyRegion(state, region, draft) {
+  const key = draftKey(state.activeBoardCode, region.id);
+  if (samePersistedSource(draft, state.serverSnapshots.get(key))) state.dirtyRegions.delete(key);
+  else state.dirtyRegions.add(key);
+  return draft;
+}
 
 function defaultSelectionStorage() {
   try { return globalThis.sessionStorage || null; } catch (_error) { return null; }
@@ -57,12 +69,12 @@ export function captureRequest(state) { const region = currentRegion(state); con
 export function isTokenCurrent(state, token) { return Boolean(token && state.active && token.generation === state.lifecycleGeneration && token.boardCode === state.activeBoardCode && state.selectedRegionByBoard.get(token.boardCode) === token.regionId); }
 export function beginPending(state, key) { if (state.pending.has(key)) return false; state.pending.add(key); return true; }
 export function endPending(state, key) { state.pending.delete(key); }
-export function setSourceMode(state, sourceMode) { const region = currentRegion(state); const draft = currentDraft(state); if (!region || !draft || (sourceMode === "system" && !region.system_supported)) return draft; draft.source_mode = sourceMode; draft.testStatus = "idle"; draft.testError = ""; draft.preview = null; draft.revision += 1; state.previews.delete(draftKey(state.activeBoardCode, region.id)); state.dirtyRegions.add(draftKey(state.activeBoardCode, region.id)); return draft; }
-export function markSqlChanged(state, sqlText) { const region = currentRegion(state); const draft = currentDraft(state); if (!region || !draft) return null; draft.sql_text = sqlText; draft.testStatus = "idle"; draft.testError = ""; draft.preview = null; draft.revision += 1; state.previews.delete(draftKey(state.activeBoardCode, region.id)); state.dirtyRegions.add(draftKey(state.activeBoardCode, region.id)); return draft; }
-export function markDatasourceChanged(state, datasourceId) { const draft = currentDraft(state); if (!draft) return null; draft.datasource_id = datasourceId; return markSqlChanged(state, draft.sql_text); }
+export function setSourceMode(state, sourceMode) { const region = currentRegion(state); const draft = currentDraft(state); if (!region || !draft || draft.source_mode === sourceMode || (sourceMode === "system" && !region.system_supported)) return draft; draft.source_mode = sourceMode; draft.testStatus = "idle"; draft.testError = ""; draft.preview = null; draft.revision += 1; state.previews.delete(draftKey(state.activeBoardCode, region.id)); return syncDirtyRegion(state, region, draft); }
+export function markSqlChanged(state, sqlText) { const region = currentRegion(state); const draft = currentDraft(state); if (!region || !draft) return null; if (draft.sql_text === sqlText) return draft; draft.sql_text = sqlText; draft.testStatus = "idle"; draft.testError = ""; draft.preview = null; draft.revision += 1; state.previews.delete(draftKey(state.activeBoardCode, region.id)); return syncDirtyRegion(state, region, draft); }
+export function markDatasourceChanged(state, datasourceId) { const region = currentRegion(state); const draft = currentDraft(state); if (!region || !draft || String(draft.datasource_id || "") === String(datasourceId || "")) return draft; draft.datasource_id = datasourceId; draft.testStatus = "idle"; draft.testError = ""; draft.preview = null; draft.revision += 1; state.previews.delete(draftKey(state.activeBoardCode, region.id)); return syncDirtyRegion(state, region, draft); }
 export function recordPreview(state, token, preview) { const key = keyForToken(token); const draft = state.drafts.get(key); if (!draft || token?.generation !== state.lifecycleGeneration || token?.revision !== draft.revision) return null; const safePreview = { ...preview, rows: previewRows(preview?.rows || []) }; draft.preview = safePreview; draft.testStatus = "passed"; draft.testError = ""; if (Number.isInteger(preview?.row_version) && preview.row_version > 0) draft.row_version = preview.row_version; state.previews.set(key, safePreview); return safePreview; }
 export function markPreviewFailed(state, token, reason) { const key = keyForToken(token); const draft = state.drafts.get(key); if (!draft || token?.generation !== state.lifecycleGeneration || token?.revision !== draft.revision) return null; draft.testStatus = "failed"; draft.testError = String(reason || "").trim(); return draft; }
-export function markSaved(state, token, sourceConfig) { const key = keyForToken(token); const draft = state.drafts.get(key); if (!draft || token?.generation !== state.lifecycleGeneration || token?.revision !== draft.revision) return null; draft.row_version = sourceConfig?.row_version || draft.row_version; if (sourceConfig?.source_mode) draft.source_mode = sourceConfig.source_mode; state.serverSnapshots.set(key, cloneDraft(draft)); state.dirtyRegions.delete(key); return draft; }
+export function markSaved(state, token, sourceConfig) { const key = keyForToken(token); const draft = state.drafts.get(key); if (!draft || token?.generation !== state.lifecycleGeneration || token?.revision !== draft.revision) return null; draft.row_version = sourceConfig?.row_version || draft.row_version; if (sourceConfig?.source_mode) draft.source_mode = sourceConfig.source_mode; const sqlWarning = String(sourceConfig?.sql_warning || "").trim(); if (sqlWarning && draft.testStatus !== "failed") { draft.testStatus = "failed"; draft.testError = sqlWarning; } state.serverSnapshots.set(key, cloneDraft(draft)); state.dirtyRegions.delete(key); return draft; }
 export function discardDraft(state, token) { const key = keyForToken(token); const snapshot = state.serverSnapshots.get(key); const current = state.drafts.get(key); if (!snapshot || !current) return null; const restored = cloneDraft(snapshot); restored.revision = current.revision + 1; state.drafts.set(key, restored); state.previews.delete(key); state.dirtyRegions.delete(key); return restored; }
 export function previewRows(rows) { return Array.isArray(rows) ? rows.slice(0, 10) : []; }
 export function hasPermission(user, permission) { const capabilities = user?.capabilities || []; return user?.role === "admin" || capabilities.includes(permission) || capabilities.includes(`sys.${permission}`); }

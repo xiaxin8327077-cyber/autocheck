@@ -80,3 +80,16 @@ def test_module_development_guide_uses_actual_backend_and_frontend_context_contr
     assert "FrontendModuleContext" not in content
     assert "`root`、`api`、`user`、`notify`、`confirm`、`navigate`、`events`" in content
     assert "Object.freeze" in content
+
+
+def test_module_development_guide_defines_explicit_external_readonly_route_contract():
+    content = (ROOT / "docs/module-development-guide.zh-CN.md").read_text(encoding="utf-8")
+
+    for fragment in [
+        "external=True",
+        "/api/external/v1/",
+        "只允许 `GET`",
+        "AUTO_CHECK_EXTERNAL_API_TOKEN",
+        "secrets.compare_digest",
+    ]:
+        assert fragment in content

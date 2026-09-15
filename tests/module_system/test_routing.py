@@ -229,3 +229,102 @@ def test_router_allows_documented_module_download_headers(valid_manifest):
         ("Content-Disposition", 'attachment; filename="result.txt"'),
         ("ETag", '"result"'),
     )
+
+
+def test_external_dispatch_only_matches_routes_explicitly_marked_external(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add(
+        "GET",
+        "/internal-only",
+        lambda request: ModuleHttpResponse.json(200, {"route": "internal"}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+    )
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(
+            200,
+            {"route": "external", "current_user": dict(request.current_user)},
+        ),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+    )
+
+    hidden = router.dispatch_external(
+        _request("GET", "/api/external/v1/custom-reports/internal-only", user={})
+    )
+    published = router.dispatch_external(
+        _request("GET", "/api/external/v1/custom-reports/published", user={})
+    )
+
+    assert hidden is None
+    assert published is not None
+    assert published.status == 200
+    assert published.body == {"route": "external", "current_user": {}}
+
+
+def test_external_route_registration_only_accepts_get(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    with pytest.raises(ValueError, match="GET"):
+        router.add(
+            "POST",
+            "/published",
+            lambda request: ModuleHttpResponse.json(200, {}),
+            permission="custom_reports.publish",
+            max_body_bytes=0,
+            external=True,
+        )
+
+
+def test_external_preflight_reports_only_explicit_external_routes(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+    )
+    router.add(
+        "GET",
+        "/internal-only",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+    )
+
+    assert router.external_preflight(
+        "GET", "/api/external/v1/custom-reports/published"
+    ).status == 200
+    assert router.external_preflight(
+        "POST", "/api/external/v1/custom-reports/published"
+    ).status == 405
+    assert router.external_preflight(
+        "GET", "/api/external/v1/custom-reports/internal-only"
+    ).status == 404
+
+
+def test_external_route_keeps_internal_permission_checks(valid_manifest):
+    router = ModuleRouter(valid_manifest, lambda current_user, permission: False)
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+    )
+
+    internal = router.dispatch(
+        _request("GET", "/api/modules/custom-reports/published", user={})
+    )
+    external = router.dispatch_external(
+        _request("GET", "/api/external/v1/custom-reports/published", user={})
+    )
+
+    assert internal.status == 403
+    assert external.status == 200

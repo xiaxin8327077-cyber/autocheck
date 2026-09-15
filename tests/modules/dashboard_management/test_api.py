@@ -28,6 +28,24 @@ class Service:
     def preview_board_data(self, board_code, current_user):
         return {"board": {"code": board_code, "name": "报送"}, "regions": []}
 
+    def preview_external_board_data(self, board_code):
+        from auto_check.modules.dashboard_management.validator import NotFoundError
+
+        if board_code not in {"report_submission", "reporting_process"}:
+            raise NotFoundError("外部看板接口不存在")
+        return {
+            "status": "partial",
+            "generated_at": "2026-09-15T09:30:00",
+            "board": {"code": board_code, "name": "报送"},
+            "regions": [
+                {
+                    "code": "sample",
+                    "status": "error",
+                    "error": {"code": "internal_error", "message": "数据读取失败"},
+                }
+            ],
+        }
+
     def update_region(self, region_id, payload, current_user):
         return {"id": region_id, "row_version": 2}
 
@@ -67,6 +85,19 @@ def _dispatch(router, method, suffix, *, body=None, user=None, body_size=0):
     )
 
 
+def _dispatch_external(router, method, suffix):
+    return router.dispatch_external(
+        request=ModuleRequest(
+            method,
+            "/api/external/v1/dashboard-management" + suffix,
+            {},
+            {},
+            None,
+            {},
+        )
+    )
+
+
 def test_api_registers_exact_routes_with_view_manage_permissions_and_body_limit():
     router = _router()
     viewer = {"role": "user", "capabilities": ["sys.dashboard_management"]}
@@ -102,6 +133,45 @@ def test_api_registers_exact_routes_with_view_manage_permissions_and_body_limit(
     assert _dispatch(router, "POST", "/regions/1/fields", body={}, user=manager).status == 201
     assert _dispatch(router, "PUT", "/fields/2", body={}, user=manager).status == 200
     assert _dispatch(router, "POST", "/boards/report_submission/regions", body={}, body_size=64 * 1024 + 1).status == 413
+
+
+def test_api_publishes_only_board_preview_with_stable_external_envelope():
+    router = _router()
+
+    response = _dispatch_external(
+        router, "GET", "/boards/report_submission/preview"
+    )
+
+    assert response.status == 200
+    assert response.body["status"] == "partial"
+    assert response.body["generated_at"] == "2026-09-15T09:30:00"
+    assert response.body["data"]["board"]["code"] == "report_submission"
+    assert response.body["data"]["regions"][0]["status"] == "error"
+    assert response.body["meta"]["request_id"].startswith("req-")
+    assert _dispatch_external(router, "GET", "/boards") is None
+    assert _dispatch_external(router, "GET", "/datasources") is None
+
+
+def test_external_board_preview_returns_404_for_unknown_board_code():
+    response = _dispatch_external(
+        _router(), "GET", "/boards/unknown_board/preview"
+    )
+
+    assert response.status == 404
+    assert response.body["error"]["code"] == "resource_not_found"
+    assert response.body["meta"]["request_id"].startswith("req-")
+
+
+def test_internal_board_preview_response_contract_is_unchanged():
+    response = _dispatch(
+        _router(), "GET", "/boards/report_submission/preview"
+    )
+
+    assert set(response.body) == {"data", "meta"}
+    assert response.body["data"] == {
+        "board": {"code": "report_submission", "name": "报送"},
+        "regions": [],
+    }
 
 
 def test_api_maps_400_401_409_and_500_to_desensitized_domain_responses():

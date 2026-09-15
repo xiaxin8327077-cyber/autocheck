@@ -58,11 +58,16 @@ function createPage(context) {
     } catch (error) { if (!aborted(error) && shouldRender(token)) notify(message(error, "字段保存失败"), "error"); throw error; }
     finally { endPending(state, pendingKey); if (shouldRender(token)) render(); }
   };
-  const saveRegion = async (payload) => {
-    const token = captureRequest(state); if (!token) return; const pendingKey = `region:${token.key}`; if (!beginPending(state, pendingKey)) return;
-    try { await api.updateRegion(token.regionId, payload); await refreshBoard(token, [token.regionId]); if (shouldRender(token)) notify("区域配置已保存", "success"); }
-    catch (error) { if (!aborted(error) && shouldRender(token)) notify(message(error, "区域保存失败"), "error"); throw error; }
-    finally { endPending(state, pendingKey); if (shouldRender(token)) render(); }
+  const saveRegion = async (targetRegion, boardCode, generation, payload, successText = "区域配置已保存") => {
+    const pendingKey = `region:${boardCode}:${targetRegion.id}`; if (!beginPending(state, pendingKey)) return;
+    const isCurrentBoard = () => state.active && generation === state.lifecycleGeneration && state.activeBoardCode === boardCode;
+    try {
+      await api.updateRegion(targetRegion.id, payload);
+      await loadBoard(boardCode, { force: true, generation });
+      if (isCurrentBoard()) { render(); notify(successText, "success"); }
+    }
+    catch (error) { if (!aborted(error) && isCurrentBoard()) notify(message(error, "区域保存失败"), "error"); throw error; }
+    finally { endPending(state, pendingKey); if (isCurrentBoard()) render(); }
   };
   const deleteRegion = async (region) => {
     if (region.built_in) return false;
@@ -84,8 +89,13 @@ function createPage(context) {
       if (!state.active || generation !== state.lifecycleGeneration || state.activeBoardCode !== boardCode) return;
       const region = latest?.regions?.find((item) => item.id === targetRegion.id);
       if (!region) { render(); notify("数据区域已不存在", "info"); return; }
-      openManageRegionDialog(context.root, { region, onSave: saveRegion, onDelete: deleteRegion, notify });
+      openManageRegionDialog(context.root, { region, onSave: (payload) => saveRegion(region, boardCode, generation, payload), onDelete: deleteRegion, notify });
     } catch (error) { if (!aborted(error) && state.active && generation === state.lifecycleGeneration) notify(message(error, "区域信息刷新失败"), "error"); }
+  };
+  const setRegionEnabled = async (region, enabled) => {
+    const boardCode = state.activeBoardCode; const generation = state.lifecycleGeneration;
+    try { await saveRegion(region, boardCode, generation, { enabled, row_version: region.row_version }, enabled ? "区域已启用" : "区域已停用"); }
+    catch (_error) { /* saveRegion 已显示安全的具体错误。 */ }
   };
   const onTest = async () => {
     const token = captureRequest(state); const draft = token && state.drafts.get(token.key); if (!token || !draft) return; if (draft.source_mode === "sql" && (!draft.datasource_id || !draft.sql_text.trim())) { notify("请选择数据源并填写 SQL 后再测试。", "error"); return; }
@@ -118,13 +128,18 @@ function createPage(context) {
     if (!region || !draft) detail.append(node("p", { className: "dm-empty", text: "请选择一个数据区域。" }));
     else {
       const contextBar = node("header", { className: "dm-region-context" });
-      contextBar.append(node("h2", { text: region.name }));
+      const contextTitle = node("div", { className: "dm-region-context-title" });
+      const enabledSwitch = button(region.enabled === false ? "已停用" : "已启用", "dm-region-enabled-switch", () => setRegionEnabled(region, region.enabled === false), { disabled: !canManage });
+      enabledSwitch.setAttribute("role", "switch");
+      enabledSwitch.setAttribute("aria-checked", region.enabled === false ? "false" : "true");
+      if (region.enabled !== false) enabledSwitch.classList.add("is-on");
+      contextTitle.append(node("h2", { text: region.name }), enabledSwitch);
+      contextBar.append(contextTitle);
       const contextTags = node("div", { className: "dm-region-context-tags" });
       contextTags.append(
         node("span", { className: "dm-context-tag", text: region.shape === "scalar" ? "单值" : "列表" }),
         node("span", { className: "dm-context-tag is-source", text: draft.source_mode === "system" ? "系统数据" : "自定义 SQL" }),
       );
-      if (region.enabled === false) contextTags.append(node("span", { className: "dm-context-tag is-disabled", text: "已停用" }));
       contextBar.append(contextTags);
       detail.append(contextBar, renderFieldPanel({ fields: region.fields || [], canManage, onCreate: () => openFieldDialog(context.root, { onSave: (payload) => saveField(null, payload), notify }), onManage: (field) => openFieldDialog(context.root, { field, onSave: (payload) => saveField(field, payload), notify }) }));
       const pending = state.pending.has(`save:${captureRequest(state)?.key}`) || state.pending.has(`test:${captureRequest(state)?.key}`);
@@ -132,13 +147,13 @@ function createPage(context) {
       let saveButton;
       const invalidateDraftView = (nextDraft) => {
         if (previewSection) { const nextPreview = renderPreviewTable(nextDraft?.preview, nextDraft?.source_mode, region.fields || []); previewSection.replaceWith(nextPreview); previewSection = nextPreview; }
-        if (saveButton) saveButton.disabled = !canManage || pending || (nextDraft?.source_mode === "sql" && nextDraft?.testStatus !== "passed");
+        if (saveButton) saveButton.disabled = !canManage || pending;
         return nextDraft;
       };
       const sourcePreviewGrid = node("div", { className: "dm-source-preview-grid" });
       sourcePreviewGrid.append(renderSourceEditor({ region, draft, datasources: state.datasources || [], canManage, canTest, pending, onMode: (mode) => { setSourceMode(state, mode); render(); }, onDatasource: (value) => invalidateDraftView(markDatasourceChanged(state, value)), onSql: (value) => invalidateDraftView(markSqlChanged(state, value)), onTest }));
       previewSection = renderPreviewTable(draft.preview, draft.source_mode, region.fields || []); sourcePreviewGrid.append(previewSection); detail.append(sourcePreviewGrid);
-      const saveBar = node("div", { className: "dm-save-bar" }); saveBar.append(node("p", { text: draft.source_mode === "sql" ? "测试通过后保存当前配置" : "保存当前系统数据配置" })); saveButton = button("保存配置", "dm-button dm-button-primary", onSave, { disabled: !canManage || pending || (draft.source_mode === "sql" && draft.testStatus !== "passed") }); saveBar.append(saveButton); detail.append(saveBar);
+      const saveBar = node("div", { className: "dm-save-bar" }); saveBar.append(node("p", { text: draft.source_mode === "sql" ? "查询 SQL 可直接保存，测试仅用于预览和校验结果" : "保存当前系统数据配置" })); saveButton = button("保存配置", "dm-button dm-button-primary", onSave, { disabled: !canManage || pending }); saveBar.append(saveButton); detail.append(saveBar);
     }
     const panels = node("div", { className: "dm-detail-panels" });
     (catalog.boards || []).forEach((board) => {

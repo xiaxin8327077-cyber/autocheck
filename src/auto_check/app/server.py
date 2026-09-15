@@ -3,7 +3,9 @@ from __future__ import annotations
 import errno
 import json
 import mimetypes
+import os
 import re
+import secrets
 import shutil
 import socket
 import sys
@@ -3741,7 +3743,14 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
     auth_manager: AuthManager
 
     def do_GET(self) -> None:
-        if self._reject_invalid_request_framing(body_allowed=False):
+        framing_headers = (
+            [("Cache-Control", "no-store")]
+            if self.path.split("?", 1)[0].startswith("/api/external/v1/")
+            else None
+        )
+        if self._reject_invalid_request_framing(
+            body_allowed=False, headers=framing_headers
+        ):
             return
         if self.path.startswith("/api/"):
             self._handle_api("GET")
@@ -3780,10 +3789,20 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_api(self, method: str) -> None:
         path = self.path.split("?", 1)[0]
-        if method in {"POST", "PUT", "DELETE"} and self._reject_invalid_request_framing():
+        framing_headers = (
+            [("Cache-Control", "no-store")]
+            if path.startswith("/api/external/v1/")
+            else None
+        )
+        if method in {"POST", "PUT", "DELETE"} and self._reject_invalid_request_framing(
+            headers=framing_headers
+        ):
             return
         if path.startswith("/api/auth/"):
             self._handle_auth(method, path)
+            return
+        if path.startswith("/api/external/v1/"):
+            self._handle_external_module_api(method, path)
             return
         if method == "GET" and path == "/api/settings/interface/theme-colors":
             optional_session = self._authenticated_session()
@@ -4007,6 +4026,78 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_module_response(response)
 
+    def _handle_external_module_api(self, method: str, path: str) -> None:
+        configured_token = os.environ.get("AUTO_CHECK_EXTERNAL_API_TOKEN", "").strip()
+        if not configured_token:
+            self._send_external_json(
+                method,
+                503,
+                {
+                    "error": {
+                        "code": "external_api_disabled",
+                        "message": "外部接口未配置",
+                    }
+                },
+            )
+            return
+
+        authorization_values = self.headers.get_all("Authorization", [])
+        authorization_parts = (
+            authorization_values[0].split() if len(authorization_values) == 1 else []
+        )
+        supplied_token = (
+            authorization_parts[1]
+            if len(authorization_parts) == 2
+            and authorization_parts[0].lower() == "bearer"
+            else ""
+        )
+        if not supplied_token or not secrets.compare_digest(
+            supplied_token, configured_token
+        ):
+            self._send_external_json(
+                method,
+                401,
+                {
+                    "error": {
+                        "code": "authentication_required",
+                        "message": "Bearer Token 缺失或无效",
+                    }
+                },
+                headers=[("WWW-Authenticate", "Bearer")],
+            )
+            return
+
+        preflight = self.router.module_runtime.external_preflight(
+            method=method, path=path
+        )
+        if preflight.status != 200:
+            error = (
+                "method not allowed"
+                if preflight.status == 405
+                else "module route not found"
+            )
+            self._send_external_json(
+                method,
+                preflight.status,
+                {"error": error},
+                headers=list(preflight.headers),
+            )
+            return
+
+        query = dict(parse_qsl(urlparse(self.path).query, keep_blank_values=True))
+        try:
+            response = self.router.module_runtime.dispatch_external(
+                method=method,
+                path=path,
+                query=query,
+            )
+        except Exception:
+            self._send_external_json(
+                method, 500, {"error": "internal server error"}
+            )
+            return
+        self._send_external_module_response(response)
+
     def _handle_module_asset(self) -> None:
         parts = urlparse(self.path).path.split("/", 3)
         if len(parts) != 4 or not parts[2] or not parts[3]:
@@ -4079,6 +4170,29 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             headers=[*response.headers, ("Cache-Control", "private, no-store")],
         )
 
+    def _send_external_module_response(self, response: ModuleHttpResponse) -> None:
+        self._send_bytes(
+            response.status,
+            response.wire_body,
+            response.content_type,
+            headers=[*response.headers, ("Cache-Control", "no-store")],
+        )
+
+    def _send_external_json(
+        self,
+        method: str,
+        status: int,
+        payload: dict[str, Any],
+        *,
+        headers: list[tuple[str, str]] | None = None,
+    ) -> None:
+        self._send_early_json(
+            method,
+            status,
+            payload,
+            headers=[*(headers or []), ("Cache-Control", "no-store")],
+        )
+
     def _send_early_json(
         self,
         method: str,
@@ -4102,7 +4216,12 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return None
         return int(raw_length)
 
-    def _reject_invalid_request_framing(self, *, body_allowed: bool = True) -> bool:
+    def _reject_invalid_request_framing(
+        self,
+        *,
+        body_allowed: bool = True,
+        headers: list[tuple[str, str]] | None = None,
+    ) -> bool:
         transfer_encodings = [
             value.strip().lower()
             for header in self.headers.get_all("Transfer-Encoding", [])
@@ -4110,15 +4229,19 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         ]
         if any(value and value != "identity" for value in transfer_encodings):
             self.close_connection = True
-            self._send_json(501, {"error": "transfer encoding is not supported"})
+            self._send_json(
+                501,
+                {"error": "transfer encoding is not supported"},
+                headers=headers,
+            )
             return True
         if self._request_content_length() is None:
             self.close_connection = True
-            self._send_json(400, {"error": "invalid request framing"})
+            self._send_json(400, {"error": "invalid request framing"}, headers=headers)
             return True
         if not body_allowed and self._request_content_length() > 0:
             self.close_connection = True
-            self._send_json(400, {"error": "request body not allowed"})
+            self._send_json(400, {"error": "request body not allowed"}, headers=headers)
             return True
         return False
 

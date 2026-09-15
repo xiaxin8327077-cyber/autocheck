@@ -35,6 +35,15 @@ def _success(data: Any, request_id: str, *, status: int = 200) -> ModuleHttpResp
     return ModuleHttpResponse.json(status, {"data": _public_value(data), "meta": {"request_id": request_id}})
 
 
+def _external_success(data: Mapping[str, Any], request_id: str) -> ModuleHttpResponse:
+    return ModuleHttpResponse.json(200, {
+        "status": str(data["status"]),
+        "generated_at": str(data["generated_at"]),
+        "data": _public_value({"board": data["board"], "regions": data["regions"]}),
+        "meta": {"request_id": request_id},
+    })
+
+
 def _error(error: DomainError, request_id: str) -> ModuleHttpResponse:
     return ModuleHttpResponse.json(error.status, {
         "error": {"code": error.code, "message": error.message, "fields": dict(error.fields)},
@@ -92,6 +101,23 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
 
         return handler
 
+    def board_preview(request: ModuleRequest) -> ModuleHttpResponse:
+        request_id = _request_id()
+        try:
+            board_code = request.path_params["board_code"]
+            service = service_provider()
+            if request.path.startswith("/api/external/v1/"):
+                return _external_success(
+                    service.preview_external_board_data(board_code), request_id
+                )
+            return _success(
+                service.preview_board_data(board_code, request.current_user), request_id
+            )
+        except DomainError as error:
+            return _error(error, request_id)
+        except Exception:
+            return _internal_error(request_id)
+
     view = "dashboard_management.view"
     manage = "dashboard_management.manage"
     test_sql = "dashboard_management.test_sql"
@@ -104,13 +130,6 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
         (
             "GET", "/boards/{board_code}/catalog",
             lambda service, request: service.catalog(request.path_params["board_code"], request.current_user),
-            view, 0, 200,
-        ),
-        (
-            "GET", "/boards/{board_code}/preview",
-            lambda service, request: service.preview_board_data(
-                request.path_params["board_code"], request.current_user,
-            ),
             view, 0, 200,
         ),
         (
@@ -183,6 +202,14 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
             permission=permission,
             max_body_bytes=max_body_bytes,
         )
+    router.add(
+        "GET",
+        "/boards/{board_code}/preview",
+        board_preview,
+        permission=view,
+        max_body_bytes=0,
+        external=True,
+    )
     router.add(
         "GET",
         "/boards/{board_code}/screen",

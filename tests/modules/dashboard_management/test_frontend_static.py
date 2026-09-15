@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -58,6 +59,13 @@ def test_dashboard_management_frontend_has_required_contract_and_copy() -> None:
     assert "aria-labelledby" in _read("components/catalog_dialog.js")
     assert "addEventListener(\"keydown\"" in _read("components/catalog_dialog.js")
     assert "updateRegion" in _read("api.js")
+    assert "dm-region-enabled-switch" in index
+    assert 'enabledSwitch.setAttribute("role", "switch")' in index
+    assert 'enabledSwitch.setAttribute("aria-checked", region.enabled === false ? "false" : "true")' in index
+    manage_dialog = _read("components/catalog_dialog.js").split("export function openManageRegionDialog", 1)[1].split("export function openFieldDialog", 1)[0]
+    assert 'labeledControl("启用区域"' not in manage_dialog
+    assert "enabled: enabled.checked" not in manage_dialog
+    assert 'form.append(nameControl, labeledControl(builtIn ? "数据形态（系统固定）" : "数据形态", shape), descriptionControl)' in manage_dialog
     assert "revision" in _read("state.js")
     assert "wasSystem" in index
     assert "已切换为自定义 SQL，需由一条 SQL 返回全部启用字段" in index
@@ -69,6 +77,24 @@ def test_dashboard_management_frontend_has_required_contract_and_copy() -> None:
     assert "hidden" in index and 'role: "tabpanel"' in index
     assert "if (recordPreview(state, token, preview))" in index
     assert "if (markSaved(state, token, saved))" in index
+    assert 'draft.source_mode === "sql" && draft.testStatus !== "passed"' not in index
+    assert 'nextDraft?.source_mode === "sql" && nextDraft?.testStatus !== "passed"' not in index
+    assert "查询 SQL 可直接保存，测试仅用于预览和校验结果" in index
+
+
+def test_region_dialog_save_targets_the_dialog_region_instead_of_the_selected_region() -> None:
+    index = _read("index.js")
+
+    save_region = re.search(
+        r"const saveRegion = async \(targetRegion, boardCode, generation, payload, successText = \"区域配置已保存\"\) => \{(?P<body>.*?)\n  \};",
+        index,
+        re.DOTALL,
+    )
+
+    assert save_region is not None
+    assert "await api.updateRegion(targetRegion.id, payload)" in save_region.group("body")
+    assert "captureRequest(state)" not in save_region.group("body")
+    assert "onSave: (payload) => saveRegion(region, boardCode, generation, payload)" in index
 
 
 def test_copied_dashboard_pages_use_only_dashboard_management_preview_api() -> None:

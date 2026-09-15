@@ -4,10 +4,15 @@ from datetime import datetime, timezone
 import secrets
 from typing import Any, Callable, Mapping
 
-from .catalog import BOARD_CATALOG
+from .catalog import BOARD_CATALOG, BUILTIN_FIELD_SEEDS, BUILTIN_REGION_SEEDS
 from .contracts import VersionConflictError
 from .storage import DashboardManagementStorage, SchemaVersionConflictError
-from .sql_executor import QueryPreview, SqlPreviewExecutor
+from .sql_executor import (
+    QueryPreview,
+    SqlPreviewExecutor,
+    validate_readonly_query,
+    validate_storable_query,
+)
 from .system_data import SystemDataPreviewExecutor
 from .validator import (
     ConflictError,
@@ -88,29 +93,106 @@ class DashboardManagementService:
         self, board_code: str, current_user: Mapping[str, Any]
     ) -> dict[str, Any]:
         del current_user
+        return self._preview_board_data(board_code, external=False)
+
+    def preview_external_board_data(self, board_code: str) -> dict[str, Any]:
+        try:
+            selected = validate_board_code(board_code)
+        except ValidationError as error:
+            raise NotFoundError("外部看板接口不存在") from error
+        return self._preview_board_data(selected, external=True)
+
+    def _preview_board_data(
+        self, board_code: str, *, external: bool
+    ) -> dict[str, Any]:
         selected = validate_board_code(board_code)
         board = next(board for board in BOARD_CATALOG if board.code == selected)
         regions = []
         request_now = self._now()
-        for region in self.storage.list_regions(selected, include_disabled=False):
-            fields = self.storage.list_fields(region["id"], include_disabled=False)
+        stored_regions = self.storage.list_regions(selected, include_disabled=False)
+        if external:
+            region_seeds = tuple(
+                seed
+                for seed in BUILTIN_REGION_SEEDS
+                if seed.board_code == selected
+            )
+            stored_regions_by_code = {
+                str(region["region_code"]): region
+                for region in stored_regions
+                if bool(region.get("built_in"))
+            }
+            region_entries = tuple(
+                (stored_regions_by_code.get(seed.code), seed) for seed in region_seeds
+            )
+        else:
+            region_entries = tuple((region, None) for region in stored_regions)
+
+        for region, region_seed in region_entries:
+            if external and region_seed is not None:
+                field_seeds = tuple(
+                    seed
+                    for seed in BUILTIN_FIELD_SEEDS
+                    if seed.region_code == region_seed.code
+                )
+                item = {
+                    "code": region_seed.code,
+                    "name": region_seed.name,
+                    "shape": region_seed.shape,
+                    "fields": [
+                        {
+                            "alias": field.alias,
+                            "name": field.name,
+                            "value_type": field.value_type,
+                        }
+                        for field in field_seeds
+                    ],
+                }
+                if region is None:
+                    item.update(_preview_error(NotFoundError(
+                        "固定数据区域尚未初始化"
+                    )))
+                    regions.append(item)
+                    continue
+                stored_fields = self.storage.list_fields(
+                    region["id"], include_disabled=False
+                )
+                stored_fields_by_alias = {
+                    str(field["field_alias"]): field
+                    for field in stored_fields
+                    if bool(field.get("built_in"))
+                }
+                fields = [
+                    stored_fields_by_alias[field.alias]
+                    for field in field_seeds
+                    if field.alias in stored_fields_by_alias
+                ]
+                if len(fields) != len(field_seeds):
+                    item.update(_preview_error(ValidationError(
+                        "外部接口固定字段配置不完整"
+                    )))
+                    regions.append(item)
+                    continue
+            else:
+                fields = self.storage.list_fields(
+                    region["id"], include_disabled=False
+                )
+                item = {
+                    "code": region["region_code"],
+                    "name": region["name"],
+                    "shape": region["shape"],
+                    "fields": [
+                        {
+                            "alias": field["field_alias"],
+                            "name": field["name"],
+                            "value_type": field["value_type"],
+                        }
+                        for field in fields
+                    ],
+                }
             snapshot_enabled = (
                 bool(region.get("built_in"))
                 and str(region["region_code"]) in SNAPSHOT_REGION_CODES
             )
-            item = {
-                "code": region["region_code"],
-                "name": region["name"],
-                "shape": region["shape"],
-                "fields": [
-                    {
-                        "alias": field["field_alias"],
-                        "name": field["name"],
-                        "value_type": field["value_type"],
-                    }
-                    for field in fields
-                ],
-            }
             period_alias = _snapshot_period_alias(str(region["region_code"]))
             if snapshot_enabled and period_alias not in {
                 str(field["field_alias"]) for field in fields
@@ -171,10 +253,20 @@ class DashboardManagementService:
                 else:
                     item.update(_preview_error(error))
             regions.append(item)
-        return {
+        result = {
             "board": {"code": board.code, "name": board.name},
             "regions": regions,
         }
+        if external:
+            result.update({
+                "status": (
+                    "partial"
+                    if any(region.get("status") == "error" for region in regions)
+                    else "success"
+                ),
+                "generated_at": _datetime_text(request_now),
+            })
+        return result
 
     def _snapshot_fallback(
         self,
@@ -347,28 +439,42 @@ class DashboardManagementService:
         else:
             source = self._data_source(values["datasource_id"])
             fields = self.storage.list_fields(region_id, include_disabled=False)
-            expected_signature = self._sql_executor.signature_for(
-                source, values["sql_text"], fields, region["shape"],
-            )
+            validate_storable_query(source, values["sql_text"])
+            sql_warning = None
+            try:
+                validate_readonly_query(source, values["sql_text"])
+            except ValidationError as error:
+                sql_warning = error.message
+                expected_signature = None
+            else:
+                expected_signature = self._sql_executor.signature_for(
+                    source, values["sql_text"], fields, region["shape"],
+                )
             current = self.storage.get_source_config(region_id)
-            if current is None or current.get("tested_signature") != expected_signature:
-                raise SqlRetestRequiredError()
+            test_is_current = (
+                expected_signature is not None
+                and current is not None
+                and current.get("tested_signature") == expected_signature
+            )
             values.update({
-                "tested_signature": expected_signature,
-                "tested_at": current.get("tested_at"),
-                "tested_by": current.get("tested_by"),
+                "tested_signature": expected_signature if test_is_current else None,
+                "tested_at": current.get("tested_at") if test_is_current else None,
+                "tested_by": current.get("tested_by") if test_is_current else None,
             })
         try:
-            return self.storage.save_source_config(
+            saved = self.storage.save_source_config(
                 region_id,
                 values,
                 row_version,
                 expected_region_version=region["row_version"],
             )
         except SchemaVersionConflictError as error:
-            raise SqlRetestRequiredError() from error
+            raise ConflictError() from error
         except VersionConflictError as error:
             raise ConflictError() from error
+        if values["source_mode"] == "sql" and sql_warning:
+            return {**saved, "sql_warning": sql_warning}
+        return saved
 
     def _region(self, region_id: int) -> Mapping[str, Any]:
         region = self.storage.get_region(region_id)
@@ -425,11 +531,6 @@ class DashboardManagementService:
         if not datasource_id or not sql_text:
             raise ValidationError("自定义 SQL 尚未完成配置")
         source = self._data_source(datasource_id)
-        expected_signature = self._sql_executor.signature_for(
-            source, sql_text, fields, str(region["shape"])
-        )
-        if source_config.get("tested_signature") != expected_signature:
-            raise SqlRetestRequiredError()
         executor = self._snapshot_sql_executor if snapshot_enabled else self._sql_executor
         return executor.execute(source, sql_text, fields, str(region["shape"]))
 

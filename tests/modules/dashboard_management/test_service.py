@@ -227,7 +227,7 @@ def test_board_preview_returns_each_enabled_region_without_one_failure_blocking_
         def get_source_config(self, region_id):
             return {
                 1: {"source_mode": "system"},
-                2: {"source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT 2 AS value", "tested_signature": "valid"},
+                2: {"source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT 2 AS value", "tested_signature": None},
                 3: {"source_mode": "sql", "datasource_id": None, "sql_text": None, "tested_signature": None},
             }[region_id]
 
@@ -252,6 +252,77 @@ def test_board_preview_returns_each_enabled_region_without_one_failure_blocking_
     assert preview["regions"][0]["fields"] == [{"alias": "value", "name": "指标值", "value_type": "integer"}]
     assert preview["regions"][1]["rows"] == ({"value": 2},)
     assert preview["regions"][2]["error"] == {"code": "invalid_request", "message": "自定义 SQL 尚未完成配置"}
+
+
+def test_external_board_preview_uses_only_fixed_builtin_regions_and_fields(
+    storage, admin
+):
+    from auto_check.modules.dashboard_management.catalog import (
+        BUILTIN_FIELD_SEEDS,
+        BUILTIN_REGION_SEEDS,
+    )
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    service = DashboardManagementService(
+        storage,
+        datasource_loader=lambda: [
+            {"id": "safe", "name": "安全数据源", "db_type": "postgresql"}
+        ],
+        now=lambda: datetime(2026, 9, 15, 9, 30),
+    )
+    custom_region = service.create_region(
+        "report_submission", _region_payload(name="不得外泄的自定义区域"), admin
+    )
+    annual_region = next(
+        region
+        for region in service.catalog("report_submission", admin)["regions"]
+        if region["region_code"] == "annual_supplement_completed"
+    )
+    service.create_field(
+        annual_region["id"],
+        _field_payload(field_alias="must_not_leak", name="不得外泄的字段"),
+        admin,
+    )
+
+    external_submission = service.preview_external_board_data("report_submission")
+    external_process = service.preview_external_board_data("reporting_process")
+    internal_submission = service.preview_board_data("report_submission", admin)
+
+    assert external_submission["generated_at"] == "2026-09-15T09:30:00"
+    assert external_submission["status"] == "partial"
+    assert [item["code"] for item in external_submission["regions"]] == [
+        seed.code
+        for seed in BUILTIN_REGION_SEEDS
+        if seed.board_code == "report_submission"
+    ]
+    assert [item["code"] for item in external_process["regions"]] == [
+        seed.code
+        for seed in BUILTIN_REGION_SEEDS
+        if seed.board_code == "reporting_process"
+    ]
+    annual_external = next(
+        item
+        for item in external_submission["regions"]
+        if item["code"] == "annual_supplement_completed"
+    )
+    assert [field["alias"] for field in annual_external["fields"]] == [
+        seed.alias
+        for seed in BUILTIN_FIELD_SEEDS
+        if seed.region_code == "annual_supplement_completed"
+    ]
+    assert "must_not_leak" not in str(external_submission)
+    assert custom_region["region_code"] not in str(external_submission)
+    assert custom_region["region_code"] in {
+        item["code"] for item in internal_submission["regions"]
+    }
+    assert "must_not_leak" in str(internal_submission)
+
+
+def test_external_board_preview_rejects_unknown_board_code(service):
+    from auto_check.modules.dashboard_management.validator import NotFoundError
+
+    with pytest.raises(NotFoundError, match="外部看板接口不存在"):
+        service.preview_external_board_data("unknown_board")
 
 
 def test_snapshot_preview_prefers_sql_rows_and_preserves_unreturned_history(storage):

@@ -28,12 +28,13 @@ def _run_scenario(tmp_path: Path) -> dict:
 import assert from "node:assert/strict";
 import {
   activateLifecycle, applyCatalog, createState, currentDraft, hasPermission, markSqlChanged,
-  beginPending, captureRequest, discardDraft, endPending, isTokenCurrent, markSaved,
+  beginPending, captureRequest, discardDraft, endPending, isTokenCurrent, markDatasourceChanged, markSaved,
   markPreviewFailed, previewRows, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode,
   startRequest, stopRequests, SELECTION_STORAGE_KEY,
 } from "./state.mjs";
 import { createApi } from "./api.mjs";
 import { sourceTestStatusText } from "./components/source_editor.mjs";
+import { formatPreviewValue } from "./components/preview_table.mjs";
 await import("./index.mjs");
 
 const catalog = {
@@ -85,12 +86,27 @@ applyCatalog(state, "report_submission", catalog);
 applyCatalog(state, "reporting_process", processCatalog);
 selectRegion(state, 11);
 assert.equal(currentDraft(state).sql_text, "SELECT month FROM trust");
+assert.equal(state.dirtyRegions.has("report_submission:11"), false);
+markDatasourceChanged(state, "other");
+assert.equal(state.dirtyRegions.has("report_submission:11"), true);
+markDatasourceChanged(state, "dws");
+assert.equal(state.dirtyRegions.has("report_submission:11"), false);
+markSqlChanged(state, "SELECT changed then restored");
+assert.equal(state.dirtyRegions.has("report_submission:11"), true);
+markSqlChanged(state, "SELECT month FROM trust");
+assert.equal(state.dirtyRegions.has("report_submission:11"), false);
+let unnecessaryConfirmationCount = 0;
+assert.equal(await requestLeave(state, async () => { unnecessaryConfirmationCount += 1; return false; }), true);
+assert.equal(unnecessaryConfirmationCount, 0);
 selectBoard(state, "reporting_process");
 assert.deepEqual(state.catalogs.get(state.activeBoardCode).regions.map((region) => region.name), ["监管报送报表数量", "当月监管报送报表时间", "报表校验统计"]);
 assert.equal(currentDraft(state).sql_text, "SELECT report_type, COUNT(*) AS report_count FROM report_source GROUP BY report_type");
 selectRegion(state, 22);
 assert.equal(currentDraft(state).source_mode, "system");
 assert.equal(setSourceMode(state, "sql").source_mode, "sql");
+assert.equal(state.dirtyRegions.has("reporting_process:22"), true);
+assert.equal(setSourceMode(state, "system").source_mode, "system");
+assert.equal(state.dirtyRegions.has("reporting_process:22"), false);
 selectBoard(state, "report_submission");
 assert.equal(state.selectedRegionByBoard.get("report_submission"), 11);
 assert.equal(currentDraft(state).sql_text, "SELECT month FROM trust");
@@ -101,10 +117,23 @@ const failedToken = captureRequest(state);
 assert.ok(markPreviewFailed(state, failedToken, "查询失败：数据表不存在：missing_table"));
 assert.equal(currentDraft(state).testStatus, "failed");
 assert.equal(currentDraft(state).testError, "查询失败：数据表不存在：missing_table");
-assert.equal(sourceTestStatusText("failed", "sql", currentDraft(state).testError), "查询失败：数据表不存在：missing_table");
+assert.equal(sourceTestStatusText("failed", "sql", currentDraft(state).testError), "当前 SQL 有问题：查询失败：数据表不存在：missing_table");
+const failedSaveToken = captureRequest(state);
+assert.ok(markSaved(state, failedSaveToken, { row_version: 7, source_mode: "sql" }));
+assert.equal(currentDraft(state).testStatus, "failed");
+assert.equal(currentDraft(state).testError, "查询失败：数据表不存在：missing_table");
 markSqlChanged(state, "SELECT changed again");
 assert.equal(currentDraft(state).testError, "");
+const warningToken = captureRequest(state);
+assert.ok(markSaved(state, warningToken, { row_version: 8, source_mode: "sql", sql_warning: "只允许单条只读查询" }));
+assert.equal(currentDraft(state).testStatus, "failed");
+assert.equal(currentDraft(state).testError, "只允许单条只读查询");
+assert.equal(sourceTestStatusText("failed", "sql", currentDraft(state).testError), "当前 SQL 有问题：只允许单条只读查询");
+assert.equal(formatPreviewValue("2026-07-02T12:00:47", { value_type: "datetime" }), "2026-07-02 12:00:47");
+assert.equal(formatPreviewValue("2026-07-02T12:00:47.123+08:00", { value_type: "datetime" }), "2026-07-02 12:00:47");
+assert.equal(formatPreviewValue("2026-07", { value_type: "string" }), "2026-07");
 assert.deepEqual(previewRows([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }, { n: 5 }, { n: 6 }, { n: 7 }, { n: 8 }, { n: 9 }, { n: 10 }, { n: 11 }]), Array.from({ length: 10 }, (_, index) => ({ n: index + 1 })));
+markSqlChanged(state, "SELECT needs confirmation");
 assert.equal(await requestLeave(state, async () => false), false);
 assert.equal(await requestLeave(state, async () => true), true);
 assert.equal(hasPermission({ capabilities: ["dashboard_management.view"] }, "dashboard_management.manage"), false);
@@ -175,7 +204,7 @@ assert.equal(currentDraft(state).sql_text, "SELECT fresh");
 assert.equal(currentDraft(state).row_version, 7);
 assert.equal(currentDraft(state).testStatus, "idle");
 assert.ok(currentDraft(state).revision > revisionBeforeRefresh);
-assert.equal(state.drafts.get("reporting_process:22").source_mode, "sql");
+assert.equal(state.drafts.get("reporting_process:22").source_mode, "system");
 
 assert.equal(beginPending(state, "save:report_submission:11"), true);
 assert.equal(beginPending(state, "save:report_submission:11"), false);

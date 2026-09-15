@@ -1,17 +1,18 @@
 import { button, labeledControl, node } from "./dom.js";
 
 export function sourceTestStatusText(status, sourceMode, errorMessage = "") {
-  if (status === "failed" && errorMessage) return errorMessage;
   if (sourceMode === "system") {
+    if (status === "failed" && errorMessage) return errorMessage;
     if (status === "passed") return "系统数据预览已更新";
     if (status === "running") return "正在读取系统数据…";
     if (status === "failed") return "系统数据读取失败，请稍后重试";
     return "点击按钮读取当前系统数据";
   }
-  if (status === "passed") return "测试通过，可保存配置";
+  if (status === "failed" && errorMessage) return `当前 SQL 有问题：${errorMessage}`;
+  if (status === "passed") return "测试通过，预览结果已更新";
   if (status === "running") return "测试执行中…";
-  if (status === "failed") return "测试未通过，请修正后重试";
-  return "SQL 或数据源修改后需要重新测试";
+  if (status === "failed") return "当前 SQL 有问题，请测试查看具体原因";
+  return "可直接保存；如需预览可测试执行";
 }
 
 export function renderSourceEditor({ region, draft, datasources, canManage, canTest, pending, onMode, onDatasource, onSql, onTest }) {

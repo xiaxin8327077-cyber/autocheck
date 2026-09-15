@@ -64,6 +64,37 @@ class QueryPreview:
     tested_signature: str
 
 
+def validate_readonly_query(source: Any, sql: str) -> None:
+    """Validate that SQL is one read-only query without executing it."""
+    _validate_readonly_sql(sql, _source_db_type(source))
+
+
+def validate_storable_query(source: Any, sql: str) -> None:
+    """Allow invalid draft SQL to be stored while rejecting obvious unsafe operations.
+
+    A saved query is validated again by :func:`validate_readonly_query` before
+    every execution.  This lighter check therefore protects configuration
+    storage from clear write/DDL, multi-statement and locking operations without
+    turning successful parsing or execution into a prerequisite for saving.
+    """
+    if not isinstance(sql, str) or not sql.strip():
+        raise ValidationError("请输入 SQL", fields={"sql_text": "请输入 SQL"})
+    db_type = _source_db_type(source)
+    try:
+        tokens = _lex_sql(sql, db_type)
+    except ValidationError:
+        _validate_unlexable_storable_sql(sql)
+        return
+    if not tokens:
+        raise ValidationError("请输入 SQL", fields={"sql_text": "请输入 SQL"})
+    semicolons = [index for index, token in enumerate(tokens) if token.raw == ";"]
+    if semicolons and semicolons != [len(tokens) - 1]:
+        raise ValidationError("只允许保存单条查询 SQL")
+    words = [token.upper for token in tokens if token.kind in {"word", "keyword"}]
+    if _contains_prohibited_command(tokens) or _contains_locking_clause(words):
+        raise ValidationError("只允许保存查询 SQL，不能包含写入、DDL 或锁表操作")
+
+
 class SqlPreviewExecutor:
     def __init__(
         self,
@@ -99,10 +130,14 @@ class SqlPreviewExecutor:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def validate_query(source: Any, sql: str) -> None:
+        validate_readonly_query(source, sql)
+
     def execute(
         self, source: Any, sql: str, fields: Sequence[Any], shape: str
     ) -> QueryPreview:
-        _validate_readonly_sql(sql, _source_db_type(source))
+        self.validate_query(source, sql)
         if shape not in {"scalar", "list"}:
             raise ValidationError("数据区域形态无效")
         active_fields = _active_fields(fields)
@@ -382,6 +417,16 @@ def _validate_readonly_sql(sql: str, db_type: str) -> None:
         raise ValidationError("只允许单条只读查询")
     if _contains_locking_clause(words):
         raise ValidationError("只允许单条只读查询")
+
+
+def _validate_unlexable_storable_sql(sql: str) -> None:
+    """Conservatively inspect malformed SQL that the tokenizer cannot finish."""
+    stripped = sql.rstrip()
+    if ";" in stripped.rstrip(";"):
+        raise ValidationError("只允许保存单条查询 SQL")
+    prohibited = "|".join(sorted(re.escape(word) for word in _PROHIBITED_WORDS))
+    if re.search(rf"(?<![\w$])(?:{prohibited})(?![\w$])", sql, re.IGNORECASE):
+        raise ValidationError("只允许保存查询 SQL，不能包含写入、DDL 或锁表操作")
 
 
 def _lex_sql(sql: str, db_type: str = "postgresql") -> list[_SqlToken]:

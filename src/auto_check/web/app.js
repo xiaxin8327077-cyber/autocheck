@@ -7015,6 +7015,15 @@ const CAPABILITY_MENU_TREE = [
       { code: "sys.users", label: "用户管理", type: "menu" },
       { code: "sys.dictionaries", label: "字典管理", type: "menu" },
       { code: "sys.scheduled_tasks", label: "定时任务管理", type: "menu" },
+      {
+        label: "看板管理",
+        type: "group",
+        children: [
+          { code: "sys.dashboard_management", label: "页面查看", type: "menu" },
+          { code: "sys.dashboard_management.manage", label: "维护数据区域、字段与来源", type: "function" },
+          { code: "sys.dashboard_management.test_sql", label: "测试自定义 SQL", type: "function" },
+        ],
+      },
     ],
   },
 ];
@@ -14763,6 +14772,16 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.27</span>
+        <span class="changelog-date">2026-09-15</span>
+      </div>
+      <ul>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.26</span>
