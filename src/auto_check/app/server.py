@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import ipaddress
 import json
 import mimetypes
 import os
@@ -67,6 +68,7 @@ from auto_check.app.flow_tool import (
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
 from auto_check.app.platform_services import create_dictionary_service, create_user_directory_service
+from auto_check.app.external_api import create_external_api_status_service
 from auto_check.app.report_navigation_platform import (
     ProviderManagedCardError,
     create_report_navigation_service,
@@ -3737,6 +3739,15 @@ def _is_client_disconnect_error(exc: BaseException) -> bool:
     return getattr(exc, "errno", None) in disconnect_codes or getattr(exc, "winerror", None) in disconnect_codes
 
 
+def _normalize_peer_ip(value: object) -> str:
+    """Normalize a TCP peer address to compressed IPv4/IPv6, or 'unknown'."""
+    host = str(value or "").strip().split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(host).compressed
+    except ValueError:
+        return "unknown"
+
+
 class AutoCheckRequestHandler(BaseHTTPRequestHandler):
     router: ApiRouter
     web_dir: Path
@@ -4027,8 +4038,28 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self._send_module_response(response)
 
     def _handle_external_module_api(self, method: str, path: str) -> None:
-        configured_token = os.environ.get("AUTO_CHECK_EXTERNAL_API_TOKEN", "").strip()
-        if not configured_token:
+        preflight = self.router.module_runtime.external_preflight(
+            method=method, path=path
+        )
+        if preflight.status == 404:
+            self._send_external_json(method, 404, {"error": "module route not found"})
+            return
+        if preflight.status == 405:
+            self._send_external_json(
+                method,
+                405,
+                {"error": "method not allowed"},
+                headers=list(preflight.headers),
+            )
+            return
+        if preflight.status != 200:
+            self._send_external_json(
+                method, preflight.status, {"error": "module route not found"}
+            )
+            return
+
+        authenticator = preflight.external_authenticator
+        if authenticator is None:
             self._send_external_json(
                 method,
                 503,
@@ -4051,9 +4082,33 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             and authorization_parts[0].lower() == "bearer"
             else ""
         )
-        if not supplied_token or not secrets.compare_digest(
-            supplied_token, configured_token
-        ):
+        try:
+            decision = authenticator(supplied_token)
+        except Exception:
+            self._send_external_json(
+                method,
+                503,
+                {
+                    "error": {
+                        "code": "external_api_disabled",
+                        "message": "外部接口未配置",
+                    }
+                },
+            )
+            return
+        if not decision.configured:
+            self._send_external_json(
+                method,
+                503,
+                {
+                    "error": {
+                        "code": "external_api_disabled",
+                        "message": "外部接口未配置",
+                    }
+                },
+            )
+            return
+        if not decision.authenticated:
             self._send_external_json(
                 method,
                 401,
@@ -4067,34 +4122,23 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
-        preflight = self.router.module_runtime.external_preflight(
-            method=method, path=path
-        )
-        if preflight.status != 200:
-            error = (
-                "method not allowed"
-                if preflight.status == 405
-                else "module route not found"
-            )
-            self._send_external_json(
-                method,
-                preflight.status,
-                {"error": error},
-                headers=list(preflight.headers),
-            )
-            return
-
         query = dict(parse_qsl(urlparse(self.path).query, keep_blank_values=True))
         try:
             response = self.router.module_runtime.dispatch_external(
                 method=method,
                 path=path,
                 query=query,
+                client_ip=_normalize_peer_ip(
+                    self.client_address[0] if self.client_address else ""
+                ),
             )
         except Exception:
             self._send_external_json(
                 method, 500, {"error": "internal server error"}
             )
+            return
+        if response is None:
+            self._send_external_json(method, 404, {"error": "module route not found"})
             return
         self._send_external_module_response(response)
 
@@ -5219,6 +5263,7 @@ def run_server(
                 create_dictionary_service(application_database),
                 create_report_navigation_service(report_navigation_service),
                 _notification_platform_module.create_notification_platform_service(notification_service),
+                create_external_api_status_service(),
             ),
         )
         module_runtime.start()

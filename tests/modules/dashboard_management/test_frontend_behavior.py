@@ -31,11 +31,13 @@ import {
   beginPending, captureRequest, discardDraft, endPending, isTokenCurrent, markDatasourceChanged, markSaved,
   markPreviewFailed, previewRows, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode,
   startRequest, stopRequests, SELECTION_STORAGE_KEY,
+  enterMonitorView, leaveMonitorView, resetMonitorFilters,
 } from "./state.mjs";
 import { createApi } from "./api.mjs";
 import { sourceTestStatusText } from "./components/source_editor.mjs";
 import { formatPreviewValue } from "./components/preview_table.mjs";
-await import("./index.mjs");
+import { formatMonitorDateTime, monitorBoardName, monitorStatusText } from "./components/external_api_monitor.mjs";
+const { confirmAndRotateToken } = await import("./index.mjs");
 
 const catalog = {
   boards: [
@@ -86,6 +88,23 @@ applyCatalog(state, "report_submission", catalog);
 applyCatalog(state, "reporting_process", processCatalog);
 selectRegion(state, 11);
 assert.equal(currentDraft(state).sql_text, "SELECT month FROM trust");
+
+// Token 轮换必须等待确认结果；取消时不得调用生成接口，确认后才执行一次。
+let rotationCalls = 0;
+const cancelled = await confirmAndRotateToken({
+  configured: true,
+  confirm: async () => false,
+  rotate: async () => { rotationCalls += 1; },
+});
+assert.equal(cancelled, false);
+assert.equal(rotationCalls, 0);
+const continued = await confirmAndRotateToken({
+  configured: true,
+  confirm: async () => true,
+  rotate: async () => { rotationCalls += 1; },
+});
+assert.equal(continued, true);
+assert.equal(rotationCalls, 1);
 assert.equal(state.dirtyRegions.has("report_submission:11"), false);
 markDatasourceChanged(state, "other");
 assert.equal(state.dirtyRegions.has("report_submission:11"), true);
@@ -210,6 +229,72 @@ assert.equal(beginPending(state, "save:report_submission:11"), true);
 assert.equal(beginPending(state, "save:report_submission:11"), false);
 endPending(state, "save:report_submission:11");
 assert.equal(beginPending(state, "save:report_submission:11"), true);
+
+// 监控视图：进入/退出不丢失草稿，筛选和分页独立
+markSqlChanged(state, "SELECT unsaved before monitor");
+const before = currentDraft(state);
+enterMonitorView(state, 128);
+assert.equal(state.viewMode, "monitor");
+leaveMonitorView(state);
+assert.equal(state.viewMode, "management");
+assert.equal(currentDraft(state), before);
+assert.equal(currentDraft(state).sql_text, "SELECT unsaved before monitor");
+assert.equal(state.managementScrollTop, 128);
+
+// 监控筛选变化/清除回第一页
+state.monitorFilters = { board_code: "report_submission", result_status: "success", caller_ip: "", started_at: "", ended_at: "" };
+state.monitorPage = 3;
+resetMonitorFilters(state);
+assert.equal(state.monitorPage, 1);
+assert.deepEqual(state.monitorFilters, { board_code: "", result_status: "", caller_ip: "", started_at: "", ended_at: "" });
+
+// 监控请求参数编码
+const monitorRequests = [];
+const monitorContext = { api: async (path, options) => { monitorRequests.push({ path, query: options.body ? JSON.parse(options.body) : Object.fromEntries(new URLSearchParams(path.split("?")[1] || "")) }); return { data: {} }; } };
+const monitorApi = createApi(monitorContext, state);
+await monitorApi.monitorSummary();
+await monitorApi.monitorCalls({ board_code: "report_submission", result_status: "success", started_at: "2026-09-16", ended_at: "2026-09-17", page: "2", page_size: "10" });
+assert.equal(monitorRequests[0].path, "/api/modules/dashboard-management/external-api/monitor/summary");
+assert.ok(monitorRequests[1].path.startsWith("/api/modules/dashboard-management/external-api/monitor/calls?"));
+assert.equal(monitorRequests[1].query.page, "2");
+assert.equal(monitorRequests[1].query.page_size, "10");
+assert.equal(monitorRequests[1].query.board_code, "report_submission");
+assert.equal(monitorRequests[1].query.result_status, "success");
+assert.equal(monitorRequests[1].query.started_at, new Date("2026-09-16T00:00:00.000").toISOString());
+assert.equal(monitorRequests[1].query.ended_at, new Date("2026-09-17T23:59:59.999").toISOString());
+
+// stopRequests 会中止监控请求
+const monitorControllers = [];
+const abortContext = { api: async (_path, options) => { monitorControllers.push(options.signal); return { data: {} }; } };
+const abortApi = createApi(abortContext, state);
+const pendingSummary = abortApi.monitorSummary();
+stopRequests(state);
+await pendingSummary;
+assert.equal(monitorControllers.length, 1);
+assert.equal(monitorControllers[0].aborted, true);
+
+// 监控页面返回不清空草稿
+activateLifecycle(state);
+selectBoard(state, "report_submission");
+selectRegion(state, 11);
+markSqlChanged(state, "SELECT unsaved for return test");
+enterMonitorView(state, 256);
+assert.equal(state.viewMode, "monitor");
+leaveMonitorView(state);
+assert.equal(state.viewMode, "management");
+assert.equal(currentDraft(state).sql_text, "SELECT unsaved for return test");
+assert.equal(state.managementScrollTop, 256);
+
+// 监控列表使用中文名称、中文状态和统一的本地时间格式。
+assert.equal(monitorBoardName("report_submission"), "金融监管报表报送大屏");
+assert.equal(monitorBoardName("reporting_process"), "金融监管报送流程大屏");
+assert.equal(monitorBoardName("unknown"), "unknown");
+assert.equal(monitorStatusText("success"), "成功");
+assert.equal(monitorStatusText("partial"), "部分成功");
+assert.equal(monitorStatusText("error"), "失败");
+assert.equal(formatMonitorDateTime("2026-09-16T01:02:03"), "2026-09-16 01:02:03");
+assert.equal(formatMonitorDateTime("invalid"), "-");
+
 console.log(JSON.stringify({ ok: true }));
 """.strip(),
         encoding="utf-8",

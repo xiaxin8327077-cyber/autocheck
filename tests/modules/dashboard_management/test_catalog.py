@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 
-def test_builtin_catalog_has_two_boards_ten_regions_and_twenty_one_fields() -> None:
+def test_builtin_catalog_has_two_boards_ten_regions_and_twenty_two_fields() -> None:
     from auto_check.modules.dashboard_management.catalog import (
         BOARD_CATALOG,
         BUILTIN_FIELD_SEEDS,
@@ -14,7 +14,7 @@ def test_builtin_catalog_has_two_boards_ten_regions_and_twenty_one_fields() -> N
 
     assert [board.code for board in BOARD_CATALOG] == ["report_submission", "reporting_process"]
     assert len(BUILTIN_REGION_SEEDS) == 10
-    assert len(BUILTIN_FIELD_SEEDS) == 21
+    assert len(BUILTIN_FIELD_SEEDS) == 22
     trust = next(item for item in BUILTIN_REGION_SEEDS if item.code == "monthly_trust_projects")
     assert trust.shape == "list"
     assert trust.system_supported is False
@@ -54,3 +54,22 @@ def test_builtin_month_fields_describe_the_required_display_format() -> None:
         "report_reconciliation_completion_time": "统计月份。格式：YYYY-MM，例如：2026-08。",
         "report_validation_issue_handling": "统计月份。格式：YYYY-MM，例如：2026-08。",
     }
+
+
+def test_reconciliation_completion_fields_separate_display_time_and_full_datetime() -> None:
+    from auto_check.modules.dashboard_management.catalog import BUILTIN_FIELD_SEEDS
+
+    fields = [
+        item
+        for item in BUILTIN_FIELD_SEEDS
+        if item.region_code == "report_reconciliation_completion_time"
+    ]
+
+    assert [
+        (item.alias, item.value_type, item.nullable, item.display_order)
+        for item in fields
+    ] == [
+        ("month", "string", False, 10),
+        ("reconciliation_completed_time", "string", False, 20),
+        ("reconciliation_completed_at", "datetime", True, 30),
+    ]

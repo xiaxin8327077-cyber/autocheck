@@ -70,6 +70,35 @@ from auto_check.engine.reconcile import NoSourceReportData
 from mysql_config_test_support import MemoryApplicationDatabase
 
 
+def test_external_module_api_method_not_allowed_sends_exactly_one_response():
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {
+                    "status": 405,
+                    "headers": (("Allow", "GET"),),
+                    "external_authenticator": None,
+                },
+            )()
+
+    handler = object.__new__(AutoCheckRequestHandler)
+    handler.router = type("Router", (), {"module_runtime": Runtime()})()
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api(
+        "POST",
+        "/api/external/v1/dashboard-management/boards/report_submission/preview",
+    )
+
+    assert len(responses) == 1
+    assert responses[0][0][1] == 405
+    assert responses[0][0][2] == {"error": "method not allowed"}
+
+
 def db_path_for_config(config_path):
     return Path(config_path).with_name("auto-check.db")
 
@@ -609,6 +638,12 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         events.append(("report_navigation_platform", service))
         return report_navigation_spec
 
+    external_api_status_spec = object()
+
+    def create_external_api_status_service():
+        events.append("external_api_status_platform")
+        return external_api_status_spec
+
     def build_module_runtime(context, *, platform_services):
         events.append(
             (
@@ -637,6 +672,11 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         server_module,
         "create_report_navigation_service",
         create_report_navigation_service,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_external_api_status_service",
+        create_external_api_status_service,
     )
     monkeypatch.setattr(server_module.ModuleRuntime, "build", staticmethod(build_module_runtime))
     monkeypatch.setattr(
@@ -710,11 +750,12 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         ("dictionary_platform", application_database),
         ("report_navigation_platform", report_navigation_service),
         "notification_platform",
+        "external_api_status_platform",
         (
             "module_build",
             application_database,
             config_path,
-            (user_directory_spec, dictionary_spec, report_navigation_spec, notification_platform_spec),
+            (user_directory_spec, dictionary_spec, report_navigation_spec, notification_platform_spec, external_api_status_spec),
         ),
         "module_start",
         ("router", application_database, report_navigation_service),

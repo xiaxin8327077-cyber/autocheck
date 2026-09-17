@@ -93,3 +93,19 @@ def test_module_development_guide_defines_explicit_external_readonly_route_contr
         "secrets.compare_digest",
     ]:
         assert fragment in content
+
+
+def test_dashboard_management_external_api_doc_covers_monitoring():
+    content = (ROOT / "docs/dashboard-management-external-api.zh-CN.md").read_text(encoding="utf-8")
+
+    for fragment in [
+        "认证通过并命中路由才记录",
+        "401/503 不记录",
+        "TCP 对端 IP",
+        "X-Forwarded-For",
+        "30 天",
+        "接口监控",
+        "返回看板管理",
+    ]:
+        assert fragment in content
+    assert "尚未包含在当前外部 v1 接口交付中" not in content

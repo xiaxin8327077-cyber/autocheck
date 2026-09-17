@@ -1,20 +1,33 @@
 import { createApi } from "./api.js";
-import { activateLifecycle, applyCatalog, beginPending, captureRequest, createState, currentDraft, currentRegion, endPending, hasPermission, isTokenCurrent, markDatasourceChanged, markPreviewFailed, markSaved, markSqlChanged, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode, stopRequests } from "./state.js";
+import { activateLifecycle, applyCatalog, beginPending, captureRequest, createState, currentDraft, currentRegion, endPending, hasPermission, isTokenCurrent, markDatasourceChanged, markPreviewFailed, markSaved, markSqlChanged, recordPreview, requestLeave, selectBoard, selectRegion, setSourceMode, stopRequests, enterMonitorView, leaveMonitorView, resetMonitorFilters } from "./state.js";
 import { button, clear, node } from "./components/dom.js";
 import { renderDashboardTabs } from "./components/dashboard_tabs.js";
 import { renderRegionList } from "./components/region_list.js";
 import { openFieldDialog, openManageRegionDialog, openRegionDialog, renderFieldPanel } from "./components/catalog_dialog.js";
 import { renderSourceEditor } from "./components/source_editor.js";
 import { renderPreviewTable } from "./components/preview_table.js";
+import { renderExternalApiMonitor } from "./components/external_api_monitor.js";
+import { openTokenDialog } from "./components/external_api_token_dialog.js";
 import { openBoardPreviewDialog, openBoardScreenPreviewDialog } from "./components/board_preview_dialog.js";
 
 let instance = null;
 function message(error, fallback) { return error?.payload?.error?.message || error?.message || fallback; }
 function aborted(error) { return error?.name === "AbortError"; }
 
+export async function confirmAndRotateToken({ configured, confirm, rotate }) {
+  if (configured) {
+    const confirmed = await confirm("旧 Token 将立即失效，Kanban 调用将返回 401，是否继续？");
+    if (!confirmed) return false;
+  }
+  await rotate();
+  return true;
+}
+
 function createPage(context) {
   const state = createState(); const api = createApi(context, state); const user = context.user(); const canManage = hasPermission(user, "dashboard_management.manage"); const canTest = hasPermission(user, "dashboard_management.test_sql");
   const notify = (text, kind = "info") => context.notify(text, kind);
+  let activeTokenDialog = null;
+  let tokenRotationInProgress = false;
   const shouldRender = (token) => isTokenCurrent(state, token);
   const loadBoard = async (boardCode, { force = false, resetRegionIds = [], generation = state.lifecycleGeneration } = {}) => {
     if (!force && state.catalogs.has(boardCode)) return state.catalogs.get(boardCode);
@@ -117,11 +130,100 @@ function createPage(context) {
     }
     openBoardPreviewDialog(context.root, { board, endpoint: `/api/modules/dashboard-management/boards/${encodeURIComponent(board.code)}/preview`, loadPreview: () => api.previewBoard(board.code), trigger });
   };
+  const loadMonitorData = async (token) => {
+    state.monitorLoading = true;
+    state.monitorError = "";
+    if (shouldRender(token)) render();
+    try {
+      const [summary, calls] = await Promise.all([api.monitorSummary(), api.monitorCalls(state.monitorFilters)]);
+      if (!state.active || token.generation !== state.lifecycleGeneration) return;
+      state.monitorSummary = summary;
+      state.monitorCalls = calls;
+      state.monitorPage = calls.page;
+    } catch (error) {
+      if (!aborted(error) && state.active && token.generation === state.lifecycleGeneration) {
+        state.monitorError = message(error, "监控数据加载失败");
+      }
+    } finally {
+      state.monitorLoading = false;
+      if (shouldRender(token)) render();
+    }
+  };
+  const loadMonitorPage = async (token) => {
+    state.monitorLoading = true;
+    state.monitorError = "";
+    if (shouldRender(token)) render();
+    try {
+      const calls = await api.monitorCalls({ ...state.monitorFilters, page: String(state.monitorPage), page_size: "10" });
+      if (!state.active || token.generation !== state.lifecycleGeneration) return;
+      state.monitorCalls = calls;
+      state.monitorPage = calls.page;
+    } catch (error) {
+      if (!aborted(error) && state.active && token.generation === state.lifecycleGeneration) {
+        state.monitorError = message(error, "监控数据加载失败");
+      }
+    } finally {
+      state.monitorLoading = false;
+      if (shouldRender(token)) render();
+    }
+  };
+  const requestTokenRotation = async () => {
+    if (activeTokenDialog) return;
+    const token = captureRequest(state);
+    try {
+      const response = await api.generateExternalApiToken();
+      if (!isTokenCurrent(state, token)) return;
+      const payload = response?.data || response;
+      activeTokenDialog = openTokenDialog({
+        host: context.root,
+        token: payload.token,
+        rotated: payload.rotated,
+        onClose: () => {
+          activeTokenDialog = null;
+          if (!state.active) return;
+          state.monitorSummary = null;
+          loadMonitorData(captureRequest(state));
+        },
+      });
+    } catch (error) {
+      if (!isTokenCurrent(state, token)) return;
+      notify(message(error, "Token 生成失败"), "error");
+    }
+  };
+  const onGenerateToken = async ({ configured }) => {
+    if (tokenRotationInProgress || activeTokenDialog) return;
+    tokenRotationInProgress = true;
+    try {
+      await confirmAndRotateToken({ configured, confirm: context.confirm, rotate: requestTokenRotation });
+    } finally {
+      tokenRotationInProgress = false;
+    }
+  };
+  const renderMonitor = () => {
+    const onBack = () => { leaveMonitorView(state); render(); requestAnimationFrame(() => { context.root.scrollTop = state.managementScrollTop; }); };
+    const onRetry = () => { const token = captureRequest(state); loadMonitorData(token); };
+    const onFilterChange = (key, value) => { state.monitorFilters[key] = value; state.monitorPage = 1; };
+    const onSearch = () => { state.monitorPage = 1; const token = captureRequest(state); loadMonitorPage(token); };
+    const onClear = () => { resetMonitorFilters(state); const token = captureRequest(state); loadMonitorPage(token); };
+    const onPageChange = (action, value) => {
+      const calls = state.monitorCalls;
+      const totalPages = calls?.total_pages || 1;
+      if (action === "prev" && state.monitorPage > 1) state.monitorPage -= 1;
+      else if (action === "next" && state.monitorPage < totalPages) state.monitorPage += 1;
+      else if (action === "jump") { const target = parseInt(value, 10); if (target >= 1 && target <= totalPages) state.monitorPage = target; }
+      const token = captureRequest(state); loadMonitorPage(token);
+    };
+    context.root.append(renderExternalApiMonitor({ state, api, onBack, onFilterChange, onSearch, onClear, onPageChange, onRetry, onGenerateToken, canManageToken }));
+  };
+  const canMonitor = hasPermission(user, "dashboard_management.external_api_monitor");
+  const canManageToken = hasPermission(user, "dashboard_management.external_api_token_manage");
   const render = () => {
-    if (!state.active) return; const catalog = state.catalogs.get(state.activeBoardCode); clear(context.root);
+    if (!state.active) return; clear(context.root);
+    if (state.viewMode === "monitor") { renderMonitor(); return; }
+    const catalog = state.catalogs.get(state.activeBoardCode);
     if (!catalog) { context.root.append(node("p", { className: "dm-loading", text: "正在加载看板目录…" })); return; }
     const shell = node("section", { className: "dm-management-card" });
-    shell.append(renderDashboardTabs({ boards: catalog.boards || [], activeBoardCode: state.activeBoardCode, onSelect: changeBoard, onPreview: previewBoard }));
+    shell.append(renderDashboardTabs({ boards: catalog.boards || [], activeBoardCode: state.activeBoardCode, onSelect: changeBoard, onPreview: previewBoard, canMonitor, onMonitor: () => { enterMonitorView(state, context.root.scrollTop || 0); const token = captureRequest(state); loadMonitorData(token); } }));
     const layout = node("div", { className: "dm-layout" }); const region = currentRegion(state); const draft = currentDraft(state);
     layout.append(renderRegionList({ regions: catalog.regions, selectedId: region?.id, canManage, onSelect: changeRegion, onCreate: () => openRegionDialog(context.root, { onCreate: createRegion, notify }), onManage: (targetRegion) => targetRegion && manageRegion(targetRegion) }));
     const detail = node("div", { className: "dm-detail-content" });
@@ -166,8 +268,8 @@ function createPage(context) {
   };
   return {
     async activate() { activateLifecycle(state); const generation = state.lifecycleGeneration; try { const selectedCatalog = await loadBoard(state.activeBoardCode, { generation }); const boards = selectedCatalog?.boards || []; await Promise.all(boards.map((board) => loadBoard(board.code, { generation }))); if (!state.datasources) state.datasources = await api.datasources(); } catch (error) { if (!aborted(error) && state.active && generation === state.lifecycleGeneration) notify(message(error, "看板管理加载失败"), "error"); } if (state.active && generation === state.lifecycleGeneration) render(); },
-    deactivate() { stopRequests(state); },
-    unmount() { stopRequests(state); clear(context.root); },
+    deactivate() { stopRequests(state); activeTokenDialog?.close(); activeTokenDialog = null; },
+    unmount() { stopRequests(state); activeTokenDialog?.close(); activeTokenDialog = null; clear(context.root); },
   };
 }
 export function mount(context) { if (!context?.root || typeof context.api !== "function" || typeof context.user !== "function" || typeof context.notify !== "function" || typeof context.confirm !== "function") throw new Error("看板管理模块缺少宿主能力"); instance = createPage(context); }

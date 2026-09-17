@@ -88,8 +88,11 @@ def test_initial_year_snapshots_use_confirmed_month_and_quarter_cutoffs(storage)
         "collective_trust_count": 52,
         "property_trust_count": 77,
     }
-    assert [row["row"]["reconciliation_completed_at"] for row in completion_rows] == [
+    assert [row["row"]["reconciliation_completed_time"] for row in completion_rows] == [
         "21:00", "20:00", "19:00", "01:00", "23:00", "20:00",
+    ]
+    assert [row["row"]["reconciliation_completed_at"] for row in completion_rows] == [
+        None, None, None, None, None, None,
     ]
     assert [row["period_value"] for row in validation_rows] == [1, 2, 3, 4, 5, 6, 7, 8]
     assert [row["row"]["validation_issue_count"] for row in validation_rows] == [

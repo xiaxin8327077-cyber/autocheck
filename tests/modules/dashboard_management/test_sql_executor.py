@@ -29,6 +29,10 @@ class _Cursor:
         self.calls.append(("fetchmany", limit))
         return self._rows[:limit]
 
+    def fetchall(self):
+        self.calls.append(("fetchall", None))
+        return list(self._rows)
+
 
 class _Connection:
     def __init__(self, columns, rows):
@@ -128,6 +132,26 @@ def test_preview_validates_columns_converts_values_and_truncates(monkeypatch):
     ), "list")
 
 
+def test_unlimited_executor_fetches_all_rows_without_has_more(monkeypatch):
+    from auto_check.modules.dashboard_management.sql_executor import SqlPreviewExecutor
+
+    rows = [(index,) for index in range(25)]
+    connection = _Connection(["value"], rows)
+    _install_driver(monkeypatch, "postgresql", connection)
+
+    preview = SqlPreviewExecutor(preview_limit=None).execute(
+        _source(),
+        "SELECT value",
+        _fields(("value", "integer", False)),
+        "list",
+    )
+
+    assert preview.returned_count == 25
+    assert preview.has_more is False
+    assert len(preview.rows) == 25
+    assert connection.calls[-1] == ("fetchall", None)
+
+
 @pytest.mark.parametrize("columns,rows,shape,match", [
     (["value", "VALUE"], [(1, 2)], "list", "重复"),
     (["other"], [(1,)], "list", "缺少"),
@@ -167,6 +191,23 @@ def test_preview_supports_native_six_types_and_mysql_readonly_session(monkeypatc
         ("SET SESSION TRANSACTION READ ONLY", None),
         ("START TRANSACTION READ ONLY", None),
     ]
+
+
+@pytest.mark.parametrize("value", ["2026-09-14", date(2026, 9, 14)])
+def test_datetime_field_rejects_date_without_time(value, monkeypatch):
+    from auto_check.modules.dashboard_management.sql_executor import SqlPreviewExecutor
+    from auto_check.modules.dashboard_management.validator import ValidationError
+
+    connection = _Connection(["completed_at"], [(value,)])
+    _install_driver(monkeypatch, "postgresql", connection)
+
+    with pytest.raises(ValidationError, match="字段 completed_at 的类型不符合要求"):
+        SqlPreviewExecutor().execute(
+            _source(),
+            "SELECT completed_at",
+            _fields(("completed_at", "datetime", False)),
+            "list",
+        )
 
 
 @pytest.mark.parametrize("db_type,sql", [

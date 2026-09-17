@@ -73,6 +73,8 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "sys.dashboard_management",
         "sys.dashboard_management.manage",
         "sys.dashboard_management.test_sql",
+        "sys.dashboard_management.external_api_monitor",
+        "sys.dashboard_management.external_api_token_manage",
     }
     assert set(CAPABILITY_DEFINITIONS) == expected_codes
     for code in expected_codes:
@@ -361,6 +363,10 @@ def test_dashboard_management_capabilities_are_admin_default_only():
     assert CAPABILITY_DEFINITIONS["sys.dashboard_management"]["type"] == TYPE_MENU
     assert CAPABILITY_DEFINITIONS["sys.dashboard_management.manage"]["type"] == TYPE_FUNCTION
     assert CAPABILITY_DEFINITIONS["sys.dashboard_management.test_sql"]["type"] == TYPE_FUNCTION
+    assert CAPABILITY_DEFINITIONS["sys.dashboard_management.external_api_monitor"]["type"] == TYPE_FUNCTION
     assert DEFAULT_MATRIX["admin"]["sys.dashboard_management"] is True
     assert DEFAULT_MATRIX["user"]["sys.dashboard_management"] is False
     assert CUSTOM_ROLE_DEFAULT_MATRIX["sys.dashboard_management.manage"] is False
+    assert DEFAULT_MATRIX["admin"]["sys.dashboard_management.external_api_monitor"] is True
+    assert DEFAULT_MATRIX["user"]["sys.dashboard_management.external_api_monitor"] is False
+    assert CUSTOM_ROLE_DEFAULT_MATRIX["sys.dashboard_management.external_api_monitor"] is False

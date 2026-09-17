@@ -7022,6 +7022,7 @@ const CAPABILITY_MENU_TREE = [
           { code: "sys.dashboard_management", label: "页面查看", type: "menu" },
           { code: "sys.dashboard_management.manage", label: "维护数据区域、字段与来源", type: "function" },
           { code: "sys.dashboard_management.test_sql", label: "测试自定义 SQL", type: "function" },
+          { code: "sys.dashboard_management.external_api_monitor", label: "查看外部接口监控", type: "function" },
         ],
       },
     ],
@@ -14774,8 +14775,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   const changelogHtml = `
     <div class="changelog-item">
       <div>
-        <span class="changelog-version">v1.2.27</span>
-        <span class="changelog-date">2026-09-15</span>
+        <span class="changelog-version">v1.2.28</span>
+        <span class="changelog-date">2026-09-16</span>
       </div>
       <ul>
         <li>系统优化及BUG修复。</li>

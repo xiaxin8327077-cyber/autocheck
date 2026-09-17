@@ -80,23 +80,23 @@
 3. 监控页标题栏左侧显示“返回看板管理”，点击后恢复进入前的当前看板、当前区域、未保存草稿、SQL 测试状态、预览结果和可恢复的滚动位置，不弹出放弃修改确认。
 4. 页面根节点采用纵向 flex，`height: 100%`、`min-height: 0`；整页只有一个 `.dm-management-card` 同源外框，内部严格按“标题栏 → 状态区 → 五项统计条 → 筛选栏 → 表格 → 底部分页”排列。
 5. 外框复用看板管理/角色权限管理的边框、背景、圆角和裁切；内部各区只用分隔线组织，不得拆成漂浮卡片、卡片瀑布或多套外框。
-6. 状态区显示“接口已启用/未启用”“Token 已配置/未配置”“记录保留 30 天”和两个完整相对路径；绝不显示 Token、长度、摘要或 Authorization。
+6. 状态区显示“接口已启用/未启用”“Token 已配置/未配置”“记录保留 30 天”和两个完整相对路径；桌面端两个接口同一行并列展示，窄屏再收敛为单列；绝不显示 Token、长度、摘要或 Authorization。
 7. 指标区固定五项：近 24 小时调用、成功、部分成功、失败、平均耗时；桌面宽度下五项等宽等高、标签和值基线一致，仅用统一分隔线组织；无调用时计数为 0，平均耗时显示 `-`。
-8. 筛选区依次为看板、结果状态、调用方 IP、开始时间、结束时间、“查询”“清除”；清除后所有筛选归零并回到第 1 页。
+8. 筛选区依次为看板、结果状态、调用方 IP、开始日期、结束日期、“查询”“重置”；日期复用系统日期选择组件，开始日期覆盖当天起始时刻，结束日期覆盖当天结束时刻；查询与重置均使用统一空心按钮，重置后所有筛选归零并回到第 1 页。
 9. 表格列顺序固定为：调用时间、调用方 IP、看板、HTTP 状态、业务状态、失败区域数、耗时、`request_id`、错误摘要。
-10. IP 和 `request_id` 使用等宽字体并提供纯主题色“复制”操作；复制成功使用现有 toast，不用渐变文字或光晕。
+10. IP 和 `request_id` 使用等宽字体展示，不提供单独复制按钮。
 11. `success` 使用成功语义色，`partial` 使用警告语义色，`error` 使用危险语义色；HTTP 状态与业务状态必须分别显示。
 12. 错误摘要为空显示 `-`；长文本在单元格内截断并通过 `title` 查看完整安全摘要，不撑破表格。
-13. 分页必须使用 `.pagination`、`.pagination-info`、`.pagination-controls`、`.page-btn`、`.page-current`、`.pagination-jump`；固定在列表卡底部，空数据和单页也显示。
+13. 分页必须使用 `.pagination`、`.pagination-info`、`.pagination-controls`、`.page-btn`、`.page-current`、`.pagination-jump`；上一页/下一页使用系统标准左右箭头和 `aria-label`，避免按钮文字竖排；分页固定在列表卡底部，空数据和单页也显示。
 14. 分页文案：有数据为“共 N 条，第 P / T 页”，空数据为“暂无数据”；当前页空数据显示 `-`，否则只显示页码 P。
 15. 筛选变化、查询、清除后回第 1 页；上一页、下一页、跳页正确，越界页收敛到有效范围；请求过程中禁用重复翻页。
 16. 首次加载显示骨架或明确的“正在加载接口监控…”；查询失败保留筛选并显示安全错误和“重新加载”，不能把失败伪装成空数据。
 17. 视口较窄时统计项从五列收敛为两列/一列，筛选项换行；表格使用自身横向滚动，不让整页横向溢出；响应式只改变排列，不改变视觉语言与内容顺序。
-18. 仅使用当前亮色活力主题、Logo 蓝渐变 `#3466D9` 到 `#6AA4FF`、现有语义色和全局变量。渐变只用于实心主操作；返回、筛选、复制等次要操作使用纯色。
+18. 仅使用当前亮色活力主题、Logo 蓝渐变 `#3466D9` 到 `#6AA4FF`、现有语义色和全局变量。渐变只用于实心主操作；返回、筛选等次要操作使用纯色。
 19. 卡片、按钮、输入框、选择框、日期控件、状态标签统一使用 `--ui-radius`；悬浮反馈使用纯色描边，不使用主题光晕，不因 hover 位移内部布局。
 20. 所有按钮带 `type="button"`，分页按钮有 `aria-label`，状态信息不只依赖颜色表达。
 21. 标题栏高度、内容内边距、筛选控件高度、表头/行高、状态标签、按钮尺寸和间距以“系统管理 / 角色权限”现有实现为准，不另造页面密度；同类控件必须齐线。
-22. 文本列左对齐，HTTP 状态、业务状态、失败区域数和耗时居中；同一行的标签、文字和复制按钮垂直居中，不得高低错位。
+22. 表头与所有内容列统一居中；同一行的标签和文字垂直居中，不得高低错位。
 23. 禁止巨型圆角、彩色投影、玻璃拟态、悬浮卡片、胶囊式导航、超大指标数字和新的独立图标语言，确保页面与系统其他管理页整齐划一。
 
 ---
@@ -699,7 +699,7 @@ Expected: PASS。
 
 **Interfaces:**
 - Produces: `renderExternalApiMonitor(options) -> HTMLElement`
-- Consumes: `onBack`、`onFilterChange`、`onSearch`、`onClear`、`onPageChange`、`onRetry`、`onCopy`
+- Consumes: `onBack`、`onFilterChange`、`onSearch`、`onClear`、`onPageChange`、`onRetry`
 
 - [ ] **Step 1: 写完整页面结构失败测试**
 
@@ -727,7 +727,7 @@ assert "var(--ui-radius)" in css
 assert "box-shadow: 0 0" not in css
 ```
 
-行为测试覆盖返回不清空草稿、复制、查询/清除、分页、加载/错误/空状态和重试。
+行为测试覆盖返回不清空草稿、查询/清除、分页、加载/错误/空状态和重试。
 
 - [ ] **Step 2: 运行前端测试确认组件缺失**
 
@@ -910,7 +910,7 @@ Wait-Process -Id $verifiedProcessId -ErrorAction SilentlyContinue
 复用原进程已经确认的 Python、`--config`、host 等参数并设置临时测试 Token，使用隐藏窗口启动。若原命令未带这些可选参数，则使用项目默认源码命令：
 
 ```powershell
-$env:AUTO_CHECK_EXTERNAL_API_TOKEN = "autocheck-monitor-smoke-token"
+$env:AUTO_CHECK_EXTERNAL_API_TOKEN = "<test-token-from-secure-config>"
 $process = Start-Process -FilePath "python" -ArgumentList "-m", "auto_check", "--no-browser", "--port", "8765" -WorkingDirectory "D:\xiaxin\auto_check" -WindowStyle Hidden -PassThru
 ```
 
@@ -928,7 +928,7 @@ $process = Start-Process -FilePath "python" -ArgumentList "-m", "auto_check", "-
 
 1. 确认“接口监控”入口位置、样式和权限显隐。
 2. 确认状态、五个指标、两个端点、30 天说明正确。
-3. 确认 IP/状态/时间筛选、查询、清除、复制和分页行为。
+3. 确认 IP/状态/时间筛选、查询、清除和分页行为。
 4. 确认空数据、单页、加载、错误重试、窄窗口横向表格滚动。
 5. 在看板管理制造未保存 SQL 草稿，进入监控再点击“返回看板管理”，确认看板、区域、草稿、测试状态和预览未丢失且无放弃提示。
 6. 确认没有暗色模式、光晕、硬编码新圆角或语义颜色错误。
@@ -936,3 +936,46 @@ $process = Start-Process -FilePath "python" -ArgumentList "-m", "auto_check", "-
 - [ ] **Step 6: 最终报告**
 
 报告必须分为：代码/配置与文档改动、可见行为变化、测试命令与实际结果、8765/401/503/两个 200/调用记录/IP/返回恢复的实测结果、未执行打包/提交/推送。不要只写“已完成”。
+
+### Task 11: 统一监控页信息层级与管理列表风格
+
+**Files:**
+- Modify: `src/auto_check/modules/dashboard_management/web/components/external_api_monitor.js`
+- Modify: `src/auto_check/modules/dashboard_management/web/styles.css`
+- Modify: `tests/modules/dashboard_management/test_frontend_static.py`
+- Modify: `src/auto_check/modules/dashboard_management/README.md`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: 现有 `renderExternalApiMonitor(options)` 的状态、筛选、分页和返回回调。
+- Produces: 保持原有行为的结构化状态区、带标签筛选区和语义状态表格。
+
+- [ ] **Step 1: 增加失败的前端结构测试**
+
+断言 `dm-monitor-status-overview`、`dm-monitor-endpoint-list`、`dm-monitor-filter-field`、`management-list-status`、粘性表头和不含复制按钮。
+
+- [ ] **Step 2: 运行单个静态测试确认失败**
+
+Run: `python -m pytest tests/modules/dashboard_management/test_frontend_static.py::test_external_api_monitor_uses_management_list_layout -q`
+
+Expected: FAIL，因为新结构类名尚未实现。
+
+- [ ] **Step 3: 重组监控页 DOM 和作用域 CSS**
+
+只在 `dashboard_management` 模块内增加状态标识、接口清单、带标签筛选、语义状态和粘性表头；保留一个外框和公共分页。
+
+- [ ] **Step 4: 同步模块与根 README**
+
+记录状态区、筛选标签、语义标签、去除复制按钮和统一管理页布局。
+
+- [ ] **Step 5: 运行相关、模块及全量回归**
+
+Run: `python -m pytest tests/modules/dashboard_management/test_frontend_static.py tests/modules/dashboard_management/test_frontend_behavior.py -q`
+
+Run: `python -m pytest tests/modules/dashboard_management -q`
+
+Run: `python -m pytest -q`
+
+Run: `git diff --check`
+
+Expected: 全部 PASS，无真实 whitespace error；不打包、不提交、不推送。

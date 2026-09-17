@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import socket
 import threading
 import time
@@ -10,11 +11,31 @@ from pathlib import Path
 import pytest
 
 from auto_check.app.module_system.contracts import ModuleBootstrapContext, ModuleHttpResponse
+from auto_check.app.module_system.routing import ExternalAuthDecision
 from auto_check.app.module_system.runtime import ModuleRuntime
 from auto_check.app.security import AuthManager
 from auto_check.app.server import ApiRouter, AutoCheckRequestHandler, ThreadingHTTPServer, web_root
 import auto_check.app.server as server_module
 from mysql_config_test_support import MemoryApplicationDatabase
+
+
+def _make_environment_aware_authenticator():
+    """Test authenticator that reads AUTO_CHECK_EXTERNAL_API_TOKEN from the environment."""
+
+    def _authenticate(candidate: str) -> ExternalAuthDecision:
+        import secrets
+
+        configured_token = os.environ.get("AUTO_CHECK_EXTERNAL_API_TOKEN", "").strip()
+        if not configured_token:
+            return ExternalAuthDecision(configured=False, authenticated=False)
+        if not isinstance(candidate, str) or not candidate:
+            return ExternalAuthDecision(configured=True, authenticated=False)
+        return ExternalAuthDecision(
+            configured=True,
+            authenticated=secrets.compare_digest(candidate, configured_token),
+        )
+
+    return _authenticate
 
 
 FIXTURE_PARENT = Path(__file__).resolve().parents[1] / "fixtures"
@@ -145,12 +166,14 @@ def module_server(monkeypatch, tmp_path):
                         "external": True,
                         "current_user": dict(request.current_user),
                         "query": dict(request.query),
+                        "client_ip": request.client_ip,
                     },
                 ),
             )[1],
             permission="alpha.view",
             max_body_bytes=0,
             external=True,
+            external_authenticator=_make_environment_aware_authenticator(),
         )
 
     route_calls = []
@@ -326,13 +349,35 @@ def test_external_module_api_dispatches_without_web_session_and_uses_query(
     )
 
     assert status == 200
-    assert json.loads(data) == {
-        "external": True,
-        "current_user": {},
-        "query": {"period": "2026-09"},
-    }
+    payload = json.loads(data)
+    assert payload["external"] is True
+    assert payload["current_user"] == {}
+    assert payload["query"] == {"period": "2026-09"}
+    assert payload["client_ip"] in {"127.0.0.1", "::1"}
     assert headers["cache-control"] == "no-store"
     assert server.module_route_calls[-1].current_user == {}
+
+
+def test_external_module_api_records_tcp_peer_ip_and_ignores_forwarded_headers(
+    module_server, monkeypatch
+):
+    server, _ = module_server
+    monkeypatch.setenv("AUTO_CHECK_EXTERNAL_API_TOKEN", "external-secret")
+
+    status, data, headers = _request(
+        server,
+        "GET",
+        "/api/external/v1/alpha/external",
+        headers={
+            "Authorization": "Bearer external-secret",
+            "X-Forwarded-For": "203.0.113.9",
+        },
+    )
+
+    assert status == 200
+    payload = json.loads(data)
+    assert payload["client_ip"] in {"127.0.0.1", "::1"}
+    assert payload["client_ip"] != "203.0.113.9"
 
 
 def test_external_module_api_does_not_publish_internal_routes_and_only_allows_get(

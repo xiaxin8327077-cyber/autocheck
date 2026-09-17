@@ -17,6 +17,13 @@ def test_dashboard_permissions_map_to_platform_capabilities():
         {"role": "user", "capabilities": ["sys.dashboard_management.manage"]},
         "dashboard_management.manage",
     )
+    assert default_permission_evaluator(
+        {
+            "role": "user",
+            "capabilities": ["sys.dashboard_management.external_api_token_manage"],
+        },
+        "dashboard_management.external_api_token_manage",
+    )
 
 
 def test_validator_exposes_all_six_supported_field_types():

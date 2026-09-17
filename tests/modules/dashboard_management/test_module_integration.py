@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from auto_check.app.module_system.contracts import ModuleBootstrapContext
 from auto_check.app.module_system.runtime import ModuleAssetNotFound, ModuleRuntime
+from auto_check.app.external_api import create_external_api_status_service
 
 
 class _Database:
@@ -100,11 +101,19 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
 ):
     """Exercise the dashboard module through the public runtime lifecycle."""
     import auto_check.app.module_system.runtime as runtime_module
+    from auto_check.modules.dashboard_management.external_api_monitoring import (
+        METADATA as MONITORING_METADATA,
+    )
+    from auto_check.modules.dashboard_management.external_api_credentials import (
+        METADATA as CREDENTIAL_METADATA,
+    )
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.storage import METADATA
 
     database = _Database()
     METADATA.create_all(database._engine)
+    MONITORING_METADATA.create_all(database._engine)
+    CREDENTIAL_METADATA.create_all(database._engine)
     _MigrationRunner.calls = []
     monkeypatch.setattr(runtime_module, "ModuleStateStore", _StateStore)
     monkeypatch.setattr(runtime_module, "ModuleMigrationRunner", _MigrationRunner)
@@ -114,7 +123,8 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
             config_path=tmp_path / "config.json",
             temp_root=tmp_path / "module-data",
             now=lambda: datetime(2026, 9, 14, tzinfo=timezone.utc),
-        )
+        ),
+        platform_services=(create_external_api_status_service(lambda: "test-token"),),
     )
     runtime._loaded = [
         loaded
@@ -123,7 +133,7 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
     ]
     runtime.start()
     try:
-        assert _MigrationRunner.calls == [("dashboard_management", 2)]
+        assert _MigrationRunner.calls == [("dashboard_management", 4)]
         modules = runtime.public_modules({"role": "admin"})
         assert modules[0]["navigation"][0]["group_id"] == "system-management"
         assert runtime.read_asset("dashboard_management", "index.js").content
@@ -134,6 +144,18 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
         assert report_catalog.status == process_catalog.status == 200
         assert len(report_catalog.body["data"]["regions"]) == 7
         assert len(process_catalog.body["data"]["regions"]) == 3
+
+        external_preflight = runtime.external_preflight(
+            method="GET",
+            path=(
+                "/api/external/v1/dashboard-management/boards/"
+                "report_submission/preview"
+            ),
+        )
+        assert external_preflight.status == 200
+        assert external_preflight.external_authenticator is not None
+        assert external_preflight.external_authenticator("test-token").authenticated is True
+        assert external_preflight.external_authenticator("wrong-token").authenticated is False
 
         created = _dispatch(runtime, "POST", "/boards/report_submission/regions", body={
             "name": "集成验收区域",
@@ -160,6 +182,7 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
                 "report_submission/preview"
             ),
             query={},
+            client_ip="198.51.100.4",
         )
         external_process = runtime.dispatch_external(
             method="GET",
@@ -168,6 +191,7 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
                 "reporting_process/preview"
             ),
             query={},
+            client_ip="2001:db8::7",
         )
         assert external_submission.status == external_process.status == 200
         assert external_submission.body["status"] == "partial"
@@ -195,6 +219,26 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
             region["code"]
             for region in external_submission.body["data"]["regions"]
         }
+
+        monitor_summary = _dispatch(runtime, "GET", "/external-api/monitor/summary")
+        monitor_calls = _dispatch(runtime, "GET", "/external-api/monitor/calls")
+        assert monitor_summary.status == monitor_calls.status == 200
+        monitor_stats = monitor_summary.body["data"]["last_24_hours"]
+        assert monitor_stats["total"] == 2
+        assert monitor_stats["success"] == 0
+        assert monitor_stats["partial"] == 2
+        assert monitor_stats["failed"] == 0
+        assert monitor_stats["average_duration_ms"] >= 0
+        assert monitor_summary.body["data"]["last_called_at"].endswith("+00:00")
+        assert monitor_calls.body["data"]["total"] == 2
+        assert {item["caller_ip"] for item in monitor_calls.body["data"]["items"]} == {
+            "198.51.100.4",
+            "2001:db8::7",
+        }
+        assert all(
+            item["called_at"].endswith("+00:00")
+            for item in monitor_calls.body["data"]["items"]
+        )
 
         module = runtime._find("dashboard_management").instance
         module._service = DashboardManagementService(

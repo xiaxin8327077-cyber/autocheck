@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import secrets
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from .catalog import BOARD_CATALOG, BUILTIN_FIELD_SEEDS, BUILTIN_REGION_SEEDS
 from .contracts import VersionConflictError
@@ -26,9 +26,12 @@ from .validator import (
     validate_update_region,
 )
 from .year_snapshots import (
+    BUSINESS_TIMEZONE,
     QUARTERLY_SPECIAL_PROCESSING,
+    REPORT_RECONCILIATION_COMPLETION_TIME,
     SNAPSHOT_REGION_CODES,
     SnapshotValidationError,
+    normalize_reconciliation_completion_row,
     normalize_snapshot_rows,
 )
 
@@ -37,6 +40,14 @@ class SqlRetestRequiredError(DomainError):
     status = 409
     code = "sql_retest_required"
     message = "SQL、数据源或字段已变化，请重新测试后保存"
+
+
+class TruncatedResultError(ValueError):
+    """完整看板读取到被截断的来源结果时抛出。"""
+
+
+class SnapshotDataNotReadyError(ValueError):
+    """当前年度没有可用的年度快照数据时抛出。"""
 
 
 class DashboardManagementService:
@@ -51,18 +62,10 @@ class DashboardManagementService:
     ) -> None:
         self.storage = storage
         self._datasource_loader = datasource_loader
-        if sql_executor is None:
-            self._sql_executor = SqlPreviewExecutor()
-            self._snapshot_sql_executor = SqlPreviewExecutor(preview_limit=12)
-        else:
-            self._sql_executor = sql_executor
-            self._snapshot_sql_executor = sql_executor
-        if system_executor is None:
-            self._system_executor = SystemDataPreviewExecutor()
-            self._snapshot_system_executor = SystemDataPreviewExecutor(preview_limit=12)
-        else:
-            self._system_executor = system_executor
-            self._snapshot_system_executor = system_executor
+        self._sql_executor = sql_executor or SqlPreviewExecutor()
+        self._board_sql_executor = sql_executor or SqlPreviewExecutor(preview_limit=None)
+        self._system_executor = system_executor or SystemDataPreviewExecutor()
+        self._board_system_executor = system_executor or SystemDataPreviewExecutor(preview_limit=None)
         self._now = now or (lambda: datetime.now(timezone.utc))
 
     def catalog(self, board_code: str, current_user: Mapping[str, Any]) -> dict[str, Any]:
@@ -93,106 +96,75 @@ class DashboardManagementService:
         self, board_code: str, current_user: Mapping[str, Any]
     ) -> dict[str, Any]:
         del current_user
-        return self._preview_board_data(board_code, external=False)
+        return self._preview_fixed_board_data(validate_board_code(board_code))
 
     def preview_external_board_data(self, board_code: str) -> dict[str, Any]:
         try:
             selected = validate_board_code(board_code)
         except ValidationError as error:
             raise NotFoundError("外部看板接口不存在") from error
-        return self._preview_board_data(selected, external=True)
+        return self._preview_fixed_board_data(selected)
 
-    def _preview_board_data(
-        self, board_code: str, *, external: bool
-    ) -> dict[str, Any]:
+    def _preview_fixed_board_data(self, board_code: str) -> dict[str, Any]:
         selected = validate_board_code(board_code)
         board = next(board for board in BOARD_CATALOG if board.code == selected)
         regions = []
         request_now = self._now()
+        business_now = _business_datetime(request_now)
+        region_seeds = tuple(
+            seed for seed in BUILTIN_REGION_SEEDS if seed.board_code == selected
+        )
         stored_regions = self.storage.list_regions(selected, include_disabled=False)
-        if external:
-            region_seeds = tuple(
-                seed
-                for seed in BUILTIN_REGION_SEEDS
-                if seed.board_code == selected
-            )
-            stored_regions_by_code = {
-                str(region["region_code"]): region
-                for region in stored_regions
-                if bool(region.get("built_in"))
-            }
-            region_entries = tuple(
-                (stored_regions_by_code.get(seed.code), seed) for seed in region_seeds
-            )
-        else:
-            region_entries = tuple((region, None) for region in stored_regions)
+        stored_regions_by_code = {
+            str(region["region_code"]): region
+            for region in stored_regions
+            if bool(region.get("built_in"))
+        }
 
-        for region, region_seed in region_entries:
-            if external and region_seed is not None:
-                field_seeds = tuple(
-                    seed
-                    for seed in BUILTIN_FIELD_SEEDS
-                    if seed.region_code == region_seed.code
-                )
-                item = {
-                    "code": region_seed.code,
-                    "name": region_seed.name,
-                    "shape": region_seed.shape,
-                    "fields": [
-                        {
-                            "alias": field.alias,
-                            "name": field.name,
-                            "value_type": field.value_type,
-                        }
-                        for field in field_seeds
-                    ],
-                }
-                if region is None:
-                    item.update(_preview_error(NotFoundError(
-                        "固定数据区域尚未初始化"
-                    )))
-                    regions.append(item)
-                    continue
-                stored_fields = self.storage.list_fields(
-                    region["id"], include_disabled=False
-                )
-                stored_fields_by_alias = {
-                    str(field["field_alias"]): field
-                    for field in stored_fields
-                    if bool(field.get("built_in"))
-                }
-                fields = [
-                    stored_fields_by_alias[field.alias]
-                    for field in field_seeds
-                    if field.alias in stored_fields_by_alias
-                ]
-                if len(fields) != len(field_seeds):
-                    item.update(_preview_error(ValidationError(
-                        "外部接口固定字段配置不完整"
-                    )))
-                    regions.append(item)
-                    continue
-            else:
-                fields = self.storage.list_fields(
-                    region["id"], include_disabled=False
-                )
-                item = {
-                    "code": region["region_code"],
-                    "name": region["name"],
-                    "shape": region["shape"],
-                    "fields": [
-                        {
-                            "alias": field["field_alias"],
-                            "name": field["name"],
-                            "value_type": field["value_type"],
-                        }
-                        for field in fields
-                    ],
-                }
-            snapshot_enabled = (
-                bool(region.get("built_in"))
-                and str(region["region_code"]) in SNAPSHOT_REGION_CODES
+        for region_seed in region_seeds:
+            region = stored_regions_by_code.get(region_seed.code)
+            field_seeds = tuple(
+                seed for seed in BUILTIN_FIELD_SEEDS if seed.region_code == region_seed.code
             )
+            item = {
+                "code": region_seed.code,
+                "name": region_seed.name,
+                "shape": region_seed.shape,
+                "fields": [
+                    {
+                        "alias": field.alias,
+                        "name": field.name,
+                        "value_type": field.value_type,
+                    }
+                    for field in field_seeds
+                ],
+            }
+            if region is None:
+                item.update(_preview_error(NotFoundError(
+                    "固定数据区域尚未初始化"
+                )))
+                regions.append(item)
+                continue
+            stored_fields = self.storage.list_fields(
+                region["id"], include_disabled=False
+            )
+            stored_fields_by_alias = {
+                str(field["field_alias"]): field
+                for field in stored_fields
+                if bool(field.get("built_in"))
+            }
+            fields = [
+                stored_fields_by_alias[field.alias]
+                for field in field_seeds
+                if field.alias in stored_fields_by_alias
+            ]
+            if len(fields) != len(field_seeds):
+                item.update(_preview_error(ValidationError(
+                    "外部接口固定字段配置不完整"
+                )))
+                regions.append(item)
+                continue
+            snapshot_enabled = str(region["region_code"]) in SNAPSHOT_REGION_CODES
             period_alias = _snapshot_period_alias(str(region["region_code"]))
             if snapshot_enabled and period_alias not in {
                 str(field["field_alias"]) for field in fields
@@ -206,26 +178,26 @@ class DashboardManagementService:
                 preview = self._execute_saved_region(
                     region, fields, snapshot_enabled=snapshot_enabled
                 )
+                if preview.has_more:
+                    raise TruncatedResultError("数据来源未返回完整结果")
                 if snapshot_enabled:
-                    if preview.has_more:
-                        raise SnapshotValidationError(
-                            "快照区域查询结果最多支持 12 个周期"
-                        )
                     refreshed_at = request_now
                     normalized = normalize_snapshot_rows(
-                        str(region["region_code"]), preview.rows, refreshed_at
+                        str(region["region_code"]), preview.rows, business_now
                     )
                     snapshots = self.storage.refresh_year_snapshots(
                         int(region["id"]),
                         normalized,
-                        period_year=refreshed_at.year,
+                        period_year=business_now.year,
                         refreshed_at=refreshed_at,
                     )
+                    if not snapshots:
+                        raise SnapshotDataNotReadyError()
                     preview = _snapshot_preview(
                         fields,
                         snapshots,
                         region_code=str(region["region_code"]),
-                        request_now=request_now,
+                        request_now=business_now,
                     )
                     item.update(_preview_item(preview))
                     item.update({
@@ -234,39 +206,49 @@ class DashboardManagementService:
                     })
                 else:
                     item.update(_preview_item(preview))
+            except TruncatedResultError as error:
+                item.update(_preview_error(error))
+            except (SnapshotValidationError, SnapshotDataNotReadyError) as error:
+                item.update(_preview_error(error))
             except Exception as error:
-                fallback = None
-                if snapshot_enabled:
-                    fallback = self._snapshot_fallback(
-                        region,
-                        fields,
-                        period_year=request_now.year,
-                        request_now=request_now,
-                    )
-                if fallback is not None:
-                    preview, refreshed_at = fallback
-                    item.update(_preview_item(preview))
-                    item.update({
-                        "snapshot_status": "stale",
-                        "snapshot_refreshed_at": refreshed_at,
-                    })
-                else:
+                if (
+                    not snapshot_enabled
+                    or isinstance(error, ValidationError) and error.fields
+                ):
                     item.update(_preview_error(error))
+                else:
+                    try:
+                        fallback = self._snapshot_fallback(
+                            region,
+                            fields,
+                            period_year=business_now.year,
+                            request_now=business_now,
+                        )
+                    except Exception as fallback_error:
+                        item.update(_preview_error(fallback_error))
+                        regions.append(item)
+                        continue
+                    if fallback is None:
+                        item.update(_preview_error(SnapshotDataNotReadyError()))
+                    else:
+                        preview, refreshed_at = fallback
+                        item.update(_preview_item(preview))
+                        item.update({
+                            "snapshot_status": "stale",
+                            "snapshot_refreshed_at": refreshed_at,
+                        })
             regions.append(item)
-        result = {
+        return {
+            "status": (
+                "partial"
+                if any(region.get("status") == "error" for region in regions)
+                else "success"
+            ),
+            "generated_at": _datetime_text(request_now),
+            "data_year": business_now.year,
             "board": {"code": board.code, "name": board.name},
             "regions": regions,
         }
-        if external:
-            result.update({
-                "status": (
-                    "partial"
-                    if any(region.get("status") == "error" for region in regions)
-                    else "success"
-                ),
-                "generated_at": _datetime_text(request_now),
-            })
-        return result
 
     def _snapshot_fallback(
         self,
@@ -392,7 +374,14 @@ class DashboardManagementService:
         datasource_id, sql_text = _test_sql_payload(payload)
         source = self._data_source(datasource_id)
         fields = self.storage.list_fields(region_id, include_disabled=False)
-        preview = self._sql_executor.execute(source, sql_text, fields, region["shape"])
+        region_code = str(region.get("region_code") or "")
+        preview = self._sql_executor.execute(
+            source,
+            sql_text,
+            _source_fields(region_code, fields),
+            region["shape"],
+        )
+        preview = _project_derived_preview(region_code, preview, fields)
         username = str(current_user.get("username") or current_user.get("id") or "")
         try:
             source_config = self.storage.record_successful_sql_test(
@@ -411,17 +400,20 @@ class DashboardManagementService:
         region = self._region(region_id)
         if not region["system_supported"]:
             raise ValidationError("该数据区域暂不支持系统数据")
+        region_code = str(region.get("region_code") or "")
+        fields = self.storage.list_fields(region_id, include_disabled=False)
         result = self._system_executor.execute(
             self.storage.database,
-            str(region["region_code"]),
-            self.storage.list_fields(region_id, include_disabled=False),
+            region_code,
+            _source_fields(region_code, fields),
             str(region["shape"]),
         )
+        preview = _project_derived_preview(region_code, result.preview, fields)
         return {
-            "columns": result.preview.columns,
-            "rows": result.preview.rows,
-            "has_more": result.preview.has_more,
-            "returned_count": result.preview.returned_count,
+            "columns": preview.columns,
+            "rows": preview.rows,
+            "has_more": preview.has_more,
+            "returned_count": preview.returned_count,
             "source": result.source,
         }
 
@@ -448,7 +440,10 @@ class DashboardManagementService:
                 expected_signature = None
             else:
                 expected_signature = self._sql_executor.signature_for(
-                    source, values["sql_text"], fields, region["shape"],
+                    source,
+                    values["sql_text"],
+                    _source_fields(str(region.get("region_code") or ""), fields),
+                    region["shape"],
                 )
             current = self.storage.get_source_config(region_id)
             test_is_current = (
@@ -510,20 +505,18 @@ class DashboardManagementService:
         if source_config is None:
             raise ValidationError("数据来源尚未配置")
         source_mode = source_config.get("source_mode")
+        region_code = str(region.get("region_code") or "")
+        source_fields = _source_fields(region_code, fields)
         if source_mode == "system":
             if not region["system_supported"]:
                 raise ValidationError("该数据区域暂不支持系统数据")
-            executor = (
-                self._snapshot_system_executor
-                if snapshot_enabled
-                else self._system_executor
-            )
-            return executor.execute(
+            preview = self._board_system_executor.execute(
                 self.storage.database,
-                str(region["region_code"]),
-                fields,
+                region_code,
+                source_fields,
                 str(region["shape"]),
             ).preview
+            return _project_derived_preview(region_code, preview, fields)
         if source_mode != "sql":
             raise ValidationError("数据来源尚未配置")
         datasource_id = str(source_config.get("datasource_id") or "")
@@ -531,8 +524,57 @@ class DashboardManagementService:
         if not datasource_id or not sql_text:
             raise ValidationError("自定义 SQL 尚未完成配置")
         source = self._data_source(datasource_id)
-        executor = self._snapshot_sql_executor if snapshot_enabled else self._sql_executor
-        return executor.execute(source, sql_text, fields, str(region["shape"]))
+        preview = self._board_sql_executor.execute(
+            source, sql_text, source_fields, str(region["shape"])
+        )
+        return _project_derived_preview(region_code, preview, fields)
+
+
+def _source_fields(
+    region_code: str, fields: Sequence[Mapping[str, Any]]
+) -> list[Mapping[str, Any]]:
+    if region_code != REPORT_RECONCILIATION_COMPLETION_TIME:
+        return list(fields)
+    return [
+        field
+        for field in fields
+        if str(field.get("field_alias")) != "reconciliation_completed_time"
+    ]
+
+
+def _project_derived_preview(
+    region_code: str,
+    preview: QueryPreview,
+    output_fields: Sequence[Mapping[str, Any]],
+) -> QueryPreview:
+    if region_code != REPORT_RECONCILIATION_COMPLETION_TIME:
+        return preview
+    columns = tuple(str(field["field_alias"]) for field in output_fields)
+    try:
+        rows = tuple(
+            {
+                alias: normalized.get(alias)
+                for alias in columns
+            }
+            for raw_row in preview.rows
+            for normalized in (
+                normalize_reconciliation_completion_row(
+                    raw_row, allow_legacy_time=False
+                ),
+            )
+        )
+    except (TypeError, ValueError) as error:
+        raise ValidationError(
+            str(error),
+            fields={"reconciliation_completed_at": str(error)},
+        ) from error
+    return QueryPreview(
+        columns=columns,
+        rows=rows,
+        has_more=preview.has_more,
+        returned_count=len(rows),
+        tested_signature=preview.tested_signature,
+    )
 
 
 def _test_sql_payload(payload: Mapping[str, Any]) -> tuple[str, str]:
@@ -598,6 +640,16 @@ def _preview_item(preview: QueryPreview) -> dict[str, Any]:
 
 
 def _preview_error(error: Exception) -> dict[str, Any]:
+    if isinstance(error, TruncatedResultError):
+        return {
+            "status": "error",
+            "error": {"code": "truncated_result", "message": "数据来源未返回完整结果"},
+        }
+    if isinstance(error, SnapshotDataNotReadyError):
+        return {
+            "status": "error",
+            "error": {"code": "data_not_ready", "message": "当前年度数据尚未准备完成"},
+        }
     if isinstance(error, DomainError):
         return {
             "status": "error",
@@ -641,8 +693,18 @@ def _snapshot_preview(
         )
         projected_snapshots.sort(key=lambda snapshot: int(snapshot["period_value"]))
     rows = tuple(
-        {alias: snapshot["row"].get(alias) for alias in columns}
+        {
+            alias: normalized.get(alias)
+            for alias in columns
+        }
         for snapshot in projected_snapshots
+        for normalized in (
+            normalize_reconciliation_completion_row(
+                snapshot["row"], allow_legacy_time=True
+            )
+            if region_code == REPORT_RECONCILIATION_COMPLETION_TIME
+            else dict(snapshot["row"])
+        ,)
     )
     return QueryPreview(
         columns=columns,
@@ -674,3 +736,9 @@ def _datetime_text(value: Any) -> str:
             value = value.astimezone(timezone.utc).replace(tzinfo=None)
         return value.isoformat()
     return str(value)
+
+
+def _business_datetime(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(BUSINESS_TIMEZONE).replace(tzinfo=None)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -205,53 +205,43 @@ def test_list_datasources_returns_safe_summary_only(service):
     ]
 
 
-def test_board_preview_returns_each_enabled_region_without_one_failure_blocking_others():
+def test_fixed_board_returns_each_builtin_region_without_one_failure_blocking_others(storage):
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.sql_executor import QueryPreview
 
-    fields = [{"field_alias": "value", "name": "指标值", "value_type": "integer", "enabled": True}]
-    regions = [
-        {"id": 1, "region_code": "system_value", "name": "系统指标", "shape": "scalar", "system_supported": True},
-        {"id": 2, "region_code": "sql_value", "name": "SQL指标", "shape": "list", "system_supported": False},
-        {"id": 3, "region_code": "missing_value", "name": "未配置指标", "shape": "list", "system_supported": False},
-    ]
-
-    class Storage:
-        database = object()
-        def list_regions(self, board_code, include_disabled=True):
-            assert board_code == "report_submission" and include_disabled is False
-            return regions
-        def list_fields(self, region_id, include_disabled=True):
-            assert include_disabled is False
-            return fields
-        def get_source_config(self, region_id):
-            return {
-                1: {"source_mode": "system"},
-                2: {"source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT 2 AS value", "tested_signature": None},
-                3: {"source_mode": "sql", "datasource_id": None, "sql_text": None, "tested_signature": None},
-            }[region_id]
-
-    class SystemExecutor:
+    class FailingSystemExecutor:
         def execute(self, database, region_code, active_fields, shape):
-            preview = QueryPreview(("value",), ({"value": 1},), False, 1, "")
+            if region_code == "monthly_report_validation_remaining":
+                raise RuntimeError("database connection lost")
+            preview = QueryPreview(
+                columns=tuple(field["field_alias"] for field in active_fields),
+                rows=tuple({field["field_alias"]: 1 for field in active_fields}),
+                has_more=False,
+                returned_count=1,
+                tested_signature="",
+            )
             return type("Result", (), {"preview": preview})()
 
-    class SqlExecutor:
-        def signature_for(self, source, sql, active_fields, shape):
-            return "valid"
-        def execute(self, source, sql, active_fields, shape):
-            return QueryPreview(("value",), ({"value": 2},), False, 1, "valid")
-
-    preview = DashboardManagementService(
-        Storage(), datasource_loader=lambda: [{"id": "safe", "config": object()}],
-        sql_executor=SqlExecutor(), system_executor=SystemExecutor(),
+    result = DashboardManagementService(
+        storage,
+        system_executor=FailingSystemExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
     ).preview_board_data("report_submission", {})
 
-    assert preview["board"] == {"code": "report_submission", "name": "金融监管报表报送大屏"}
-    assert [region["status"] for region in preview["regions"]] == ["success", "success", "error"]
-    assert preview["regions"][0]["fields"] == [{"alias": "value", "name": "指标值", "value_type": "integer"}]
-    assert preview["regions"][1]["rows"] == ({"value": 2},)
-    assert preview["regions"][2]["error"] == {"code": "invalid_request", "message": "自定义 SQL 尚未完成配置"}
+    assert result["board"] == {"code": "report_submission", "name": "金融监管报表报送大屏"}
+    status_by_code = {region["code"]: region["status"] for region in result["regions"]}
+    assert status_by_code["monthly_report_validation_remaining"] == "error"
+    assert status_by_code["annual_supplement_completed"] == "success"
+    remaining = next(
+        region for region in result["regions"]
+        if region["code"] == "monthly_report_validation_remaining"
+    )
+    assert remaining["error"] == {"code": "internal_error", "message": "数据读取失败"}
+    supplement = next(
+        region for region in result["regions"]
+        if region["code"] == "annual_supplement_completed"
+    )
+    assert supplement["status"] == "success"
 
 
 def test_external_board_preview_uses_only_fixed_builtin_regions_and_fields(
@@ -312,10 +302,56 @@ def test_external_board_preview_uses_only_fixed_builtin_regions_and_fields(
     ]
     assert "must_not_leak" not in str(external_submission)
     assert custom_region["region_code"] not in str(external_submission)
-    assert custom_region["region_code"] in {
-        item["code"] for item in internal_submission["regions"]
-    }
-    assert "must_not_leak" in str(internal_submission)
+    assert internal_submission == external_submission
+    assert internal_submission["data_year"] == 2026
+    assert [item["code"] for item in internal_submission["regions"]] == [
+        seed.code
+        for seed in BUILTIN_REGION_SEEDS
+        if seed.board_code == "report_submission"
+    ]
+    assert custom_region["region_code"] not in str(internal_submission)
+    assert "must_not_leak" not in str(internal_submission)
+
+
+def test_january_writes_previous_december_but_returns_only_current_data_year(storage, admin):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    now = datetime(2027, 1, 4, 9, 0)
+    completion_region = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "report_reconciliation_completion_time"
+    )
+
+    class SystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if region_code != "report_reconciliation_completion_time":
+                raise RuntimeError("unrelated system region")
+            preview = QueryPreview(
+                columns=("month", "reconciliation_completed_at"),
+                rows=(
+                    {"month": "2026-12", "reconciliation_completed_at": "2027-01-03T01:15:00"},
+                    {"month": "2027-01", "reconciliation_completed_at": "2027-01-04T08:30:00"},
+                ),
+                has_more=False,
+                returned_count=2,
+                tested_signature="",
+            )
+            return type("Result", (), {"preview": preview})()
+
+    service = DashboardManagementService(
+        storage, system_executor=SystemExecutor(), now=lambda: now
+    )
+    result = service.preview_external_board_data("report_submission")
+    completion = next(
+        item for item in result["regions"]
+        if item["code"] == "report_reconciliation_completion_time"
+    )
+
+    assert result["data_year"] == 2027
+    assert [row["month"] for row in completion["rows"]] == ["2027-01"]
+    assert storage.list_year_snapshots(completion_region["id"], 2026)[-1]["row"]["month"] == "2026-12"
+    assert storage.list_year_snapshots(completion_region["id"], 2027)[0]["row"]["month"] == "2027-01"
 
 
 def test_external_board_preview_rejects_unknown_board_code(service):
@@ -433,6 +469,69 @@ def test_snapshot_preview_falls_back_to_current_year_history_when_live_query_fai
     assert "driver" not in str(item)
 
 
+def test_snapshot_preview_does_not_hide_datetime_contract_error_with_stale_history(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    class InvalidCompletionExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if region_code != "report_reconciliation_completion_time":
+                raise RuntimeError("unrelated system region")
+            preview = QueryPreview(
+                columns=("month", "reconciliation_completed_at"),
+                rows=({
+                    "month": "2026-09",
+                    "reconciliation_completed_at": "09:30",
+                },),
+                has_more=False,
+                returned_count=1,
+                tested_signature="",
+            )
+            return type("Result", (), {"preview": preview})()
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=InvalidCompletionExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region
+        for region in result["regions"]
+        if region["code"] == "report_reconciliation_completion_time"
+    )
+
+    assert item["status"] == "error"
+    assert item["error"] == {
+        "code": "invalid_request",
+        "message": "新数据必须提供完整日期时间",
+    }
+    assert "snapshot_status" not in item
+    assert "rows" not in item
+
+
+def test_data_year_uses_business_timezone_at_calendar_boundary(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    class FailingSystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            raise RuntimeError("database failure")
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=FailingSystemExecutor(),
+        now=lambda: datetime(2026, 12, 31, 16, 30, tzinfo=timezone.utc),
+    ).preview_board_data("report_submission", {})
+
+    assert result["data_year"] == 2027
+    completion = next(
+        region
+        for region in result["regions"]
+        if region["code"] == "report_reconciliation_completion_time"
+    )
+    assert completion["status"] == "error"
+    assert completion["error"]["code"] == "data_not_ready"
+
+
 def test_quarterly_snapshot_preview_returns_future_quarter_as_zero_without_persisting(storage):
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.sql_executor import QueryPreview
@@ -499,8 +598,12 @@ def test_snapshot_preview_without_current_year_history_keeps_existing_error(stor
     )
 
     assert item["status"] == "error"
-    assert item["error"] == {"code": "internal_error", "message": "数据读取失败"}
-    assert "snapshot_status" not in item
+    assert item["error"] == {
+        "code": "data_not_ready",
+        "message": "当前年度数据尚未准备完成",
+    }
+    assert result["status"] == "partial"
+    assert result["data_year"] == 2027
 
 
 def test_default_snapshot_executors_can_read_all_twelve_months_without_changing_editor_limit(storage):
@@ -510,8 +613,70 @@ def test_default_snapshot_executors_can_read_all_twelve_months_without_changing_
 
     assert service._sql_executor.preview_limit == 10
     assert service._system_executor.preview_limit == 10
-    assert service._snapshot_sql_executor.preview_limit == 12
-    assert service._snapshot_system_executor.preview_limit == 12
+    assert service._board_sql_executor.preview_limit is None
+    assert service._board_system_executor.preview_limit is None
+
+
+def test_fixed_board_returns_more_than_ten_rows_without_truncation(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    region = next(
+        row for row in storage.list_regions("reporting_process")
+        if row["region_code"] == "regulatory_report_count"
+    )
+    source_config = storage.get_source_config(region["id"])
+    storage.save_source_config(
+        region["id"],
+        {
+            "source_mode": "sql",
+            "datasource_id": "safe",
+            "sql_text": "SELECT report_type, report_count",
+            "tested_signature": "valid",
+            "tested_at": datetime(2026, 9, 16, 8, 0),
+            "tested_by": "admin",
+        },
+        source_config["row_version"],
+        expected_region_version=region["row_version"],
+    )
+    rows = tuple(
+        {"report_type": f"R{index:02d}", "report_count": index}
+        for index in range(15)
+    )
+
+    class SqlExecutor:
+        def signature_for(self, source, sql, active_fields, shape):
+            return "valid"
+
+        def execute(self, source, sql, active_fields, shape):
+            return QueryPreview(
+                columns=("report_type", "report_count"),
+                rows=rows,
+                has_more=False,
+                returned_count=len(rows),
+                tested_signature="valid",
+            )
+
+    service = DashboardManagementService(
+        storage,
+        datasource_loader=lambda: [{"id": "safe", "config": object()}],
+        sql_executor=SqlExecutor(),
+        now=lambda: datetime(2026, 9, 16, 9, 0),
+    )
+    result = service.preview_external_board_data("reporting_process")
+    item = next(
+        entry for entry in result["regions"]
+        if entry["code"] == "regulatory_report_count"
+    )
+
+    assert item["status"] == "success"
+    assert item["has_more"] is False
+    assert item["returned_count"] == 15
+    assert item["rows"] == rows
+    for entry in result["regions"]:
+        if entry.get("status") == "success" and "rows" in entry:
+            assert entry["has_more"] is False
+            assert entry["returned_count"] == len(entry["rows"])
 
 
 def test_snapshot_preview_uses_one_request_time_for_all_regions_and_fallback(storage):
@@ -592,11 +757,17 @@ def test_snapshot_preview_rejects_truncated_live_result_without_overwriting_hist
     ).preview_board_data("report_submission", {})
     item = next(region for region in result["regions"] if region["code"] == trust["region_code"])
 
-    assert item["snapshot_status"] == "stale"
-    assert item["rows"][5]["single_trust_count"] == 4
+    assert item["status"] == "error"
+    assert item["error"] == {
+        "code": "truncated_result",
+        "message": "数据来源未返回完整结果",
+    }
+    assert "rows" not in item
+    assert storage.list_year_snapshots(trust["id"], 2026)[5]["row"]["single_trust_count"] == 4
+    assert result["status"] == "partial"
 
 
-def test_snapshot_rows_follow_active_fields_and_fill_new_field_with_null(storage):
+def test_fixed_board_uses_only_builtin_fields_and_rejects_disabled_builtin(storage):
     from auto_check.modules.dashboard_management.service import DashboardManagementService
 
     trust = next(
@@ -627,12 +798,13 @@ def test_snapshot_rows_follow_active_fields_and_fill_new_field_with_null(storage
     ).preview_board_data("report_submission", {})
     item = next(region for region in result["regions"] if region["code"] == trust["region_code"])
 
-    assert item["snapshot_status"] == "stale"
-    assert item["columns"] == (
-        "month", "single_trust_count", "collective_trust_count", "new_metric"
-    )
-    assert set(item["rows"][0]) == set(item["columns"])
-    assert item["rows"][0]["new_metric"] is None
+    assert item["status"] == "error"
+    assert item["error"] == {
+        "code": "invalid_request",
+        "message": "外部接口固定字段配置不完整",
+    }
+    assert "new_metric" not in str(result)
+    assert result["status"] == "partial"
 
 
 def test_snapshot_region_does_not_fallback_when_required_period_field_is_disabled(storage):
@@ -659,6 +831,6 @@ def test_snapshot_region_does_not_fallback_when_required_period_field_is_disable
     assert item["status"] == "error"
     assert item["error"] == {
         "code": "invalid_request",
-        "message": "快照区域必须启用周期字段：month",
+        "message": "外部接口固定字段配置不完整",
     }
     assert "snapshot_status" not in item

@@ -100,8 +100,10 @@ class SqlPreviewExecutor:
         self,
         connect_timeout_seconds: int = 5,
         query_timeout_seconds: int = 10,
-        preview_limit: int = 10,
+        preview_limit: int | None = 10,
     ) -> None:
+        if preview_limit is not None and preview_limit < 1:
+            raise ValueError("preview_limit 必须大于 0 或为 None")
         self.connect_timeout_seconds = connect_timeout_seconds
         self.query_timeout_seconds = query_timeout_seconds
         self.preview_limit = preview_limit
@@ -163,17 +165,22 @@ class SqlPreviewExecutor:
             )
         if shape == "scalar" and len(rows) > 1:
             raise ValidationError("单值数据区域最多只能返回一行")
+        visible_rows = rows if self.preview_limit is None else rows[: self.preview_limit]
         converted_rows = tuple(
             {
                 alias: _convert_value(row[positions[alias]], field)
                 for alias, field in zip(required_aliases, active_fields)
             }
-            for row in rows[: self.preview_limit]
+            for row in visible_rows
         )
         return QueryPreview(
             columns=tuple(required_aliases),
             rows=converted_rows,
-            has_more=len(rows) > self.preview_limit,
+            has_more=(
+                False
+                if self.preview_limit is None
+                else len(rows) > self.preview_limit
+            ),
             returned_count=len(converted_rows),
             tested_signature=signature,
         )
@@ -202,7 +209,11 @@ class SqlPreviewExecutor:
                     raise ValidationError("不支持的数据源类型")
                 cursor.execute(sql)
                 columns = [str(column[0]) for column in cursor.description or ()]
-                rows = list(cursor.fetchmany(self.preview_limit + 1))
+                rows = list(
+                    cursor.fetchall()
+                    if self.preview_limit is None
+                    else cursor.fetchmany(self.preview_limit + 1)
+                )
                 return columns, rows
         finally:
             rollback = getattr(connection, "rollback", None)
@@ -390,7 +401,12 @@ def _convert_value(value: Any, field: Any) -> Any:
         if value_type == "datetime":
             if isinstance(value, datetime):
                 return value.isoformat()
-            return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00")).isoformat()
+            if isinstance(value, date):
+                raise ValueError
+            text = str(value).strip()
+            if "T" not in text and " " not in text:
+                raise ValueError
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
     except (ValueError, TypeError, InvalidOperation):
         raise ValidationError(f"字段 {alias} 的类型不符合要求", fields={alias: "字段类型不匹配"}) from None
     raise ValidationError(f"字段 {alias} 的类型无效", fields={alias: "字段类型无效"})

@@ -109,7 +109,14 @@ SYSTEM_QUERY_DEFINITIONS: dict[str, SystemQueryDefinition] = {
               AND header.run_date IS NOT NULL
               AND header.run_at IS NOT NULL
               AND reconcile.total_count = 0
-              AND YEAR(header.run_date) = YEAR(CURRENT_DATE)
+              AND (
+                    YEAR(header.run_date) = YEAR(CURRENT_DATE)
+                    OR (
+                         MONTH(CURRENT_DATE) = 1
+                         AND YEAR(header.run_date) = YEAR(CURRENT_DATE) - 1
+                         AND MONTH(header.run_date) = 12
+                    )
+                  )
             GROUP BY DATE_FORMAT(header.run_date, '%Y-%m')
             ORDER BY month
             """
@@ -204,7 +211,9 @@ class SystemPreviewResult:
 
 
 class SystemDataPreviewExecutor:
-    def __init__(self, preview_limit: int = SYSTEM_PREVIEW_LIMIT) -> None:
+    def __init__(self, preview_limit: int | None = SYSTEM_PREVIEW_LIMIT) -> None:
+        if preview_limit is not None and preview_limit < 1:
+            raise ValueError("preview_limit 必须大于 0 或为 None")
         self.preview_limit = preview_limit
 
     def source_for(self, database: Any, region_code: str) -> dict[str, Any] | None:
@@ -230,7 +239,11 @@ class SystemDataPreviewExecutor:
             with database.connect() as connection:
                 result = connection.execute(text(definition.sql))
                 columns = tuple(str(column) for column in result.keys())
-                raw_rows = list(result.fetchmany(self.preview_limit + 1))
+                raw_rows = list(
+                    result.fetchall()
+                    if self.preview_limit is None
+                    else result.fetchmany(self.preview_limit + 1)
+                )
         except ValidationError:
             raise
         except Exception as error:
@@ -249,18 +262,25 @@ class SystemDataPreviewExecutor:
             )
         if shape == "scalar" and len(raw_rows) > 1:
             raise ValidationError("单值数据区域最多只能返回一行")
+        visible_rows = (
+            raw_rows if self.preview_limit is None else raw_rows[: self.preview_limit]
+        )
         rows = tuple(
             {
                 alias: _convert_value(row[positions[alias]], field)
                 for alias, field in zip(aliases, active_fields)
             }
-            for row in raw_rows[: self.preview_limit]
+            for row in visible_rows
         )
         return SystemPreviewResult(
             preview=QueryPreview(
                 columns=tuple(aliases),
                 rows=rows,
-                has_more=len(raw_rows) > self.preview_limit,
+                has_more=(
+                    False
+                    if self.preview_limit is None
+                    else len(raw_rows) > self.preview_limit
+                ),
                 returned_count=len(rows),
                 tested_signature="",
             ),

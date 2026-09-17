@@ -11,6 +11,11 @@ ADMIN = {"id": "1", "role": "admin"}
 USER = {"id": "2", "role": "user"}
 
 
+def _rejecting_authenticator(candidate: str) -> "ExternalAuthDecision":
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+    return ExternalAuthDecision(configured=False, authenticated=False)
+
+
 def _request(method: str, path: str, user=USER) -> ModuleRequest:
     return ModuleRequest(method, path, {}, {}, None, user)
 
@@ -250,6 +255,7 @@ def test_external_dispatch_only_matches_routes_explicitly_marked_external(valid_
         permission="custom_reports.view",
         max_body_bytes=0,
         external=True,
+        external_authenticator=_rejecting_authenticator,
     )
 
     hidden = router.dispatch_external(
@@ -265,6 +271,41 @@ def test_external_dispatch_only_matches_routes_explicitly_marked_external(valid_
     assert published.body == {"route": "external", "current_user": {}}
 
 
+def test_external_dispatch_propagates_client_ip_to_handler(valid_manifest):
+    captured = {}
+
+    def handler(request):
+        captured["client_ip"] = request.client_ip
+        return ModuleHttpResponse.json(200, {"client_ip": request.client_ip})
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    router.add(
+        "GET",
+        "/published",
+        handler,
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=_rejecting_authenticator,
+    )
+
+    response = router.dispatch_external(
+        ModuleRequest(
+            "GET",
+            "/api/external/v1/custom-reports/published",
+            {},
+            {},
+            None,
+            {},
+            client_ip="2001:db8::7",
+        )
+    )
+
+    assert response.status == 200
+    assert captured["client_ip"] == "2001:db8::7"
+    assert response.body == {"client_ip": "2001:db8::7"}
+
+
 def test_external_route_registration_only_accepts_get(valid_manifest):
     router = ModuleRouter(valid_manifest, default_permission_evaluator)
 
@@ -276,7 +317,8 @@ def test_external_route_registration_only_accepts_get(valid_manifest):
             permission="custom_reports.publish",
             max_body_bytes=0,
             external=True,
-        )
+        external_authenticator=_rejecting_authenticator,
+    )
 
 
 def test_external_preflight_reports_only_explicit_external_routes(valid_manifest):
@@ -288,6 +330,7 @@ def test_external_preflight_reports_only_explicit_external_routes(valid_manifest
         permission="custom_reports.view",
         max_body_bytes=0,
         external=True,
+        external_authenticator=_rejecting_authenticator,
     )
     router.add(
         "GET",
@@ -317,6 +360,7 @@ def test_external_route_keeps_internal_permission_checks(valid_manifest):
         permission="custom_reports.view",
         max_body_bytes=0,
         external=True,
+        external_authenticator=_rejecting_authenticator,
     )
 
     internal = router.dispatch(
@@ -328,3 +372,158 @@ def test_external_route_keeps_internal_permission_checks(valid_manifest):
 
     assert internal.status == 403
     assert external.status == 200
+
+
+def test_external_route_must_register_authenticator(valid_manifest):
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    def authenticator(candidate: str) -> ExternalAuthDecision:
+        return ExternalAuthDecision(configured=True, authenticated=bool(candidate))
+
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=authenticator,
+    )
+
+    preflight = router.external_preflight("GET", "/api/external/v1/custom-reports/published")
+    assert preflight.status == 200
+    assert preflight.external_authenticator is authenticator
+
+
+def test_internal_route_rejects_external_authenticator(valid_manifest):
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    def authenticator(candidate: str) -> ExternalAuthDecision:
+        return ExternalAuthDecision(configured=True, authenticated=False)
+
+    with pytest.raises(ValueError, match="external_authenticator"):
+        router.add(
+            "GET",
+            "/internal-only",
+            lambda request: ModuleHttpResponse.json(200, {}),
+            permission="custom_reports.view",
+            max_body_bytes=0,
+            external=False,
+            external_authenticator=authenticator,
+        )
+
+
+def test_external_route_requires_authenticator(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    with pytest.raises(ValueError, match="authenticator"):
+        router.add(
+            "GET",
+            "/published",
+            lambda request: ModuleHttpResponse.json(200, {}),
+            permission="custom_reports.view",
+            max_body_bytes=0,
+            external=True,
+        )
+
+
+def test_external_preflight_does_not_invoke_authenticator(valid_manifest):
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+    calls = []
+
+    def authenticator(candidate: str) -> ExternalAuthDecision:
+        calls.append(candidate)
+        return ExternalAuthDecision(configured=True, authenticated=True)
+
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=authenticator,
+    )
+
+    router.external_preflight("GET", "/api/external/v1/custom-reports/published")
+    assert calls == []
+
+
+def test_external_preflight_unknown_path_returns_404(valid_manifest):
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=lambda c: ExternalAuthDecision(configured=True, authenticated=True),
+    )
+
+    assert router.external_preflight("GET", "/api/external/v1/custom-reports/unknown").status == 404
+
+
+def test_external_preflight_method_mismatch_keeps_allow(valid_manifest):
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=lambda c: ExternalAuthDecision(configured=True, authenticated=True),
+    )
+
+    preflight = router.external_preflight("POST", "/api/external/v1/custom-reports/published")
+    assert preflight.status == 405
+    assert dict(preflight.headers).get("Allow") == "GET"
+
+
+def test_different_external_routes_get_distinct_authenticators(valid_manifest):
+    from auto_check.app.module_system.routing import ExternalAuthDecision
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    def auth_a(candidate: str) -> ExternalAuthDecision:
+        return ExternalAuthDecision(configured=True, authenticated=False)
+
+    def auth_b(candidate: str) -> ExternalAuthDecision:
+        return ExternalAuthDecision(configured=True, authenticated=True)
+
+    router.add(
+        "GET",
+        "/route-a",
+        lambda request: ModuleHttpResponse.json(200, {"route": "a"}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=auth_a,
+    )
+    router.add(
+        "GET",
+        "/route-b",
+        lambda request: ModuleHttpResponse.json(200, {"route": "b"}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=auth_b,
+    )
+
+    preflight_a = router.external_preflight("GET", "/api/external/v1/custom-reports/route-a")
+    preflight_b = router.external_preflight("GET", "/api/external/v1/custom-reports/route-b")
+    assert preflight_a.external_authenticator is auth_a
+    assert preflight_b.external_authenticator is auth_b

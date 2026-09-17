@@ -16,11 +16,16 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     assert payload["id"] == "dashboard_management"
     assert payload["required"] is False
     assert payload["api_prefix"] == "/api/modules/dashboard-management"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 4
     assert payload["permissions"] == [
         "dashboard_management.view",
         "dashboard_management.manage",
         "dashboard_management.test_sql",
+        "dashboard_management.external_api_monitor",
+        "dashboard_management.external_api_token_manage",
+    ]
+    assert payload["service_dependencies"] == [
+        {"name": "platform.external_api_status", "minimum_version": 2}
     ]
     assert payload["navigation"] == [
         {
@@ -35,6 +40,8 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
         }
     ]
     assert any("外部只读" in item for item in payload["release_notes"]["items"])
+    assert any("外部接口监控" in item and "30 天" in item for item in payload["release_notes"]["items"])
+    assert len(payload["release_notes"]["items"]) <= 20
 
 
 def test_external_api_document_covers_security_examples_and_all_fixed_fields() -> None:
@@ -93,6 +100,7 @@ def test_external_api_document_covers_security_examples_and_all_fixed_fields() -
         "single_trust_count",
         "collective_trust_count",
         "property_trust_count",
+        "reconciliation_completed_time",
         "reconciliation_completed_at",
         "validation_issue_count",
         "quarter",
@@ -110,6 +118,21 @@ def test_external_api_document_covers_security_examples_and_all_fixed_fields() -
     assert content.count("YYYY-MM") >= 2
     assert "YYYY-MM-DD" in content
     assert "ISO 8601" in content
+
+    for fragment in [
+        '"data_year": 2026',
+        '"reconciliation_completed_time": "09:30"',
+        '"reconciliation_completed_at": "2026-09-15T09:30:00"',
+        '"reconciliation_completed_at": null',
+        '"code": "data_not_ready"',
+        '"code": "truncated_result"',
+        "month=2026-12",
+        "2027-01",
+        "has_more=false",
+        "returned_count",
+        "AutoCheck 预览",
+    ]:
+        assert fragment in content
 
 
 def test_module_readme_links_to_external_api_document_from_module_directory() -> None:
@@ -149,6 +172,38 @@ def test_second_migration_creates_year_snapshot_table_with_period_uniqueness() -
     assert "INSERT " not in sql.upper()
 
 
+def test_fourth_migration_creates_credentials_table_with_digest_only() -> None:
+    sql = (MODULE_ROOT / "migrations" / "004_external_api_credentials.sql").read_text(encoding="utf-8")
+
+    assert sql.count("CREATE TABLE dashboard_management_external_api_credentials") == 1
+    assert "token_digest" in sql
+    assert "token_fingerprint" in sql
+    assert "created_by" in sql
+    assert "plaintext_token" not in sql
+    assert "INSERT " not in sql.upper()
+    table_names = {
+        line.split("(", 1)[0].split()[-1]
+        for line in sql.splitlines()
+        if line.startswith("CREATE TABLE ")
+    }
+    assert table_names == {"dashboard_management_external_api_credentials"}
+
+
+def test_third_migration_creates_external_api_call_logs_table_once() -> None:
+    sql = (MODULE_ROOT / "migrations" / "003_external_api_call_logs.sql").read_text("utf-8")
+
+    assert sql.count("CREATE TABLE dashboard_management_external_api_calls") == 1
+    for fragment in [
+        "CREATE TABLE dashboard_management_external_api_calls",
+        "caller_ip VARCHAR(45) NOT NULL",
+        "request_id VARCHAR(64) NOT NULL",
+        "UNIQUE KEY uq_dashboard_management_external_api_calls_request_id",
+        "KEY ix_dashboard_management_external_api_calls_called_at",
+    ]:
+        assert fragment in sql
+    assert "INSERT " not in sql.upper()
+
+
 def test_module_registers_schema_for_all_dashboard_management_tables() -> None:
     from auto_check.app.module_system.schema import ModuleSchemaRegistry
     from auto_check.modules.dashboard_management.module import create_module
@@ -172,6 +227,15 @@ def test_module_registers_schema_for_all_dashboard_management_tables() -> None:
         "dashboard_management_year_snapshots": {
             "id", "region_id", "period_year", "period_type", "period_value", "row_json",
             "source_refreshed_at", "created_at", "updated_at",
+        },
+        "dashboard_management_external_api_calls": {
+            "id", "called_at", "board_code", "http_status", "result_status",
+            "failed_region_count", "duration_ms", "request_id", "caller_ip",
+            "error_code", "error_message",
+        },
+        "dashboard_management_external_api_credentials": {
+            "scope_key", "token_digest", "token_fingerprint",
+            "created_by", "created_at", "updated_by", "updated_at",
         },
     }
     assert registry.declared_table_names == frozenset(expected)

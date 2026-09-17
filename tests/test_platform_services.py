@@ -5,6 +5,10 @@ from dataclasses import fields
 import pytest
 
 from auto_check.app.module_system.services import ServiceRegistry
+from auto_check.app.external_api import (
+    ExternalApiStatusSnapshot,
+    create_external_api_status_service,
+)
 from auto_check.app.platform_services import (
     PublicDictionaryItem,
     PublicUser,
@@ -180,3 +184,60 @@ def test_dictionary_service_binds_independent_facades_per_owner():
     with pytest.raises(RuntimeError, match="closed"):
         facade_a.list_active_items("business_system")
     assert facade_b.list_active_items("business_system")
+
+
+def test_external_api_status_service_exposes_only_configuration_boolean():
+    registry = ServiceRegistry()
+    registry.register_platform(create_external_api_status_service(lambda: "secret"))
+    services = registry.for_module(
+        "dashboard_management",
+        service_dependencies={"platform.external_api_status": 1},
+    )
+    facade = services.resolve("platform.external_api_status", 1)
+    assert facade.get_status() == ExternalApiStatusSnapshot(token_configured=True)
+    assert not hasattr(facade.get_status(), "token")
+    services.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        facade.get_status()
+
+
+def test_external_api_status_service_reports_blank_token_as_unconfigured():
+    spec = create_external_api_status_service(lambda: "   ")
+    registry = ServiceRegistry()
+    registry.register_platform(spec)
+    services = registry.for_module(
+        "dashboard_management",
+        service_dependencies={"platform.external_api_status": 2},
+    )
+    assert services.resolve("platform.external_api_status", 2).get_status().token_configured is False
+
+
+def test_external_api_status_service_verify_candidate_constant_time():
+    spec = create_external_api_status_service(lambda: "correct-token-value")
+    registry = ServiceRegistry()
+    registry.register_platform(spec)
+    services = registry.for_module(
+        "dashboard_management",
+        service_dependencies={"platform.external_api_status": 2},
+    )
+    facade = services.resolve("platform.external_api_status", 2)
+    assert facade.verify_candidate("correct-token-value") is True
+    assert facade.verify_candidate("wrong-token") is False
+    assert facade.verify_candidate("") is False
+    assert facade.verify_candidate(None) is False  # type: ignore[arg-type]
+    status = facade.get_status()
+    assert not hasattr(status, "token")
+    assert not hasattr(status, "digest")
+    services.close()
+
+
+def test_external_api_status_service_verify_candidate_blank_configured():
+    spec = create_external_api_status_service(lambda: "   ")
+    registry = ServiceRegistry()
+    registry.register_platform(spec)
+    services = registry.for_module(
+        "dashboard_management",
+        service_dependencies={"platform.external_api_status": 2},
+    )
+    facade = services.resolve("platform.external_api_status", 2)
+    assert facade.verify_candidate("anything") is False

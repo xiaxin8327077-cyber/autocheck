@@ -446,6 +446,7 @@ class ModuleRuntime:
         method: str,
         path: str,
         query: Mapping[str, str],
+        client_ip: str = "",
     ) -> ModuleHttpResponse:
         """Dispatch an explicitly published external read-only module route."""
         with self._lifecycle_lock:
@@ -458,7 +459,7 @@ class ModuleRuntime:
                     and loaded.discovered.manifest.id not in self._transitioning_modules
                 )
             )
-        request = ModuleRequest(method, path, {}, query, None, {})
+        request = ModuleRequest(method, path, {}, query, None, {}, client_ip=client_ip)
         for router in routers:
             response = router.dispatch_external(request)
             if response is not None:

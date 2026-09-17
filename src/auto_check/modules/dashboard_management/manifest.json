@@ -1,7 +1,7 @@
 {
   "id": "dashboard_management",
   "name": "看板管理",
-  "version": "1.2.27",
+  "version": "1.2.28",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.dashboard_management.module:create_module",
@@ -23,16 +23,19 @@
   "permissions": [
     "dashboard_management.view",
     "dashboard_management.manage",
-    "dashboard_management.test_sql"
+    "dashboard_management.test_sql",
+    "dashboard_management.external_api_monitor",
+    "dashboard_management.external_api_token_manage"
   ],
   "dependencies": [],
-  "schema_version": 2,
+  "service_dependencies": [
+    {"name": "platform.external_api_status", "minimum_version": 2}
+  ],
+  "schema_version": 4,
   "release_notes": {
-    "version": "1.2.27",
+    "version": "1.2.28",
     "items": [
-      "看板管理模块：支持固定看板的数据区域、字段与安全 SQL 来源配置",
-      "看板管理模块：系统数据自动生成 AutoCheck 系统库只读 SQL，数据表与字段的中英文名称通过 SQL 注释展示，结果预览使用字段中文名并居中对齐",
-      "看板管理模块：自定义 SQL 支持任意单条 SELECT/WITH 查询、注释、数据库原生函数与不带 schema 的表名，同时保留写入、DDL、多语句和锁表拦截",
+      "看板管理模块：支持固定看板的数据区域、字段与安全 SQL/系统数据来源配置，自动生成只读 SQL 并支持任意单条 SELECT/WITH 查询",
       "看板管理模块：浏览器刷新后恢复当前看板及各看板最后选择的数据区域",
       "看板管理模块：报表对账完成时间按报送期读取总差异为 0 的最早自动对数历史执行时间，季度报表特殊处理仅统计待确认和已确认记录",
       "看板管理模块：看板页签支持预览接口 JSON 和内置看板页面，页面按已保存配置聚合展示各数据区域",
@@ -41,14 +44,16 @@
       "看板管理模块：顶部使用明显的紧凑看板 Tabs，并统一提供当前看板预览入口",
       "看板管理模块：当月报表报送时间对比统计排除人行大集中",
       "看板管理模块：顶部切换栏与内容区合并为系统标准外层卡片，统一背景、系统圆角裁切与悬浮描边",
-      "看板管理模块：四个年度趋势区域由看板预览接口实时刷新本地快照，同周期以实时 SQL 或系统结果覆盖、缺失周期保留，并初始化已确认的 2026 年历史基线",
+      "看板管理模块：四个年度趋势区域由看板预览接口实时刷新本地快照，同周期以实时 SQL 或系统结果覆盖、缺失周期保留，并初始化已确认的 2026 年历史基线；新年度未准备时返回 data_not_ready，截断时返回 truncated_result，响应通过 data_year 隔离年度并支持 1 月补写上一年 12 月迟到对账记录",
       "看板管理模块：SQL 测试失败时同步显示安全的具体原因，包括表或字段不存在、语法、权限、连接、超时和数据格式问题",
       "看板管理模块：季度报表特殊处理在对外预览接口中为当前季度之后的缺失季度返回 0，且不写入年度快照",
       "看板管理模块：修复编辑未选中区域时错误覆盖当前区域的问题，并将区域启停改为标题旁开关",
       "看板管理模块：看板查看、配置维护和 SQL 测试能力纳入角色权限树",
       "看板管理模块：仅在来源配置存在实际差异时提示放弃修改，自定义 SQL 即使存在语法、字段或执行问题也可保存，并在测试按钮旁保留具体问题提示",
       "看板管理模块：结果预览中的日期时间按 YYYY-MM-DD HH:mm:ss 展示，接口继续保持 ISO 8601 格式",
-      "看板管理模块：为两个固定监管看板提供 Bearer Token 认证的外部只读数据接口"
+      "看板管理模块：为两个固定监管看板提供 Bearer Token 认证的外部只读数据接口，接口数据预览、看板页面预览与外部接口共用固定 7+3 区域的完整结果，AutoCheck 页面作为 Kanban 适配基准，报表对账完成时间同时返回 HH:mm 展示时分与完整完成日期时间",
+      "看板管理模块：新增外部接口监控，展示接口状态、近 24 小时统计及含调用方 IP 的 30 天认证后调用记录",
+      "看板管理模块：管理员可在接口监控页面为两个固定监管看板接口生成和更新专属 Bearer Token，页面显示系统生成来源及最近生成时间，Token 仅适用于两个精确接口、一次性展示且旧 Token 立即失效"
     ]
   }
 }

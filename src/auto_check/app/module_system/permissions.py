@@ -18,6 +18,8 @@ _MODULE_PERMISSION_TO_CAPABILITY: dict[str, str] = {
     "dashboard_management.view": "sys.dashboard_management",
     "dashboard_management.manage": "sys.dashboard_management.manage",
     "dashboard_management.test_sql": "sys.dashboard_management.test_sql",
+    "dashboard_management.external_api_monitor": "sys.dashboard_management.external_api_monitor",
+    "dashboard_management.external_api_token_manage": "sys.dashboard_management.external_api_token_manage",
 }
 
 

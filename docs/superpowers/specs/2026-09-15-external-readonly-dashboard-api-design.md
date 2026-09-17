@@ -1,6 +1,6 @@
 # AutoCheck 外部只读看板接口设计
 
-状态：已确认，待实施
+状态：已实施；2026-09-16 的契约修正规范优先于本文早期约定
 
 日期：2026-09-15
 
@@ -40,7 +40,7 @@ AutoCheck 为“金融监管报表报送大屏”和“金融监管报送流程�
 
 ## 4. 看板模块契约
 
-`dashboard_management` 只把 `/boards/{board_code}/preview` 标记为 external，并由独立的外部处理器调用 `preview_external_board_data()`。内部 `/api/modules/dashboard-management/boards/{board_code}/preview` 继续调用现有 `preview_board_data()`，因此内部预览仍可展示用户启用的自定义区域。
+`dashboard_management` 只把 `/boards/{board_code}/preview` 标记为 external，并由外部处理器调用 `preview_external_board_data()`。内部 `/api/modules/dashboard-management/boards/{board_code}/preview` 调用 `preview_board_data()`；两个方法现已复用同一固定投影，均只返回固定 7+3 区域及固定字段。自定义区域和字段继续保留在配置与来源测试中，但不进入完整看板预览。
 
 外部接口只接受：
 
@@ -65,6 +65,7 @@ AutoCheck 为“金融监管报表报送大屏”和“金融监管报送流程�
   "status": "success",
   "generated_at": "2026-09-15T09:30:00",
   "data": {
+    "data_year": 2026,
     "board": {"code": "report_submission", "name": "金融监管报表报送大屏"},
     "regions": []
   },
@@ -84,10 +85,10 @@ AutoCheck 为“金融监管报表报送大屏”和“金融监管报送流程�
 
 调用链固定为：浏览器大屏 → 对方系统后端适配接口 → AutoCheck 外部接口。
 
-对方后端保存 AutoCheck 地址和 Token，把 `regions` 按 `code` 转换为原大屏结构；单区失败保留最近成功数据；连接超时建议 3 秒、总超时 10 秒；只对连接失败、超时、502 和 503 少量重试，不重试 401；记录 `meta.request_id`；缓存最近一次成功响应，避免 AutoCheck 短暂不可用时大屏整体空白。
+对方后端保存 AutoCheck 地址和 Token，把 `regions` 按 `code` 转换为原大屏结构；只用顶层 `status=success` 的完整响应更新缓存，`partial` 时沿用最近一次完整成功响应且不做跨年度区域拼接；连接超时建议 3 秒、总超时 10 秒；只对连接失败、超时、502 和 503 少量重试，不重试 401；记录 `meta.request_id`。
 
 ## 7. 测试与验收
 
-TDD 覆盖：external 标记隔离、只允许 GET、503/401、正确 Token、两个固定看板、非法 board code、排除自定义区域、顶层元数据、部分失败、内部预览兼容。相关测试通过后运行全量 `python -m pytest -q` 和 `git diff --check`。
+TDD 覆盖：external 标记隔离、只允许 GET、503/401、正确 Token、两个固定看板、非法 board code、排除自定义区域、顶层元数据、部分失败，以及内部/外部完整看板投影一致。相关测试通过后运行全量 `python -m pytest -q` 和 `git diff --check`。
 
 最后重启当前 AutoCheck 开发环境，确认 8765 端口监听，并实测 401、503 和正确 Token 的成功调用。为避免把正式 Token 写入命令历史，开发验收使用临时测试 Token，重启后按既有运行配置恢复或明确记录当前 Token 状态。

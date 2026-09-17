@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from importlib import resources
 
-from auto_check.app.module_system.contracts import ModuleManifest, ModuleRequest
+from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleManifest, ModuleRequest
 from auto_check.app.module_system.permissions import default_permission_evaluator
-from auto_check.app.module_system.routing import ModuleRouter
+from auto_check.app.module_system.routing import ExternalAuthDecision, ModuleRouter
 
 
 def _manifest():
@@ -26,7 +26,7 @@ class Service:
         return {"id": 1, "board_code": board_code, "row_version": 1}
 
     def preview_board_data(self, board_code, current_user):
-        return {"board": {"code": board_code, "name": "报送"}, "regions": []}
+        return self.preview_external_board_data(board_code)
 
     def preview_external_board_data(self, board_code):
         from auto_check.modules.dashboard_management.validator import NotFoundError
@@ -36,6 +36,7 @@ class Service:
         return {
             "status": "partial",
             "generated_at": "2026-09-15T09:30:00",
+            "data_year": 2026,
             "board": {"code": board_code, "name": "报送"},
             "regions": [
                 {
@@ -69,18 +70,58 @@ class Service:
         }
 
 
-def _router(service=None):
+def _router(service=None, monitoring=None):
     from auto_check.modules.dashboard_management.api import register_routes
 
     router = ModuleRouter(_manifest(), default_permission_evaluator)
-    register_routes(router, lambda: service or Service())
+    register_routes(router, lambda: service or Service(), lambda: monitoring)
     return router
 
 
-def _dispatch(router, method, suffix, *, body=None, user=None, body_size=0):
+def _router_with_monitoring(monitoring):
+    from auto_check.modules.dashboard_management.api import register_routes
+
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(router, lambda: Service(), lambda: monitoring)
+    return router
+
+
+def test_external_authenticator_resolves_credential_service_at_request_time():
+    from auto_check.modules.dashboard_management.api import register_routes
+
+    holder = {"service": None}
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(
+        router,
+        lambda: Service(),
+        lambda: None,
+        lambda: holder["service"],
+    )
+    preflight = router.external_preflight(
+        "GET",
+        "/api/external/v1/dashboard-management/boards/report_submission/preview",
+    )
+
+    class CredentialService:
+        @staticmethod
+        def authenticate(candidate):
+            return ExternalAuthDecision(configured=True, authenticated=candidate == "valid")
+
+    holder["service"] = CredentialService()
+
+    assert preflight is not None
+    assert preflight.external_authenticator is not None
+    assert preflight.external_authenticator("valid") == ExternalAuthDecision(
+        configured=True,
+        authenticated=True,
+    )
+
+
+def _dispatch(router, method, suffix, *, body=None, user=None, body_size=0, query=None):
     user = dict(user or {"role": "admin"})
+    path = _manifest().api_prefix + suffix
     return router.dispatch(
-        request=ModuleRequest(method, _manifest().api_prefix + suffix, {}, {}, body, user),
+        request=ModuleRequest(method, path, {}, query or {}, body, user),
         body_size=body_size,
     )
 
@@ -145,6 +186,7 @@ def test_api_publishes_only_board_preview_with_stable_external_envelope():
     assert response.status == 200
     assert response.body["status"] == "partial"
     assert response.body["generated_at"] == "2026-09-15T09:30:00"
+    assert response.body["data"]["data_year"] == 2026
     assert response.body["data"]["board"]["code"] == "report_submission"
     assert response.body["data"]["regions"][0]["status"] == "error"
     assert response.body["meta"]["request_id"].startswith("req-")
@@ -157,21 +199,22 @@ def test_external_board_preview_returns_404_for_unknown_board_code():
         _router(), "GET", "/boards/unknown_board/preview"
     )
 
-    assert response.status == 404
-    assert response.body["error"]["code"] == "resource_not_found"
-    assert response.body["meta"]["request_id"].startswith("req-")
+    # Unknown board codes no longer match any exact external route.
+    assert response is None
 
 
-def test_internal_board_preview_response_contract_is_unchanged():
-    response = _dispatch(
-        _router(), "GET", "/boards/report_submission/preview"
-    )
+def test_internal_and_external_board_preview_publish_the_same_business_payload():
+    router = _router()
+    internal = _dispatch(router, "GET", "/boards/report_submission/preview")
+    external = _dispatch_external(router, "GET", "/boards/report_submission/preview")
 
-    assert set(response.body) == {"data", "meta"}
-    assert response.body["data"] == {
-        "board": {"code": "report_submission", "name": "报送"},
-        "regions": [],
-    }
+    assert internal.status == external.status == 200
+    assert internal.body["status"] == external.body["status"]
+    assert internal.body["generated_at"] == external.body["generated_at"]
+    assert internal.body["data"] == external.body["data"]
+    assert internal.body["data"]["data_year"] == 2026
+    assert internal.body["meta"]["request_id"].startswith("req-")
+    assert external.body["meta"]["request_id"].startswith("req-")
 
 
 def test_api_maps_400_401_409_and_500_to_desensitized_domain_responses():
@@ -235,3 +278,320 @@ def test_datasource_response_only_contains_safe_summary_fields():
     assert response.body["data"] == [{"id": "safe", "name": "安全数据源", "db_type": "postgresql"}]
     rendered = str(response.body)
     assert "host" not in rendered and "password" not in rendered
+
+
+class _FakeMonitoring:
+    def __init__(self):
+        self.calls = []
+        self.begin_error = None
+        self.finish_error = None
+
+    def begin_call(self, board_code, caller_ip, request_id):
+        self.calls.append(("begin", board_code, caller_ip, request_id))
+        if self.begin_error:
+            raise self.begin_error
+        return object()
+
+    def finish_call(self, trace, response):
+        self.calls.append(("finish", response.status))
+        if self.finish_error:
+            raise self.finish_error
+
+    def monitor_summary(self, credential_status=None):
+        return {"enabled": True, "token_configured": True, "token_source": "none"}
+
+    def list_calls(self, query):
+        return {"items": [], "page": 1, "page_size": 10, "total": 0, "total_pages": 1}
+
+
+def test_external_preview_records_call_with_client_ip_and_request_id():
+    monitoring = _FakeMonitoring()
+    router = _router_with_monitoring(monitoring)
+
+    response = router.dispatch_external(
+        ModuleRequest(
+            "GET",
+            "/api/external/v1/dashboard-management/boards/report_submission/preview",
+            {},
+            {},
+            None,
+            {},
+            client_ip="198.51.100.4",
+        )
+    )
+
+    assert response.status == 200
+    assert len(monitoring.calls) == 2
+    assert monitoring.calls[0] == ("begin", "report_submission", "198.51.100.4", response.body["meta"]["request_id"])
+    assert monitoring.calls[1][0] == "finish"
+    assert monitoring.calls[1][1] == 200
+
+
+def test_internal_preview_does_not_record_call():
+    monitoring = _FakeMonitoring()
+    router = _router_with_monitoring(monitoring)
+
+    response = _dispatch(router, "GET", "/boards/report_submission/preview")
+
+    assert response.status == 200
+    assert response.body["data"]["data_year"] == 2026
+    assert monitoring.calls == []
+
+
+def test_external_preview_records_404_and_500_exactly_once():
+    monitoring = _FakeMonitoring()
+    router = _router_with_monitoring(monitoring)
+
+    not_found = router.dispatch_external(
+        ModuleRequest("GET", "/api/external/v1/dashboard-management/boards/unknown/preview", {}, {}, None, {})
+    )
+    # Unknown board codes no longer match any external route.
+    assert not_found is None
+    # No monitoring calls are recorded for unmatched external paths.
+    assert monitoring.calls == []
+
+
+def test_external_preview_finish_call_error_does_not_change_response():
+    monitoring = _FakeMonitoring()
+    monitoring.finish_error = RuntimeError("database unavailable")
+    router = _router_with_monitoring(monitoring)
+
+    response = router.dispatch_external(
+        ModuleRequest(
+            "GET",
+            "/api/external/v1/dashboard-management/boards/report_submission/preview",
+            {},
+            {},
+            None,
+            {},
+            client_ip="198.51.100.4",
+        )
+    )
+
+    assert response.status == 200
+    assert response.body["status"] == "partial"
+    assert len(monitoring.calls) == 2
+
+
+def test_external_preview_begin_call_error_does_not_change_response():
+    monitoring = _FakeMonitoring()
+    monitoring.begin_error = RuntimeError("database unavailable")
+    router = _router_with_monitoring(monitoring)
+
+    response = router.dispatch_external(
+        ModuleRequest(
+            "GET",
+            "/api/external/v1/dashboard-management/boards/report_submission/preview",
+            {},
+            {},
+            None,
+            {},
+            client_ip="unknown",
+        )
+    )
+
+    assert response.status == 200
+    assert response.body["status"] == "partial"
+    assert monitoring.calls[0][0] == "begin"
+
+
+def test_monitor_apis_require_permission_and_return_403_for_unauthorized():
+    from auto_check.modules.dashboard_management.api import register_routes
+
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(router, lambda: Service(), lambda: _FakeMonitoring())
+
+    authorized = {"role": "user", "capabilities": ["sys.dashboard_management.external_api_monitor"]}
+    unauthorized = {"role": "user", "capabilities": []}
+
+    assert _dispatch(router, "GET", "/external-api/monitor/summary", user=authorized).status == 200
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", user=authorized).status == 200
+    assert _dispatch(router, "GET", "/external-api/monitor/summary", user=unauthorized).status == 403
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", user=unauthorized).status == 403
+
+
+def test_token_generation_requires_mapped_capability_and_strict_empty_object():
+    from auto_check.modules.dashboard_management.api import register_routes
+
+    class Credentials:
+        calls = 0
+
+        def generate(self, operator):
+            self.calls += 1
+            return type(
+                "Generated",
+                (),
+                {
+                    "token": "generated-test-token",
+                    "generated_at": "2026-09-16T12:00:00",
+                    "rotated": False,
+                },
+            )()
+
+    credentials = Credentials()
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(
+        router,
+        lambda: Service(),
+        lambda: _FakeMonitoring(),
+        lambda: credentials,
+    )
+    authorized = {
+        "role": "user",
+        "username": "token-manager",
+        "capabilities": ["sys.dashboard_management.external_api_token_manage"],
+    }
+
+    denied = _dispatch(
+        router,
+        "POST",
+        "/external-api/token/generate",
+        body={},
+        user={"role": "user", "capabilities": []},
+    )
+    invalid_mapping = _dispatch(
+        router,
+        "POST",
+        "/external-api/token/generate",
+        body={"unexpected": True},
+        user=authorized,
+    )
+    invalid_scalar = _dispatch(
+        router,
+        "POST",
+        "/external-api/token/generate",
+        body=[],
+        user=authorized,
+    )
+    generated = _dispatch(
+        router,
+        "POST",
+        "/external-api/token/generate",
+        body={},
+        user=authorized,
+    )
+
+    assert denied.status == 403
+    assert invalid_mapping.status == invalid_scalar.status == 400
+    assert credentials.calls == 1
+    assert generated.status == 200
+    assert generated.body["token"] == "generated-test-token"
+
+
+def test_token_generation_failure_log_does_not_include_exception_details(caplog):
+    from auto_check.modules.dashboard_management.api import register_routes
+
+    class FailingCredentials:
+        @staticmethod
+        def generate(operator):
+            raise RuntimeError("private-token-digest-material")
+
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(
+        router,
+        lambda: Service(),
+        lambda: _FakeMonitoring(),
+        lambda: FailingCredentials(),
+    )
+
+    with caplog.at_level("WARNING"):
+        response = _dispatch(
+            router,
+            "POST",
+            "/external-api/token/generate",
+            body={},
+        )
+
+    assert response.status == 500
+    assert "private-token-digest-material" not in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_monitor_apis_validate_query_parameters():
+    import logging
+    from auto_check.modules.dashboard_management.api import register_routes
+    from auto_check.modules.dashboard_management.external_api_monitoring import ExternalApiMonitoringService
+
+    class _FakeStatusFacade:
+        def get_status(self):
+            from auto_check.app.external_api import ExternalApiStatusSnapshot
+            return ExternalApiStatusSnapshot(token_configured=True)
+
+    class _FakeStore:
+        def record_and_cleanup(self, record, cutoff):
+            pass
+        def summary(self, since, cutoff):
+            return {"total": 0, "success": 0, "partial": 0, "failed": 0, "average_duration_ms": 0, "last_called_at": None, "last_success_at": None}
+        def list_calls(self, query, cutoff):
+            return {"items": [], "page": 1, "page_size": 10, "total": 0, "total_pages": 1}
+
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    service = ExternalApiMonitoringService(
+        _FakeStore(),
+        status_facade=_FakeStatusFacade(),
+        logger=logging.getLogger("test"),
+    )
+    register_routes(router, lambda: Service(), lambda: service)
+    admin = {"role": "admin"}
+
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"page": "0"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"page_size": "0"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"page_size": "101"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"board_code": "unknown"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"result_status": "unknown"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"caller_ip": "not-an-ip"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"started_at": "not-a-date"}, user=admin).status == 400
+    assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"ended_at": "not-a-date"}, user=admin).status == 400
+
+
+def test_monitor_apis_wrap_real_service_results_in_internal_response_envelope():
+    import logging
+    from auto_check.modules.dashboard_management.api import register_routes
+    from auto_check.modules.dashboard_management.external_api_monitoring import ExternalApiMonitoringService
+
+    class _FakeStatusFacade:
+        def get_status(self):
+            from auto_check.app.external_api import ExternalApiStatusSnapshot
+            return ExternalApiStatusSnapshot(token_configured=True)
+
+    class _FakeStore:
+        def summary(self, since, cutoff):
+            return {"total": 1, "success": 1, "partial": 0, "failed": 0, "average_duration_ms": 7, "last_called_at": None, "last_success_at": None}
+
+        def list_calls(self, query, cutoff):
+            return {"items": [], "page": 1, "page_size": 10, "total": 0, "total_pages": 1}
+
+    service = ExternalApiMonitoringService(
+        _FakeStore(),
+        status_facade=_FakeStatusFacade(),
+        logger=logging.getLogger("test"),
+    )
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(router, lambda: Service(), lambda: service)
+
+    summary = _dispatch(router, "GET", "/external-api/monitor/summary")
+    calls = _dispatch(router, "GET", "/external-api/monitor/calls")
+
+    assert summary.status == 200
+    assert summary.body["data"]["last_24_hours"]["total"] == 1
+    assert summary.body["meta"]["request_id"].startswith("req-")
+    assert calls.status == 200
+    assert calls.body["data"]["items"] == []
+    assert calls.body["meta"]["request_id"].startswith("req-")
+
+
+def test_monitor_summary_returns_safe_503_when_status_service_is_unavailable():
+    class _UnavailableMonitoring(_FakeMonitoring):
+        def monitor_summary(self):
+            raise RuntimeError("secret backend details")
+
+    response = _dispatch(
+        _router_with_monitoring(_UnavailableMonitoring()),
+        "GET",
+        "/external-api/monitor/summary",
+    )
+
+    assert response.status == 503
+    assert response.body["error"]["code"] == "service_unavailable"
+    assert "secret" not in str(response.body)
+    assert response.body["meta"]["request_id"].startswith("req-")

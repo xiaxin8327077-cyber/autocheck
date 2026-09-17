@@ -739,6 +739,9 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       if (!payload?.data?.regions) throw new Error(payload?.error?.message || '接口返回异常');
+      const dataYear = Number(payload?.data?.data_year);
+      if (!Number.isInteger(dataYear)) throw new Error('接口缺少有效的数据年度');
+      document.documentElement.dataset.dataYear = String(dataYear);
       renderReportCounts(regionRows(payload, 'regulatory_report_count'));
       renderTable('当月监管报送报表时间', regionRows(payload, 'monthly_regulatory_report_time'), 'reporting_date', 'var(--cyan)');
       renderTable('报表校验统计', regionRows(payload, 'report_validation_statistics'), 'validation_count', 'var(--cyan)');

@@ -101,7 +101,7 @@ src/auto_check/modules/<module_id>/
 
 模块只有在经过独立平台变更评审且业务确有服务端集成需求时，才能把单条路由登记为 `external=True`。外部路由只允许 `GET`，映射到 `/api/external/v1/<module-prefix>/...`；没有显式标记的普通模块 GET、修改接口、数据源/SQL/用户等管理信息不能通过外部命名空间访问。外部分发不提供网页登录身份，`ModuleRequest.current_user` 固定为空，模块必须在自身 service 中实现固定资源白名单和稳定字段契约，不能依赖前端隐藏或平台内核硬编码业务。
 
-平台从 `AUTO_CHECK_EXTERNAL_API_TOKEN` 读取共享 Bearer Token，未配置时关闭外部接口；使用 `secrets.compare_digest` 校验并统一生成 401 challenge 与 `Cache-Control: no-store`。模块不得读取或记录该 Token，不得自行开放 CORS，也不得建议浏览器直接调用。新增外部路由必须同时测试：GET-only 登记、未标记路由隔离、认证状态、业务白名单、错误脱敏和内部接口兼容性。
+每条外部路由必须注册平台定义的认证器契约，由 HTTP 入口在精确路由预检后调用；认证器分别返回“是否已配置”和“是否认证成功”，平台据此统一生成 503、401 challenge 与 `Cache-Control: no-store`。环境变量兼容认证应通过 `platform.external_api_status` v2 只读 facade 的 `get_status()` 与 `verify_candidate()` 完成，普通模块不得直接读取或记录环境 Token。业务模块可在自身表中保存专属 Token 摘要，但不得保存或回显明文、不得把业务白名单写入平台内核、不得自行开放 CORS，也不得建议浏览器直接调用。新增外部路由必须同时测试：GET-only 登记、未标记路由隔离、认证生命周期、业务白名单、错误脱敏和内部接口兼容性。
 
 ## 4. 数据库迁移与运维
 

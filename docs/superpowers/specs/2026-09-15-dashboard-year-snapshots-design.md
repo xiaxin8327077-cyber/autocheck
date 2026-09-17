@@ -32,7 +32,7 @@
 ## 3. 周期规范
 
 - 月度信托项目数量：查询结果 `month` 兼容 `M月`、`MM月` 和 `YYYY-MM`。本地统一保存年份和月份，接口继续返回 `M月`，并仅接受当前月及以前的当年月份，避免年初把外部近半年中的上年月份误记为本年未来月份。
-- 报表对账完成时间：`month` 保存为 `YYYY-MM`；`reconciliation_completed_at` 对接口和看板统一输出 `HH:mm`。实时系统查询的完整执行时间写快照前提取时分。
+- 报表对账完成时间：`month` 保存为 `YYYY-MM`；接口同时返回 `reconciliation_completed_time`（`HH:mm` 展示时分）与 `reconciliation_completed_at`（完整日期时间或 `null`）两个独立字段，不再让 `reconciliation_completed_at` 兼容两种格式。新数据必须提供完整日期时间；初始化历史仅有既时分时，完整日期保持 `null`。
 - 报表校验问题处理：`month` 保存并返回 `YYYY-MM`。
 - 季度报表特殊处理：兼容 `第N季度` 和 `YYYY年第N季度`，本地保存年份和季度，接口返回 `第N季度`。
 

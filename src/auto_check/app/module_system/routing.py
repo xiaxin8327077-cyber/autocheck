@@ -14,6 +14,17 @@ PermissionEvaluator = Callable[[Mapping[str, Any] | None, str], bool]
 _PATH_PARAMETER_PATTERN = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
+@dataclass(frozen=True)
+class ExternalAuthDecision:
+    """Result of authenticating a candidate token for an external route."""
+
+    configured: bool
+    authenticated: bool
+
+
+ExternalRouteAuthenticator = Callable[[str], ExternalAuthDecision]
+
+
 class ModuleRouteConflict(ValueError):
     """Raised when a module registers a route more than once."""
 
@@ -25,6 +36,7 @@ class ModuleRoutePreflight:
     status: int
     max_body_bytes: int | None = None
     headers: tuple[tuple[str, str], ...] = ()
+    external_authenticator: ExternalRouteAuthenticator | None = None
 
 
 @dataclass(frozen=True)
@@ -36,6 +48,7 @@ class _ModuleRoute:
     permission: str
     max_body_bytes: int
     external: bool
+    external_authenticator: ExternalRouteAuthenticator | None
 
 
 class ModuleRouter:
@@ -55,6 +68,7 @@ class ModuleRouter:
         permission: str,
         max_body_bytes: int,
         external: bool = False,
+        external_authenticator: ExternalRouteAuthenticator | None = None,
     ) -> None:
         normalized_method = self._normalize_method(method)
         pattern = self._compile_relative_path(path)
@@ -68,6 +82,10 @@ class ModuleRouter:
             raise ValueError("external must be a boolean")
         if external and normalized_method != "GET":
             raise ValueError("external module routes only support GET")
+        if external and not callable(external_authenticator):
+            raise ValueError("external routes must register a callable external_authenticator")
+        if not external and external_authenticator is not None:
+            raise ValueError("external_authenticator must be None for internal routes")
         if any(route.method == normalized_method and route.path == path for route in self._routes):
             raise ModuleRouteConflict(f"duplicate module route: {normalized_method} {path}")
 
@@ -80,6 +98,7 @@ class ModuleRouter:
                 permission=permission,
                 max_body_bytes=max_body_bytes,
                 external=external,
+                external_authenticator=external_authenticator,
             )
         )
 
@@ -181,7 +200,12 @@ class ModuleRouter:
                 status=405,
                 headers=(("Allow", ", ".join(route.method for route in path_matches)),),
             )
-        return ModuleRoutePreflight(status=200, max_body_bytes=method_matches[0].max_body_bytes)
+        matched = method_matches[0]
+        return ModuleRoutePreflight(
+            status=200,
+            max_body_bytes=matched.max_body_bytes,
+            external_authenticator=matched.external_authenticator,
+        )
 
     def _relative_path(self, path: str, *, external: bool) -> str | None:
         prefix = (

@@ -44,7 +44,7 @@ function persistSelection(state) {
 }
 export function createState(selectionStorage = defaultSelectionStorage()) {
   const selection = restoredSelection(selectionStorage);
-  return { activeBoardCode: selection.activeBoardCode, selectedRegionByBoard: selection.selectedRegionByBoard, selectionStorage, catalogs: new Map(), drafts: new Map(), serverSnapshots: new Map(), previews: new Map(), dirtyRegions: new Set(), pending: new Set(), requestController: null, requestControllers: new Set(), lifecycleGeneration: 0, active: true };
+  return { activeBoardCode: selection.activeBoardCode, selectedRegionByBoard: selection.selectedRegionByBoard, selectionStorage, catalogs: new Map(), drafts: new Map(), serverSnapshots: new Map(), previews: new Map(), dirtyRegions: new Set(), pending: new Set(), requestController: null, requestControllers: new Set(), lifecycleGeneration: 0, active: true, viewMode: "management", managementScrollTop: 0, monitorSummary: null, monitorCalls: null, monitorFilters: { board_code: "", result_status: "", caller_ip: "", started_at: "", ended_at: "" }, monitorPage: 1, monitorLoading: false, monitorError: "" };
 }
 export function applyCatalog(state, boardCode, catalog, { resetRegionIds = [] } = {}) {
   const reset = new Set(resetRegionIds.map(Number));
@@ -82,3 +82,14 @@ export async function requestLeave(state, confirm, token = captureRequest(state)
 export function startRequest(state, context, path, options = {}) { const controller = new AbortController(); state.requestController = controller; state.requestControllers.add(controller); return context.api(path, { ...options, signal: controller.signal }).finally(() => { state.requestControllers.delete(controller); if (state.requestController === controller) state.requestController = null; }); }
 export function activateLifecycle(state) { state.active = true; }
 export function stopRequests(state) { state.lifecycleGeneration += 1; state.active = false; state.requestControllers.forEach((controller) => controller.abort()); state.requestControllers.clear(); state.requestController = null; }
+export function enterMonitorView(state, scrollTop = 0) {
+  state.managementScrollTop = Math.max(0, Number(scrollTop) || 0);
+  state.viewMode = "monitor";
+}
+export function leaveMonitorView(state) {
+  state.viewMode = "management";
+}
+export function resetMonitorFilters(state) {
+  state.monitorFilters = { board_code: "", result_status: "", caller_ip: "", started_at: "", ended_at: "" };
+  state.monitorPage = 1;
+}

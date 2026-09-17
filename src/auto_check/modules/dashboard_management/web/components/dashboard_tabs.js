@@ -5,7 +5,7 @@ const BOARD_LABELS = new Map([
   ["reporting_process", "金融监管报送流程大屏"],
 ]);
 
-export function renderDashboardTabs({ boards, activeBoardCode, onSelect, onPreview }) {
+export function renderDashboardTabs({ boards, activeBoardCode, onSelect, onPreview, canMonitor, onMonitor }) {
   const toolbar = node("div", { className: "dm-tabs" });
   const tabs = node("div", { className: "dm-tab-switches", attrs: { role: "tablist", "aria-label": "看板选择" } });
   boards.forEach((board) => {
@@ -20,10 +20,11 @@ export function renderDashboardTabs({ boards, activeBoardCode, onSelect, onPrevi
     tabs.append(tab);
   });
   const activeBoard = boards.find((board) => board.code === activeBoardCode) || boards[0];
+  const actions = node("div", { className: "dm-tab-actions" });
   toolbar.append(tabs);
   if (activeBoard) {
     const preview = node("div", { className: "dm-tab-preview" });
-    const trigger = button("", "dm-tab-preview-trigger", () => {});
+    const trigger = button("", "dm-tab-action-button dm-tab-preview-trigger", () => {});
     trigger.append(
       node("span", { className: "dm-tab-preview-label", text: "预览当前看板" }),
       node("span", { className: "dm-tab-preview-chevron", attrs: { "aria-hidden": "true" } }),
@@ -35,7 +36,13 @@ export function renderDashboardTabs({ boards, activeBoardCode, onSelect, onPrevi
       button("看板页面", "dm-tab-preview-item", () => onPreview(activeBoard, "screen", trigger)),
     );
     preview.append(trigger, menu);
-    toolbar.append(preview);
+    actions.append(preview);
   }
+  if (canMonitor) {
+    const monitorBtn = button("接口监控", "dm-tab-action-button dm-tab-monitor", () => onMonitor());
+    monitorBtn.setAttribute("aria-label", "查看接口监控");
+    actions.append(monitorBtn);
+  }
+  toolbar.append(actions);
   return toolbar;
 }

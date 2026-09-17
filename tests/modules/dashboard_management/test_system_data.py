@@ -14,6 +14,9 @@ class _Result:
         assert size == 11
         return [("1104", date(2026, 9, 20))]
 
+    def fetchall(self):
+        return [("1104", date(2026, 9, 20))]
+
 
 class _Connection:
     def __init__(self):
@@ -69,6 +72,9 @@ def test_system_query_catalog_explains_all_six_system_sources():
     assert "INNER JOIN reconcile_runs" in reconciliation.sql
     assert "reconcile.total_count = 0" in reconciliation.sql
     assert "MIN(header.run_at) AS reconciliation_completed_at" in reconciliation.sql
+    assert "MONTH(CURRENT_DATE) = 1" in reconciliation.sql
+    assert "YEAR(header.run_date) = YEAR(CURRENT_DATE) - 1" in reconciliation.sql
+    assert "MONTH(header.run_date) = 12" in reconciliation.sql
     assert "MAX(finished_at)" not in reconciliation.sql
     assert "header.status = 'completed'" not in reconciliation.sql
     quarterly = SYSTEM_QUERY_DEFINITIONS["quarterly_special_processing"]
@@ -137,3 +143,50 @@ def test_system_preview_returns_safe_specific_database_error():
         SystemDataPreviewExecutor().execute(
             BrokenDatabase(), "monthly_regulatory_report_time", fields, "list"
         )
+
+
+def test_unlimited_system_preview_fetches_all_rows() -> None:
+    from auto_check.modules.dashboard_management.system_data import SystemDataPreviewExecutor
+
+    class Result:
+        def keys(self):
+            return ("report_type", "reporting_date")
+
+        def fetchall(self):
+            return [
+                ("1104", date(2026, 9, 20)),
+                ("1105", date(2026, 9, 21)),
+            ]
+
+    class Connection(_Connection):
+        def execute(self, statement):
+            self.sql = str(statement)
+            return Result()
+
+    database = _Database()
+    database.connection = Connection()
+    fields = [
+        {
+            "field_alias": "report_type",
+            "value_type": "string",
+            "nullable": False,
+            "enabled": True,
+        },
+        {
+            "field_alias": "reporting_date",
+            "value_type": "date",
+            "nullable": True,
+            "enabled": True,
+        },
+    ]
+
+    result = SystemDataPreviewExecutor(preview_limit=None).execute(
+        database,
+        "monthly_regulatory_report_time",
+        fields,
+        "list",
+    )
+
+    assert result.preview.has_more is False
+    assert result.preview.returned_count == 2
+    assert result.preview.rows[-1]["report_type"] == "1105"

@@ -137,3 +137,88 @@ def test_service_maps_region_snapshot_conflict_to_version_conflict():
             "source_mode": "sql", "datasource_id": "safe", "sql_text": "SELECT value", "row_version": 2,
         }, {"username": "admin"})
     assert error.value.status == 409 and error.value.code == "version_conflict"
+
+
+def test_reconciliation_sql_test_requires_datetime_and_returns_derived_time():
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    fields = [
+        {
+            "field_alias": "month",
+            "value_type": "string",
+            "nullable": False,
+            "enabled": True,
+        },
+        {
+            "field_alias": "reconciliation_completed_time",
+            "value_type": "string",
+            "nullable": False,
+            "enabled": True,
+        },
+        {
+            "field_alias": "reconciliation_completed_at",
+            "value_type": "datetime",
+            "nullable": True,
+            "enabled": True,
+        },
+    ]
+    captured_aliases = []
+
+    class Storage:
+        def get_region(self, region_id):
+            return {
+                "id": region_id,
+                "region_code": "report_reconciliation_completion_time",
+                "shape": "list",
+                "system_supported": True,
+                "row_version": 1,
+            }
+
+        def list_fields(self, region_id, include_disabled=False):
+            return fields
+
+        def record_successful_sql_test(
+            self, region_id, signature, username, schema_version
+        ):
+            assert schema_version == 1
+            return {"row_version": 2, "tested_signature": signature}
+
+    class Executor:
+        def execute(self, source, sql, active_fields, shape):
+            captured_aliases.extend(
+                field["field_alias"] for field in active_fields
+            )
+            return QueryPreview(
+                columns=("month", "reconciliation_completed_at"),
+                rows=({
+                    "month": "2026-08",
+                    "reconciliation_completed_at": "2026-09-15T09:30:00",
+                },),
+                has_more=False,
+                returned_count=1,
+                tested_signature="a" * 64,
+            )
+
+    service = DashboardManagementService(
+        Storage(),
+        datasource_loader=lambda: [{"id": "safe", "config": object()}],
+        sql_executor=Executor(),
+    )
+    response = service.test_sql(
+        1,
+        {"datasource_id": "safe", "sql_text": "SELECT month, completed_at"},
+        {"username": "admin"},
+    )
+
+    assert captured_aliases == ["month", "reconciliation_completed_at"]
+    assert response["columns"] == (
+        "month",
+        "reconciliation_completed_time",
+        "reconciliation_completed_at",
+    )
+    assert response["rows"][0] == {
+        "month": "2026-08",
+        "reconciliation_completed_time": "09:30",
+        "reconciliation_completed_at": "2026-09-15T09:30:00",
+    }

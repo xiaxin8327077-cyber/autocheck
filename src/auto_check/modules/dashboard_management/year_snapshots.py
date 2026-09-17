@@ -4,12 +4,15 @@ from dataclasses import dataclass
 from datetime import datetime, time
 import re
 from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
 
 MONTHLY_TRUST_PROJECTS = "monthly_trust_projects"
 REPORT_RECONCILIATION_COMPLETION_TIME = "report_reconciliation_completion_time"
 REPORT_VALIDATION_ISSUE_HANDLING = "report_validation_issue_handling"
 QUARTERLY_SPECIAL_PROCESSING = "quarterly_special_processing"
+RECONCILIATION_COMPLETED_TIME = "reconciliation_completed_time"
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 SNAPSHOT_REGION_CODES = frozenset({
     MONTHLY_TRUST_PROJECTS,
@@ -56,9 +59,10 @@ INITIAL_2026_SNAPSHOT_ROWS: Mapping[str, tuple[SnapshotRow, ...]] = {
     REPORT_RECONCILIATION_COMPLETION_TIME: tuple(
         SnapshotRow(2026, "month", month, {
             "month": f"2026-{month:02d}",
-            "reconciliation_completed_at": completed_at,
+            RECONCILIATION_COMPLETED_TIME: completed_time,
+            "reconciliation_completed_at": None,
         })
-        for month, completed_at in (
+        for month, completed_time in (
             (1, "21:00"),
             (2, "20:00"),
             (3, "19:00"),
@@ -135,23 +139,34 @@ def _normalize_row(
         return SnapshotRow(year, "quarter", quarter, row)
 
     allow_month_only = region_code == MONTHLY_TRUST_PROJECTS
-    period = _month_period(row.get("month"), now, allow_month_only=allow_month_only)
+    period = _month_period(
+        row.get("month"),
+        now,
+        allow_month_only=allow_month_only,
+        allow_previous_december=(
+            region_code == REPORT_RECONCILIATION_COMPLETION_TIME
+        ),
+    )
     if period is None:
         return None
     year, month = period
     row["month"] = f"{month}月" if allow_month_only else f"{year:04d}-{month:02d}"
     if region_code == REPORT_RECONCILIATION_COMPLETION_TIME:
         try:
-            row["reconciliation_completed_at"] = _completion_time(
-                row.get("reconciliation_completed_at")
+            row = normalize_reconciliation_completion_row(
+                row, allow_legacy_time=False
             )
-        except (TypeError, ValueError):
-            return None
+        except (TypeError, ValueError) as error:
+            raise SnapshotValidationError(str(error)) from error
     return SnapshotRow(year, "month", month, row)
 
 
 def _month_period(
-    value: Any, now: datetime, *, allow_month_only: bool
+    value: Any,
+    now: datetime,
+    *,
+    allow_month_only: bool,
+    allow_previous_december: bool = False,
 ) -> tuple[int, int] | None:
     text = str(value or "").strip()
     match = _YEAR_MONTH.fullmatch(text)
@@ -166,7 +181,14 @@ def _month_period(
         month = int(match.group("month"))
     else:
         return None
-    if year != now.year or month > now.month:
+    is_current_period = year == now.year and month <= now.month
+    is_previous_december = (
+        allow_previous_december
+        and now.month == 1
+        and year == now.year - 1
+        and month == 12
+    )
+    if not (is_current_period or is_previous_december):
         return None
     return year, month
 
@@ -189,20 +211,54 @@ def _quarter_period(value: Any, now: datetime) -> tuple[int, int] | None:
     return year, quarter
 
 
-def _completion_time(value: Any) -> str | None:
-    if value is None:
-        return None
+def normalize_reconciliation_completion_row(
+    raw_row: Mapping[str, Any], *, allow_legacy_time: bool
+) -> dict[str, Any]:
+    row = dict(raw_row)
+    completed_at = row.get("reconciliation_completed_at")
+    display_time = row.get(RECONCILIATION_COMPLETED_TIME)
+
+    if allow_legacy_time and completed_at is not None:
+        text = str(completed_at).strip()
+        if "T" not in text and " " not in text:
+            row[RECONCILIATION_COMPLETED_TIME] = _display_time(text)
+            row["reconciliation_completed_at"] = None
+            return row
+
+    if completed_at is None:
+        if not allow_legacy_time or display_time is None:
+            raise ValueError("新数据必须提供完整日期时间")
+        row[RECONCILIATION_COMPLETED_TIME] = _display_time(display_time)
+        row["reconciliation_completed_at"] = None
+        return row
+
+    parsed = _local_datetime(completed_at)
+    row[RECONCILIATION_COMPLETED_TIME] = parsed.strftime("%H:%M")
+    row["reconciliation_completed_at"] = parsed.isoformat(timespec="seconds")
+    return row
+
+
+def _local_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value.strftime("%H:%M")
-    if isinstance(value, time):
-        return value.strftime("%H:%M")
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        if "T" in text or " " in text:
+        parsed = value
+    elif isinstance(value, time) or value is None:
+        raise ValueError("新数据必须提供完整日期时间")
+    else:
+        text = str(value).strip()
+        if not text or ("T" not in text and " " not in text):
+            raise ValueError("新数据必须提供完整日期时间")
+        try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-            return parsed.strftime("%H:%M")
-        return time.fromisoformat(text).strftime("%H:%M")
-    except ValueError:
-        raise ValueError("对账完成时间格式无效") from None
+        except ValueError:
+            raise ValueError("新数据必须提供完整日期时间") from None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(BUSINESS_TIMEZONE).replace(tzinfo=None)
+    return parsed.replace(microsecond=0)
+
+
+def _display_time(value: Any) -> str:
+    try:
+        parsed = value if isinstance(value, time) else time.fromisoformat(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError("历史展示时间格式无效") from None
+    return parsed.strftime("%H:%M")

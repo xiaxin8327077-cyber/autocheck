@@ -1200,6 +1200,11 @@
         if (!payload?.data?.regions) {
           throw new Error(payload?.error?.message || '接口返回异常');
         }
+        const dataYear = Number(payload?.data?.data_year);
+        if (!Number.isInteger(dataYear)) {
+          throw new Error('接口缺少有效的数据年度');
+        }
+        document.documentElement.dataset.dataYear = String(dataYear);
         const supplement = regionRows(payload, 'annual_supplement_completed')[0] || {};
         const remaining = regionRows(payload, 'monthly_report_validation_remaining')[0] || {};
         setText('.total-sales .value', formatNumber(supplement.completed_supplement_count));
@@ -1210,7 +1215,7 @@
           collectiveTrustCount: row.collective_trust_count,
           propertyTrustCount: row.property_trust_count,
         })));
-        renderReconciliation(regionRows(payload, 'report_reconciliation_completion_time').map((row) => ({ month: row.month, value: row.reconciliation_completed_at })));
+        renderReconciliation(regionRows(payload, 'report_reconciliation_completion_time').map((row) => ({ month: row.month, value: row.reconciliation_completed_time })));
         renderValidationIssues(regionRows(payload, 'report_validation_issue_handling').map((row) => ({ month: row.month, count: row.validation_issue_count })));
         renderQuarterRows(regionRows(payload, 'quarterly_special_processing').map((row) => ({ quarter: row.quarter, count: row.special_processing_count })));
         renderSubmissionCompare(regionRows(payload, 'monthly_report_submission_time_comparison').map((row) => ({

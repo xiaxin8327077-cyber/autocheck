@@ -82,6 +82,21 @@ def test_dashboard_management_frontend_has_required_contract_and_copy() -> None:
     assert "查询 SQL 可直接保存，测试仅用于预览和校验结果" in index
 
 
+def test_external_api_token_dialog_is_single_use_scoped_and_cleared_on_exit() -> None:
+    index = _read("index.js")
+    state = _read("state.js")
+    dialog = _read("components/external_api_token_dialog.js")
+
+    assert "pendingToken" not in state
+    assert "pendingToken" not in index
+    assert "activeTokenDialog?.close()" in index
+    assert "host.appendChild(overlay)" in dialog
+    assert "document.body.appendChild(overlay)" not in dialog
+    assert 'class: `${CLASS_ROOT}__title`' in dialog
+    assert 'tokenInput.value = ""' in dialog
+    assert "secret = \"\"" in dialog
+
+
 def test_region_dialog_save_targets_the_dialog_region_instead_of_the_selected_region() -> None:
     index = _read("index.js")
 
@@ -116,6 +131,12 @@ def test_copied_dashboard_pages_use_only_dashboard_management_preview_api() -> N
         "regulatory_report_count", "monthly_regulatory_report_time", "report_validation_statistics",
     ):
         assert region_code in process
+    assert "value: row.reconciliation_completed_time" in report
+    assert "value: row.reconciliation_completed_at" not in report
+    assert "payload?.data?.data_year" in report
+    assert "/api/external/" not in report and "/api/external/" not in process
+    assert report.count("/api/modules/dashboard-management/boards/report_submission/preview") == 1
+    assert process.count("/api/modules/dashboard-management/boards/reporting_process/preview") == 1
 
 
 def test_dashboard_tabs_are_compact_and_preview_only_the_active_board() -> None:
@@ -129,18 +150,29 @@ def test_dashboard_tabs_are_compact_and_preview_only_the_active_board() -> None:
     assert 'onPreview(activeBoard, "data", trigger)' in tabs
     assert 'onPreview(activeBoard, "screen", trigger)' in tabs
     assert tabs.count("dm-tab-preview-trigger") == 1
+    assert 'button("", "dm-tab-action-button dm-tab-preview-trigger"' in tabs
+    assert 'button("接口监控", "dm-tab-action-button dm-tab-monitor"' in tabs
+    assert '"dm-button dm-button-secondary dm-tab-monitor"' not in tabs
     assert "dm-tab-preview-label" in tabs
     assert "dm-tab-preview-chevron" in tabs
     assert 'text: "⌄"' not in tabs
+    assert 'const actions = node("div", { className: "dm-tab-actions" });' in tabs
+    assert "actions.append(preview)" in tabs
+    assert "actions.append(monitorBtn)" in tabs
+    assert "toolbar.append(actions)" in tabs
+    assert "toolbar.append(preview)" not in tabs
+    assert "toolbar.append(monitorBtn)" not in tabs
     assert '.querySelector?.(\'.dm-tab[aria-selected="true"]\')' in dialog
     assert ".dm-tabs {" in css and "min-height: 46px;" in css
     assert "padding: 0 18px 0 0;" in css
     assert ".dm-tab-switches {" in css
     assert ".dm-tab.is-active {" in css and "inset 0 -3px 0 var(--dm-brand)" in css
-    assert ".dm-tab-preview-trigger {" in css and "align-items: center;" in css
+    assert ".dm-tab-action-button {" in css and "align-items: center;" in css
+    assert "min-height: 32px;" in css and "font-size: 12px;" in css and "font-weight: 400;" in css
     assert "border-right: 1px solid currentColor;" in css
     assert "translateY(-2px) rotate(45deg)" in css
     assert ".dm-tab-preview-menu {" in css and "top: 100%;" in css
+    assert ".dm-tab-actions {" in css and "margin-left: auto;" in css
 
 
 def test_dashboard_management_styles_are_fully_scoped_and_use_light_theme_tokens() -> None:
@@ -218,3 +250,98 @@ def test_custom_sql_controls_align_and_fill_desktop_height() -> None:
     assert ".dm-detail-content { display: flex; flex-direction: column; height: 100%;" in css
     assert ".dm-source-preview-grid { flex: 1 1 auto;" in css
     assert ".dm-sql-control { display: flex; flex: 1 1 auto;" in css
+
+
+def test_dashboard_management_monitor_page_structure():
+    component = _read("components/external_api_monitor.js")
+    css = _read("styles.css")
+    for class_name in [
+        "dm-monitor-page", "dm-monitor-header", "dm-monitor-status-section",
+        "dm-monitor-metrics", "dm-management-card", "dm-monitor-filters",
+        "dm-monitor-table-wrap", "pagination", "pagination-info",
+        "pagination-controls", "page-btn", "page-current", "pagination-jump",
+    ]:
+        assert class_name in component or class_name in css
+    for text in [
+        "返回看板管理", "调用方 IP", "近 24 小时调用", "部分成功",
+        "平均耗时", "记录保留", "暂无数据", "跳至", "正在加载接口监控",
+        "重新加载",
+    ]:
+        assert text in component
+    assert "state.monitorLoading" in component
+    assert "state.monitorError" in component
+    assert component.count('type: "date"') == 2
+    assert 'type: "datetime-local"' not in component
+    assert 'className: "pagination-jump"' in component
+    assert 'text: "页"' in component
+    assert 'attrs: { value: "report_submission" }' in component
+    assert 'attrs: { value: "reporting_process" }' in component
+    assert 'attrs: { value: "success" }' in component
+    assert 'attrs: { value: "partial" }' in component
+    assert 'attrs: { value: "error" }' in component
+    assert "height: 100%" in css
+    assert "min-height: 0" in css
+    assert "flex: 1" in css
+    assert "var(--ui-radius)" in css
+    assert "box-shadow: 0 0" not in css
+    assert ".dm-monitor-table-wrap { flex: 1 1 auto; min-width: 0; min-height: 0;" in css
+    assert ".dm-monitor-page { display: flex; width: 100%; min-width: 0;" in css
+    assert ".dm-monitor-card { display: flex; width: 100%; min-width: 0;" in css
+    assert ".dm-filter-select { width: 190px; flex: none;" in css
+    assert ".dm-filter-input { width: 180px; flex: none;" in css
+    assert 'managed: "系统生成"' in component
+    assert 'text: `生成时间：${formatMonitorDateTime(summary.token_generated_at)}`' in component
+    assert 'configured ? "更新 Token" : "生成 Token"' in component
+    assert '"Token 已配置"' not in component
+    assert '"Token 未配置"' not in component
+    assert '"轮换 Token"' not in component
+    assert "最近调用：" not in component
+    assert "最近成功：" not in component
+    assert "dm-monitor-status-meta" not in component
+    assert 'rotated ? "Token 已更新" : "Token 已生成"' in _read("components/external_api_token_dialog.js")
+    assert "生产环境上线后必须重新生成生产 Token" not in _read("components/external_api_token_dialog.js")
+
+
+def test_external_api_monitor_uses_management_list_layout() -> None:
+    component = _read("components/external_api_monitor.js")
+    css = _read("styles.css")
+
+    for class_name in [
+        "dm-monitor-status-overview",
+        "dm-monitor-status-badges",
+        "dm-monitor-status-badge",
+        "dm-monitor-endpoint-list",
+        "dm-monitor-endpoint-row",
+        "dm-monitor-filter-field",
+        "dm-monitor-filter-actions",
+        "management-list-status",
+    ]:
+        assert class_name in component
+    for label in ["看板", "业务状态", "调用方 IP", "开始日期", "结束日期"]:
+        assert f'monitorFilterField("{label}"' in component
+    assert 'button("重置", "dm-button dm-button-secondary dm-monitor-reset"' in component
+    assert 'button("清除"' not in component
+    assert 'className: "dm-monitor-endpoint-path"' in component
+    assert ".dm-monitor-table th { position: sticky;" in css
+    assert ".dm-monitor-status-badge.is-enabled" in css
+    assert ".dm-monitor-filter-field {" in css
+    assert ".dm-monitor-endpoint-path {" in css
+    assert ".dm-monitor-endpoint-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));" in css
+    assert ".dm-monitor-table th, .auto-check-module[data-module=\"dashboard_management\"] .dm-monitor-table td { height: 46px; padding: 8px 12px; border-bottom: 1px solid var(--outline-variant); text-align: center;" in css
+    assert 'button("◀", "page-btn"' in component
+    assert 'button("▶", "page-btn"' in component
+    assert 'button("上一页", "page-btn"' not in component
+    assert 'button("下一页", "page-btn"' not in component
+
+
+def test_dashboard_management_monitor_interactions_expose_loading_without_copy_controls():
+    index = _read("index.js")
+    component = _read("components/external_api_monitor.js")
+
+    assert "state.monitorLoading = true" in index
+    assert "state.monitorError = \"\"" in index
+    assert "state.monitorPage = calls.page" in index
+    assert "navigator.clipboard" not in index
+    assert "onCopy" not in index
+    assert "onCopy" not in component
+    assert 'button("复制"' not in component

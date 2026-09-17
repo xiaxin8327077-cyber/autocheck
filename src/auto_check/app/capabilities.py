@@ -73,6 +73,8 @@ CAPABILITY_DEFINITIONS: dict[str, dict[str, str]] = {
     "sys.dashboard_management": {"label": "看板管理", "type": TYPE_MENU},
     "sys.dashboard_management.manage": {"label": "维护看板数据区域、字段与来源", "type": TYPE_FUNCTION},
     "sys.dashboard_management.test_sql": {"label": "测试看板自定义 SQL", "type": TYPE_FUNCTION},
+    "sys.dashboard_management.external_api_monitor": {"label": "查看外部接口监控", "type": TYPE_FUNCTION},
+    "sys.dashboard_management.external_api_token_manage": {"label": "生成和轮换外部接口专属 Token", "type": TYPE_FUNCTION},
 }
 
 #: 旧能力码 → 新能力码（读取矩阵时自动继承旧值，落盘后为全新结构）。
@@ -94,6 +96,7 @@ ADMIN_ONLY_CAPABILITIES: frozenset[str] = frozenset(
         "sys.users",
         "sys.role_permissions",
         "sys.scheduled_tasks",
+        "sys.dashboard_management.external_api_token_manage",
     }
 )
 
