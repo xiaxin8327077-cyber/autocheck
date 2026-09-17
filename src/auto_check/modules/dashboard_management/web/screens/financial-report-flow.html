@@ -696,6 +696,49 @@
       return number(value).toLocaleString('zh-CN');
     }
 
+    function formatReportingDate(value) {
+      const text = String(value || '').trim();
+      if (!text) return '-';
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+      if (!match) return text;
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      if (month < 1 || month > 12 || day < 1 || day > 31) return text;
+      return `${month}月${day}号`;
+    }
+
+    function reportCountBarX(index, count) {
+      const firstBarX = 25;
+      const lastBarX = 275;
+      if (count <= 1) {
+        return (firstBarX + lastBarX) / 2;
+      }
+      return firstBarX + (lastBarX - firstBarX) * index / (count - 1);
+    }
+
+    function reportTypeLines(value) {
+      const characters = Array.from(String(value || ''));
+      if (characters.length <= 5) return [characters.join('')];
+      const secondLine = characters.length > 10
+        ? `${characters.slice(5, 9).join('')}…`
+        : characters.slice(5).join('');
+      return [characters.slice(0, 5).join(''), secondLine];
+    }
+
+    function appendReportTypeLabel(group, value, x) {
+      const lines = reportTypeLines(value);
+      const firstLineY = lines.length > 1 ? 180 : 187;
+      const label = svgNode('text', {
+        'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 9,
+      });
+      lines.forEach((line, index) => {
+        label.appendChild(svgNode('tspan', {
+          x, y: firstLineY + index * 14,
+        }, line));
+      });
+      group.appendChild(label);
+    }
+
     function renderReportCounts(rows) {
       const group = findPanel('监管报送报表数量')?.querySelector('svg g[transform="translate(40, 15)"]');
       if (!group) return;
@@ -703,13 +746,13 @@
       const data = rows.slice(0, 6);
       const max = Math.max(1, ...data.map((row) => number(row.report_count)));
       data.forEach((row, index) => {
-        const x = 25 + index * 50;
+        const x = reportCountBarX(index, data.length);
         const height = Math.max(2, Math.round(number(row.report_count) / max * 145));
         group.append(
           svgNode('rect', { x, y: 155 - height, width: 15, height, rx: 2, class: index % 3 === 2 ? 'bar-cyan' : 'bar-blue' }),
-          svgNode('text', { x: x + 8, y: Math.max(10, 149 - height), 'text-anchor': 'middle', fill: 'var(--blue-light)', 'font-size': 10, 'font-weight': 700 }, formatNumber(row.report_count)),
-          svgNode('text', { x: x + 8, y: 187, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 9 }, row.report_type || ''),
+          svgNode('text', { x: x + 8, y: Math.max(4, 149 - height), 'text-anchor': 'middle', fill: 'var(--blue-light)', 'font-size': 10, 'font-weight': 700 }, formatNumber(row.report_count)),
         );
+        appendReportTypeLabel(group, row.report_type, x + 8);
       });
     }
 
@@ -722,7 +765,7 @@
         body.append(
           svgNode('rect', { x: 0, y, width: 328, height: 26, rx: 3, fill: index % 2 ? 'rgba(34,211,238,0.03)' : 'rgba(34,211,238,0.05)', stroke: 'rgba(34,211,238,0.15)', 'stroke-width': .8 }),
           svgNode('text', { x: 100, y: y + 17, 'text-anchor': 'middle', fill: 'var(--text)', 'font-size': 10 }, row.report_type || ''),
-          svgNode('text', { x: 264, y: y + 17, 'text-anchor': 'middle', fill: valueColor, 'font-size': 12, 'font-weight': 700 }, valueAlias === 'validation_count' ? formatNumber(row[valueAlias]) : (row[valueAlias] || '-')),
+          svgNode('text', { x: 264, y: y + 17, 'text-anchor': 'middle', fill: valueColor, 'font-size': 12, 'font-weight': 700 }, valueAlias === 'validation_count' ? formatNumber(row[valueAlias]) : formatReportingDate(row[valueAlias])),
         );
       });
     }

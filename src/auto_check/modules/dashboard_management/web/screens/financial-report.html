@@ -1128,6 +1128,15 @@
         `;
       }
 
+      function submissionGroupX(index, count) {
+        const firstGroupX = 96;
+        const lastGroupX = 806;
+        if (count <= 1) {
+          return (firstGroupX + lastGroupX) / 2;
+        }
+        return firstGroupX + (lastGroupX - firstGroupX) * index / (count - 1);
+      }
+
       function renderSubmissionCompare(rows) {
         const svg = document.querySelector('.bottom-row .chart-card .chart-svg');
         if (!svg) {
@@ -1140,7 +1149,6 @@
         if (!barGroup || !labelGroup) {
           return;
         }
-        const xPositions = [96, 238, 380, 522, 664, 806];
         function bar(day) {
           if (!Number.isFinite(day) || day <= 0) {
             return null;
@@ -1154,7 +1162,7 @@
           const requiredDay = parseDay(row.requiredSubmissionDate);
           const actual = bar(actualDay);
           const required = bar(requiredDay);
-          const x = xPositions[index] || (96 + index * 142);
+          const x = submissionGroupX(index, data.length);
           return [
             actual ? `
               <rect fill="url(#barGradientAct)" x="${x}" y="${actual.y}" width="18" height="${actual.height}" rx="3"/>
@@ -1167,7 +1175,7 @@
           ].join('');
         }).join('');
         labelGroup.innerHTML = data.map((row, index) => {
-          const x = [118, 260, 402, 544, 686, 828][index] || (118 + index * 142);
+          const x = submissionGroupX(index, data.length) + 22;
           return `<text class="axis-text-month" x="${x}" y="260" text-anchor="middle">${row.reportType || ''}</text>`;
         }).join('');
       }

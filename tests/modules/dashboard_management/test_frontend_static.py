@@ -140,6 +140,27 @@ def test_copied_dashboard_pages_use_only_dashboard_management_preview_api() -> N
     assert process.count("/api/modules/dashboard-management/boards/reporting_process/preview") == 1
 
 
+def test_copied_dashboard_pages_match_kanban_dynamic_chart_and_date_display() -> None:
+    report = _read("screens/financial-report.html")
+    process = _read("screens/financial-report-flow.html")
+
+    assert "function submissionGroupX(index, count)" in report
+    assert "const x = submissionGroupX(index, data.length);" in report
+    assert "const x = submissionGroupX(index, data.length) + 22;" in report
+    assert "const xPositions = [96, 238, 380, 522, 664, 806];" not in report
+
+    assert "function reportCountBarX(index, count)" in process
+    assert "const x = reportCountBarX(index, data.length);" in process
+    assert "const x = 25 + index * 50;" not in process
+    assert "function reportTypeLines(value)" in process
+    assert "function appendReportTypeLabel(group, value, x)" in process
+    assert "appendReportTypeLabel(group, row.report_type, x + 8);" in process
+    assert "y: Math.max(4, 149 - height)" in process
+    assert "y: Math.max(10, 149 - height)" not in process
+    assert "function formatReportingDate(value)" in process
+    assert "formatReportingDate(row[valueAlias])" in process
+
+
 def test_dashboard_tabs_are_compact_and_preview_only_the_active_board() -> None:
     tabs = _read("components/dashboard_tabs.js")
     dialog = _read("components/board_preview_dialog.js")
