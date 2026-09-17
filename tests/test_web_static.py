@@ -19,10 +19,71 @@ README_MD = ROOT / "README.md"
 PYINSTALLER_SPEC = ROOT / "auto-check.spec"
 MODULE_HOST_JS = ROOT / "src" / "auto_check" / "web" / "module_host.js"
 MODULE_HOST_CSS = ROOT / "src" / "auto_check" / "web" / "module_host.css"
+AGENTS_MD = ROOT / "AGENTS.md"
 
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def test_global_content_surface_hierarchy_is_shared_by_every_page_and_documented():
+    css = _read(STYLES_CSS)
+    constraints = _read(AGENTS_MD)
+
+    for declaration in (
+        "--ui-page-surface: var(--theme-page-background);",
+        "--ui-panel-surface: var(--surface-container-lowest);",
+        "--ui-subsection-surface: var(--surface-container-low);",
+        "--ui-disabled-surface: var(--surface-container);",
+        "--ui-content-border: var(--outline-variant);",
+    ):
+        assert declaration in css
+
+    main_content_bodies = re.findall(r"\.main-content\s*\{(.*?)\n\}", css, re.S)
+    page_bodies = re.findall(r"\.page\s*\{(.*?)\n\}", css, re.S)
+    assert any("background: var(--ui-page-surface);" in body for body in main_content_bodies)
+    assert any("background: transparent;" in body for body in page_bodies)
+
+    assert "系统所有页面及独立模块的结构性背景必须共用统一表面层级" in constraints
+    assert "`--ui-page-surface`" in constraints
+    assert "`--ui-panel-surface`" in constraints
+    assert "`--ui-subsection-surface`" in constraints
+    assert "状态色、选中态、图表色和代码预览等语义或专用画布" in constraints
+
+
+def test_space_tech_final_cascade_keeps_structural_surfaces_on_shared_tokens():
+    css = _read(STYLES_CSS)
+    marker = "/* Unified content surface hierarchy: final cascade guard */"
+
+    assert marker in css
+    guard_start = css.rindex(marker)
+    guard_end = css.index("/* ===== 登录超时原账号重新认证遮罩", guard_start)
+    guard = css[guard_start:guard_end]
+
+    for selector in (
+        "#page-home .glass-card",
+        "#page-report-navigation .report-nav-stats-layout",
+        "#page-auto-check > .card",
+        "#page-history > .card",
+        "#page-tools .tool-card",
+        "#page-dictionaries > .card",
+        "#page-scheduled-tasks > .card",
+        "#page-role-permissions > .card",
+        "#page-settings .settings-dashboard-card",
+        "#page-users .user-stat-card",
+        "#page-users .user-filter-bar",
+        "#page-users .user-table-card",
+        "#page-local-storage .local-storage-metric",
+        "#page-local-storage .local-storage-table-panel",
+        "#page-local-storage .local-storage-detail-panel",
+    ):
+        assert selector in guard
+
+    assert "background: var(--ui-panel-surface) !important;" in guard
+    assert "background: var(--ui-subsection-surface) !important;" in guard
+    assert "backdrop-filter: none !important;" in guard
+    assert "-webkit-backdrop-filter: none !important;" in guard
+    assert "rgba(255, 255, 255" not in guard
 
 
 def test_module_host_assets_are_loaded_before_legacy_app():
@@ -8068,9 +8129,13 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.30</span>' in app_js
     assert '<span class="changelog-version">v1.2.29</span>' in app_js
     assert '<span class="changelog-version">v1.2.28</span>' in app_js
     assert "看板管理模块：两个固定监管看板外部接口新增可选 IP 白名单配置。" in app_js
+    assert app_js.index('<span class="changelog-version">v1.2.30</span>') < app_js.index(
+        '<span class="changelog-version">v1.2.29</span>'
+    )
     assert '<span class="changelog-version">v1.2.22</span>' in app_js
     assert '<span class="changelog-version">v1.2.21</span>' in app_js
     assert '<span class="changelog-version">v1.2.20</span>' in app_js

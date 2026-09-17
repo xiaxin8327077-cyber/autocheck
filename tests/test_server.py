@@ -256,6 +256,190 @@ def test_external_module_api_normalizes_tcp_peer_and_server_addresses():
     assert responses == ["sentinel"]
 
 
+def test_external_rate_limit_rejects_before_authentication_and_dispatch():
+    from auto_check.app.module_system.routing import ExternalRateLimitDecision
+
+    authenticated = []
+    dispatched = []
+    observed = []
+
+    def authenticator(token):
+        authenticated.append(token)
+        return type("Decision", (), {"configured": True, "authenticated": True})()
+
+    def limiter(client_ip):
+        assert client_ip == "192.168.1.8"
+        return ExternalRateLimitDecision(allowed=False, retry_after_seconds=23)
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {
+                    "status": 200,
+                    "headers": (),
+                    "external_authenticator": staticmethod(authenticator),
+                    "external_rate_limiter": staticmethod(limiter),
+                    "external_rejection_observer": staticmethod(observed.append),
+                },
+            )()
+
+        @staticmethod
+        def dispatch_external(**kwargs):
+            dispatched.append(kwargs)
+            return "unexpected"
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("::ffff:192.168.1.8", 51000),
+        server_address=("192.168.1.9", 8765),
+        authorization=None,
+    )
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api("GET", handler.path)
+
+    assert authenticated == []
+    assert dispatched == []
+    assert responses[0][0][1] == 429
+    assert responses[0][0][2]["error"]["code"] == "rate_limit_exceeded"
+    assert responses[0][1]["headers"] == [("Retry-After", "23")]
+    assert len(observed) == 1
+    assert observed[0].client_ip == "192.168.1.8"
+    assert observed[0].http_status == 429
+    assert observed[0].error_code == "rate_limit_exceeded"
+
+
+@pytest.mark.parametrize(
+    ("authorization", "expected_error_code"),
+    [
+        (None, "token_missing_or_malformed"),
+        ("Basic wrong", "token_missing_or_malformed"),
+        ("Bearer wrong-token", "token_invalid"),
+    ],
+)
+def test_external_authentication_rejections_notify_monitor_without_token_details(
+    authorization, expected_error_code
+):
+    from auto_check.app.module_system.routing import ExternalRateLimitDecision
+
+    observed = []
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {
+                    "status": 200,
+                    "headers": (),
+                    "external_authenticator": staticmethod(lambda token: type(
+                        "Decision", (), {"configured": True, "authenticated": False}
+                    )()),
+                    "external_rate_limiter": staticmethod(
+                        lambda client_ip: ExternalRateLimitDecision(allowed=True)
+                    ),
+                    "external_rejection_observer": staticmethod(observed.append),
+                },
+            )()
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("203.0.113.9", 51000),
+        server_address=("192.168.1.8", 8765),
+        authorization=authorization,
+    )
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api("GET", handler.path)
+
+    assert responses[0][0][1] == 401
+    assert len(observed) == 1
+    event = observed[0]
+    assert event.http_status == 401
+    assert event.error_code == expected_error_code
+    assert "wrong-token" not in event.error_message
+    assert "Basic wrong" not in event.error_message
+
+
+def test_external_token_configuration_failure_notifies_monitor():
+    from auto_check.app.module_system.routing import ExternalRateLimitDecision
+
+    observed = []
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {
+                    "status": 200,
+                    "headers": (),
+                    "external_authenticator": None,
+                    "external_rate_limiter": staticmethod(
+                        lambda client_ip: ExternalRateLimitDecision(allowed=True)
+                    ),
+                    "external_rejection_observer": staticmethod(observed.append),
+                },
+            )()
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("203.0.113.9", 51000),
+        server_address=("192.168.1.8", 8765),
+    )
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api("GET", handler.path)
+
+    assert responses[0][0][1] == 503
+    assert len(observed) == 1
+    assert observed[0].http_status == 503
+    assert observed[0].error_code == "external_api_disabled"
+
+
+def test_external_method_not_allowed_notifies_matching_route_monitor():
+    observed = []
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {
+                    "status": 405,
+                    "headers": (("Allow", "GET"),),
+                    "external_authenticator": None,
+                    "external_rate_limiter": None,
+                    "external_rejection_observer": staticmethod(observed.append),
+                },
+            )()
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("203.0.113.9", 51000),
+        server_address=("192.168.1.8", 8765),
+    )
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api("POST", handler.path)
+
+    assert responses[0][0][1] == 405
+    assert len(observed) == 1
+    assert observed[0].method == "POST"
+    assert observed[0].http_status == 405
+    assert observed[0].error_code == "method_not_allowed"
+
+
 def db_path_for_config(config_path):
     return Path(config_path).with_name("auto-check.db")
 

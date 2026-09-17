@@ -35,6 +35,14 @@ EXTERNAL_ENDPOINTS = (
     {"path": "/api/external/v1/dashboard-management/boards/report_submission/preview", "board_code": "report_submission", "name": "金融监管报表报送大屏"},
     {"path": "/api/external/v1/dashboard-management/boards/reporting_process/preview", "board_code": "reporting_process", "name": "金融监管报送流程大屏"},
 )
+PLATFORM_REJECTION_SUMMARIES = {
+    "token_missing_or_malformed": (401, "未携带 Token 或 Authorization 格式错误"),
+    "token_invalid": (401, "Token 无效"),
+    "method_not_allowed": (405, "请求方法不允许"),
+    "rate_limit_exceeded": (429, "请求过于频繁，请稍后重试"),
+    "external_api_disabled": (503, "外部接口未配置"),
+    "rate_limit_unavailable": (503, "外部接口访问频率控制暂时不可用"),
+}
 
 EXTERNAL_API_CALLS = Table(
     "dashboard_management_external_api_calls",
@@ -321,6 +329,40 @@ class ExternalApiMonitoringService:
             self._store.record_and_cleanup(record, cutoff)
         except Exception:
             self._logger.warning("external api call record failed", exc_info=True)
+
+    def record_rejection(self, board_code: str, event: Any, request_id: str) -> None:
+        """Persist one sanitized platform-stage rejection for an exact board route."""
+        try:
+            if board_code not in ALLOWED_BOARDS:
+                raise ValueError("unsupported board code")
+            summary = PLATFORM_REJECTION_SUMMARIES.get(str(event.error_code))
+            if summary is None or event.http_status != summary[0]:
+                raise ValueError("unsupported platform rejection")
+            duration_ms = event.duration_ms
+            if type(duration_ms) is not int or duration_ms < 0:
+                raise ValueError("invalid rejection duration")
+            safe_request_id = str(request_id)
+            if not safe_request_id or len(safe_request_id) > 64:
+                raise ValueError("invalid rejection request id")
+            now = _as_naive_utc(self._utc_now())
+            record = ExternalApiCallRecord(
+                called_at=now,
+                board_code=board_code,
+                http_status=summary[0],
+                result_status="error",
+                failed_region_count=0,
+                duration_ms=duration_ms,
+                request_id=safe_request_id,
+                caller_ip=_validate_ip(str(event.client_ip)) or "unknown",
+                error_code=str(event.error_code)[:64],
+                error_message=summary[1],
+            )
+            self._store.record_and_cleanup(
+                record,
+                now - timedelta(days=RETENTION_DAYS),
+            )
+        except Exception:
+            self._logger.warning("external api rejection record failed", exc_info=True)
 
     def monitor_summary(
         self,

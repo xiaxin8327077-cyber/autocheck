@@ -95,7 +95,7 @@
   padding: 7px;
   border: 1px solid rgba(148, 163, 184, 0.45);
   border-radius: var(--ui-radius);
-  background: rgba(255, 255, 255, 0.94);
+  background: color-mix(in srgb, var(--ui-panel-surface, var(--surface-container-lowest, #ffffff)) 94%, transparent);
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
   backdrop-filter: blur(20px) saturate(1.16);
   transform: translateX(-50%);

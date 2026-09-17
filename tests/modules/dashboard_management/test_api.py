@@ -174,6 +174,53 @@ def test_external_authenticator_resolves_credential_service_at_request_time():
     )
 
 
+def test_external_routes_share_one_rate_limit_and_register_board_observers():
+    from auto_check.app.module_system.routing import ExternalRejectionEvent
+
+    class Monitoring:
+        def __init__(self):
+            self.rejections = []
+
+        def record_rejection(self, board_code, event, request_id):
+            self.rejections.append((board_code, event, request_id))
+
+    monitoring = Monitoring()
+    router = _router_with_monitoring(monitoring)
+    submission = router.external_preflight(
+        "GET",
+        "/api/external/v1/dashboard-management/boards/report_submission/preview",
+    )
+    process = router.external_preflight(
+        "GET",
+        "/api/external/v1/dashboard-management/boards/reporting_process/preview",
+    )
+
+    assert submission.external_rate_limiter is process.external_rate_limiter
+    for _ in range(5):
+        assert submission.external_rate_limiter("192.168.1.20").allowed is True
+        assert process.external_rate_limiter("192.168.1.20").allowed is True
+    assert submission.external_rate_limiter("192.168.1.20").allowed is False
+
+    event = ExternalRejectionEvent(
+        method="GET",
+        path="/api/external/v1/dashboard-management/boards/report_submission/preview",
+        client_ip="192.168.1.20",
+        http_status=401,
+        error_code="token_invalid",
+        error_message="Token 无效",
+        duration_ms=1,
+    )
+    submission.external_rejection_observer(event)
+    process.external_rejection_observer(event)
+
+    assert [item[0] for item in monitoring.rejections] == [
+        "report_submission",
+        "reporting_process",
+    ]
+    assert all(item[1] is event for item in monitoring.rejections)
+    assert all(item[2].startswith("req-") for item in monitoring.rejections)
+
+
 def _dispatch(router, method, suffix, *, body=None, user=None, body_size=0, query=None):
     user = dict(user or {"role": "admin"})
     path = _manifest().api_prefix + suffix

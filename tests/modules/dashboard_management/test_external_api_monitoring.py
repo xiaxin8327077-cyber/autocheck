@@ -285,6 +285,36 @@ def test_service_finish_call_swallows_store_errors():
     assert store.records == []
 
 
+def test_service_records_sanitized_platform_rejection_in_existing_call_store():
+    from auto_check.app.module_system.routing import ExternalRejectionEvent
+
+    now = datetime(2026, 9, 17, 10, 20, 30, tzinfo=timezone.utc)
+    service = _service(utc_now=lambda: now)
+    event = ExternalRejectionEvent(
+        method="GET",
+        path="/api/external/v1/dashboard-management/boards/report_submission/preview",
+        client_ip="203.0.113.8",
+        http_status=401,
+        error_code="token_invalid",
+        error_message="Token 无效",
+        duration_ms=3,
+    )
+
+    service.record_rejection("report_submission", event, "req-platform-rejection")
+
+    record = service._store.records[0]
+    assert record.called_at == datetime(2026, 9, 17, 10, 20, 30)
+    assert record.board_code == "report_submission"
+    assert record.http_status == 401
+    assert record.result_status == "error"
+    assert record.failed_region_count == 0
+    assert record.duration_ms == 3
+    assert record.request_id == "req-platform-rejection"
+    assert record.caller_ip == "203.0.113.8"
+    assert record.error_code == "token_invalid"
+    assert record.error_message == "Token 无效"
+
+
 def test_service_rounds_positive_duration_up_and_stores_naive_utc_time():
     now = datetime(2026, 9, 16, 8, 0, tzinfo=timezone(timedelta(hours=8)))
     ticks = iter((10.0, 10.0001))

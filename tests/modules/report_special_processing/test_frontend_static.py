@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -9,6 +10,49 @@ WEB = ROOT / "src" / "auto_check" / "modules" / "report_special_processing" / "w
 
 def read(name: str) -> str:
     return (WEB / name).read_text(encoding="utf-8")
+
+
+def test_module_structural_surfaces_follow_the_platform_surface_hierarchy():
+    css = read("styles.css")
+    root = css.split(
+        '.auto-check-module[data-module="report_special_processing"] {', 1
+    )[1].split("}", 1)[0]
+
+    for declaration in (
+        "--rsp-brand: var(--theme-accent, #3466d9);",
+        "--rsp-text: var(--on-surface, #17233c);",
+        "--rsp-muted: var(--on-surface-variant, #66738a);",
+        "--rsp-line: var(--ui-content-border, var(--outline-variant, #d8e1ee));",
+        "--rsp-panel: var(--ui-panel-surface, var(--surface-container-lowest, #ffffff));",
+        "--rsp-subsection: var(--ui-subsection-surface, var(--surface-container-low, #f1f4f6));",
+        "--rsp-disabled: var(--ui-disabled-surface, var(--surface-container, #ebeef0));",
+    ):
+        assert declaration in root
+
+    neutral_hardcoded_backgrounds = {
+        "#fff",
+        "#ffffff",
+        "#fbfdff",
+        "#fbfcff",
+        "#fbfcfe",
+        "#fafbfc",
+        "#f8fafc",
+        "#f8f9fd",
+        "#f7f9fc",
+        "#f6f8fb",
+        "#f5f8fc",
+        "#f3f5f8",
+        "#f2f6fb",
+        "#f0f2f5",
+        "#e8eef6",
+    }
+    backgrounds = {
+        value.lower()
+        for value in re.findall(
+            r"background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})\b", css
+        )
+    }
+    assert backgrounds.isdisjoint(neutral_hardcoded_backgrounds)
 
 
 def test_default_period_uses_previous_month_end():
@@ -292,7 +336,7 @@ def test_ledger_does_not_pass_null_availability_into_replace_children():
     assert "grid-template-columns: repeat(3, minmax(0, 1fr))" in css
     assert ".rsp-span-cols-2" in css
     assert "grid-column: span 2" in css
-    assert "background: #e8eef6 !important" in css
+    assert "background: var(--rsp-disabled) !important" in css
     assert ".rsp-record-modal input:disabled" in css
     assert ".custom-select-disabled .custom-select-trigger" in css
     assert ".rsp-multi-select-trigger:disabled" in css

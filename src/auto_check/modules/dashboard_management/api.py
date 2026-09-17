@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
 
+from .external_api_rate_limit import DashboardExternalApiRateLimiter
 from .validator import DomainError, ValidationError, validate_board_code
 
 
@@ -453,6 +454,16 @@ def register_routes(
         return _authenticate
 
     external_authenticator = _make_external_authenticator()
+    external_rate_limiter = DashboardExternalApiRateLimiter().check
+
+    def _make_external_rejection_observer(board_code: str) -> Any:
+        def _observe(event: Any) -> None:
+            monitor = monitoring_provider() if monitoring_provider else None
+            if monitor is None:
+                return
+            monitor.record_rejection(board_code, event, _request_id())
+
+        return _observe
 
     router.add(
         "GET",
@@ -462,6 +473,10 @@ def register_routes(
         max_body_bytes=0,
         external=True,
         external_authenticator=external_authenticator,
+        external_rate_limiter=external_rate_limiter,
+        external_rejection_observer=_make_external_rejection_observer(
+            "report_submission"
+        ),
     )
     router.add(
         "GET",
@@ -471,6 +486,10 @@ def register_routes(
         max_body_bytes=0,
         external=True,
         external_authenticator=external_authenticator,
+        external_rate_limiter=external_rate_limiter,
+        external_rejection_observer=_make_external_rejection_observer(
+            "reporting_process"
+        ),
     )
     router.add(
         "GET",

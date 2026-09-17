@@ -25,6 +25,31 @@ class ExternalAuthDecision:
 ExternalRouteAuthenticator = Callable[[str], ExternalAuthDecision]
 
 
+@dataclass(frozen=True)
+class ExternalRateLimitDecision:
+    """Result of applying a source-scoped rate limit to an external route."""
+
+    allowed: bool
+    retry_after_seconds: int = 0
+
+
+@dataclass(frozen=True)
+class ExternalRejectionEvent:
+    """Sanitized platform rejection metadata for a matched external route."""
+
+    method: str
+    path: str
+    client_ip: str
+    http_status: int
+    error_code: str
+    error_message: str
+    duration_ms: int
+
+
+ExternalRouteRateLimiter = Callable[[str], ExternalRateLimitDecision]
+ExternalRouteRejectionObserver = Callable[[ExternalRejectionEvent], None]
+
+
 class ModuleRouteConflict(ValueError):
     """Raised when a module registers a route more than once."""
 
@@ -37,6 +62,8 @@ class ModuleRoutePreflight:
     max_body_bytes: int | None = None
     headers: tuple[tuple[str, str], ...] = ()
     external_authenticator: ExternalRouteAuthenticator | None = None
+    external_rate_limiter: ExternalRouteRateLimiter | None = None
+    external_rejection_observer: ExternalRouteRejectionObserver | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +76,8 @@ class _ModuleRoute:
     max_body_bytes: int
     external: bool
     external_authenticator: ExternalRouteAuthenticator | None
+    external_rate_limiter: ExternalRouteRateLimiter | None
+    external_rejection_observer: ExternalRouteRejectionObserver | None
 
 
 class ModuleRouter:
@@ -69,6 +98,8 @@ class ModuleRouter:
         max_body_bytes: int,
         external: bool = False,
         external_authenticator: ExternalRouteAuthenticator | None = None,
+        external_rate_limiter: ExternalRouteRateLimiter | None = None,
+        external_rejection_observer: ExternalRouteRejectionObserver | None = None,
     ) -> None:
         normalized_method = self._normalize_method(method)
         pattern = self._compile_relative_path(path)
@@ -86,6 +117,16 @@ class ModuleRouter:
             raise ValueError("external routes must register a callable external_authenticator")
         if not external and external_authenticator is not None:
             raise ValueError("external_authenticator must be None for internal routes")
+        if external_rate_limiter is not None and not callable(external_rate_limiter):
+            raise ValueError("external_rate_limiter must be callable")
+        if not external and external_rate_limiter is not None:
+            raise ValueError("external_rate_limiter must be None for internal routes")
+        if external_rejection_observer is not None and not callable(
+            external_rejection_observer
+        ):
+            raise ValueError("external_rejection_observer must be callable")
+        if not external and external_rejection_observer is not None:
+            raise ValueError("external_rejection_observer must be None for internal routes")
         if any(route.method == normalized_method and route.path == path for route in self._routes):
             raise ModuleRouteConflict(f"duplicate module route: {normalized_method} {path}")
 
@@ -99,6 +140,8 @@ class ModuleRouter:
                 max_body_bytes=max_body_bytes,
                 external=external,
                 external_authenticator=external_authenticator,
+                external_rate_limiter=external_rate_limiter,
+                external_rejection_observer=external_rejection_observer,
             )
         )
 
@@ -199,12 +242,17 @@ class ModuleRouter:
             return ModuleRoutePreflight(
                 status=405,
                 headers=(("Allow", ", ".join(route.method for route in path_matches)),),
+                external_rejection_observer=(
+                    path_matches[0].external_rejection_observer if external else None
+                ),
             )
         matched = method_matches[0]
         return ModuleRoutePreflight(
             status=200,
             max_body_bytes=matched.max_body_bytes,
             external_authenticator=matched.external_authenticator,
+            external_rate_limiter=matched.external_rate_limiter,
+            external_rejection_observer=matched.external_rejection_observer,
         )
 
     def _relative_path(self, path: str, *, external: bool) -> str | None:

@@ -16,7 +16,7 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     assert payload["id"] == "dashboard_management"
     assert payload["required"] is False
     assert payload["api_prefix"] == "/api/modules/dashboard-management"
-    assert payload["version"] == "1.2.29"
+    assert payload["version"] == "1.2.30"
     assert payload["schema_version"] == 5
     assert payload["permissions"] == [
         "dashboard_management.view",
@@ -43,7 +43,11 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     ]
     assert any("外部只读" in item for item in payload["release_notes"]["items"])
     assert any("外部接口监控" in item and "30 天" in item for item in payload["release_notes"]["items"])
-    assert payload["release_notes"]["version"] == "1.2.29"
+    assert payload["release_notes"]["version"] == "1.2.30"
+    assert any(
+        "10 次/60 秒" in item and "401" in item and "429" in item
+        for item in payload["release_notes"]["items"]
+    )
     assert any(
         "IP 白名单" in item and "本机访问" in item
         for item in payload["release_notes"]["items"]
@@ -79,6 +83,10 @@ def test_external_api_document_covers_security_examples_and_all_fixed_fields() -
         "v1 不定义查询参数",
         "请求体",
         "HTTP 405",
+        "HTTP 429",
+        "Retry-After",
+        "10 次",
+        "任意连续 60 秒",
         "Allow: GET",
         "成功区域",
         "并非所有平台级错误",

@@ -351,6 +351,68 @@ def test_external_preflight_reports_only_explicit_external_routes(valid_manifest
     ).status == 404
 
 
+def test_external_preflight_exposes_rate_limiter_and_rejection_observer(valid_manifest):
+    from auto_check.app.module_system.routing import (
+        ExternalRateLimitDecision,
+        ExternalRejectionEvent,
+    )
+
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    def limiter(client_ip: str) -> ExternalRateLimitDecision:
+        return ExternalRateLimitDecision(allowed=client_ip == "127.0.0.1")
+
+    observed: list[ExternalRejectionEvent] = []
+    observer = observed.append
+    router.add(
+        "GET",
+        "/published",
+        lambda request: ModuleHttpResponse.json(200, {}),
+        permission="custom_reports.view",
+        max_body_bytes=0,
+        external=True,
+        external_authenticator=_rejecting_authenticator,
+        external_rate_limiter=limiter,
+        external_rejection_observer=observer,
+    )
+
+    get_preflight = router.external_preflight(
+        "GET", "/api/external/v1/custom-reports/published"
+    )
+    method_preflight = router.external_preflight(
+        "POST", "/api/external/v1/custom-reports/published"
+    )
+
+    assert get_preflight.external_rate_limiter is limiter
+    assert get_preflight.external_rejection_observer is observer
+    assert method_preflight.status == 405
+    assert method_preflight.external_rejection_observer is observer
+
+
+def test_internal_route_rejects_external_security_callbacks(valid_manifest):
+    router = ModuleRouter(valid_manifest, default_permission_evaluator)
+
+    with pytest.raises(ValueError, match="external_rate_limiter"):
+        router.add(
+            "GET",
+            "/internal-only",
+            lambda request: ModuleHttpResponse.json(200, {}),
+            permission="custom_reports.view",
+            max_body_bytes=0,
+            external_rate_limiter=lambda client_ip: None,
+        )
+
+    with pytest.raises(ValueError, match="external_rejection_observer"):
+        router.add(
+            "GET",
+            "/internal-only",
+            lambda request: ModuleHttpResponse.json(200, {}),
+            permission="custom_reports.view",
+            max_body_bytes=0,
+            external_rejection_observer=lambda event: None,
+        )
+
+
 def test_external_route_keeps_internal_permission_checks(valid_manifest):
     router = ModuleRouter(valid_manifest, lambda current_user, permission: False)
     router.add(

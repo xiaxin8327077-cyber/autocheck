@@ -149,6 +149,7 @@ from auto_check.app.report_navigation import (
 from auto_check.app.scheduled_tasks import ScheduledTaskManager
 from auto_check.app.module_system import ModuleRuntime
 from auto_check.app.module_system.contracts import ModuleBootstrapContext, ModuleHttpResponse
+from auto_check.app.module_system.routing import ExternalRejectionEvent
 from auto_check.app.notifications.http_api import NotificationHttpApi
 from auto_check.app.notifications import platform as _notification_platform_module
 from auto_check.app.platform_services import _UserDirectoryFacade
@@ -4046,13 +4047,38 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         self._send_module_response(response)
 
     def _handle_external_module_api(self, method: str, path: str) -> None:
+        request_started_tick = time.monotonic()
+        # 外部认证、限流和后续模块分发必须复用同一份真实 TCP 对端地址；
+        # 不读取调用方可伪造的代理转发请求头。
+        peer_address = getattr(self, "client_address", None)
+        client_ip = _normalize_peer_ip(peer_address[0] if peer_address else "")
         preflight = self.router.module_runtime.external_preflight(
             method=method, path=path
         )
+
+        def notify_rejection(status: int, code: str, message: str) -> None:
+            observer = getattr(preflight, "external_rejection_observer", None)
+            if not callable(observer):
+                return
+            event = ExternalRejectionEvent(
+                method=method.upper(),
+                path=path,
+                client_ip=client_ip,
+                http_status=status,
+                error_code=code,
+                error_message=message,
+                duration_ms=max(0, int((time.monotonic() - request_started_tick) * 1000)),
+            )
+            try:
+                observer(event)
+            except Exception:
+                self.log_error("external rejection observer failed")
+
         if preflight.status == 404:
             self._send_external_json(method, 404, {"error": "module route not found"})
             return
         if preflight.status == 405:
+            notify_rejection(405, "method_not_allowed", "请求方法不允许")
             self._send_external_json(
                 method,
                 405,
@@ -4066,8 +4092,54 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             )
             return
 
+        rate_limiter = getattr(preflight, "external_rate_limiter", None)
+        if rate_limiter is not None:
+            try:
+                rate_decision = rate_limiter(client_ip)
+                if type(getattr(rate_decision, "allowed", None)) is not bool:
+                    raise ValueError("invalid external rate limit decision")
+            except Exception:
+                notify_rejection(
+                    503,
+                    "rate_limit_unavailable",
+                    "外部接口访问频率控制暂时不可用",
+                )
+                self._send_external_json(
+                    method,
+                    503,
+                    {
+                        "error": {
+                            "code": "rate_limit_unavailable",
+                            "message": "外部接口访问频率控制暂时不可用",
+                        }
+                    },
+                )
+                return
+            if not rate_decision.allowed:
+                retry_after = getattr(rate_decision, "retry_after_seconds", 1)
+                if type(retry_after) is not int or retry_after < 1:
+                    retry_after = 1
+                notify_rejection(
+                    429,
+                    "rate_limit_exceeded",
+                    "请求过于频繁，请稍后重试",
+                )
+                self._send_external_json(
+                    method,
+                    429,
+                    {
+                        "error": {
+                            "code": "rate_limit_exceeded",
+                            "message": "请求过于频繁，请稍后重试",
+                        }
+                    },
+                    headers=[("Retry-After", str(retry_after))],
+                )
+                return
+
         authenticator = preflight.external_authenticator
         if authenticator is None:
+            notify_rejection(503, "external_api_disabled", "外部接口未配置")
             self._send_external_json(
                 method,
                 503,
@@ -4093,6 +4165,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
         try:
             decision = authenticator(supplied_token)
         except Exception:
+            notify_rejection(503, "external_api_disabled", "外部接口未配置")
             self._send_external_json(
                 method,
                 503,
@@ -4105,6 +4178,7 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if not decision.configured:
+            notify_rejection(503, "external_api_disabled", "外部接口未配置")
             self._send_external_json(
                 method,
                 503,
@@ -4117,6 +4191,15 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if not decision.authenticated:
+            rejection_code = (
+                "token_invalid" if supplied_token else "token_missing_or_malformed"
+            )
+            rejection_message = (
+                "Token 无效"
+                if supplied_token
+                else "未携带 Token 或 Authorization 格式错误"
+            )
+            notify_rejection(401, rejection_code, rejection_message)
             self._send_external_json(
                 method,
                 401,
@@ -4131,11 +4214,6 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
 
         query = dict(parse_qsl(urlparse(self.path).query, keep_blank_values=True))
-        # 真实 TCP 对端与服务端本地地址只从 socket 读取；不读取也不信任
-        # X-Forwarded-For / X-Real-IP / Forwarded 等可由调用方伪造的请求头。
-        client_ip = _normalize_peer_ip(
-            self.client_address[0] if self.client_address else ""
-        )
         connection = getattr(self, "connection", None)
         try:
             server_ip = (

@@ -43,6 +43,12 @@
   --theme-accent-readable: #3466D9;
   --theme-focus-ring: rgba(52, 102, 217, 0.28);
   --theme-page-background: #EEF4F8;
+  /* Unified page/content surface hierarchy shared by core pages and modules. */
+  --ui-page-surface: var(--theme-page-background);
+  --ui-panel-surface: var(--surface-container-lowest);
+  --ui-subsection-surface: var(--surface-container-low);
+  --ui-disabled-surface: var(--surface-container);
+  --ui-content-border: var(--outline-variant);
   --ui-radius: 4px;
   --ui-thin-scrollbar-size: 6px;
   --ui-thin-scrollbar-thumb: #c5d0e0;
@@ -1442,12 +1448,14 @@ h1, h2, h3, p { margin: 0; }
   flex-direction: column;
   gap: 16px;
   overflow-y: auto;
+  background: var(--ui-page-surface);
 }
 
 .page {
   display: none;
   flex-direction: column;
   gap: 16px;
+  background: transparent;
 }
 
 .page.active {
@@ -12374,9 +12382,9 @@ input.custom-input-native:disabled {
 #page-local-storage .local-storage-metric,
 #page-local-storage .local-storage-table-panel,
 #page-local-storage .local-storage-detail-panel {
-  border: 1px solid color-mix(in srgb, var(--outline-variant) 78%, transparent);
+  border: 1px solid var(--ui-content-border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-container-lowest) 88%, transparent);
+  background: var(--ui-panel-surface);
   box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
 }
 
@@ -17419,6 +17427,46 @@ input.custom-input-native:disabled {
 :root[data-page="local-storage"] .top-nav .top-nav-item[data-page="local-storage"] {
   /* Clip Edge antialias fringe around the rounded gradient pill. */
   overflow: hidden;
+}
+
+/* Unified content surface hierarchy: final cascade guard */
+[data-theme="space-tech"] #page-home .glass-card,
+[data-theme="space-tech"] #page-home .glass-stat-card,
+[data-theme="space-tech"] #page-report-navigation .report-nav-stats-layout,
+[data-theme="space-tech"] #page-report-navigation .report-nav-flow-card,
+[data-theme="space-tech"] #page-report-navigation .report-nav-schedule-card,
+[data-theme="space-tech"] #page-report-navigation .report-nav-attention-card,
+[data-theme="space-tech"] #page-auto-check > .card,
+[data-theme="space-tech"] #page-history > .card,
+[data-theme="space-tech"] #page-tools .tool-card,
+[data-theme="space-tech"] #page-dictionaries > .card,
+[data-theme="space-tech"] #page-scheduled-tasks > .card,
+[data-theme="space-tech"] #page-role-permissions > .card,
+[data-theme="space-tech"] #page-settings .settings-dashboard-card,
+[data-theme="space-tech"] #page-users .user-stat-card,
+[data-theme="space-tech"] #page-users .user-filter-bar,
+[data-theme="space-tech"] #page-users .user-table-card,
+[data-theme="space-tech"] #page-local-storage .local-storage-metric,
+[data-theme="space-tech"] #page-local-storage .local-storage-table-panel,
+[data-theme="space-tech"] #page-local-storage .local-storage-detail-panel {
+  background: var(--ui-panel-surface) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-theme="space-tech"] #page-settings .metric-item,
+[data-theme="space-tech"] #page-settings .data-manage-item,
+[data-theme="space-tech"] #page-settings .business-field-group,
+[data-theme="space-tech"] #page-settings .about-description,
+[data-theme="space-tech"] #page-settings .about-features,
+[data-theme="space-tech"] #page-settings .about-tech,
+[data-theme="space-tech"] #page-settings .reconcile-settings-panel,
+[data-theme="space-tech"] #page-settings .db-validation-source-row,
+[data-theme="space-tech"] #page-settings .reconcile-schema-table,
+[data-theme="space-tech"] #page-settings .business-settings-note {
+  background: var(--ui-subsection-surface) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* ===== 登录超时原账号重新认证遮罩（作用域严格限定 .auth-recovery-*） ===== */

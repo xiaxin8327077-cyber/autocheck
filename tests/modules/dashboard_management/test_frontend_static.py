@@ -12,6 +12,43 @@ def _read(relative: str) -> str:
     return (WEB / relative).read_text(encoding="utf-8")
 
 
+def test_module_structural_surfaces_follow_the_platform_surface_hierarchy() -> None:
+    css = _read("styles.css")
+    root = css.split(
+        '.auto-check-module[data-module="dashboard_management"] {', 1
+    )[1].split("}", 1)[0]
+
+    for declaration in (
+        "--dm-border: var(--ui-content-border, var(--outline-variant, #dfe6f1));",
+        "--dm-surface: var(--ui-panel-surface, var(--surface-container-lowest, #ffffff));",
+        "--dm-subtle: var(--ui-subsection-surface, var(--surface-container-low, #f1f4f6));",
+        "--dm-disabled: var(--ui-disabled-surface, var(--surface-container, #ebeef0));",
+        "background: transparent;",
+    ):
+        assert declaration in root
+
+    neutral_hardcoded_backgrounds = {
+        "#fff",
+        "#ffffff",
+        "#fafbfd",
+        "#fbfcfe",
+        "#f6f8fb",
+        "#f4f7fb",
+        "#f2f5f9",
+        "#f2f4f7",
+        "#f1f5fa",
+        "#f0f4fa",
+        "#f0f2f5",
+    }
+    backgrounds = {
+        value.lower()
+        for value in re.findall(
+            r"background(?:-color)?\s*:\s*(#[0-9a-fA-F]{3,8})\b", css
+        )
+    }
+    assert backgrounds.isdisjoint(neutral_hardcoded_backgrounds)
+
+
 def test_dashboard_management_frontend_has_required_contract_and_copy() -> None:
     index = _read("index.js")
     tabs = _read("components/dashboard_tabs.js")
