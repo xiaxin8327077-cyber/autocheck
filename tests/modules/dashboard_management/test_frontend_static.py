@@ -95,6 +95,7 @@ def test_external_api_token_dialog_is_single_use_scoped_and_cleared_on_exit() ->
     assert 'class: `${CLASS_ROOT}__title`' in dialog
     assert 'tokenInput.value = ""' in dialog
     assert "secret = \"\"" in dialog
+    assert 'if (event.target === overlay) close();' not in dialog
 
 
 def test_region_dialog_save_targets_the_dialog_region_instead_of_the_selected_region() -> None:
@@ -285,11 +286,18 @@ def test_dashboard_management_monitor_page_structure():
     assert "var(--ui-radius)" in css
     assert "box-shadow: 0 0" not in css
     assert ".dm-monitor-table-wrap { flex: 1 1 auto; min-width: 0; min-height: 0;" in css
+    assert ".dm-monitor-table-wrap { scrollbar-width: thin; scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent; }" in css
+    assert ".dm-monitor-table-wrap::-webkit-scrollbar { width: var(--ui-thin-scrollbar-size, 6px); height: var(--ui-thin-scrollbar-size, 6px); }" in css
+    assert ".dm-monitor-table-wrap::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--ui-thin-scrollbar-thumb, #c5d0e0); }" in css
+    assert ".dm-monitor-table-wrap::-webkit-scrollbar-track { background: transparent; }" in css
     assert ".dm-monitor-page { display: flex; width: 100%; min-width: 0;" in css
     assert ".dm-monitor-card { display: flex; width: 100%; min-width: 0;" in css
     assert ".dm-filter-select { width: 190px; flex: none;" in css
     assert ".dm-filter-input { width: 180px; flex: none;" in css
     assert 'managed: "系统生成"' in component
+    assert component.index("dm-monitor-ip-whitelist-badge") < component.index("`\u6765\u6e90：${tokenSourceText(summary.token_source)}`")
+    assert ".dm-monitor-status-badge { display: inline-flex; align-items: center; height: 24px;" in css
+    assert "box-sizing: border-box" in css
     assert 'text: `生成时间：${formatMonitorDateTime(summary.token_generated_at)}`' in component
     assert 'configured ? "更新 Token" : "生成 Token"' in component
     assert '"Token 已配置"' not in component
@@ -332,6 +340,92 @@ def test_external_api_monitor_uses_management_list_layout() -> None:
     assert 'button("▶", "page-btn"' in component
     assert 'button("上一页", "page-btn"' not in component
     assert 'button("下一页", "page-btn"' not in component
+
+
+def test_external_api_ip_whitelist_dialog_contract_and_scope():
+    index = _read("index.js")
+    api = _read("api.js")
+    dialog = _read("components/external_api_ip_whitelist_dialog.js")
+    component = _read("components/external_api_monitor.js")
+    css = _read("styles.css")
+    scope = '.auto-check-module[data-module="dashboard_management"]'
+
+    # 前端 API
+    assert "externalApiIpWhitelist: () =>" in api
+    assert 'request("/external-api/ip-whitelist")' in api
+    assert "updateExternalApiIpWhitelist: (payload) =>" in api
+    assert 'body("PUT", payload)' in api
+
+    # 弹窗契约
+    assert "export function openIpWhitelistDialog({ host, policy, onSave, onClose })" in dialog
+    assert "return { element: overlay, close }" in dialog
+    assert 'text: "IP 白名单配置"' in dialog
+    assert 'text: "启用 IP 白名单"' in dialog
+    assert "IP 地址（每行一个）" in dialog
+    assert "未启用时不限制来源 IP。启用后，仅白名单中的 IP 和运行 AutoCheck 的本机可以访问两个外部接口；未填写 IP 时仅允许本机访问。" in dialog
+    assert 'closeButton("取消"' in dialog
+    assert 'closeButton("保存"' in dialog
+    assert 'dm-button dm-button-plain ${CLASS_ROOT}__close' in dialog
+    assert "const MAX_ALLOWED_IPS = 100;" in dialog
+    assert ".slice(0, MAX_ALLOWED_IPS)" not in dialog
+    assert ".filter((line) => line.length > 0)" in dialog
+    assert "最多只能配置 100 个 IP 地址，请删除多余地址后再保存。" in dialog
+    # 关闭路径绝不触发保存，点击遮罩也不关闭
+    assert 'if (event.target === overlay) close();' not in dialog
+    assert 'if (event.key === "Escape")' in dialog
+    assert "host.appendChild(overlay)" in dialog
+    assert "document.body.appendChild(overlay)" not in dialog
+    assert "if (saving || closed) return;" in dialog
+    assert "await onSave(payload)" in dialog
+
+    # 监控页
+    assert "monitorIpWhitelistText" in component
+    assert 'return enabled ? `IP 白名单：已启用（${count} 个）` : "IP 白名单：未启用";' in component
+    assert '"配置 IP 白名单"' in component
+    assert '"dm-button dm-button-secondary dm-monitor-ip-whitelist-action"' in component
+    assert "canManageIpWhitelist" in component
+    assert "summary.ip_whitelist_enabled" in component
+
+    # 页面装配
+    assert 'import { openIpWhitelistDialog } from "./components/external_api_ip_whitelist_dialog.js";' in index
+    assert "const canManageIpWhitelist = hasPermission(" in index
+    assert '"dashboard_management.external_api_ip_whitelist_manage",' in index
+    assert "let activeIpWhitelistDialog = null;" in index
+    assert "let ipWhitelistSaveInProgress = false;" in index
+    assert "const onConfigureIpWhitelist = async () =>" in index
+    assert "await api.externalApiIpWhitelist()" in index
+    assert "await api.updateExternalApiIpWhitelist(payload)" in index
+    assert 'notify("IP 白名单配置已保存", "success")' in index
+    assert 'notify(message(error, "保存 IP 白名单失败"), "error")' in index
+    assert "state.monitorSummary = null;" in index
+    assert "if (!state.active) return;\n      state.monitorSummary = null;\n      loadMonitorData(captureRequest(state));" in index
+    assert "onClose: () => {\n          activeIpWhitelistDialog = null;\n          ipWhitelistSaveInProgress = false;\n        }," in index
+    assert "onConfigureIpWhitelist, canManageIpWhitelist" in index
+    assert index.count("activeIpWhitelistDialog?.close(); activeIpWhitelistDialog = null; ipWhitelistSaveInProgress = false;") == 2
+
+    # 全局状态不长期保存完整 IP 列表
+    state = _read("state.js")
+    assert "allowed_ips" not in state
+    assert "ipWhitelist" not in state
+
+    # 样式作用域与主题变量
+    for class_name in [
+        "dm-ip-whitelist-dialog__overlay",
+        "dm-ip-whitelist-dialog__dialog",
+        "dm-ip-whitelist-dialog__switch",
+        "dm-ip-whitelist-dialog__switch-input",
+        "dm-ip-whitelist-dialog__hint",
+        "dm-ip-whitelist-dialog__textarea",
+        "dm-ip-whitelist-dialog__actions",
+        "dm-monitor-ip-whitelist-action",
+        "dm-monitor-ip-whitelist-badge",
+    ]:
+        assert f"{scope} .{class_name}" in css
+    assert ".dm-ip-whitelist-dialog__textarea { width: 100%;" in css
+    assert ".dm-ip-whitelist-dialog__close:hover" in css
+    assert "background: var(--surface-container-low);" in css
+    assert "var(--ui-radius)" in css
+    assert "[data-theme" not in css
 
 
 def test_dashboard_management_monitor_interactions_expose_loading_without_copy_controls():

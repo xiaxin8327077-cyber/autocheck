@@ -201,7 +201,7 @@
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-section { padding: 14px 16px; border-bottom: 1px solid var(--outline-variant); background: var(--surface-container-lowest); }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-overview { display: flex; align-items: center; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badge { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 8px; border: 1px solid transparent; border-radius: var(--ui-radius); font-size: 12px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badge { display: inline-flex; align-items: center; height: 24px; padding: 2px 8px; box-sizing: border-box; border: 1px solid transparent; border-radius: var(--ui-radius); font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badge.is-enabled, .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badge.is-configured { color: var(--action-success, #16803c); border-color: color-mix(in srgb, var(--action-success, #16803c) 30%, var(--outline-variant)); background: color-mix(in srgb, var(--action-success, #16803c) 10%, var(--surface-container-lowest)); }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badge.is-disabled { color: var(--action-danger, #bf2c35); border-color: color-mix(in srgb, var(--action-danger, #bf2c35) 30%, var(--outline-variant)); background: color-mix(in srgb, var(--action-danger, #bf2c35) 8%, var(--surface-container-lowest)); }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-status-badge.is-unconfigured { color: var(--action-warning, #9a6700); border-color: color-mix(in srgb, var(--action-warning, #9a6700) 30%, var(--outline-variant)); background: color-mix(in srgb, var(--action-warning, #9a6700) 9%, var(--surface-container-lowest)); }
@@ -227,6 +227,10 @@
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-filter-actions { display: flex; align-items: center; gap: 8px; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-filter-actions .dm-button { min-height: 36px; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-table-wrap { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-table-wrap { scrollbar-width: thin; scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent; }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-table-wrap::-webkit-scrollbar { width: var(--ui-thin-scrollbar-size, 6px); height: var(--ui-thin-scrollbar-size, 6px); }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-table-wrap::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--ui-thin-scrollbar-thumb, #c5d0e0); }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-table-wrap::-webkit-scrollbar-track { background: transparent; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-table { width: 100%; min-width: 1420px; table-layout: fixed; border-collapse: collapse; color: var(--on-surface); font-size: 13px; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-table th, .auto-check-module[data-module="dashboard_management"] .dm-monitor-table td { height: 46px; padding: 8px 12px; border-bottom: 1px solid var(--outline-variant); text-align: center; vertical-align: middle; }
 .auto-check-module[data-module="dashboard_management"] .dm-monitor-table th { position: sticky; z-index: 1; top: 0; height: 40px; color: var(--on-surface-variant); background: var(--surface-container-low); font-size: 12px; font-weight: 600; }
@@ -263,3 +267,23 @@
 .auto-check-module[data-module="dashboard_management"] .dm-token-dialog__actions { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 12px; }
 .auto-check-module[data-module="dashboard_management"] .dm-token-dialog__copy { min-width: 80px; }
 .auto-check-module[data-module="dashboard_management"] .dm-token-dialog__close { min-width: 96px; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.5); }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow-y: auto; border-radius: var(--ui-radius); background: var(--surface-container-lowest); border: 1px solid var(--outline-variant); padding: 24px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18); box-sizing: border-box; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__title { margin: 0; font-size: 18px; font-weight: 700; color: var(--on-surface); }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__close { width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-radius: var(--ui-radius); color: var(--on-surface-variant); background: transparent; box-shadow: none; font-size: 20px; font-weight: 400; line-height: 1; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__close:hover { color: var(--on-surface); background: var(--surface-container-low); transform: none; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__close:focus-visible { outline: 2px solid var(--theme-accent, #3466d9); outline-offset: 2px; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__switch { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; cursor: pointer; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__switch-input { width: 16px; height: 16px; margin: 0; accent-color: var(--theme-accent, #3466d9); }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__switch-text { font-size: 14px; font-weight: 600; color: var(--on-surface); }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__field-label { font-size: 13px; font-weight: 600; color: var(--on-surface-variant); }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__textarea { width: 100%; min-height: 140px; padding: 10px 12px; border-radius: var(--ui-radius); border: 1px solid var(--outline-variant); background: var(--surface-container-low); color: var(--on-surface); font-family: var(--font-mono, monospace); font-size: 13px; line-height: 1.6; resize: vertical; box-sizing: border-box; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__hint { margin: 0 0 12px; font-size: 12px; line-height: 1.6; color: var(--on-surface-variant); }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__error { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--ui-radius); border: 1px solid color-mix(in srgb, var(--action-danger, #bf2c35) 30%, var(--outline-variant)); background: color-mix(in srgb, var(--action-danger, #bf2c35) 8%, var(--surface-container-lowest)); color: var(--on-surface); font-size: 13px; line-height: 1.5; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__cancel { min-width: 80px; }
+.auto-check-module[data-module="dashboard_management"] .dm-ip-whitelist-dialog__save { min-width: 96px; }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-ip-whitelist-action { min-width: 132px; }
+.auto-check-module[data-module="dashboard_management"] .dm-monitor-ip-whitelist-badge { font-weight: 600; }

@@ -1,7 +1,7 @@
 {
   "id": "dashboard_management",
   "name": "看板管理",
-  "version": "1.2.28",
+  "version": "1.2.29",
   "platform_api": 1,
   "required": false,
   "backend_entry": "auto_check.modules.dashboard_management.module:create_module",
@@ -25,15 +25,16 @@
     "dashboard_management.manage",
     "dashboard_management.test_sql",
     "dashboard_management.external_api_monitor",
-    "dashboard_management.external_api_token_manage"
+    "dashboard_management.external_api_token_manage",
+    "dashboard_management.external_api_ip_whitelist_manage"
   ],
   "dependencies": [],
   "service_dependencies": [
     {"name": "platform.external_api_status", "minimum_version": 2}
   ],
-  "schema_version": 4,
+  "schema_version": 5,
   "release_notes": {
-    "version": "1.2.28",
+    "version": "1.2.29",
     "items": [
       "看板管理模块：支持固定看板的数据区域、字段与安全 SQL/系统数据来源配置，自动生成只读 SQL 并支持任意单条 SELECT/WITH 查询",
       "看板管理模块：浏览器刷新后恢复当前看板及各看板最后选择的数据区域",
@@ -53,7 +54,8 @@
       "看板管理模块：结果预览中的日期时间按 YYYY-MM-DD HH:mm:ss 展示，接口继续保持 ISO 8601 格式",
       "看板管理模块：为两个固定监管看板提供 Bearer Token 认证的外部只读数据接口，接口数据预览、看板页面预览与外部接口共用固定 7+3 区域的完整结果，AutoCheck 页面作为 Kanban 适配基准，报表对账完成时间同时返回 HH:mm 展示时分与完整完成日期时间",
       "看板管理模块：新增外部接口监控，展示接口状态、近 24 小时统计及含调用方 IP 的 30 天认证后调用记录",
-      "看板管理模块：管理员可在接口监控页面为两个固定监管看板接口生成和更新专属 Bearer Token，页面显示系统生成来源及最近生成时间，Token 仅适用于两个精确接口、一次性展示且旧 Token 立即失效"
+      "看板管理模块：管理员可在接口监控页面为两个固定监管看板接口生成和更新专属 Bearer Token，页面显示系统生成来源及最近生成时间，Token 仅适用于两个精确接口、一次性展示且旧 Token 立即失效",
+      "看板管理模块：两个固定监管看板外部接口支持可选 IP 白名单，启用后仅允许已配置 IP 和 AutoCheck 本机访问"
     ]
   }
 }

@@ -382,6 +382,7 @@ class ModuleRequest:
     body: Mapping[str, Any] | None
     current_user: Mapping[str, Any]
     client_ip: str = ""
+    server_ip: str = ""
 
 
 @dataclass(frozen=True)

@@ -57,9 +57,6 @@ export function openTokenDialog({ host, token, rotated, onClose }) {
   };
 
   overlay.addEventListener("keydown", handleKeydown);
-  overlay.addEventListener("click", (event) => {
-    if (event.target === overlay) close();
-  });
 
   const title = node("h3", { id: `${CLASS_ROOT}-title`, class: `${CLASS_ROOT}__title` }, rotated ? "Token 已更新" : "Token 已生成");
   dialog.append(title);

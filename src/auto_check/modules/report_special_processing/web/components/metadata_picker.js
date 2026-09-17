@@ -231,12 +231,6 @@ export function openMetadataPicker(documentRef, options) {
     role: "dialog",
     "aria-modal": "true",
     "aria-label": title,
-    onClick: (event) => {
-      if (event.target === shell) {
-        close();
-        onCancel?.();
-      }
-    },
   }, [
     element(documentRef, "div", { className: "rsp-picker" }, [
       element(documentRef, "header", { className: "rsp-picker-head" }, [

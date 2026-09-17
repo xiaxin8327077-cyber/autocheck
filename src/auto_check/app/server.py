@@ -3740,12 +3740,20 @@ def _is_client_disconnect_error(exc: BaseException) -> bool:
 
 
 def _normalize_peer_ip(value: object) -> str:
-    """Normalize a TCP peer address to compressed IPv4/IPv6, or 'unknown'."""
+    """Normalize a TCP peer address to compressed IPv4/IPv6, or 'unknown'.
+
+    IPv6 zone identifiers are dropped and IPv4-mapped IPv6 addresses such as
+    ``::ffff:192.168.1.8`` collapse to plain IPv4. Unparsable input is reported
+    as ``unknown`` instead of raising.
+    """
     host = str(value or "").strip().split("%", 1)[0]
     try:
-        return ipaddress.ip_address(host).compressed
+        address = ipaddress.ip_address(host)
     except ValueError:
         return "unknown"
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return address.ipv4_mapped.compressed
+    return address.compressed
 
 
 class AutoCheckRequestHandler(BaseHTTPRequestHandler):
@@ -4123,14 +4131,27 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
             return
 
         query = dict(parse_qsl(urlparse(self.path).query, keep_blank_values=True))
+        # 真实 TCP 对端与服务端本地地址只从 socket 读取；不读取也不信任
+        # X-Forwarded-For / X-Real-IP / Forwarded 等可由调用方伪造的请求头。
+        client_ip = _normalize_peer_ip(
+            self.client_address[0] if self.client_address else ""
+        )
+        connection = getattr(self, "connection", None)
+        try:
+            server_ip = (
+                _normalize_peer_ip(connection.getsockname()[0])
+                if connection is not None
+                else "unknown"
+            )
+        except Exception:
+            server_ip = "unknown"
         try:
             response = self.router.module_runtime.dispatch_external(
                 method=method,
                 path=path,
                 query=query,
-                client_ip=_normalize_peer_ip(
-                    self.client_address[0] if self.client_address else ""
-                ),
+                client_ip=client_ip,
+                server_ip=server_ip,
             )
         except Exception:
             self._send_external_json(

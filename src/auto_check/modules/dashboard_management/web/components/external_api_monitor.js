@@ -38,6 +38,13 @@ function tokenSourceText(value) {
   return TOKEN_SOURCE_TEXT[value] || "未知";
 }
 
+export function monitorIpWhitelistText(summary) {
+  const enabled = Boolean(summary?.ip_whitelist_enabled);
+  const count = Number(summary?.ip_whitelist_count || 0);
+  // 状态标签只展示启用状态和数量，绝不展示具体 IP。
+  return enabled ? `IP 白名单：已启用（${count} 个）` : "IP 白名单：未启用";
+}
+
 function monitorFilterField(labelText, control) {
   const field = node("label", { className: "dm-monitor-filter-field" });
   field.append(node("span", { text: labelText }), control);
@@ -45,7 +52,7 @@ function monitorFilterField(labelText, control) {
 }
 
 export function renderExternalApiMonitor(options) {
-  const { state, onBack, onFilterChange, onSearch, onClear, onPageChange, onRetry, onGenerateToken, canManageToken } = options;
+  const { state, onBack, onFilterChange, onSearch, onClear, onPageChange, onRetry, onGenerateToken, canManageToken, onConfigureIpWhitelist, canManageIpWhitelist } = options;
   const page = node("section", { className: "dm-monitor-page" });
   const card = node("section", { className: "dm-management-card dm-monitor-card" });
 
@@ -76,6 +83,10 @@ export function renderExternalApiMonitor(options) {
     const badges = node("div", { className: "dm-monitor-status-badges" });
     badges.append(
       node("span", { className: `dm-monitor-status-badge ${summary.enabled ? "is-enabled" : "is-disabled"}`, text: statusText }),
+      node("span", {
+        className: `dm-monitor-status-badge dm-monitor-ip-whitelist-badge ${summary.ip_whitelist_enabled ? "is-enabled" : "is-disabled"}`,
+        text: monitorIpWhitelistText(summary),
+      }),
       node("span", { className: `dm-monitor-status-badge ${summary.token_source ? "has-source" : "no-source"}`, text: `来源：${tokenSourceText(summary.token_source)}` }),
       ...(summary.token_source === "managed" && summary.token_generated_at
         ? [node("span", { className: "dm-monitor-token-generated-at", text: `生成时间：${formatMonitorDateTime(summary.token_generated_at)}` })]
@@ -83,15 +94,26 @@ export function renderExternalApiMonitor(options) {
       node("span", { className: "dm-monitor-retention", text: `记录保留 ${summary.retention_days} 天` }),
     );
     overview.append(badges);
-    if (canManageToken && typeof onGenerateToken === "function") {
+    const showTokenAction = canManageToken && typeof onGenerateToken === "function";
+    const showWhitelistAction = canManageIpWhitelist && typeof onConfigureIpWhitelist === "function";
+    if (showTokenAction || showWhitelistAction) {
       const actionRow = node("div", { className: "dm-monitor-status-actions" });
-      const configured = summary.token_configured;
-      const actionBtn = button(
-        configured ? "更新 Token" : "生成 Token",
-        `dm-button ${configured ? "dm-button-secondary" : "dm-button-primary"} dm-monitor-token-action`,
-        () => onGenerateToken({ configured }),
-      );
-      actionRow.append(actionBtn);
+      if (showTokenAction) {
+        const configured = summary.token_configured;
+        const actionBtn = button(
+          configured ? "更新 Token" : "生成 Token",
+          `dm-button ${configured ? "dm-button-secondary" : "dm-button-primary"} dm-monitor-token-action`,
+          () => onGenerateToken({ configured }),
+        );
+        actionRow.append(actionBtn);
+      }
+      if (showWhitelistAction) {
+        actionRow.append(button(
+          "配置 IP 白名单",
+          "dm-button dm-button-secondary dm-monitor-ip-whitelist-action",
+          () => onConfigureIpWhitelist(),
+        ));
+      }
       overview.append(actionRow);
     }
     statusSection.append(overview);

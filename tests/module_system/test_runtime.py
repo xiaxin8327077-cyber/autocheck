@@ -954,6 +954,7 @@ def test_runtime_dispatch_external_propagates_client_ip(isolated_runtime_factory
                     200,
                     {
                         "client_ip": request.client_ip,
+                        "server_ip": request.server_ip,
                         "query": dict(request.query),
                     },
                 ),
@@ -974,7 +975,45 @@ def test_runtime_dispatch_external_propagates_client_ip(isolated_runtime_factory
     )
 
     assert response.status == 200
-    assert response.body == {"client_ip": "2001:db8::7", "query": {}}
+    assert response.body == {
+        "client_ip": "2001:db8::7",
+        "server_ip": "",
+        "query": {},
+    }
+
+
+def test_runtime_dispatch_external_propagates_server_ip(isolated_runtime_factory):
+    class ExternalModule(_LifecycleModule):
+        def register_routes(self, router):
+            router.add(
+                "GET",
+                "/published",
+                lambda request: ModuleHttpResponse.json(
+                    200,
+                    {
+                        "client_ip": request.client_ip,
+                        "server_ip": request.server_ip,
+                    },
+                ),
+                permission="alpha.view",
+                max_body_bytes=0,
+                external=True,
+                external_authenticator=lambda c: __import__("auto_check.app.module_system.routing", fromlist=["ExternalAuthDecision"]).ExternalAuthDecision(configured=True, authenticated=bool(c)),
+            )
+
+    runtime = isolated_runtime_factory([ExternalModule(_manifest("alpha"), [])])
+    runtime.start()
+
+    response = runtime.dispatch_external(
+        method="GET",
+        path="/api/external/v1/alpha/published",
+        query={},
+        client_ip="192.168.1.8",
+        server_ip="192.168.1.8",
+    )
+
+    assert response.status == 200
+    assert response.body == {"client_ip": "192.168.1.8", "server_ip": "192.168.1.8"}
 
 
 def test_runtime_reads_assets_only_for_enabled_modules(runtime_factory):

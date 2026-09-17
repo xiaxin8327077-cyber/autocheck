@@ -323,7 +323,9 @@ class ExternalApiMonitoringService:
             self._logger.warning("external api call record failed", exc_info=True)
 
     def monitor_summary(
-        self, credential_status: Mapping[str, Any] | None = None
+        self,
+        credential_status: Mapping[str, Any] | None = None,
+        access_status: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         now = _as_naive_utc(self._utc_now())
         since = now - timedelta(hours=SUMMARY_HOURS)
@@ -338,11 +340,17 @@ class ExternalApiMonitoringService:
             token_configured = bool(configured)
             if source == "managed":
                 token_generated_at = _utc_iso(credential_status.get("generated_at"))
+        # 白名单状态由调用方读取；读取失败时调用方在进入本方法前已转换为 503，
+        # 因此这里不会把读取失败错误展示成“未启用”。
+        whitelist_enabled = bool((access_status or {}).get("enabled", False))
+        whitelist_count = int((access_status or {}).get("count", 0) or 0)
         return {
             "enabled": token_configured,
             "token_configured": token_configured,
             "token_source": source,
             "token_generated_at": token_generated_at,
+            "ip_whitelist_enabled": whitelist_enabled,
+            "ip_whitelist_count": whitelist_count,
             "endpoints": [dict(item) for item in EXTERNAL_ENDPOINTS],
             "last_called_at": _utc_iso(stats["last_called_at"]),
             "last_success_at": _utc_iso(stats["last_success_at"]),

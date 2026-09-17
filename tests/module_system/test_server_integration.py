@@ -167,6 +167,7 @@ def module_server(monkeypatch, tmp_path):
                         "current_user": dict(request.current_user),
                         "query": dict(request.query),
                         "client_ip": request.client_ip,
+                        "server_ip": request.server_ip,
                     },
                 ),
             )[1],
@@ -354,6 +355,8 @@ def test_external_module_api_dispatches_without_web_session_and_uses_query(
     assert payload["current_user"] == {}
     assert payload["query"] == {"period": "2026-09"}
     assert payload["client_ip"] in {"127.0.0.1", "::1"}
+    # 服务端本地地址来自本次连接的 getsockname()，用于识别本机访问。
+    assert payload["server_ip"] in {"127.0.0.1", "::1"}
     assert headers["cache-control"] == "no-store"
     assert server.module_route_calls[-1].current_user == {}
 
@@ -371,13 +374,17 @@ def test_external_module_api_records_tcp_peer_ip_and_ignores_forwarded_headers(
         headers={
             "Authorization": "Bearer external-secret",
             "X-Forwarded-For": "203.0.113.9",
+            "X-Real-IP": "203.0.113.10",
+            "Forwarded": "for=203.0.113.11",
         },
     )
 
     assert status == 200
     payload = json.loads(data)
     assert payload["client_ip"] in {"127.0.0.1", "::1"}
-    assert payload["client_ip"] != "203.0.113.9"
+    assert payload["client_ip"] not in {"203.0.113.9", "203.0.113.10", "203.0.113.11"}
+    assert payload["server_ip"] in {"127.0.0.1", "::1"}
+    assert payload["server_ip"] not in {"203.0.113.9", "203.0.113.10", "203.0.113.11"}
 
 
 def test_external_module_api_does_not_publish_internal_routes_and_only_allows_get(

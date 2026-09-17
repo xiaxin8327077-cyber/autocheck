@@ -20,6 +20,7 @@ _MODULE_PERMISSION_TO_CAPABILITY: dict[str, str] = {
     "dashboard_management.test_sql": "sys.dashboard_management.test_sql",
     "dashboard_management.external_api_monitor": "sys.dashboard_management.external_api_monitor",
     "dashboard_management.external_api_token_manage": "sys.dashboard_management.external_api_token_manage",
+    "dashboard_management.external_api_ip_whitelist_manage": "sys.dashboard_management.external_api_ip_whitelist_manage",
 }
 
 

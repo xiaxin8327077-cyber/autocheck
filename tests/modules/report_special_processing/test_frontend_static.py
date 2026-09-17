@@ -244,6 +244,7 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
     assert "最多粘贴 3 张图片" in drawer
     assert "rsp-image-lightbox" in drawer
     assert "openImageLightbox" in drawer
+    assert "if (event.target === lightboxNode) closeImageLightbox();" not in drawer
     assert "上传" not in drawer
     assert "type: \"file\"" not in drawer
     assert 'await confirm("确认完成"' not in ledger
@@ -976,6 +977,7 @@ def test_metadata_picker_contract():
     assert "加载中…" in source
     assert "已添加" in source
     assert "selectMode" in source
+    assert "if (event.target === shell)" not in source
 
 
 def test_drawer_switches_between_structured_and_legacy_modes():

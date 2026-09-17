@@ -319,6 +319,30 @@ def test_service_monitor_summary_reports_token_configured_and_endpoints():
     assert summary["retention_days"] == 30
     assert len(summary["endpoints"]) == 2
     assert summary["last_24_hours"]["total"] == 0
+    assert summary["ip_whitelist_enabled"] is False
+    assert summary["ip_whitelist_count"] == 0
+
+
+def test_service_monitor_summary_reports_ip_whitelist_state():
+    service = _service()
+
+    disabled = service.monitor_summary(access_status={"enabled": False, "count": 0})
+    enabled = service.monitor_summary(access_status={"enabled": True, "count": 2})
+
+    assert disabled["ip_whitelist_enabled"] is False
+    assert disabled["ip_whitelist_count"] == 0
+    assert enabled["ip_whitelist_enabled"] is True
+    # 数量只统计管理员配置的地址，不包含自动放行的本机地址。
+    assert enabled["ip_whitelist_count"] == 2
+
+
+def test_service_monitor_summary_defaults_whitelist_to_disabled_when_state_is_absent():
+    service = _service()
+
+    summary = service.monitor_summary()
+
+    assert summary["ip_whitelist_enabled"] is False
+    assert summary["ip_whitelist_count"] == 0
 
 
 def test_service_monitor_summary_reports_token_not_configured():

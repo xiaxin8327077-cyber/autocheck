@@ -99,6 +99,163 @@ def test_external_module_api_method_not_allowed_sends_exactly_one_response():
     assert responses[0][0][2] == {"error": "method not allowed"}
 
 
+def test_normalize_peer_ip_handles_ipv4_ipv6_zone_ids_and_mapped_addresses():
+    from auto_check.app.server import _normalize_peer_ip
+
+    assert _normalize_peer_ip("127.0.0.1") == "127.0.0.1"
+    assert _normalize_peer_ip("192.168.1.8") == "192.168.1.8"
+    assert _normalize_peer_ip("::1") == "::1"
+    assert _normalize_peer_ip("2001:0db8:0000:0000:0000:0000:0000:0001") == "2001:db8::1"
+    # IPv6 zone id 必须去掉。
+    assert _normalize_peer_ip("fe80::1%eth0") == "fe80::1"
+    assert _normalize_peer_ip("fe80::1%12") == "fe80::1"
+    # IPv4-mapped IPv6 统一转为普通 IPv4。
+    assert _normalize_peer_ip("::ffff:192.168.1.8") == "192.168.1.8"
+    assert _normalize_peer_ip("::ffff:127.0.0.1") == "127.0.0.1"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", "unknown", "not-an-ip", "192.168.1.256", "example.com", "192.168.1.0/24", None],
+)
+def test_normalize_peer_ip_falls_back_to_unknown(value):
+    from auto_check.app.server import _normalize_peer_ip
+
+    assert _normalize_peer_ip(value) == "unknown"
+
+
+def _external_handler(runtime, *, client_address, server_address, authorization="Bearer test-token"):
+    class Headers:
+        @staticmethod
+        def get_all(name, default=None):
+            return [] if authorization is None else [authorization]
+
+    handler = object.__new__(AutoCheckRequestHandler)
+    handler.router = type("Router", (), {"module_runtime": runtime})()
+    handler.headers = Headers()
+    handler.path = "/api/external/v1/dashboard-management/boards/report_submission/preview"
+    handler.client_address = client_address
+    handler.connection = type(
+        "Connection", (), {"getsockname": lambda self: server_address}
+    )()
+    return handler
+
+
+def test_external_module_api_rejects_bad_token_before_dispatching_to_the_module():
+    """Token 认证失败必须先于模块内的 IP 白名单校验返回 401。"""
+    dispatched = []
+
+    class DenyAuthenticator:
+        def __call__(self, token):
+            return type("Decision", (), {"configured": True, "authenticated": False})()
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {"status": 200, "headers": (), "external_authenticator": DenyAuthenticator()},
+            )()
+
+        @staticmethod
+        def dispatch_external(**kwargs):
+            dispatched.append(kwargs)
+            return "unexpected"
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("203.0.113.9", 51000),
+        server_address=("192.168.1.8", 8765),
+        authorization="Bearer wrong-token",
+    )
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api("GET", handler.path)
+
+    assert dispatched == []
+    assert len(responses) == 1
+    assert responses[0][0][1] == 401
+    assert responses[0][0][2]["error"]["code"] == "authentication_required"
+    assert responses[0][1]["headers"] == [("WWW-Authenticate", "Bearer")]
+
+
+def test_external_module_api_returns_503_when_token_is_not_configured_before_dispatch():
+    dispatched = []
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {"status": 200, "headers": (), "external_authenticator": None},
+            )()
+
+        @staticmethod
+        def dispatch_external(**kwargs):
+            dispatched.append(kwargs)
+            return "unexpected"
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("203.0.113.9", 51000),
+        server_address=("192.168.1.8", 8765),
+    )
+    responses = []
+    handler._send_external_json = lambda *args, **kwargs: responses.append((args, kwargs))
+
+    handler._handle_external_module_api("GET", handler.path)
+
+    assert dispatched == []
+    assert len(responses) == 1
+    assert responses[0][0][1] == 503
+    assert responses[0][0][2]["error"]["code"] == "external_api_disabled"
+
+
+def test_external_module_api_normalizes_tcp_peer_and_server_addresses():
+    captured = {}
+
+    class AllowAuthenticator:
+        def __call__(self, token):
+            return type("Decision", (), {"configured": True, "authenticated": True})()
+
+    class Runtime:
+        @staticmethod
+        def external_preflight(*, method, path):
+            return type(
+                "Preflight",
+                (),
+                {
+                    "status": 200,
+                    "headers": (),
+                    "external_authenticator": AllowAuthenticator(),
+                },
+            )()
+
+        @staticmethod
+        def dispatch_external(*, method, path, query, client_ip, server_ip):
+            captured.update({"client_ip": client_ip, "server_ip": server_ip})
+            return "sentinel"
+
+    handler = _external_handler(
+        Runtime(),
+        client_address=("::ffff:192.168.1.8", 51000),
+        server_address=("fe80::1%eth0", 8765),
+    )
+    responses = []
+    handler._send_external_module_response = lambda response: responses.append(response)
+
+    handler._handle_external_module_api(
+        "GET",
+        "/api/external/v1/dashboard-management/boards/report_submission/preview",
+    )
+
+    assert captured == {"client_ip": "192.168.1.8", "server_ip": "fe80::1"}
+    assert responses == ["sentinel"]
+
+
 def db_path_for_config(config_path):
     return Path(config_path).with_name("auto-check.db")
 

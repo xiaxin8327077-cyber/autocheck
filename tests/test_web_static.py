@@ -5682,6 +5682,22 @@ def test_all_system_modals_use_balanced_shared_shell():
     assert '[data-color-mode="dark"] .app-modal-shell' in css
 
 
+def test_all_system_modals_do_not_close_when_the_backdrop_is_clicked():
+    app_js = _read(APP_JS)
+
+    forbidden_backdrop_closers = (
+        "if (event.target === reportNavCardMaintenanceModal) closeReportNavigationCardMaintenance();",
+        "if (event.target === reportNavTodoAllModal) closeReportNavTodoAllModal();",
+        "if (event.target === reportNavHistoryModal) closeReportNavHistoryModal();",
+        "if (e.target === modal) cleanup();",
+        "if (e.target === dbValidationHistoryOverlay) closeDbValidationHistory();",
+        "if (event.target === dbValidationMappingOverlay) closeDbValidationFieldMapping();",
+        "if (e.target === flowHistoryOverlay) closeFlowHistory();",
+    )
+    for closer in forbidden_backdrop_closers:
+        assert closer not in app_js
+
+
 def test_all_modal_footers_use_the_neutral_shared_surface():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
@@ -8052,7 +8068,9 @@ def test_role_permissions_page_and_capability_access_are_present():
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
     assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert '<span class="changelog-version">v1.2.29</span>' in app_js
     assert '<span class="changelog-version">v1.2.28</span>' in app_js
+    assert "看板管理模块：两个固定监管看板外部接口新增可选 IP 白名单配置。" in app_js
     assert '<span class="changelog-version">v1.2.22</span>' in app_js
     assert '<span class="changelog-version">v1.2.21</span>' in app_js
     assert '<span class="changelog-version">v1.2.20</span>' in app_js
@@ -8471,6 +8489,13 @@ def test_user_management_list_uses_display_fields_pagination_and_admin_guards():
     assert table_wrap is not None
     assert "overflow: auto" in table_wrap.group("body")
     assert "min-height: 0" in table_wrap.group("body")
+    assert "scrollbar-width: thin" in table_wrap.group("body")
+    assert "scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent" in table_wrap.group("body")
+    assert ".user-table-wrap::-webkit-scrollbar {" in css
+    assert "width: var(--ui-thin-scrollbar-size, 6px)" in css
+    assert ".user-table-wrap::-webkit-scrollbar-thumb {" in css
+    assert "background: var(--ui-thin-scrollbar-thumb, #c5d0e0)" in css
+    assert ".user-table-wrap::-webkit-scrollbar-track {" in css
     assert ".user-pagination {" not in css
     assert ".user-pagination-actions {" not in css
 
@@ -8486,6 +8511,10 @@ def test_project_rules_require_consistent_management_list_pages():
     assert "不得为新页面另建分页样式" in rules
     assert "overflow: hidden" in rules
     assert "悬浮描边" in rules
+    assert "点击遮罩层或背景空白处关闭" in rules
+    assert "--ui-thin-scrollbar-size" in rules
+    assert "--ui-thin-scrollbar-thumb" in rules
+    assert "::-webkit-scrollbar" in rules
 
 
 def test_user_display_name_drives_navigation_and_user_export():
@@ -8581,7 +8610,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "function renderHistoryDetailContent(run)" in app_js
     assert "function renderHistoryDetailFooter(run)" not in app_js
     assert "function showHistoryDetailModal(id)" in app_js
-    assert 'showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });' in app_js
+    assert 'showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail" });' in app_js
     assert 'detailActionLabel: "恢复到结果页"' in app_js
     assert "onDetailAction: async () =>" in app_js
     assert "await restoreHistoryRun(history);" in app_js
@@ -8634,7 +8663,7 @@ def test_history_detail_opens_in_modal_and_respects_permissions():
     assert "historyDetailLoadingId" not in load_detail.group("body")
     assert "renderHistoryList();" not in load_detail.group("body")
     assert "await api(" in load_detail.group("body")
-    assert "options.closeOnBackdrop === false" in app_js
+    assert "options.closeOnBackdrop === false" not in app_js
 
     assert ".history-detail-card" in css
     assert ".history-detail-card .history-detail" in css

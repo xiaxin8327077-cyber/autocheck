@@ -2770,9 +2770,6 @@ function openReportNavigationCardMaintenance(cardCode) {
 
 reportNavCardMaintenanceClose?.addEventListener("click", closeReportNavigationCardMaintenance);
 reportNavCardMaintenanceCancel?.addEventListener("click", closeReportNavigationCardMaintenance);
-reportNavCardMaintenanceModal?.addEventListener("click", (event) => {
-  if (event.target === reportNavCardMaintenanceModal) closeReportNavigationCardMaintenance();
-});
 
 reportNavCardMaintenanceSave?.addEventListener("click", async () => {
   const cardCode = reportNavCardMaintenanceModal?.dataset.cardCode || "";
@@ -3591,9 +3588,6 @@ reportNavTodoAllBtn?.addEventListener("click", () => {
 reportNavTodoAllModalClose?.addEventListener("click", () => {
   closeReportNavTodoAllModal();
 });
-reportNavTodoAllModal?.addEventListener("click", (event) => {
-  if (event.target === reportNavTodoAllModal) closeReportNavTodoAllModal();
-});
 reportNavTodoAllPrev?.addEventListener("click", () => {
   if (reportNavTodoAllPage <= 1) return;
   reportNavTodoAllPage -= 1;
@@ -3610,9 +3604,6 @@ reportNavHistoryBtn?.addEventListener("click", () => {
 });
 reportNavHistoryModalClose?.addEventListener("click", () => {
   closeReportNavHistoryModal();
-});
-reportNavHistoryModal?.addEventListener("click", (event) => {
-  if (event.target === reportNavHistoryModal) closeReportNavHistoryModal();
 });
 reportNavHistoryPrev?.addEventListener("click", () => {
   if (reportNavHistoryPage <= 1 || reportNavHistoryLoading) return;
@@ -3673,7 +3664,6 @@ reportNavRefreshButton?.addEventListener("click", async () => {
       if (issues.length || providerIssues.length) {
         showInfo("报送导航统计异常",
           `${issues.length ? renderReportNavigationRefreshIssues(issues) : ""}${providerIssues.length ? renderReportNavigationProviderIssues(providerIssues) : ""}`,
-          { closeOnBackdrop: false },
         );
       } else {
         showToast(result.error_message || "刷新完成，但部分统计暂不可用", "error");
@@ -7655,13 +7645,12 @@ async function loadHistoryDetail(id) {
 }
 
 async function showHistoryDetailModal(id) {
-  showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail", closeOnBackdrop: false });
+  showInfo("历史详情", renderHistoryDetailLoading(id), { modalClass: "modal-info--history-detail" });
   bindHistoryDetailAutoHideScrollbars();
   try {
     const history = await loadHistoryDetail(id);
     showInfo("历史详情", renderHistoryDetailContent(history), {
       modalClass: "modal-info--history-detail",
-      closeOnBackdrop: false,
       detailActionLabel: "恢复到结果页",
       onDetailAction: async () => {
         await restoreHistoryRun(history);
@@ -7674,7 +7663,6 @@ async function showHistoryDetailModal(id) {
     selectedHistoryId = "";
     showInfo("历史详情", `<p class="history-empty">${escapeHtml(e.message || "历史详情加载失败")}</p>`, {
       modalClass: "modal-info--history-detail",
-      closeOnBackdrop: false,
     });
     throw e;
   }
@@ -8748,7 +8736,6 @@ function showReconcileSchemaSaveError(message = "", title = "表字段配置保�
     </div>
   `, {
     modalClass: "modal-info--reconcile-schema-error",
-    closeOnBackdrop: false,
   });
 }
 
@@ -11442,10 +11429,7 @@ function showInfo(title, content, options = {}) {
   }
 
   closeBtn.onclick = cleanup;
-  modal.onclick = (e) => {
-    if (options.closeOnBackdrop === false) return;
-    if (e.target === modal) cleanup();
-  };
+  modal.onclick = null;
 }
 
 // System Info
@@ -12608,9 +12592,6 @@ dbValidationModalClose?.addEventListener("click", closeDbValidationModal);
 dbValidationCloseBtn?.addEventListener("click", closeDbValidationModal);
 dbValidationHistoryBtn?.addEventListener("click", openDbValidationHistory);
 dbValidationHistoryClose?.addEventListener("click", closeDbValidationHistory);
-dbValidationHistoryOverlay?.addEventListener("click", (e) => {
-  if (e.target === dbValidationHistoryOverlay) closeDbValidationHistory();
-});
 dbValidationHistoryBody?.addEventListener("click", (e) => {
   const button = e.target.closest(".db-validation-history-download");
   if (!button) return;
@@ -12682,7 +12663,6 @@ dbValidationMappingQuickFilters?.addEventListener("click", event => {
   renderDbValidationMappingRows();
 });
 dbValidationMappingOverlay?.addEventListener("click", event => {
-  if (event.target === dbValidationMappingOverlay) closeDbValidationFieldMapping();
   const edit = event.target.closest(".db-validation-mapping-edit");
   const restore = event.target.closest(".db-validation-mapping-restore");
   if (edit) updateDbValidationMapping(edit, false);
@@ -13606,9 +13586,6 @@ flowBgRunBtn?.addEventListener("click", () => {
 });
 flowHistoryBtn?.addEventListener("click", openFlowHistory);
 flowHistoryClose?.addEventListener("click", closeFlowHistory);
-flowHistoryOverlay?.addEventListener("click", (e) => {
-  if (e.target === flowHistoryOverlay) closeFlowHistory();
-});
 addFlowChainBtn?.addEventListener("click", addFlowChainConfig);
 saveFlowSettingsBtn?.addEventListener("click", saveFlowSettings);
 flowChainSettingsList?.addEventListener("click", (e) => {
@@ -14773,6 +14750,17 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.2.29</span>
+        <span class="changelog-date">2026-09-17</span>
+      </div>
+      <ul>
+        <li>看板管理模块：两个固定监管看板外部接口新增可选 IP 白名单配置。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.28</span>

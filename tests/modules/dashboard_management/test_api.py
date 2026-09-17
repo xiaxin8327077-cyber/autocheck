@@ -1,11 +1,53 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from datetime import datetime
 from importlib import resources
+
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleManifest, ModuleRequest
 from auto_check.app.module_system.permissions import default_permission_evaluator
 from auto_check.app.module_system.routing import ExternalAuthDecision, ModuleRouter
+
+
+class _AccessDatabase:
+    def __init__(self) -> None:
+        self._engine = create_engine(
+            "sqlite+pysqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+    @contextmanager
+    def connect(self):
+        with self._engine.connect() as connection:
+            yield connection
+
+    @contextmanager
+    def transaction(self):
+        with self._engine.begin() as connection:
+            yield connection
+
+
+def _real_access_service(*, enabled: bool = False, allowed_ips=()):
+    """Build a real whitelist service over an isolated in-memory database."""
+    from auto_check.modules.dashboard_management.external_api_access import (
+        METADATA,
+        DashboardExternalApiAccessService,
+    )
+
+    database = _AccessDatabase()
+    METADATA.create_all(database._engine)
+    service = DashboardExternalApiAccessService(
+        database,
+        utc_now=lambda: datetime(2026, 9, 17, 10, 20, 30),
+    )
+    if enabled or allowed_ips:
+        service.update(enabled=enabled, allowed_ips=list(allowed_ips), operator="admin")
+    return service
 
 
 def _manifest():
@@ -70,19 +112,33 @@ class Service:
         }
 
 
-def _router(service=None, monitoring=None):
+def _router(service=None, monitoring=None, access=None):
     from auto_check.modules.dashboard_management.api import register_routes
 
     router = ModuleRouter(_manifest(), default_permission_evaluator)
-    register_routes(router, lambda: service or Service(), lambda: monitoring)
+    access_service = access if access is not None else _real_access_service()
+    register_routes(
+        router,
+        lambda: service or Service(),
+        lambda: monitoring,
+        lambda: None,
+        lambda: access_service,
+    )
     return router
 
 
-def _router_with_monitoring(monitoring):
+def _router_with_monitoring(monitoring, access=None):
     from auto_check.modules.dashboard_management.api import register_routes
 
     router = ModuleRouter(_manifest(), default_permission_evaluator)
-    register_routes(router, lambda: Service(), lambda: monitoring)
+    access_service = access if access is not None else _real_access_service()
+    register_routes(
+        router,
+        lambda: Service(),
+        lambda: monitoring,
+        lambda: None,
+        lambda: access_service,
+    )
     return router
 
 
@@ -96,6 +152,7 @@ def test_external_authenticator_resolves_credential_service_at_request_time():
         lambda: Service(),
         lambda: None,
         lambda: holder["service"],
+        lambda: _real_access_service(),
     )
     preflight = router.external_preflight(
         "GET",
@@ -126,7 +183,7 @@ def _dispatch(router, method, suffix, *, body=None, user=None, body_size=0, quer
     )
 
 
-def _dispatch_external(router, method, suffix):
+def _dispatch_external(router, method, suffix, *, client_ip="", server_ip=""):
     return router.dispatch_external(
         request=ModuleRequest(
             method,
@@ -135,6 +192,8 @@ def _dispatch_external(router, method, suffix):
             {},
             None,
             {},
+            client_ip=client_ip,
+            server_ip=server_ip,
         )
     )
 
@@ -217,6 +276,304 @@ def test_internal_and_external_board_preview_publish_the_same_business_payload()
     assert external.body["meta"]["request_id"].startswith("req-")
 
 
+def test_external_preview_returns_403_before_board_query_when_ip_is_not_allowed():
+    queried = []
+
+    class Counting(Service):
+        def preview_external_board_data(self, board_code):
+            queried.append(board_code)
+            return super().preview_external_board_data(board_code)
+
+    monitoring = _FakeMonitoring()
+    access = _real_access_service(enabled=True, allowed_ips=["192.168.1.10"])
+    router = _router(Counting(), monitoring, access)
+
+    denied = _dispatch_external(
+        router,
+        "GET",
+        "/boards/report_submission/preview",
+        client_ip="203.0.113.9",
+        server_ip="10.0.0.1",
+    )
+
+    assert denied.status == 403
+    assert denied.body["error"] == {
+        "code": "ip_not_allowed",
+        "message": "来源 IP 不在白名单中",
+        "fields": {},
+    }
+    assert denied.body["meta"]["request_id"].startswith("req-")
+    # 403 必须在调用 preview_external_board_data() 之前产生。
+    assert queried == []
+    # 403 已进入模块，因此写入调用监控。
+    assert monitoring.calls[0][0] == "begin"
+    assert monitoring.calls[1] == ("finish", 403)
+
+    allowed = _dispatch_external(
+        router,
+        "GET",
+        "/boards/report_submission/preview",
+        client_ip="192.168.1.10",
+        server_ip="10.0.0.1",
+    )
+    assert allowed.status == 200
+    assert queried == ["report_submission"]
+
+
+def test_both_fixed_external_endpoints_enforce_the_ip_whitelist():
+    access = _real_access_service(enabled=True, allowed_ips=[])
+    router = _router(access=access)
+
+    for suffix in (
+        "/boards/report_submission/preview",
+        "/boards/reporting_process/preview",
+    ):
+        response = _dispatch_external(
+            router, "GET", suffix, client_ip="203.0.113.9", server_ip="10.0.0.1"
+        )
+        assert response.status == 403
+        assert response.body["error"]["code"] == "ip_not_allowed"
+
+
+def test_external_preview_allows_loopback_and_matching_server_address():
+    access = _real_access_service(enabled=True, allowed_ips=[])
+    router = _router(access=access)
+
+    loopback = _dispatch_external(
+        router, "GET", "/boards/report_submission/preview", client_ip="127.0.0.1", server_ip="127.0.0.1"
+    )
+    same_host = _dispatch_external(
+        router, "GET", "/boards/report_submission/preview", client_ip="192.168.1.8", server_ip="192.168.1.8"
+    )
+    other_host = _dispatch_external(
+        router, "GET", "/boards/report_submission/preview", client_ip="192.168.1.8", server_ip="192.168.1.9"
+    )
+
+    assert loopback.status == same_host.status == 200
+    assert other_host.status == 403
+
+
+def test_internal_preview_is_not_affected_by_the_ip_whitelist():
+    access = _real_access_service(enabled=True, allowed_ips=[])
+    router = _router(access=access)
+
+    response = _dispatch(router, "GET", "/boards/report_submission/preview")
+
+    assert response.status == 200
+    assert response.body["data"]["data_year"] == 2026
+
+
+def test_external_preview_returns_503_when_access_policy_check_fails():
+    class BrokenAccess:
+        @staticmethod
+        def is_allowed(client_ip, server_ip):
+            raise RuntimeError("policy table unavailable")
+
+        @staticmethod
+        def status():
+            raise RuntimeError("policy table unavailable")
+
+    monitoring = _FakeMonitoring()
+    router = _router(monitoring=monitoring, access=BrokenAccess())
+
+    response = _dispatch_external(
+        router,
+        "GET",
+        "/boards/report_submission/preview",
+        client_ip="203.0.113.9",
+        server_ip="10.0.0.1",
+    )
+
+    assert response.status == 503
+    assert response.body["error"] == {
+        "code": "access_policy_unavailable",
+        "message": "外部接口访问策略暂时不可用",
+        "fields": {},
+    }
+    assert "policy table unavailable" not in str(response.body)
+    assert monitoring.calls[1] == ("finish", 503)
+
+
+def test_external_preview_returns_503_when_access_service_is_missing():
+    from auto_check.modules.dashboard_management.api import register_routes
+
+    router = ModuleRouter(_manifest(), default_permission_evaluator)
+    register_routes(router, lambda: Service(), lambda: None, lambda: None, lambda: None)
+
+    response = _dispatch_external(
+        router, "GET", "/boards/report_submission/preview", client_ip="203.0.113.9"
+    )
+
+    assert response.status == 503
+    assert response.body["error"]["code"] == "access_policy_unavailable"
+
+
+def test_access_policy_failure_log_does_not_include_exception_details(caplog):
+    class BrokenAccess:
+        @staticmethod
+        def is_allowed(client_ip, server_ip):
+            raise RuntimeError(
+                "postgresql://secret@host/auto_check DROP TABLE dashboard_management_external_api_access_policies"
+            )
+
+    with caplog.at_level("WARNING"):
+        response = _dispatch_external(
+            _router(access=BrokenAccess()),
+            "GET",
+            "/boards/report_submission/preview",
+            client_ip="203.0.113.9",
+        )
+
+    assert response.status == 503
+    assert "secret" not in caplog.text
+    assert "DROP TABLE" not in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "secret" not in str(response.body)
+
+
+def test_ip_whitelist_endpoints_require_the_dedicated_capability():
+    router = _router()
+    authorized = {
+        "role": "user",
+        "capabilities": ["sys.dashboard_management.external_api_ip_whitelist_manage"],
+    }
+    other_capability = {
+        "role": "user",
+        "capabilities": ["sys.dashboard_management.external_api_monitor"],
+    }
+
+    assert _dispatch(router, "GET", "/external-api/ip-whitelist", user=authorized).status == 200
+    assert _dispatch(router, "GET", "/external-api/ip-whitelist", user=other_capability).status == 403
+    assert _dispatch(
+        router,
+        "PUT",
+        "/external-api/ip-whitelist",
+        body={"enabled": False, "allowed_ips": []},
+        user=other_capability,
+    ).status == 403
+
+
+def test_ip_whitelist_get_and_put_return_normalized_configuration():
+    access = _real_access_service()
+    router = _router(access=access)
+    admin = {"role": "admin", "username": "whitelist-admin"}
+
+    empty = _dispatch(router, "GET", "/external-api/ip-whitelist", user=admin)
+    assert empty.status == 200
+    assert empty.body["data"] == {"enabled": False, "allowed_ips": [], "updated_at": None}
+    assert empty.body["meta"]["request_id"].startswith("req-")
+
+    saved = _dispatch(
+        router,
+        "PUT",
+        "/external-api/ip-whitelist",
+        body={
+            "enabled": True,
+            "allowed_ips": [
+                " 192.168.1.10 ",
+                "2001:0db8::0010",
+                "::ffff:10.0.0.1",
+                "192.168.1.10",
+                "",
+            ],
+        },
+        user=admin,
+    )
+    assert saved.status == 200
+    assert saved.body["data"] == {
+        "enabled": True,
+        "allowed_ips": ["192.168.1.10", "2001:db8::10", "10.0.0.1"],
+        "updated_at": "2026-09-17T10:20:30",
+    }
+
+    fetched = _dispatch(router, "GET", "/external-api/ip-whitelist", user=admin)
+    assert fetched.body["data"] == saved.body["data"]
+
+
+def test_ip_whitelist_put_rejects_missing_unknown_and_invalid_payloads():
+    router = _router(access=_real_access_service())
+    admin = {"role": "admin"}
+
+    missing = _dispatch(
+        router, "PUT", "/external-api/ip-whitelist", body={"enabled": True}, user=admin
+    )
+    assert missing.status == 400
+    assert set(missing.body["error"]["fields"]) == {"allowed_ips"}
+
+    unknown = _dispatch(
+        router,
+        "PUT",
+        "/external-api/ip-whitelist",
+        body={"enabled": True, "allowed_ips": [], "extra": 1},
+        user=admin,
+    )
+    assert unknown.status == 400
+
+    scalar = _dispatch(router, "PUT", "/external-api/ip-whitelist", body=[], user=admin)
+    assert scalar.status == 400
+
+    bad_enabled = _dispatch(
+        router,
+        "PUT",
+        "/external-api/ip-whitelist",
+        body={"enabled": 1, "allowed_ips": []},
+        user=admin,
+    )
+    assert bad_enabled.status == 400
+    assert set(bad_enabled.body["error"]["fields"]) == {"enabled"}
+
+    bad_ip = _dispatch(
+        router,
+        "PUT",
+        "/external-api/ip-whitelist",
+        body={"enabled": True, "allowed_ips": ["192.168.1.0/24"]},
+        user=admin,
+    )
+    assert bad_ip.status == 400
+    assert set(bad_ip.body["error"]["fields"]) == {"allowed_ips"}
+    assert "192.168.1.0/24" not in str(bad_ip.body["error"]["fields"]["allowed_ips"])
+
+    too_large = _dispatch(
+        router,
+        "PUT",
+        "/external-api/ip-whitelist",
+        body={"enabled": True, "allowed_ips": []},
+        user=admin,
+        body_size=8192 + 1,
+    )
+    assert too_large.status == 413
+
+
+def test_monitor_summary_reports_ip_whitelist_state():
+    access = _real_access_service(enabled=True, allowed_ips=["192.168.1.10", "2001:db8::10"])
+    router = _router(monitoring=_FakeMonitoring(), access=access)
+
+    response = _dispatch(router, "GET", "/external-api/monitor/summary")
+
+    assert response.status == 200
+    assert response.body["data"]["ip_whitelist_enabled"] is True
+    assert response.body["data"]["ip_whitelist_count"] == 2
+
+
+def test_monitor_summary_returns_503_when_whitelist_status_is_unavailable():
+    class BrokenAccess:
+        @staticmethod
+        def status():
+            raise RuntimeError("policy table unavailable")
+
+        @staticmethod
+        def is_allowed(client_ip, server_ip):
+            raise RuntimeError("policy table unavailable")
+
+    router = _router(monitoring=_FakeMonitoring(), access=BrokenAccess())
+
+    response = _dispatch(router, "GET", "/external-api/monitor/summary")
+
+    assert response.status == 503
+    assert response.body["error"]["code"] == "service_unavailable"
+    assert "policy table unavailable" not in str(response.body)
+
+
 def test_api_maps_400_401_409_and_500_to_desensitized_domain_responses():
     from auto_check.modules.dashboard_management.validator import ConflictError, DomainError, ValidationError
 
@@ -297,8 +654,14 @@ class _FakeMonitoring:
         if self.finish_error:
             raise self.finish_error
 
-    def monitor_summary(self, credential_status=None):
-        return {"enabled": True, "token_configured": True, "token_source": "none"}
+    def monitor_summary(self, credential_status=None, access_status=None):
+        return {
+            "enabled": True,
+            "token_configured": True,
+            "token_source": "none",
+            "ip_whitelist_enabled": bool((access_status or {}).get("enabled", False)),
+            "ip_whitelist_count": int((access_status or {}).get("count", 0) or 0),
+        }
 
     def list_calls(self, query):
         return {"items": [], "page": 1, "page_size": 10, "total": 0, "total_pages": 1}
@@ -399,7 +762,13 @@ def test_monitor_apis_require_permission_and_return_403_for_unauthorized():
     from auto_check.modules.dashboard_management.api import register_routes
 
     router = ModuleRouter(_manifest(), default_permission_evaluator)
-    register_routes(router, lambda: Service(), lambda: _FakeMonitoring())
+    register_routes(
+        router,
+        lambda: Service(),
+        lambda: _FakeMonitoring(),
+        lambda: None,
+        lambda: _real_access_service(),
+    )
 
     authorized = {"role": "user", "capabilities": ["sys.dashboard_management.external_api_monitor"]}
     unauthorized = {"role": "user", "capabilities": []}
@@ -435,6 +804,7 @@ def test_token_generation_requires_mapped_capability_and_strict_empty_object():
         lambda: Service(),
         lambda: _FakeMonitoring(),
         lambda: credentials,
+        lambda: _real_access_service(),
     )
     authorized = {
         "role": "user",
@@ -492,6 +862,7 @@ def test_token_generation_failure_log_does_not_include_exception_details(caplog)
         lambda: Service(),
         lambda: _FakeMonitoring(),
         lambda: FailingCredentials(),
+        lambda: _real_access_service(),
     )
 
     with caplog.at_level("WARNING"):
@@ -531,7 +902,7 @@ def test_monitor_apis_validate_query_parameters():
         status_facade=_FakeStatusFacade(),
         logger=logging.getLogger("test"),
     )
-    register_routes(router, lambda: Service(), lambda: service)
+    register_routes(router, lambda: Service(), lambda: service, lambda: None, lambda: _real_access_service())
     admin = {"role": "admin"}
 
     assert _dispatch(router, "GET", "/external-api/monitor/calls", query={"page": "0"}, user=admin).status == 400
@@ -567,7 +938,7 @@ def test_monitor_apis_wrap_real_service_results_in_internal_response_envelope():
         logger=logging.getLogger("test"),
     )
     router = ModuleRouter(_manifest(), default_permission_evaluator)
-    register_routes(router, lambda: Service(), lambda: service)
+    register_routes(router, lambda: Service(), lambda: service, lambda: None, lambda: _real_access_service())
 
     summary = _dispatch(router, "GET", "/external-api/monitor/summary")
     calls = _dispatch(router, "GET", "/external-api/monitor/calls")

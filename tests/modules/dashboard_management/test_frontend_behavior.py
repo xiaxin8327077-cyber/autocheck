@@ -36,8 +36,49 @@ import {
 import { createApi } from "./api.mjs";
 import { sourceTestStatusText } from "./components/source_editor.mjs";
 import { formatPreviewValue } from "./components/preview_table.mjs";
-import { formatMonitorDateTime, monitorBoardName, monitorStatusText } from "./components/external_api_monitor.mjs";
+import { formatMonitorDateTime, monitorBoardName, monitorStatusText, monitorIpWhitelistText } from "./components/external_api_monitor.mjs";
+import { openIpWhitelistDialog } from "./components/external_api_ip_whitelist_dialog.mjs";
 const { confirmAndRotateToken } = await import("./index.mjs");
+
+// 最小 DOM 替身：只实现弹窗组件实际使用到的接口。
+class FakeElement {
+  constructor(tag) {
+    this.tagName = String(tag).toUpperCase();
+    this.children = [];
+    this.attributes = new Map();
+    this.listeners = new Map();
+    this.parentNode = null;
+    this.className = "";
+    this.textContent = "";
+    this.hidden = false;
+    this.disabled = false;
+    this.checked = false;
+    this.value = "";
+    this.offsetParent = { visible: true };
+    this.classList = { add() {}, remove() {} };
+  }
+  setAttribute(name, value) { this.attributes.set(String(name), String(value)); }
+  getAttribute(name) { return this.attributes.get(String(name)); }
+  append(...nodes) { nodes.forEach((child) => { child.parentNode = this; this.children.push(child); }); }
+  appendChild(child) { this.append(child); return child; }
+  removeChild(child) { this.children = this.children.filter((item) => item !== child); child.parentNode = null; }
+  addEventListener(type, handler) { this.listeners.set(type, handler); }
+  removeEventListener(type) { this.listeners.delete(type); }
+  querySelectorAll() { return []; }
+  focus() {}
+  dispatch(type, event = {}) { const handler = this.listeners.get(type); return handler ? handler(event) : undefined; }
+}
+globalThis.document = { createElement: (tag) => new FakeElement(tag), activeElement: null };
+
+function findByClass(root, className) {
+  if (String(root.className || "").split(/\\s+/).includes(className)) return root;
+  for (const child of root.children) {
+    const found = findByClass(child, className);
+    if (found) return found;
+  }
+  return null;
+}
+const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const catalog = {
   boards: [
@@ -294,6 +335,113 @@ assert.equal(monitorStatusText("partial"), "部分成功");
 assert.equal(monitorStatusText("error"), "失败");
 assert.equal(formatMonitorDateTime("2026-09-16T01:02:03"), "2026-09-16 01:02:03");
 assert.equal(formatMonitorDateTime("invalid"), "-");
+
+// IP 白名单弹窗：回显、取消/Esc 关闭、遮罩不关闭、保存拆分与上限、失败保留、防重复点击。
+const whitelistHost = new FakeElement("div");
+const whitelistSaveCalls = [];
+let whitelistClosed = 0;
+const newWhitelistDialog = (policy, onSave) => openIpWhitelistDialog({
+  host: whitelistHost,
+  policy,
+  onSave: onSave || (async (payload) => { whitelistSaveCalls.push(payload); }),
+  onClose: () => { whitelistClosed += 1; },
+});
+
+const echoDialog = newWhitelistDialog({ enabled: true, allowed_ips: ["192.168.1.10", "2001:db8::10"], updated_at: "2026-09-17T10:20:30" });
+const echoBody = echoDialog.element.children[0];
+assert.equal(findByClass(echoBody, "dm-ip-whitelist-dialog__title").textContent, "IP 白名单配置");
+assert.equal(findByClass(echoBody, "dm-ip-whitelist-dialog__switch-input").checked, true);
+assert.equal(findByClass(echoBody, "dm-ip-whitelist-dialog__textarea").value, "192.168.1.10\\n2001:db8::10");
+assert.equal(echoDialog.element.parentNode, whitelistHost);
+findByClass(echoBody, "dm-ip-whitelist-dialog__cancel").dispatch("click");
+assert.equal(whitelistSaveCalls.length, 0);
+assert.equal(whitelistClosed, 1);
+assert.equal(whitelistHost.children.length, 0);
+
+const closeDialog = newWhitelistDialog({ enabled: false, allowed_ips: [] });
+findByClass(closeDialog.element.children[0], "dm-ip-whitelist-dialog__close").dispatch("click");
+assert.equal(whitelistSaveCalls.length, 0);
+assert.equal(whitelistClosed, 2);
+assert.equal(whitelistHost.children.length, 0);
+
+const escDialog = newWhitelistDialog({ enabled: true, allowed_ips: ["192.168.1.10"] });
+escDialog.element.dispatch("keydown", { key: "Escape", preventDefault() {} });
+assert.equal(whitelistSaveCalls.length, 0);
+assert.equal(whitelistClosed, 3);
+assert.equal(whitelistHost.children.length, 0);
+
+const maskDialog = newWhitelistDialog({ enabled: true, allowed_ips: ["192.168.1.10"] });
+maskDialog.element.dispatch("click", { target: maskDialog.element });
+assert.equal(whitelistSaveCalls.length, 0);
+assert.equal(whitelistClosed, 3);
+assert.equal(whitelistHost.children.length, 1);
+maskDialog.close();
+assert.equal(whitelistClosed, 4);
+assert.equal(whitelistHost.children.length, 0);
+
+const saveDialog = newWhitelistDialog({ enabled: false, allowed_ips: [] });
+const saveBody = saveDialog.element.children[0];
+findByClass(saveBody, "dm-ip-whitelist-dialog__switch-input").checked = true;
+findByClass(saveBody, "dm-ip-whitelist-dialog__textarea").value = "  192.168.1.10  \\n\\n2001:db8::10\\n   \\n";
+findByClass(saveBody, "dm-ip-whitelist-dialog__save").dispatch("click");
+await flush();
+assert.deepEqual(whitelistSaveCalls.at(-1), { enabled: true, allowed_ips: ["192.168.1.10", "2001:db8::10"] });
+assert.equal(whitelistClosed, 5);
+assert.equal(whitelistHost.children.length, 0);
+
+const limitDialog = newWhitelistDialog({ enabled: true, allowed_ips: [] });
+const limitBody = limitDialog.element.children[0];
+findByClass(limitBody, "dm-ip-whitelist-dialog__textarea").value = Array.from({ length: 150 }, (_, index) => `10.0.${Math.floor(index / 256)}.${index % 256}`).join("\\n");
+const saveCallCountBeforeLimit = whitelistSaveCalls.length;
+findByClass(limitBody, "dm-ip-whitelist-dialog__save").dispatch("click");
+await flush();
+assert.equal(whitelistSaveCalls.length, saveCallCountBeforeLimit);
+assert.equal(limitDialog.element.parentNode, whitelistHost);
+const limitError = findByClass(limitBody, "dm-ip-whitelist-dialog__error");
+assert.equal(limitError.hidden, false);
+assert.equal(limitError.textContent, "最多只能配置 100 个 IP 地址，请删除多余地址后再保存。");
+limitDialog.close();
+assert.equal(whitelistHost.children.length, 0);
+
+const failingDialog = newWhitelistDialog({ enabled: true, allowed_ips: ["192.168.1.10"] }, async () => { throw new Error("保存 IP 白名单失败"); });
+const failingBody = failingDialog.element.children[0];
+const failingTextarea = findByClass(failingBody, "dm-ip-whitelist-dialog__textarea");
+failingTextarea.value = "192.168.1.10\\n10.0.0.1";
+findByClass(failingBody, "dm-ip-whitelist-dialog__save").dispatch("click");
+await flush();
+assert.equal(failingDialog.element.parentNode, whitelistHost);
+assert.equal(failingTextarea.value, "192.168.1.10\\n10.0.0.1");
+const failingError = findByClass(failingBody, "dm-ip-whitelist-dialog__error");
+assert.equal(failingError.hidden, false);
+assert.equal(failingError.textContent, "保存 IP 白名单失败");
+failingDialog.close();
+assert.equal(whitelistHost.children.length, 0);
+
+let slowSaveCount = 0;
+const slowDialog = newWhitelistDialog({ enabled: true, allowed_ips: [] }, async () => { slowSaveCount += 1; await flush(); });
+const slowSaveBtn = findByClass(slowDialog.element.children[0], "dm-ip-whitelist-dialog__save");
+slowSaveBtn.dispatch("click");
+slowSaveBtn.dispatch("click");
+await flush();
+await flush();
+assert.equal(slowSaveCount, 1);
+slowDialog.close();
+
+// 监控页白名单状态标签只显示启用状态与数量。
+assert.equal(monitorIpWhitelistText({ ip_whitelist_enabled: true, ip_whitelist_count: 2 }), "IP 白名单：已启用（2 个）");
+assert.equal(monitorIpWhitelistText({ ip_whitelist_enabled: false, ip_whitelist_count: 0 }), "IP 白名单：未启用");
+assert.equal(monitorIpWhitelistText({}), "IP 白名单：未启用");
+
+// 白名单前端 API 路径与请求体。
+const whitelistRequests = [];
+const whitelistApi = createApi({ api: async (path, options) => { whitelistRequests.push({ path, options }); return { data: {} }; } }, state);
+await whitelistApi.externalApiIpWhitelist();
+await whitelistApi.updateExternalApiIpWhitelist({ enabled: true, allowed_ips: ["192.168.1.10"] });
+assert.equal(whitelistRequests[0].path, "/api/modules/dashboard-management/external-api/ip-whitelist");
+assert.equal(whitelistRequests[0].options.method, undefined);
+assert.equal(whitelistRequests[1].path, "/api/modules/dashboard-management/external-api/ip-whitelist");
+assert.equal(whitelistRequests[1].options.method, "PUT");
+assert.deepEqual(JSON.parse(whitelistRequests[1].options.body), { enabled: true, allowed_ips: ["192.168.1.10"] });
 
 console.log(JSON.stringify({ ok: true }));
 """.strip(),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from importlib import resources
 from typing import Any, Callable, Mapping
 
@@ -12,6 +12,8 @@ from .validator import DomainError, ValidationError, validate_board_code
 
 
 MAX_BODY_BYTES = 64 * 1024
+IP_WHITELIST_MAX_BODY_BYTES = 8192
+IP_WHITELIST_FIELDS = ("enabled", "allowed_ips")
 SCREEN_FILES = {
     "report_submission": "financial-report.html",
     "reporting_process": "financial-report-flow.html",
@@ -75,6 +77,57 @@ def _monitor_unavailable(request_id: str) -> ModuleHttpResponse:
     })
 
 
+def _access_policy_unavailable(request_id: str) -> ModuleHttpResponse:
+    return ModuleHttpResponse.json(503, {
+        "error": {
+            "code": "access_policy_unavailable",
+            "message": "外部接口访问策略暂时不可用",
+            "fields": {},
+        },
+        "meta": {"request_id": request_id},
+    })
+
+
+def _ip_not_allowed(request_id: str) -> ModuleHttpResponse:
+    return ModuleHttpResponse.json(403, {
+        "error": {
+            "code": "ip_not_allowed",
+            "message": "来源 IP 不在白名单中",
+            "fields": {},
+        },
+        "meta": {"request_id": request_id},
+    })
+
+
+def _naive_iso(value: Any) -> str | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.isoformat()
+
+
+def _ip_whitelist_payload(request: ModuleRequest) -> Mapping[str, Any]:
+    body = _body(request)
+    if any(key not in IP_WHITELIST_FIELDS for key in body):
+        raise ValidationError("请求体包含未知字段", fields={"request": "请求体包含未知字段"})
+    missing = [field for field in IP_WHITELIST_FIELDS if field not in body]
+    if missing:
+        raise ValidationError(
+            "缺少必填字段",
+            fields={field: "缺少必填字段" for field in missing},
+        )
+    return body
+
+
+def _ip_whitelist_data(policy: Any) -> dict[str, Any]:
+    return {
+        "enabled": bool(policy.enabled),
+        "allowed_ips": list(policy.allowed_ips),
+        "updated_at": _naive_iso(policy.updated_at),
+    }
+
+
 def _body(request: ModuleRequest) -> Mapping[str, Any]:
     if request.body is None or not isinstance(request.body, Mapping):
         raise ValidationError()
@@ -110,6 +163,7 @@ def register_routes(
     service_provider: Callable[[], Any],
     monitoring_provider: Callable[[], Any] | None = None,
     credential_service_provider: Callable[[], Any] | None = None,
+    access_service_provider: Callable[[], Any] | None = None,
 ) -> None:
     def handle(callback: Callable[[Any, ModuleRequest], Any], *, status: int = 200):
         def handler(request: ModuleRequest) -> ModuleHttpResponse:
@@ -146,13 +200,33 @@ def register_routes(
         except Exception:
             LOGGER.warning("external api call monitoring begin failed", exc_info=True)
         try:
-            response = _board_success(
-                service_provider().preview_external_board_data(board_code), request_id
+            access_service = access_service_provider() if access_service_provider else None
+            if access_service is None:
+                raise RuntimeError("external api access policy service is unavailable")
+            allowed = access_service.is_allowed(
+                request.client_ip,
+                request.server_ip,
             )
-        except DomainError as error:
-            response = _error(error, request_id)
-        except Exception:
-            response = _internal_error(request_id)
+        except Exception as error:
+            # 只记录异常类型，不记录数据库错误原文、策略内容或 SQL。
+            LOGGER.warning(
+                "external api access policy check failed (%s)",
+                type(error).__name__,
+            )
+            response = _access_policy_unavailable(request_id)
+        else:
+            if not allowed:
+                # 403 必须在看板业务查询之前产生，不执行任何看板取数。
+                response = _ip_not_allowed(request_id)
+            else:
+                try:
+                    response = _board_success(
+                        service_provider().preview_external_board_data(board_code), request_id
+                    )
+                except DomainError as error:
+                    response = _error(error, request_id)
+                except Exception:
+                    response = _internal_error(request_id)
         if trace is not None:
             try:
                 monitor.finish_call(trace, response)
@@ -199,6 +273,51 @@ def register_routes(
                 value = value.astimezone(_tz.utc).replace(tzinfo=None)
             return value.isoformat()
         return str(value)
+
+    def ip_whitelist_status(request: ModuleRequest) -> ModuleHttpResponse:
+        request_id = _request_id()
+        service = access_service_provider() if access_service_provider else None
+        if service is None:
+            return _access_policy_unavailable(request_id)
+        try:
+            policy = service.status()
+        except DomainError as error:
+            return _error(error, request_id)
+        except Exception as error:
+            LOGGER.warning(
+                "external api access policy read failed (%s)",
+                type(error).__name__,
+            )
+            return _access_policy_unavailable(request_id)
+        return ModuleHttpResponse.json(200, {
+            "data": _ip_whitelist_data(policy),
+            "meta": {"request_id": request_id},
+        })
+
+    def update_ip_whitelist(request: ModuleRequest) -> ModuleHttpResponse:
+        request_id = _request_id()
+        service = access_service_provider() if access_service_provider else None
+        if service is None:
+            return _access_policy_unavailable(request_id)
+        try:
+            body = _ip_whitelist_payload(request)
+            policy = service.update(
+                enabled=body["enabled"],
+                allowed_ips=body["allowed_ips"],
+                operator=_operator(request),
+            )
+        except DomainError as error:
+            return _error(error, request_id)
+        except Exception as error:
+            LOGGER.warning(
+                "external api access policy update failed (%s)",
+                type(error).__name__,
+            )
+            return _internal_error(request_id)
+        return ModuleHttpResponse.json(200, {
+            "data": _ip_whitelist_data(policy),
+            "meta": {"request_id": request_id},
+        })
 
     def monitor_handle(callback: Callable[[Any, ModuleRequest], Any]):
         def handler(request: ModuleRequest) -> ModuleHttpResponse:
@@ -358,6 +477,7 @@ def register_routes(
         "/external-api/monitor/summary",
         monitor_handle(lambda monitoring, request: monitoring.monitor_summary(
             credential_status=_credential_status(credential_service_provider),
+            access_status=_access_status(access_service_provider),
         )),
         permission=monitor_permission,
         max_body_bytes=0,
@@ -378,6 +498,34 @@ def register_routes(
         permission=token_manage,
         max_body_bytes=64,
     )
+
+    whitelist_manage = "dashboard_management.external_api_ip_whitelist_manage"
+    router.add(
+        "GET",
+        "/external-api/ip-whitelist",
+        ip_whitelist_status,
+        permission=whitelist_manage,
+        max_body_bytes=0,
+    )
+    router.add(
+        "PUT",
+        "/external-api/ip-whitelist",
+        update_ip_whitelist,
+        permission=whitelist_manage,
+        max_body_bytes=IP_WHITELIST_MAX_BODY_BYTES,
+    )
+
+
+def _access_status(access_service_provider: Callable[[], Any] | None) -> dict[str, Any]:
+    """Read whitelist state for the monitor summary; never degrade to 'disabled'."""
+    service = access_service_provider() if access_service_provider else None
+    if service is None:
+        raise RuntimeError("external api access policy service is unavailable")
+    policy = service.status()
+    return {
+        "enabled": bool(policy.enabled),
+        "count": len(policy.allowed_ips),
+    }
 
 
 def _credential_status(credential_service_provider: Callable[[], Any] | None) -> dict[str, Any]:

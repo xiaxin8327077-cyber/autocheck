@@ -37,6 +37,14 @@ export function createApi(context, state) {
     previewSystem: (regionId) => request(`/regions/${encodeURIComponent(regionId)}/source/system-preview`, { method: "POST" }),
     saveSource: (regionId, payload) => request(`/regions/${encodeURIComponent(regionId)}/source`, body("PUT", payload)),
     generateExternalApiToken: () => request("/external-api/token/generate", body("POST", {}), false),
+    externalApiIpWhitelist: () =>
+      request("/external-api/ip-whitelist"),
+
+    updateExternalApiIpWhitelist: (payload) =>
+      request(
+        "/external-api/ip-whitelist",
+        body("PUT", payload),
+      ),
     monitorSummary: () => request("/external-api/monitor/summary"),
     monitorCalls: (filters = {}) => {
       const params = new URLSearchParams();

@@ -10697,6 +10697,22 @@ input:focus, select:focus {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-thin-scrollbar-thumb, #c5d0e0) transparent;
+}
+
+.user-table-wrap::-webkit-scrollbar {
+  width: var(--ui-thin-scrollbar-size, 6px);
+  height: var(--ui-thin-scrollbar-size, 6px);
+}
+
+.user-table-wrap::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--ui-thin-scrollbar-thumb, #c5d0e0);
+}
+
+.user-table-wrap::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .user-table-card:hover {

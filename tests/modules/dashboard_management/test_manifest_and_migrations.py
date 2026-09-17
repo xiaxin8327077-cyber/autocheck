@@ -16,13 +16,15 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     assert payload["id"] == "dashboard_management"
     assert payload["required"] is False
     assert payload["api_prefix"] == "/api/modules/dashboard-management"
-    assert payload["schema_version"] == 4
+    assert payload["version"] == "1.2.29"
+    assert payload["schema_version"] == 5
     assert payload["permissions"] == [
         "dashboard_management.view",
         "dashboard_management.manage",
         "dashboard_management.test_sql",
         "dashboard_management.external_api_monitor",
         "dashboard_management.external_api_token_manage",
+        "dashboard_management.external_api_ip_whitelist_manage",
     ]
     assert payload["service_dependencies"] == [
         {"name": "platform.external_api_status", "minimum_version": 2}
@@ -41,6 +43,11 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     ]
     assert any("外部只读" in item for item in payload["release_notes"]["items"])
     assert any("外部接口监控" in item and "30 天" in item for item in payload["release_notes"]["items"])
+    assert payload["release_notes"]["version"] == "1.2.29"
+    assert any(
+        "IP 白名单" in item and "本机访问" in item
+        for item in payload["release_notes"]["items"]
+    )
     assert len(payload["release_notes"]["items"]) <= 20
 
 
@@ -204,6 +211,30 @@ def test_third_migration_creates_external_api_call_logs_table_once() -> None:
     assert "INSERT " not in sql.upper()
 
 
+def test_fifth_migration_creates_external_api_access_policy_table() -> None:
+    sql = (MODULE_ROOT / "migrations" / "005_external_api_access_policy.sql").read_text("utf-8")
+
+    assert sql.count("CREATE TABLE dashboard_management_external_api_access_policies") == 1
+    for fragment in [
+        "scope_key VARCHAR(128) NOT NULL",
+        "whitelist_enabled TINYINT(1) NOT NULL DEFAULT 0",
+        "allowed_ips_json TEXT NOT NULL",
+        "created_by VARCHAR(128) NOT NULL",
+        "created_at DATETIME(6) NOT NULL",
+        "updated_by VARCHAR(128) NOT NULL",
+        "updated_at DATETIME(6) NOT NULL",
+        "PRIMARY KEY (scope_key)",
+    ]:
+        assert fragment in sql
+    assert "INSERT " not in sql.upper()
+    table_names = {
+        line.split("(", 1)[0].split()[-1]
+        for line in sql.splitlines()
+        if line.startswith("CREATE TABLE ")
+    }
+    assert table_names == {"dashboard_management_external_api_access_policies"}
+
+
 def test_module_registers_schema_for_all_dashboard_management_tables() -> None:
     from auto_check.app.module_system.schema import ModuleSchemaRegistry
     from auto_check.modules.dashboard_management.module import create_module
@@ -235,6 +266,10 @@ def test_module_registers_schema_for_all_dashboard_management_tables() -> None:
         },
         "dashboard_management_external_api_credentials": {
             "scope_key", "token_digest", "token_fingerprint",
+            "created_by", "created_at", "updated_by", "updated_at",
+        },
+        "dashboard_management_external_api_access_policies": {
+            "scope_key", "whitelist_enabled", "allowed_ips_json",
             "created_by", "created_at", "updated_by", "updated_at",
         },
     }

@@ -8,6 +8,7 @@ from typing import Any
 from auto_check.app.module_system.contracts import ModuleHealth, ModuleManifest
 
 from .api import register_routes
+from .external_api_access import DashboardExternalApiAccessService
 from .external_api_credentials import DashboardExternalApiCredentialService
 from .external_api_monitoring import ExternalApiMonitoringService, ExternalApiMonitoringStore
 from .service import DashboardManagementService
@@ -29,6 +30,7 @@ class DashboardManagementModule:
     _service: DashboardManagementService | None = field(default=None, init=False, repr=False)
     _monitoring_service: ExternalApiMonitoringService | None = field(default=None, init=False, repr=False)
     _credential_service: DashboardExternalApiCredentialService | None = field(default=None, init=False, repr=False)
+    _access_service: DashboardExternalApiAccessService | None = field(default=None, init=False, repr=False)
 
     def register_routes(self, router: Any) -> None:
         register_routes(
@@ -36,10 +38,14 @@ class DashboardManagementModule:
             self._require_service,
             self._require_monitoring_service,
             self._credential_service_if_available,
+            self._access_service_if_available,
         )
 
     def _credential_service_if_available(self) -> Any:
         return self._credential_service
+
+    def _access_service_if_available(self) -> Any:
+        return self._access_service
 
     def register_schema(self, registry: Any) -> None:
         registry.add("dashboard_management_regions", {
@@ -68,6 +74,10 @@ class DashboardManagementModule:
             "scope_key", "token_digest", "token_fingerprint",
             "created_by", "created_at", "updated_by", "updated_at",
         })
+        registry.add("dashboard_management_external_api_access_policies", {
+            "scope_key", "whitelist_enabled", "allowed_ips_json",
+            "created_by", "created_at", "updated_by", "updated_at",
+        })
 
     def start(self, context: Any) -> None:
         self._storage = DashboardManagementStorage(context.application_database)
@@ -83,8 +93,10 @@ class DashboardManagementModule:
             context.application_database,
             status_facade,
         )
+        self._access_service = DashboardExternalApiAccessService(context.application_database)
 
     def stop(self) -> None:
+        self._access_service = None
         self._credential_service = None
         self._monitoring_service = None
         self._service = None
@@ -94,7 +106,8 @@ class DashboardManagementModule:
         return ModuleHealth(
             healthy=self._service is not None
             and self._monitoring_service is not None
-            and self._credential_service is not None,
+            and self._credential_service is not None
+            and self._access_service is not None,
         )
 
     def _require_service(self) -> DashboardManagementService:

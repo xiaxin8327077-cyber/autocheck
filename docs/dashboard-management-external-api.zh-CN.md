@@ -2,7 +2,7 @@
 
 本文定义 AutoCheck 向外部系统提供的两个监管看板数据接口，以及对方系统的推荐接入方式。接口版本为 `v1`，响应编码为 UTF-8。
 
-- 文档更新时间：2026-09-16
+- 文档更新时间：2026-09-17
 - 默认示例地址：`http://127.0.0.1:8765`
 - 生产 Base URL：由部署方提供，例如 `https://autocheck.example.internal`
 
@@ -37,6 +37,8 @@ Cache-Control: no-store
 ```
 
 数据库管理 Token 以 SHA-256 摘要保存并使用 `secrets.compare_digest` 比较；环境变量回退通过平台只读认证服务进行常量时间校验。`Bearer` 认证方案大小写不敏感，但 Token 值区分大小写。外部接口的所有响应都带 `Cache-Control: no-store`。Token 与网页登录 Session 相互独立；外部请求不需要 Cookie 或 CSRF Token，也不能访问普通内部模块路由。
+
+两个固定接口还可以额外启用**来源 IP 白名单**（默认关闭）。白名单校验在 Token 认证通过之后执行，因此未认证请求不会得知白名单是否启用；启用后必须同时满足 Token 和 IP 白名单才允许访问，详见第 18 节。
 
 ## 3. 请求约束
 
@@ -229,10 +231,11 @@ Cache-Control: no-store
 | 200 | 全部区域成功或区域级部分失败；检查顶层 `status` | 不按 HTTP 重试；只有 `success` 才能替换完整缓存，`partial` 保留上一份完整成功响应 |
 | 400 | 请求 framing 非法，例如 GET 携带实体或冲突长度 | 否，修正客户端请求 |
 | 401 | Bearer Token 缺失、重复、格式错误或值错误 | 否，检查密钥配置 |
+| 403 | Token 正确，但来源 IP 不在白名单中（白名单已启用） | 否，联系 AutoCheck 管理员登记调用方出口 IP |
 | 404 | 外部路由、模块或 `board_code` 不存在 | 否，检查固定路径 |
 | 405 | 路径存在但方法不是 GET | 否，改用 GET |
 | 500 | 模块发生未预期错误 | 可少量重试，并记录可用的 `request_id`/`error_id` |
-| 503 | 外部 Token 未配置，接口关闭 | 可少量重试；持续出现时联系 AutoCheck 运维 |
+| 503 | 外部 Token 未配置（接口关闭），或白名单策略读取失败（访问策略暂时不可用） | 可少量重试；持续出现时联系 AutoCheck 运维 |
 
 请求追踪号并非所有平台级错误都会返回：看板业务处理产生的响应通常包含 `meta.request_id`；认证阶段的 401、未配置阶段的 503 以及部分平台路由错误没有 `request_id`。对方系统排查时还应记录本地时间、目标 URL、HTTP 状态和自身追踪号。
 
@@ -305,6 +308,52 @@ Content-Type: application/json; charset=utf-8
   "error": {
     "code": "external_api_disabled",
     "message": "外部接口未配置"
+  }
+}
+```
+
+### HTTP 403：来源 IP 不在白名单中
+
+仅在管理员启用了 IP 白名单时可能出现。此时 Token 认证已经通过，但本次请求的 TCP 对端地址既不是回环地址，也不等于本次连接的服务端本地地址，且不在白名单中。返回 403 时不会执行任何看板取数。
+
+```http
+HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Content-Type: application/json; charset=utf-8
+```
+
+```json
+{
+  "error": {
+    "code": "ip_not_allowed",
+    "message": "来源 IP 不在白名单中",
+    "fields": {}
+  },
+  "meta": {
+    "request_id": "req-0f2f6d9c4b1e4f0f9c2d7a3e5b8c1d40"
+  }
+}
+```
+
+### HTTP 503：外部接口访问策略暂时不可用
+
+白名单策略读取失败（例如策略表暂时不可访问或策略内容无法解析）时返回 503，并明确禁止放行。该响应发生在 Token 认证通过之后，因此会写入 AutoCheck 的接口调用监控。
+
+```http
+HTTP/1.1 503 Service Unavailable
+Cache-Control: no-store
+Content-Type: application/json; charset=utf-8
+```
+
+```json
+{
+  "error": {
+    "code": "access_policy_unavailable",
+    "message": "外部接口访问策略暂时不可用",
+    "fields": {}
+  },
+  "meta": {
+    "request_id": "req-8c1d40aa1b2c4d3e9f5a6b7c8d9e0f12"
   }
 }
 ```
@@ -408,7 +457,7 @@ Content-Type: application/json; charset=utf-8
 
 AutoCheck 已在“系统管理 → 看板管理”中提供接口监控页面和调用记录存储。该能力用于 AutoCheck 管理员排查外部 v1 接口状态，不替代调用方自己的服务端调用日志。
 
-监控只记录“Bearer 认证通过且命中看板预览路由”的调用，记录 TCP 对端 IP 并滚动保留 30 天；401、503、错误方法及未命中路由不会进入调用记录。AutoCheck 默认不信任 `X-Forwarded-For` 或 `Forwarded`，部署在反向代理之后时看到的 TCP 对端 IP 可能是代理地址。该监控规则不改变本文件定义的外部响应结构。
+监控只记录“Bearer 认证通过且命中看板预览路由”的调用，记录 TCP 对端 IP 并滚动保留 30 天。IP 白名单拒绝的 403 和策略故障的 503 会进入调用记录；平台认证阶段的 401、Token 未配置的 503、错误方法及未命中路由不会记录。AutoCheck 默认不信任 `X-Forwarded-For` 或 `Forwarded`，部署在反向代理之后时看到的 TCP 对端 IP 可能是代理地址。该监控规则不改变本文件定义的外部响应结构。
 
 ## 15. 联调检查清单
 
@@ -422,6 +471,7 @@ AutoCheck 已在“系统管理 → 看板管理”中提供接口监控页面�
 8. 确认缓存最近一次完整成功响应；`partial` 响应不得覆盖最近一次完整成功快照，也不得按区域拼接跨年度结果。
 9. 确认日志记录本地时间、目标看板、HTTP 状态、耗时、`request_id`（存在时）和自身追踪号，但不记录 Token 或完整 Authorization。
 10. 完成联调后执行一次 Token 更新演练，确认旧 Token 失效、新 Token 生效且大屏不直接感知密钥。
+11. 若 AutoCheck 启用了 IP 白名单，确认调用方出口 IP 已登记；未登记时应得到 403 `ip_not_allowed`，并据此联系管理员，而不是反复重试或更换 Token。
 
 ## 16. 接口监控（AutoCheck 内部）
 
@@ -433,9 +483,9 @@ AutoCheck"系统管理 → 看板管理"内提供"接口监控"子页面，供�
 
 - HTTP 200 且顶层 `status=success`：记为成功。
 - HTTP 200 且顶层 `status=partial`：记为部分成功，并记录 `region.status=error` 的区域数量。
-- 认证通过但产生 4xx/5xx（如非法看板 404、处理器异常 500）：记为失败。
+- 认证通过但产生 4xx/5xx（如非法看板 404、处理器异常 500、IP 白名单拒绝 403、白名单策略故障 503）：记为失败。
 
-以下请求**不记录**（401/503 不记录）：
+以下请求**不记录**（平台认证阶段的 401/503 不记录）：
 
 - Token 缺失或错误产生的 **401**。
 - 未配置外部 Token 时产生的 **503**。
@@ -444,9 +494,9 @@ AutoCheck"系统管理 → 看板管理"内提供"接口监控"子页面，供�
 
 ### 16.2 调用方 IP
 
-调用方 IP 取规范化的 **TCP 对端地址**（IPv4 或 IPv6），用于精确筛选和展示。
+调用方 IP 取规范化的 **TCP 对端地址**（IPv4 或 IPv6），用于精确筛选、展示和 IP 白名单校验。
 
-不信任 `X-Forwarded-For`、`Forwarded` 等可由客户端伪造的请求头，即使请求携带这些头也不会覆盖 TCP 对端 IP。
+不信任 `X-Forwarded-For`、`X-Real-IP`、`Forwarded` 等可由客户端伪造的请求头，即使请求携带这些头也不会覆盖 TCP 对端 IP。IP 白名单使用同一份 TCP 来源地址，不会因为请求头而改变判定结果。
 
 ### 16.3 留存与隐私
 
@@ -464,7 +514,7 @@ AutoCheck"系统管理 → 看板管理"内提供"接口监控"子页面，供�
 
 ### 16.5 权限
 
-监控入口和内部 API 受 `dashboard_management.external_api_monitor` / `sys.dashboard_management.external_api_monitor` 能力控制，默认仅管理员开启。
+监控入口和内部 API 受 `dashboard_management.external_api_monitor` / `sys.dashboard_management.external_api_monitor` 能力控制，默认仅管理员开启。IP 白名单配置受 `dashboard_management.external_api_ip_whitelist_manage` / `sys.dashboard_management.external_api_ip_whitelist_manage` 能力控制，同样默认仅管理员，且不允许授权给非管理员角色；没有该能力的用户看不到“配置 IP 白名单”按钮。
 
 ## 17. Token 管理
 
@@ -510,4 +560,89 @@ AutoCheck"系统管理 → 看板管理"内提供"接口监控"子页面，供�
 
 - Token 不进入 URL、日志、调用记录、`localStorage`、`sessionStorage` 或普通页面状态。
 - 生成操作记录管理员标识和时间，但不记录明文、摘要或候选 Token。
+
+## 18. IP 白名单
+
+两个固定看板接口除 Bearer Token 外，还支持**可选的**来源 IP 白名单。默认未启用，启用后必须同时满足 Token 认证和 IP 白名单才允许访问。
+
+### 18.1 执行顺序
+
+外部请求按固定顺序处理，白名单校验位于 Token 认证之后、看板取数之前：
+
+1. 平台执行精确路由预检，未匹配返回 404，方法错误返回 405。
+2. 平台校验 Bearer Token：未配置返回 503，缺失或错误返回 401。
+3. Token 认证成功后进入看板模块，创建接口监控 trace。
+4. 看板模块读取 IP 白名单策略：
+   - 白名单未启用：放行。
+   - 来源为本机：自动放行。
+   - 来源 IP 在白名单中：放行。
+   - 其他情况：返回 403，不执行看板查询。
+5. 白名单服务或数据库异常：返回 503，禁止放行。
+6. 允许访问后才执行看板数据查询。
+
+把白名单放在 Token 之后，可以避免向未认证调用者泄露访问策略。401、Token 未配置的 503 仍发生在平台认证阶段，不写入调用记录；白名单产生的 403 和策略故障 503 已进入模块，会写入调用记录。
+
+### 18.2 本机自动放行
+
+“同机器免配置”只依据 TCP 层事实判断，不使用主机名、DNS 或网卡枚举：
+
+- TCP 对端是回环地址（`127.0.0.1` 或 `::1`）；或者
+- TCP 对端地址等于本次连接 `getsockname()` 返回的服务端本地地址。
+
+因此以下场景无需登记即可访问：`127.0.0.1`、`::1`、以及本机通过自己的局域网 IP 调用 AutoCheck。管理员配置的 IP 数量统计不包含这些自动放行地址。
+
+### 18.3 地址规范
+
+- 只支持单个 IPv4 或 IPv6 地址；不支持域名，也不支持 CIDR 网段。
+- 每行一个地址，前后空格忽略，空行忽略。
+- IPv4-mapped IPv6（例如 `::ffff:192.168.1.8`）统一按 `192.168.1.8` 保存和比较。
+- IPv6 使用压缩格式保存（例如 `2001:db8::10`）。
+- 按输入顺序去重，保留第一次出现的位置。
+- 最多 100 个地址；允许启用白名单但地址列表为空，此时仅本机可以访问。
+- 管理弹窗输入超过 100 个非空地址时阻止保存并显示错误，不静默截断。
+- 不支持 IPv6 zone id（含 `%` 的地址会被拒绝）。
+
+### 18.4 配置接口与权限
+
+内部登录态接口（需要 Cookie 会话与 CSRF）：
+
+| 方法 | 路径 |
+|---|---|
+| `GET` | `/api/modules/dashboard-management/external-api/ip-whitelist` |
+| `PUT` | `/api/modules/dashboard-management/external-api/ip-whitelist` |
+
+`GET` 返回当前配置；无配置时返回 `{"enabled": false, "allowed_ips": [], "updated_at": null}`。
+
+```json
+{
+  "data": {
+    "enabled": true,
+    "allowed_ips": ["192.168.1.10", "2001:db8::10"],
+    "updated_at": "2026-09-17T10:20:30"
+  },
+  "meta": {
+    "request_id": "req-4d5e6f708192a3b4c5d6e7f8091a2b3c"
+  }
+}
+```
+
+`PUT` 请求体必须且只能包含 `enabled` 和 `allowed_ips`；缺少字段、存在未知字段、类型错误或存在非法地址时返回 400，非法地址会在 `fields.allowed_ips` 中给出安全错误说明（不回显策略内容或数据库细节）。请求体上限为 8192 字节。
+
+```json
+{
+  "enabled": true,
+  "allowed_ips": ["192.168.1.10", "2001:db8::10"]
+}
+```
+
+`GET` 和 `PUT` 均受 `dashboard_management.external_api_ip_whitelist_manage` / `sys.dashboard_management.external_api_ip_whitelist_manage` 能力控制，默认仅管理员，不允许授权给非管理员角色。策略保存在模块表 `dashboard_management_external_api_access_policies`，使用单个数据库事务写入；更新失败保留旧配置。环境变量和内存配置都不是策略的事实来源。
+
+### 18.5 监控页展示
+
+监控页状态区在“接口已启用/未启用”紧后展示 `IP 白名单：未启用` 或 `IP 白名单：已启用（N 个）`，高度、内边距、行高与其他状态标签一致；标签只显示启用状态和数量，不显示具体 IP。拥有白名单配置能力的用户可在“更新 Token”旁点击“配置 IP 白名单”打开弹窗维护。配置弹窗只能通过关闭、取消、保存或 `Esc` 关闭，点击遮罩空白处不关闭；取消不会触发监控数据刷新。若白名单状态读取失败，监控摘要整体返回 503，不会错误显示为“未启用”。调用记录表格使用与“报送导航”一致的细滚动条。
+
+### 18.6 错误响应不泄露的信息
+
+403 和 503 响应只返回固定的错误码与文案，以及 `request_id`。错误响应和日志中不包含：白名单具体内容、`Authorization` 请求头、Token、SQL 原文、数据库错误原文。
+
 - 页面不显示摘要、环境变量值、数据库字段或内部错误。

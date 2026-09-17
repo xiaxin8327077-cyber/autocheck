@@ -8,6 +8,7 @@ import { renderSourceEditor } from "./components/source_editor.js";
 import { renderPreviewTable } from "./components/preview_table.js";
 import { renderExternalApiMonitor } from "./components/external_api_monitor.js";
 import { openTokenDialog } from "./components/external_api_token_dialog.js";
+import { openIpWhitelistDialog } from "./components/external_api_ip_whitelist_dialog.js";
 import { openBoardPreviewDialog, openBoardScreenPreviewDialog } from "./components/board_preview_dialog.js";
 
 let instance = null;
@@ -28,6 +29,8 @@ function createPage(context) {
   const notify = (text, kind = "info") => context.notify(text, kind);
   let activeTokenDialog = null;
   let tokenRotationInProgress = false;
+  let activeIpWhitelistDialog = null;
+  let ipWhitelistSaveInProgress = false;
   const shouldRender = (token) => isTokenCurrent(state, token);
   const loadBoard = async (boardCode, { force = false, resetRegionIds = [], generation = state.lifecycleGeneration } = {}) => {
     if (!force && state.catalogs.has(boardCode)) return state.catalogs.get(boardCode);
@@ -199,6 +202,44 @@ function createPage(context) {
       tokenRotationInProgress = false;
     }
   };
+  const saveIpWhitelist = async (payload) => {
+    if (ipWhitelistSaveInProgress) return;
+    ipWhitelistSaveInProgress = true;
+    try {
+      await api.updateExternalApiIpWhitelist(payload);
+      notify("IP 白名单配置已保存", "success");
+      if (!state.active) return;
+      state.monitorSummary = null;
+      loadMonitorData(captureRequest(state));
+    } catch (error) {
+      if (!aborted(error)) notify(message(error, "保存 IP 白名单失败"), "error");
+      throw error;
+    } finally {
+      ipWhitelistSaveInProgress = false;
+    }
+  };
+  const onConfigureIpWhitelist = async () => {
+    if (activeIpWhitelistDialog || ipWhitelistSaveInProgress) return;
+    const generation = state.lifecycleGeneration;
+    try {
+      // 先读取当前配置，成功后才打开弹窗。
+      const policy = await api.externalApiIpWhitelist();
+      if (!state.active || generation !== state.lifecycleGeneration) return;
+      activeIpWhitelistDialog = openIpWhitelistDialog({
+        host: context.root,
+        policy,
+        onSave: saveIpWhitelist,
+        onClose: () => {
+          activeIpWhitelistDialog = null;
+          ipWhitelistSaveInProgress = false;
+        },
+      });
+    } catch (error) {
+      if (!aborted(error) && state.active && generation === state.lifecycleGeneration) {
+        notify(message(error, "IP 白名单配置加载失败"), "error");
+      }
+    }
+  };
   const renderMonitor = () => {
     const onBack = () => { leaveMonitorView(state); render(); requestAnimationFrame(() => { context.root.scrollTop = state.managementScrollTop; }); };
     const onRetry = () => { const token = captureRequest(state); loadMonitorData(token); };
@@ -213,10 +254,14 @@ function createPage(context) {
       else if (action === "jump") { const target = parseInt(value, 10); if (target >= 1 && target <= totalPages) state.monitorPage = target; }
       const token = captureRequest(state); loadMonitorPage(token);
     };
-    context.root.append(renderExternalApiMonitor({ state, api, onBack, onFilterChange, onSearch, onClear, onPageChange, onRetry, onGenerateToken, canManageToken }));
+    context.root.append(renderExternalApiMonitor({ state, api, onBack, onFilterChange, onSearch, onClear, onPageChange, onRetry, onGenerateToken, canManageToken, onConfigureIpWhitelist, canManageIpWhitelist }));
   };
   const canMonitor = hasPermission(user, "dashboard_management.external_api_monitor");
   const canManageToken = hasPermission(user, "dashboard_management.external_api_token_manage");
+  const canManageIpWhitelist = hasPermission(
+    user,
+    "dashboard_management.external_api_ip_whitelist_manage",
+  );
   const render = () => {
     if (!state.active) return; clear(context.root);
     if (state.viewMode === "monitor") { renderMonitor(); return; }
@@ -268,8 +313,8 @@ function createPage(context) {
   };
   return {
     async activate() { activateLifecycle(state); const generation = state.lifecycleGeneration; try { const selectedCatalog = await loadBoard(state.activeBoardCode, { generation }); const boards = selectedCatalog?.boards || []; await Promise.all(boards.map((board) => loadBoard(board.code, { generation }))); if (!state.datasources) state.datasources = await api.datasources(); } catch (error) { if (!aborted(error) && state.active && generation === state.lifecycleGeneration) notify(message(error, "看板管理加载失败"), "error"); } if (state.active && generation === state.lifecycleGeneration) render(); },
-    deactivate() { stopRequests(state); activeTokenDialog?.close(); activeTokenDialog = null; },
-    unmount() { stopRequests(state); activeTokenDialog?.close(); activeTokenDialog = null; clear(context.root); },
+    deactivate() { stopRequests(state); activeTokenDialog?.close(); activeTokenDialog = null; activeIpWhitelistDialog?.close(); activeIpWhitelistDialog = null; ipWhitelistSaveInProgress = false; },
+    unmount() { stopRequests(state); activeTokenDialog?.close(); activeTokenDialog = null; activeIpWhitelistDialog?.close(); activeIpWhitelistDialog = null; ipWhitelistSaveInProgress = false; clear(context.root); },
   };
 }
 export function mount(context) { if (!context?.root || typeof context.api !== "function" || typeof context.user !== "function" || typeof context.notify !== "function" || typeof context.confirm !== "function") throw new Error("看板管理模块缺少宿主能力"); instance = createPage(context); }

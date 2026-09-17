@@ -107,6 +107,9 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
     from auto_check.modules.dashboard_management.external_api_credentials import (
         METADATA as CREDENTIAL_METADATA,
     )
+    from auto_check.modules.dashboard_management.external_api_access import (
+        METADATA as ACCESS_METADATA,
+    )
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.storage import METADATA
 
@@ -114,6 +117,7 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
     METADATA.create_all(database._engine)
     MONITORING_METADATA.create_all(database._engine)
     CREDENTIAL_METADATA.create_all(database._engine)
+    ACCESS_METADATA.create_all(database._engine)
     _MigrationRunner.calls = []
     monkeypatch.setattr(runtime_module, "ModuleStateStore", _StateStore)
     monkeypatch.setattr(runtime_module, "ModuleMigrationRunner", _MigrationRunner)
@@ -133,7 +137,7 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
     ]
     runtime.start()
     try:
-        assert _MigrationRunner.calls == [("dashboard_management", 4)]
+        assert _MigrationRunner.calls == [("dashboard_management", 5)]
         modules = runtime.public_modules({"role": "admin"})
         assert modules[0]["navigation"][0]["group_id"] == "system-management"
         assert runtime.read_asset("dashboard_management", "index.js").content
@@ -239,6 +243,79 @@ def test_module_runtime_discovers_migrates_routes_assets_and_restores_dashboard_
             item["called_at"].endswith("+00:00")
             for item in monitor_calls.body["data"]["items"]
         )
+
+        # IP 白名单默认关闭：任意来源放行，监控摘要报告未启用。
+        whitelist_default = _dispatch(runtime, "GET", "/external-api/ip-whitelist")
+        assert whitelist_default.status == 200
+        assert whitelist_default.body["data"] == {
+            "enabled": False,
+            "allowed_ips": [],
+            "updated_at": None,
+        }
+        assert monitor_summary.body["data"]["ip_whitelist_enabled"] is False
+        assert monitor_summary.body["data"]["ip_whitelist_count"] == 0
+
+        saved_whitelist = _dispatch(
+            runtime,
+            "PUT",
+            "/external-api/ip-whitelist",
+            body={"enabled": True, "allowed_ips": ["192.168.1.10"]},
+        )
+        assert saved_whitelist.status == 200
+        assert saved_whitelist.body["data"]["enabled"] is True
+        assert saved_whitelist.body["data"]["allowed_ips"] == ["192.168.1.10"]
+
+        denied = runtime.dispatch_external(
+            method="GET",
+            path=(
+                "/api/external/v1/dashboard-management/boards/"
+                "report_submission/preview"
+            ),
+            query={},
+            client_ip="203.0.113.9",
+            server_ip="10.0.0.1",
+        )
+        assert denied.status == 403
+        assert denied.body["error"]["code"] == "ip_not_allowed"
+
+        listed_ip = runtime.dispatch_external(
+            method="GET",
+            path=(
+                "/api/external/v1/dashboard-management/boards/"
+                "report_submission/preview"
+            ),
+            query={},
+            client_ip="192.168.1.10",
+            server_ip="10.0.0.1",
+        )
+        assert listed_ip.status == 200
+
+        local_call = runtime.dispatch_external(
+            method="GET",
+            path=(
+                "/api/external/v1/dashboard-management/boards/"
+                "reporting_process/preview"
+            ),
+            query={},
+            client_ip="127.0.0.1",
+            server_ip="127.0.0.1",
+        )
+        assert local_call.status == 200
+
+        summary_after_whitelist = _dispatch(runtime, "GET", "/external-api/monitor/summary")
+        assert summary_after_whitelist.body["data"]["ip_whitelist_enabled"] is True
+        assert summary_after_whitelist.body["data"]["ip_whitelist_count"] == 1
+
+        calls_after_whitelist = _dispatch(runtime, "GET", "/external-api/monitor/calls")
+        denied_records = [
+            item
+            for item in calls_after_whitelist.body["data"]["items"]
+            if item["http_status"] == 403
+        ]
+        assert len(denied_records) == 1
+        assert denied_records[0]["error_code"] == "ip_not_allowed"
+        assert denied_records[0]["result_status"] == "error"
+        assert denied_records[0]["caller_ip"] == "203.0.113.9"
 
         module = runtime._find("dashboard_management").instance
         module._service = DashboardManagementService(

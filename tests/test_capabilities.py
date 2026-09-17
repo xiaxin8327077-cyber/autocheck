@@ -75,6 +75,7 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "sys.dashboard_management.test_sql",
         "sys.dashboard_management.external_api_monitor",
         "sys.dashboard_management.external_api_token_manage",
+        "sys.dashboard_management.external_api_ip_whitelist_manage",
     }
     assert set(CAPABILITY_DEFINITIONS) == expected_codes
     for code in expected_codes:
@@ -370,3 +371,19 @@ def test_dashboard_management_capabilities_are_admin_default_only():
     assert DEFAULT_MATRIX["admin"]["sys.dashboard_management.external_api_monitor"] is True
     assert DEFAULT_MATRIX["user"]["sys.dashboard_management.external_api_monitor"] is False
     assert CUSTOM_ROLE_DEFAULT_MATRIX["sys.dashboard_management.external_api_monitor"] is False
+
+
+def test_external_api_ip_whitelist_capability_is_admin_only():
+    code = "sys.dashboard_management.external_api_ip_whitelist_manage"
+
+    assert CAPABILITY_DEFINITIONS[code] == {"label": "配置外部接口 IP 白名单", "type": TYPE_FUNCTION}
+    assert code in ADMIN_ONLY_CAPABILITIES
+    assert is_admin_only(code) is True
+    assert DEFAULT_MATRIX["admin"][code] is True
+    assert DEFAULT_MATRIX["user"][code] is False
+    assert CUSTOM_ROLE_DEFAULT_MATRIX[code] is False
+
+    incoming = merge_matrix(None, custom_roles=["custom_auditor"])
+    incoming["custom_auditor"][code] = True
+    with pytest.raises(ValueError):
+        assert_admin_only_unchanged(incoming)

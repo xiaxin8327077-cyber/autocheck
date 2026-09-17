@@ -918,9 +918,6 @@ export function createRecordDrawer(documentRef, options) {
       tabIndex: "-1",
       "aria-modal": "true",
       "aria-label": "图片预览",
-      onClick: (event) => {
-        if (event.target === lightboxNode) closeImageLightbox();
-      },
     }, [img]);
     overlayNode.append(lightboxNode);
     lightboxNode.focus();
