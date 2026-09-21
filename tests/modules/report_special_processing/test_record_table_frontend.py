@@ -96,9 +96,9 @@ def test_table_uses_same_display_projection_as_export(tmp_path: Path) -> None:
     exported = export_rows([record])
     assert len(groups) == len(exported)
     for group, row in zip(groups, exported):
-        assert _nodes(group, "rsp-change-field-name")[0]["text"] == row[1]
-        assert [node["text"] for node in _nodes(group, "rsp-change-grid-value")] == row[2:4]
-    assert [node["text"] for node in _nodes(rendered, "rsp-process-name-line")] == exported[0][5].split("\n")
+        assert _nodes(group, "rsp-change-field-name")[0]["text"] == row[2]
+        assert [node["text"] for node in _nodes(group, "rsp-change-grid-value")] == row[3:5]
+    assert [node["text"] for node in _nodes(rendered, "rsp-process-name-line")] == exported[0][6].split("\n")
 
 
 def test_main_list_uses_three_plain_change_columns_and_deduplicates_fields(tmp_path: Path) -> None:

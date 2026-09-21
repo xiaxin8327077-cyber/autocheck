@@ -42,10 +42,10 @@ def test_export_rows_follow_visible_ledger_columns():
         ]
     )
     assert EXPORT_HEADERS == (
-        "处理表名", "修改字段", "修改前", "修改后", "所属业务系统", "关联报送", "状态", "处理人", "处理时间",
+        "报送期", "处理表名", "修改字段", "修改前", "修改后", "所属业务系统", "关联报送", "处理摘要", "状态", "处理人", "处理时间",
     )
     assert rows == [[
-        "t_demo", "amt", "1", "2", "—", "人行大集中报送、1104报送", "待确认", "管理员", "2026-08-06 11:20:00",
+        "2026-07-31", "t_demo", "amt", "1", "2", "—", "人行大集中报送、1104报送", "摘要", "待确认", "管理员", "2026-08-06 11:20:00",
     ]]
     assert "RSP-should-not-export" not in str(rows)
     assert "报表A" not in str(rows)
@@ -75,17 +75,19 @@ def test_build_export_xlsx_writes_ledger_headers_and_styles():
     workbook = load_workbook(BytesIO(payload))
     sheet = workbook.active
     assert [cell.value for cell in sheet[1]] == list(EXPORT_HEADERS)
-    assert sheet["A2"].value == "t_fund"
-    assert sheet["B2"].value == "bal"
-    assert sheet["E2"].value == "—"
-    assert sheet["F2"].value == "1104报送"
-    assert sheet["G2"].value == "已完成"
-    assert sheet["H2"].value == "admin"
-    assert sheet["I2"].value == "2026-08-06 11:20:00"
-    assert sheet.max_column == 9
+    assert sheet["A2"].value == "2026-07-31"
+    assert sheet["B2"].value == "t_fund"
+    assert sheet["C2"].value == "bal"
+    assert sheet["F2"].value == "—"
+    assert sheet["G2"].value == "1104报送"
+    assert sheet["H2"].value == "s"
+    assert sheet["I2"].value == "已完成"
+    assert sheet["J2"].value == "admin"
+    assert sheet["K2"].value == "2026-08-06 11:20:00"
+    assert sheet.max_column == 11
     assert sheet.freeze_panes == "A2"
     assert all(cell.alignment.wrap_text for cell in sheet[2])
-    assert sheet.column_dimensions["B"].width >= 40
+    assert sheet.column_dimensions["C"].width >= 40
     for row in sheet:
         for cell in row:
             assert cell.alignment.horizontal == cell.alignment.vertical == "center"
@@ -223,11 +225,13 @@ def test_export_rows_render_legacy_chinese_fields_like_ledger():
             }
         ]
     )
-    assert [row[:4] for row in rows] == [["资产表", "金额\n数量", "1", "2"], ["估值表", "汇率", "1", "2"]]
+    assert [row[1:5] for row in rows] == [["资产表", "金额\n数量", "1", "2"], ["估值表", "汇率", "1", "2"]]
 
 
 def test_structured_export_groups_values_and_merges_record_metadata():
     record = {
+        "report_period": date(2026, 8, 31),
+        "summary": "第一行摘要\n第二行摘要",
         "business_system_name_snapshot": "衡泰",
         "status": "completed",
         "report_processes": [{"name": "人行大集中报送"}, {"name": "1104报送"}],
@@ -243,25 +247,28 @@ def test_structured_export_groups_values_and_merges_record_metadata():
         ]},
     }
     rows = export_rows([record])
-    assert [row[:4] for row in rows] == [["资产表", "金额\n数量", "001", "=1+1"], ["估值表", "x", "0", "—"], ["估值表", "金额", "001", "=1+1"]]
-    assert rows[0][4:7] == ["衡泰", "1104报送\n人行大集中报送", "已完成"]
+    assert [row[1:5] for row in rows] == [["资产表", "金额\n数量", "001", "=1+1"], ["估值表", "x", "0", "—"], ["估值表", "金额", "001", "=1+1"]]
+    assert rows[0][5:9] == ["衡泰", "1104报送\n人行大集中报送", "第一行摘要\n第二行摘要", "已完成"]
     sheet = load_workbook(BytesIO(build_export_xlsx([record]))).active
-    assert {str(item) for item in sheet.merged_cells.ranges} == {"E2:E4", "F2:F4", "G2:G4", "H2:H4", "I2:I4"}
-    assert sheet["C2"].value == "001"
-    assert sheet["D2"].value == "=1+1"
-    assert sheet["D2"].data_type == "s"
+    assert {str(item) for item in sheet.merged_cells.ranges} == {"A2:A4", "F2:F4", "G2:G4", "H2:H4", "I2:I4", "J2:J4", "K2:K4"}
+    assert sheet["A2"].value == "2026-08-31"
+    assert sheet["H2"].value == "第一行摘要\n第二行摘要"
+    assert sheet["H2"].alignment.wrap_text
+    assert sheet["D2"].value == "001"
+    assert sheet["E2"].value == "=1+1"
+    assert sheet["E2"].data_type == "s"
 
 
 def test_legacy_export_keeps_unmatched_multiline_values_intact():
     rows = export_rows([{"field_name": "金额｜amt；数量｜qty", "value_before": "a\nb\nc", "value_after": "z"}])
-    assert rows[0][1:4] == ["金额\n数量", "a\nb\nc", "z"]
+    assert rows[0][2:5] == ["金额\n数量", "a\nb\nc", "z"]
 
 
 def test_legacy_export_pairs_fields_and_groups_equal_values():
     rows = export_rows([{"field_name": "金额｜amt；数量｜qty；汇率｜rate", "value_before": "1\n1\n2", "value_after": "3\n3\n4"}])
-    assert [row[1:4] for row in rows] == [["汇率", "2", "4"], ["金额\n数量", "1", "3"]]
+    assert [row[2:5] for row in rows] == [["汇率", "2", "4"], ["金额\n数量", "1", "3"]]
 
 
 def test_legacy_tables_remain_multiline_when_field_mapping_is_unknown():
     rows = export_rows([{"table_name": "资产表｜fa；估值表｜va", "field_name": "旧字段", "value_before": "1\n2", "value_after": "3"}])
-    assert rows[0][:4] == ["资产表\n估值表", "旧字段", "1\n2", "3"]
+    assert rows[0][1:5] == ["资产表\n估值表", "旧字段", "1\n2", "3"]
