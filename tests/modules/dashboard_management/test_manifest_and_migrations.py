@@ -41,18 +41,16 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
             "group_order": 90,
         }
     ]
-    assert any("外部只读" in item for item in payload["release_notes"]["items"])
-    assert any("外部接口监控" in item and "30 天" in item for item in payload["release_notes"]["items"])
+    release_notes = payload["release_notes"]["items"]
+    assert release_notes == [
+        "支持看板配置、预览与年度趋势统计。",
+        "支持外部只读接口、外部接口监控、访问令牌及 IP 白名单。",
+    ]
+    assert len(release_notes) == 2
+    assert len(set(release_notes)) == len(release_notes)
+    assert all(not item.startswith("看板管理模块：") for item in release_notes)
+    assert all("原型" not in item and "文档" not in item for item in release_notes)
     assert payload["release_notes"]["version"] == "1.2.31"
-    assert any(
-        "10 次/60 秒" in item and "401" in item and "429" in item
-        for item in payload["release_notes"]["items"]
-    )
-    assert any(
-        "IP 白名单" in item and "本机访问" in item
-        for item in payload["release_notes"]["items"]
-    )
-    assert len(payload["release_notes"]["items"]) <= 20
 
 
 def test_external_api_document_covers_security_examples_and_all_fixed_fields() -> None:

@@ -16,6 +16,7 @@ EXPORT_DETAIL_JS = ROOT / "src" / "auto_check" / "web" / "export_detail.js"
 SERVER_PY = ROOT / "src" / "auto_check" / "app" / "server.py"
 STYLES_CSS = ROOT / "src" / "auto_check" / "web" / "styles.css"
 README_MD = ROOT / "README.md"
+PROJECT_HISTORY_MD = ROOT / "docs" / "project-history.zh-CN.md"
 PYINSTALLER_SPEC = ROOT / "auto-check.spec"
 MODULE_HOST_JS = ROOT / "src" / "auto_check" / "web" / "module_host.js"
 MODULE_HOST_CSS = ROOT / "src" / "auto_check" / "web" / "module_host.css"
@@ -34,11 +35,12 @@ def test_v13_display_version_and_release_notes_are_consistent():
     assert 'id="statusText">V1.3</span>' in html
     assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
     assert 'id="sysVersion">V1.3</span>' in html
-    assert "- 应用界面版本：`V1.3`" in readme
+    assert "| 界面版本 | **V1.3**" in readme
     assert app_js.count('class="changelog-version">v1.3.0</span>') == 1
     assert app_js.index('>v1.3.0</span>') < app_js.index('>v1.2.31</span>')
     latest = app_js.split('>v1.3.0</span>', 1)[1].split('</ul>', 1)[0]
-    assert latest.count("系统优化及BUG修复") == 1
+    assert latest.count("<li>") == 1
+    assert latest.count("报表特殊处理支持字典扩展关联报送，优化统计标签和 Excel 导出。") == 1
     assert "`v1.3.0` (2026-09-21)" in readme
 
 
@@ -1810,7 +1812,7 @@ def test_result_detail_expansion_is_single_open():
 def test_expanded_result_row_stays_sticky_while_details_scroll():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert 'document.querySelector("#page-auto-check .result-card > .table-wrap > .result-table")' in app_js
     assert "function setResultTableBodies(tbodyHtml)" in app_js
@@ -1864,7 +1866,7 @@ def test_result_detail_uses_report_asset_total_label_everywhere():
     app_js = _read(APP_JS)
     export_detail_js = _read(EXPORT_DETAIL_JS)
     server_py = _read(ROOT / "src" / "auto_check" / "app" / "server.py")
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert '"label": "资负报表资产合计"' in server_py
     assert 'displayDetailLabel(r.label)' in app_js
@@ -1966,7 +1968,7 @@ def test_multilevel_navigation_groups_reconcile_pages_and_renames_labels():
 def test_smart_reconcile_parent_uses_theme_specific_toggle_and_hover_behavior():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for selector in [
         ".top-nav-group:hover .top-nav-submenu",
@@ -2354,7 +2356,7 @@ def test_report_navigation_processes_sort_by_report_date_ascending_and_stably(tm
 
 def test_report_navigation_reorder_uses_immediate_lightweight_flip_animation():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
     css = _read(STYLES_CSS)
 
     assert "function captureReportNavigationSortPositions(container)" in app_js
@@ -2492,7 +2494,7 @@ def test_report_navigation_has_first_load_placeholder_and_accessible_loading_sta
 
 
 def test_report_navigation_refresh_optimization_is_documented():
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
     app_js = _read(APP_JS)
 
     assert "浏览器刷新时优先恢复当前用户和统计周期的最近成功画面" in readme
@@ -2522,7 +2524,7 @@ def test_report_check_card_config_entry_and_modal_exist():
     app_js = _read(APP_JS)
     index_html = _read(INDEX_HTML)
     styles_css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert 'id="reportNavCheckConfigButton"' not in index_html
     assert 'id="reportCheckConfigModal"' in index_html
@@ -2597,11 +2599,11 @@ def test_completed_report_navigation_schedule_detail_shows_completion_time():
     ) in css
     assert "color: var(--on-surface);" in css
     assert "#page-report-navigation .report-nav-schedule-detail-completed-at[hidden]" in css
-    assert "全部完成时在展开详情的“下一步”区域显示“完成时间：YYYY-MM-DD HH:mm:ss”" in _read(README_MD)
+    assert "全部完成时在展开详情的“下一步”区域显示“完成时间：YYYY-MM-DD HH:mm:ss”" in _read(PROJECT_HISTORY_MD)
 
 
 def test_report_navigation_overdue_state_is_real_and_current_period_only():
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
     app = _read(APP_JS)
     design = _read(
         ROOT
@@ -3640,14 +3642,14 @@ def test_report_navigation_schedule_timeline_expands_with_hover_step_preview():
         r"#page-report-navigation \.report-nav-schedule-steps-popover\s*\{(?P<body>[^}]*)\}",
         css,
     ).group("body")
-    assert "鼠标悬浮“查看步骤”以状态面板展示该流程的全部步骤" in _read(README_MD)
-    assert "提前完成使用绿色并在实际完成日结束" in _read(README_MD)
-    assert "实际完成日后保留原灰色虚线和灰色圆点" in _read(README_MD)
-    assert "原截止日仅显示与完成勾同尺寸的红色空心圈" in _read(README_MD)
-    assert "截止日及之前保持主题蓝" in _read(README_MD)
-    assert "超过截止日后改为红色" in _read(README_MD)
-    assert "不显示今天文字标签，保留当天日期圆圈" in _read(README_MD)
-    assert "鼠标悬浮日程行时采用参考页 01 的浅蓝横向渐变底" in _read(README_MD)
+    assert "鼠标悬浮“查看步骤”以状态面板展示该流程的全部步骤" in _read(PROJECT_HISTORY_MD)
+    assert "提前完成使用绿色并在实际完成日结束" in _read(PROJECT_HISTORY_MD)
+    assert "实际完成日后保留原灰色虚线和灰色圆点" in _read(PROJECT_HISTORY_MD)
+    assert "原截止日仅显示与完成勾同尺寸的红色空心圈" in _read(PROJECT_HISTORY_MD)
+    assert "截止日及之前保持主题蓝" in _read(PROJECT_HISTORY_MD)
+    assert "超过截止日后改为红色" in _read(PROJECT_HISTORY_MD)
+    assert "不显示今天文字标签，保留当天日期圆圈" in _read(PROJECT_HISTORY_MD)
+    assert "鼠标悬浮日程行时采用参考页 01 的浅蓝横向渐变底" in _read(PROJECT_HISTORY_MD)
     assert "--report-nav-schedule-table-width" not in app_js
     assert "border-color: var(--theme-accent);" in css
     assert ".report-nav-schedule-date-head.holiday" in css
@@ -3719,7 +3721,7 @@ def test_report_navigation_manual_refresh_has_icon_cooldown_and_error_feedback()
     assert 'showInfo("报送导航统计异常"' in app_js
     assert "result.issues || []" in app_js
     assert "普通用户 5 分钟可见倒计时、管理员免冷却" in app_js
-    assert "管理员不受冷却限制" in _read(README_MD)
+    assert "管理员不受冷却限制" in _read(PROJECT_HISTORY_MD)
     assert "#page-report-navigation .report-nav-refresh-button" in css
     assert "#page-report-navigation .report-nav-refresh-countdown" in css
     assert "\n.report-nav-refresh-issues {" in css
@@ -3730,7 +3732,7 @@ def test_report_navigation_manual_refresh_has_icon_cooldown_and_error_feedback()
 def test_report_navigation_docs_changelog_and_page_titles_are_updated():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for title in ["对数总览", "对数执行", "对数历史"]:
         assert f"<h2>{title}</h2>" in html
@@ -3754,7 +3756,7 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for label, stat_id, stat_key in [
         ("总差异数", "homeStatTotalDiff", "total"),
@@ -4064,7 +4066,7 @@ def test_home_dashboard_uses_clickable_reconcile_stats_and_keeps_line_charts():
 
 
 def test_readme_documents_bounded_reconcile_matching_and_reference_codes():
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
     app_js = _read(APP_JS)
 
     assert "50～100 行候选池仍可快速匹配 2～5 条组合" in readme
@@ -4142,12 +4144,12 @@ def test_home_report_period_stat_card_fits_scale_ratio_changes():
     assert "value.scrollWidth > value.clientWidth + 1" in app_js
     assert 'if (id === "homeStatReportPeriod") fitHomeReportPeriodValue();' in app_js
     assert 'window.addEventListener("resize", fitHomeReportPeriodValue);' in app_js
-    assert "\u9996\u9875\u62a5\u544a\u671f\u7edf\u8ba1\u5361\u7247\u6309\u5b9e\u9645\u663e\u793a\u6bd4\u4f8b\u81ea\u9002\u5e94\u5b57\u53f7" in _read(README_MD)
+    assert "\u9996\u9875\u62a5\u544a\u671f\u7edf\u8ba1\u5361\u7247\u6309\u5b9e\u9645\u663e\u793a\u6bd4\u4f8b\u81ea\u9002\u5e94\u5b57\u53f7" in _read(PROJECT_HISTORY_MD)
 
 
 def test_outer_content_panels_share_one_glow_free_hover_rule():
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     shared_base_rule = re.search(
         r"#page-home \.glass-card,\s*"
@@ -4198,7 +4200,7 @@ def test_outer_content_panels_share_one_glow_free_hover_rule():
 
 def test_home_charts_rerender_after_scale_ratio_changes():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert "let homeChartsResizeTimer = null;" in app_js
     assert "const HOME_CHARTS_RESIZE_DEBOUNCE_MS = 160;" in app_js
@@ -4214,7 +4216,7 @@ def test_home_charts_rerender_after_scale_ratio_changes():
 
 def test_home_analysis_cards_keep_height_in_short_scale_ratio_viewports():
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert "@media (max-width: 1200px) and (max-height: 700px)" in css
     assert ":root[data-page=\"home\"] body" in css
@@ -4511,7 +4513,7 @@ def test_v21_changelog_documents_interface_radius_concisely():
 
 
 def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
     app_js = _read(APP_JS)
 
     for text in [
@@ -4544,7 +4546,7 @@ def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
 
 def test_changelog_and_readme_document_pbc_import_and_space_nav_updates():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in [
         "新增工具页面与人行全量产品一键导入能力。",
@@ -4565,7 +4567,7 @@ def test_changelog_and_readme_document_pbc_import_and_space_nav_updates():
 def test_version_206_documents_db_validation_engine_update():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert 'const DEFAULT_VERSION = "V1.3";' in app_js
     assert 'id="statusText">V1.3</span>' in html
@@ -4699,7 +4701,7 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
     login_logo = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "logo-login.svg")
     login_dark_logo = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "logo-login-dark.svg")
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert "<title>监管智核</title>" in html
     assert "<title>监管智核</title>" in login_html
@@ -4756,12 +4758,13 @@ def test_version_208_documents_regulatory_intelligence_core_brand_update():
 def test_version_21_documents_reconcile_schema_and_flow_updates():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
+    current_readme = _read(README_MD)
 
     assert 'const DEFAULT_VERSION = "V1.3";' in app_js
     assert 'id="statusText">V1.3</span>' in html
     assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
-    assert "- 应用界面版本：`V1.3`" in readme
+    assert "| 界面版本 | **V1.3**" in current_readme
     assert 'id="sysVersion">V1.3</span>' in html
 
     change_items = [
@@ -4811,7 +4814,7 @@ def test_version_205_documents_scheme_a_logo_update():
     app_js = _read(APP_JS)
     logo = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "logo-full.svg")
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert 'const DEFAULT_VERSION = "V1.3";' in app_js
     assert 'id="statusText">V1.3</span>' in html
@@ -4877,7 +4880,7 @@ def test_home_chart_date_select_keeps_scrollable_wider_dropdown():
 def test_home_chart_date_select_keeps_fixed_width_after_custom_select_enhancement():
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     chart_select_rule = re.search(r"(?m)^\.chart-date-select\s*\{(?P<body>.*?)\}", css, re.S)
     chart_shell_rule = re.search(r"(?m)^\.custom-select-shell\.chart-date-select\s*\{(?P<body>.*?)\}", css, re.S)
@@ -4892,7 +4895,7 @@ def test_home_chart_date_select_keeps_fixed_width_after_custom_select_enhancemen
 
 def test_version_204_documents_tab_and_brand_hierarchy_update():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in [
         "v1.2.8",
@@ -4914,7 +4917,7 @@ def test_version_204_documents_tab_and_brand_hierarchy_update():
 
 def test_version_203_documents_brand_logo_update():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in [
         "v1.2.7",
@@ -4935,7 +4938,7 @@ def test_version_203_documents_brand_logo_update():
 
 def test_version_202_documents_security_login_update():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in [
         "v1.2.6",
@@ -4974,7 +4977,7 @@ def test_version_202_documents_security_login_update():
 
 def test_version_201_documents_confirm_button_update():
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in [
         "v1.2.5",
@@ -5001,7 +5004,7 @@ def test_business_settings_displays_current_table_field_mapping():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     assert 'id="businessSettingsBody"' in html
     assert 'id="businessSettingsContent"' in html
@@ -5179,7 +5182,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
     settings_section = re.search(
         r'<section class="page" id="page-settings">(?P<body>.*?)\n      </section>\n\n      <!-- 确认弹窗 -->',
         html,
@@ -5650,7 +5653,7 @@ def test_remaining_user_modal_home_stat_validation_flow_and_report_radius_overri
 
 
 def test_readme_documents_expanded_interface_radius_surface_coverage():
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in (
         "鱼骨详情卡",
@@ -7413,7 +7416,7 @@ def test_space_tech_top_navigation_centers_pages_and_keeps_actions_right():
     html = _read(INDEX_HTML)
     css = _read(STYLES_CSS)
     app_js = _read(APP_JS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     top_nav = re.search(r'<header class="top-nav">(?P<body>.*?)</header>', html, re.S)
     assert top_nav is not None
@@ -7894,7 +7897,7 @@ def test_auth_password_rule_copy_requires_six_chars_and_letter():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     login_html = _read(ROOT / "src" / "auto_check" / "web" / "login.html")
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for text in [html, app_js, login_html, readme]:
         assert "至少 6 位且包含字母" in text
@@ -8258,7 +8261,7 @@ def test_admin_local_storage_browser_page_and_api_hooks_are_removed():
 
 def test_user_management_cards_and_rows_have_theme_glow_hover_motion():
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for selector in [
         r"\.user-stat-card:hover",
@@ -9180,7 +9183,7 @@ def test_db_validation_frontend_tool_settings_and_api_are_wired():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
     css = _read(STYLES_CSS)
-    readme = _read(README_MD)
+    readme = _read(PROJECT_HISTORY_MD)
 
     for item_id in [
         'id="toolCardDbValidation"',

@@ -11,6 +11,12 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     allowedHosts: ["terminal.local"],
+    proxy: {
+      "/spoon": {
+        target: "http://192.168.107.72:8881",
+        changeOrigin: true,
+      },
+    },
     warmup: {
       clientFiles: ["./src/main.jsx"],
     },

@@ -14705,7 +14705,8 @@ function collectModuleReleaseNoteItems(releaseNotes) {
     if (!note || !Array.isArray(note.items)) continue;
     const label = moduleChangelogLabel(note.module_name);
     for (const item of note.items) {
-      const text = String(item || "").trim();
+      let text = String(item || "").trim();
+      while (text.startsWith(`${label}：`)) text = text.slice(label.length + 1).trim();
       if (text) items.push({ label, text });
     }
   }
@@ -14725,23 +14726,28 @@ function extractFirstChangelogListItems(changelogHtml) {
 }
 
 function mergeModuleReleaseNotesIntoSystemChangelog(changelogHtml, releaseNotes) {
-  const moduleItems = collectModuleReleaseNoteItems(releaseNotes);
-  if (!moduleItems.length) return String(changelogHtml || "");
-  const seen = new Set(extractFirstChangelogListItems(changelogHtml).map(normalizeChangelogItemText));
-  const extra = [];
-  for (const { label, text } of moduleItems) {
-    const bare = normalizeChangelogItemText(text);
-    if (!bare || seen.has(bare)) continue;
-    const display = `${label}：${text}`;
-    const displayNorm = normalizeChangelogItemText(display);
-    if (seen.has(displayNorm)) continue;
-    seen.add(bare);
-    seen.add(displayNorm);
-    extra.push(`<li>${escapeHtml(display)}</li>`);
-  }
-  if (!extra.length) return String(changelogHtml || "");
-  // 模块更新点并入最新系统版本条目：前缀「XX模块：」，去重，不单独成块、不单独列模块版本号。
-  return String(changelogHtml || "").replace("</ul>", `${extra.join("")}</ul>`);
+  const html = String(changelogHtml || "");
+  if (!Array.isArray(releaseNotes) || !releaseNotes.length) return html;
+  // 按同号系统版本归并，避免旧模块日志持续追加到最新版本。
+  return html.replace(
+    /(<span class="changelog-version">v([^<]+)<\/span>[\s\S]*?<ul>)([\s\S]*?)(<\/ul>)/g,
+    (block, heading, version, body, closing) => {
+      const notes = releaseNotes.filter((note) => note?.version === version.trim());
+      const seen = new Set(extractFirstChangelogListItems(`<ul>${body}</ul>`).map(normalizeChangelogItemText));
+      const extra = [];
+      for (const { label, text } of collectModuleReleaseNoteItems(notes)) {
+        const bare = normalizeChangelogItemText(text);
+        if (!bare || bare === "系统优化及BUG修复" || seen.has(bare)) continue;
+        const display = `${label}：${text}`;
+        const displayNorm = normalizeChangelogItemText(display);
+        if (seen.has(displayNorm)) continue;
+        seen.add(bare);
+        seen.add(displayNorm);
+        extra.push(`<li>${escapeHtml(display)}</li>`);
+      }
+      return extra.length ? `${heading}${body}${extra.join("")}${closing}` : block;
+    },
+  );
 }
 
 document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
@@ -14756,7 +14762,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-09-21</span>
       </div>
       <ul>
-        <li>系统优化及BUG修复。</li>
+        <li>报表特殊处理支持字典扩展关联报送，优化统计标签和 Excel 导出。</li>
       </ul>
     </div>
 

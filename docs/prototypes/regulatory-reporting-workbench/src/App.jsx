@@ -49,7 +49,7 @@ function AppHeader({ activeModule, scheduleSection, onNavigate, onNavigateSchedu
         <div className={`global-nav-group ${scheduleMenuOpen ? 'open' : ''}`} onMouseEnter={() => setScheduleMenuOpen(true)} onMouseLeave={() => setScheduleMenuOpen(false)}>
           <button className={activeModule === '调度管理' ? 'active' : ''} aria-haspopup="menu" aria-expanded={scheduleMenuOpen} onClick={() => setScheduleMenuOpen(true)}>调度管理</button>
           <div className="global-submenu" role="menu" aria-label="调度管理二级菜单">
-            {['KETTLE', '版本管理', '定时调度'].map(item => <button key={item} role="menuitem" className={scheduleSection === item ? 'current' : ''} onClick={() => { onNavigateSchedule(item); setScheduleMenuOpen(false); }}>{item}<span>{item === 'KETTLE' ? '在线设计' : item === '版本管理' ? 'SVN 与发布' : '生产任务'}</span></button>)}
+            {['KETTLE', '版本管理', '定时调度'].map(item => <button key={item} role="menuitem" className={scheduleSection === item ? 'current' : ''} onClick={() => { onNavigateSchedule(item); setScheduleMenuOpen(false); }}>{item}<span>{item === 'KETTLE' ? '在线设计' : item === '版本管理' ? '版本与发布' : '生产任务'}</span></button>)}
           </div>
         </div>
         {endNavItems.map(item => <button key={item} className={activeModule === item ? 'active' : ''} onClick={() => onNavigate(item)}>{item}</button>)}

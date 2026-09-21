@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README = ROOT / "README.md"
+PROJECT_HISTORY = ROOT / "docs" / "project-history.zh-CN.md"
 MYSQL_STORAGE_DOC = ROOT / "docs" / "mysql-application-storage.zh-CN.md"
 DEPLOYMENT_DOC = ROOT / "docs" / "deployment.zh-CN.md"
 INTRANET_DEPLOYMENT_DOC = ROOT / "docs" / "intranet-production-deployment.zh-CN.md"
@@ -42,8 +43,27 @@ def test_changelog_version_block_stops_at_multi_segment_version() -> None:
     assert "旧版本内容" not in v21_changes
 
 
-def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
+def test_root_readme_keeps_current_entrypoints_and_history_link() -> None:
     readme = _read(README)
+
+    for heading in [
+        "## 版本信息",
+        "## 当前功能",
+        "## 本地开发",
+        "## 部署与升级",
+        "## 文档导航",
+        "## 最新变更说明",
+    ]:
+        assert heading in readme
+
+    assert "| 界面版本 | **V1.3**" in readme
+    assert "`v1.3.0` (2026-09-21)" in readme
+    assert "docs/project-history.zh-CN.md" in readme
+    assert "docs/prototypes/regulatory-reporting-workbench/README.md" in readme
+
+
+def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
+    readme = _read(PROJECT_HISTORY)
     current_features = readme.split("## 当前功能", 1)[1].split(
         "## MySQL 应用库上线准备", 1
     )[0]
@@ -89,7 +109,7 @@ def test_readme_documents_user_interface_radius_behavior_and_scope() -> None:
 
 
 def test_readme_documents_fixed_logo_theme_and_personal_line_style() -> None:
-    readme = _read(README)
+    readme = _read(PROJECT_HISTORY)
     current_features = readme.split("## 当前功能", 1)[1].split(
         "## MySQL 应用库上线准备", 1
     )[0]
@@ -126,8 +146,8 @@ def test_readme_documents_fixed_logo_theme_and_personal_line_style() -> None:
 
 def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> None:
     acceptance_sections = {
-        README: next(
-            line for line in _read(README).splitlines() if "上线核验" in line
+        PROJECT_HISTORY: next(
+            line for line in _read(PROJECT_HISTORY).splitlines() if "上线核验" in line
         ),
         DEPLOYMENT_DOC: next(
             line
@@ -156,7 +176,7 @@ def test_rollout_docs_distinguish_migrated_rows_from_complete_mysql_schema() -> 
 
 
 def test_mysql_rollout_docs_require_module_schema_upgrade_sequence() -> None:
-    for path in [README, MYSQL_STORAGE_DOC, DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
+    for path in [PROJECT_HISTORY, MYSQL_STORAGE_DOC, DEPLOYMENT_DOC, INTRANET_DEPLOYMENT_DOC]:
         text = _read(path)
         scripts = [
             "001_init_schema.sql",
@@ -174,7 +194,7 @@ def test_mysql_rollout_docs_require_module_schema_upgrade_sequence() -> None:
             "013_report_navigation_provider_states.sql",
         ]
         assert "56 张" in text
-        if path == README:
+        if path == PROJECT_HISTORY:
             preparation = text.split("上线前需要按以下顺序处理：", 1)[1].split("示例：", 1)[0]
         elif path == MYSQL_STORAGE_DOC:
             preparation = text.split("## 二、上线与升级顺序", 1)[1].split("## 三、", 1)[0]
@@ -212,7 +232,7 @@ def test_deployment_upgrade_docs_define_safe_manual_004_through_008_boundary() -
 
 def test_dictionary_management_migration_documented() -> None:
     deployment = _read(DEPLOYMENT_DOC)
-    readme = _read(README)
+    readme = _read(PROJECT_HISTORY)
     assert "019_dictionary_management.sql" in deployment
     assert "system_dictionaries" in deployment
     assert "system_dictionary_items" in deployment
@@ -262,7 +282,7 @@ def test_operator_followable_upgrade_sequences_include_013_after_012() -> None:
     assert "人工执行" in offline_export
 
     readme_incremental = next(
-        line for line in _read(README).splitlines() if line.startswith("- 应用存储增量升级：")
+        line for line in _read(PROJECT_HISTORY).splitlines() if line.startswith("- 应用存储增量升级：")
     )
     _assert_sql_order(readme_incremental, scripts_001_to_013[6:])
     assert "备份" in readme_incremental

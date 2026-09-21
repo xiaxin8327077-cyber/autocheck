@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_deployment_docs_include_module_schema_upgrade():
     for relative in [
-        "README.md",
+        "docs/project-history.zh-CN.md",
         "docs/mysql-application-storage.zh-CN.md",
         "docs/mysql-application-storage-progress.zh-CN.md",
         "docs/deployment.zh-CN.md",

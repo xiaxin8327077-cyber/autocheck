@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROJECT_HISTORY = ROOT / "docs" / "project-history.zh-CN.md"
 WINDOWS_DEPLOY_SCRIPT = ROOT / "scripts" / "run-deployed-windows.ps1"
 LINUX_DEPLOY_SCRIPT = ROOT / "scripts" / "run-deployed-linux.sh"
 DEPLOYMENT_DOC = ROOT / "docs" / "deployment.zh-CN.md"
@@ -57,7 +58,7 @@ def test_linux_deployment_doc_covers_operational_steps() -> None:
 
 
 def test_mysql_application_storage_docs_cover_production_cutover() -> None:
-    readme = _read(ROOT / "README.md")
+    readme = _read(PROJECT_HISTORY)
     deployment_doc = _read(DEPLOYMENT_DOC)
     intranet_doc = _read(INTRANET_DEPLOYMENT_DOC)
     mysql_doc = _read(MYSQL_STORAGE_DOC)

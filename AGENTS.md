@@ -1,118 +1,83 @@
 # AGENTS.md
 
-## 适用范围
+适用于整个仓库；用户明确指示优先于默认工作流。
 
-本文件适用于整个仓库。
+## 项目与目录
 
-## 项目概况
+监管智核（Auto Check）提供自动对数、人行全量产品导入、逐笔校验及报送相关功能。生产环境为 Linux Web 服务，Windows 用于源码开发及可选程序交付。应用库使用 MySQL；DWS、报表业务数据源均支持 PostgreSQL / MySQL。
 
-Auto Check（对外名称"监管智核"）是一个本地 Windows Web 应用，用于自动对数、人行全量产品导入、人行逐笔校验和相关数据核对流程。
+- `src/auto_check/app/`：Web、配置、数据访问、历史、流程工具、PBC 导入、安全与仓储查询。
+- `src/auto_check/engine/`：规则、金额与匹配（`reconcile.py`、`matching.py`、`money.py`）。
+- `src/auto_check/db_validation/`：逐笔规则、规则文档、Excel、DDL 与元数据。
+- `src/auto_check/modules/`：独立模块；`src/auto_check/web/`：页面、样式、导出与加密兜底；`src/auto_check/resources/`：内置资源。
+- `tests/`：后端和前端结构测试；`scripts/`：测试辅助及打包；`sql/`：迁移、测试 DDL 与造数；`config/`：配置样例；`docs/`：文档。
+- `docs/prototypes/`：独立原型和设计预览，不属于正式产物。
 
-核心目录布局：
+## 开发与协作
 
-- `src/auto_check/app/`：本地 Web 服务、配置、数据访问、历史记录、流程工具、PBC 导入、安全与仓储查询
-- `src/auto_check/engine/`：自动对数规则、金额比较、匹配模型（`reconcile.py`、`matching.py`、`money.py`）
-- `src/auto_check/db_validation/`：人行逐笔校验引擎，含规则、规则文档、Excel 读取、表结构 DDL 与元数据
-- `src/auto_check/resources/`：内置资源数据
-- `src/auto_check/web/`：前端静态资源（页面、样式、导出详情脚本、加密兜底）
-- `tests/`：单元测试和前端静态结构测试
-- `docs/`：中文规则说明和设计说明（详见下方"相关文档"）
-- `scripts/`：本地测试辅助脚本和打包脚本
-- `sql/`：本地测试库 DDL 和造数脚本
-- `config/`：本地测试配置样例
-- `dist\auto-check.exe`：打包产物
+- 沿用既有风格和结构，不做无关重构、不回退已有改动；搜索优先 `rg`。
+- 默认在当前目录、当前分支开发；未经用户明确指示，不得创建隔离分支、Git worktree 或其他隔离检出。技能/流程的默认建议不构成授权。
+- 非小范围明确改动先写方案并获认可；小而明确的改动直接执行，不重复确认已授权事项，但仍检查上下文与结果。
+- 业务模块改动前完整阅读 `docs/ai-modular-development-rules.zh-CN.md`；业务代码不得进入公共入口、平台内核或其他模块，平台协议缺口单独提案评审。
+- 测试、验证或可拆分任务可委派子代理，主会话协调、复核和修正；多轮无回复影响推进时可接手并说明原因。委派提示和模型选择遵循全局规则。
+- 完成后说明代码、配置/文档及行为变化，如实交代验证范围。
+- PowerShell 优先 `pwsh`（7），确需 5.1 兼容时才用 `powershell.exe` 并说明原因。
 
-支持的数据源类型为 PostgreSQL 和 MySQL，界面上维护 DWS 数据源与报表数据源两类连接配置。
+## 界面统一规范
 
-## 常用命令
-
-- 运行测试：`python -m pytest -q`
-- 打包 Windows 可执行文件：`powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1`
-- 打包产物路径：`dist\auto-check.exe`
-
-如果需要指定 Python 运行时：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -PythonPath "<path-to-python.exe>"
-```
-
-## 开发约定
-
-- 优先沿用现有代码风格和项目结构，避免无关重构。
-- 不要回退用户或工作区中已有的无关改动。
-- 搜索文件或文本时优先使用 `rg`。
-- 新增或修改业务模块前，必须完整阅读并遵守 `docs/ai-modular-development-rules.zh-CN.md`；普通模块不得把业务代码写入公共入口、平台内核或其他业务模块，平台协议缺口必须单独形成方案并评审。
-- 测试、验证或任务可清晰拆分时，可以自动开启子代理并行处理；主会话负责协调、检查结果和必要的后续修正。
-- 子代理或后台线程多轮等待仍无回复、影响当前任务推进时，可以切回主会话直接处理或补做必要验证，并在结果说明中注明原因。
-- 每次修改后都需要说明修改内容，说明应包含涉及的代码内容、配置/文档内容和行为变化。
-- 前端当前仅保留亮色活力主题；新增或修改界面时不得恢复沉稳主题、暗色模式或相关切换入口。
-- 各功能模块的图标、按钮形态和背景色应统一遵循固定 Logo 蓝渐变（`#3466D9` 到 `#6AA4FF`）及现有语义色规范，不提供自定义主题色或渐变开关。
-- 新增功能或新增可见界面元素时，默认必须遵循系统统一的圆角和主题色规范；卡片、弹窗、按钮、输入框、选择框、日期控件、标签、图标容器等应使用现有全局圆角变量（如 `--ui-radius`）和主题色变量，不得另行硬编码一套圆角或主题色。只有用户明确提出特殊视觉要求时才允许例外。
-- 系统所有页面及独立模块的结构性背景必须共用统一表面层级：页面内容区使用 `--ui-page-surface`，主卡片、主面板和弹窗主体使用 `--ui-panel-surface`，卡片内嵌区域、筛选区、只读分组和次级内容块使用 `--ui-subsection-surface`，禁用输入面使用 `--ui-disabled-surface`，中性边框使用 `--ui-content-border`。模块只能在自身作用域内引用这些全局变量，不得另建近似白色、灰色或浅蓝色的结构背景；状态色、选中态、图表色和代码预览等语义或专用画布不受此限制，但必须明确限定到对应组件或状态。
-- 系统所有弹窗均不得通过点击遮罩层或背景空白处关闭；必须使用明确的关闭、取消、确认或完成按钮。可按具体交互保留 `Esc` 关闭，但新增或修改弹窗时必须增加遮罩点击不关闭的回归测试。
-- 系统中可滚动的页面、列表和弹窗区域，需要显示滚动条时必须与“报送导航”保持一致：使用细滚动条、透明轨道、全圆角滑块，尺寸优先复用 `--ui-thin-scrollbar-size`，颜色优先复用 `--ui-thin-scrollbar-thumb`；不得使用浏览器默认的粗滚动条。新增或修改滚动容器时必须同时覆盖 Firefox 的 `scrollbar-width` / `scrollbar-color` 与 WebKit 的 `::-webkit-scrollbar` 样式。
-- 主题渐变仅用于实心主操作按钮等需要突出强调的主操作表面。空心按钮、可点击纯文字、角色标签和“我”等身份标签不得使用渐变，应使用纯主题色文字/边框及必要的浅色主题背景，且必须保证文字和图标清晰可见、不得通过透明文字实现视觉效果。
-- 卡片、面板和按钮的悬浮反馈不得使用主题光晕；需要反馈时仅使用纯主题色描边和轻微位移，并保留必要的中性阴影层级。
-- 按钮颜色应优先遵循操作语义：主操作使用主题色，删除和停止等危险操作使用红色，警告操作使用警告色，成功操作使用成功色，中性或次要操作使用中性色；不得为了统一主题色而覆盖明确的操作语义颜色。
-- 修改公共主题、按钮、链接或表单控件样式时，应限制选择器作用范围，避免通用规则覆盖用户管理操作按钮、筛选项、弹窗按钮等已有语义样式。
-- 人行全量产品一键导入需要保持四步流程：上传文件、字段映射、开始导入、完成。
-- 修改上传、解析、映射或导入逻辑时，需要同步更新后端测试和前端静态测试。
-- 修改可见 UI、版本号或更新日志时，需要同步更新 `README.md`、`src/auto_check/web/app.js` 中的系统更新日志，以及相关测试，除非用户明确要求某一处不更新。
-- `src/auto_check/web/app.js` 中系统设置的更新日志应保持精简：新增功能列出具体功能；系统界面布局、美化、体验优化、问题修复等统一写为“系统优化及BUG修复”，不要展开细节。
-- 应用内版本与更新日志规则：
-  - 展示用大版本号（如顶栏 / 系统信息中的 `V1.2`）与更新日志小版本（如 `v1.2.15`）分开维护；**跨大版本（如 `V1.2` → `V1.3` / `V2.0`）必须由用户明确授权后才能修改**，AI 与开发人员不得自行推进大版本号。
-  - 模块更新点直接并入对应系统版本条目，不单独成「模块更新」块，也不单独列出模块版本号。
-  - 来自模块的更新项格式为「XX模块：具体内容」（以模块 `manifest.name` 为准；名称末尾无「模块」时自动补「模块」）。
-  - 同一版本内条目不得重复；「系统优化及BUG修复」每个版本最多一条；模块 `release_notes` 不要再写该通用条，只写模块自身功能点。
-- `README.md` 中的版本说明仍需要保留详细变更内容，正常列出关键优化、修复和行为变化，不套用应用内更新日志的精简口径。
-- 登录和用户管理的新密码规则为：至少 6 位且至少包含 1 个字母；初始化管理员密码、新建用户、管理员修改/重置用户密码都必须执行该限制，已有用户密码和登录验证不受新规则影响。
-- 修改自动对数核心逻辑、对数仓储查询、差异类型/具体原因展示或导出逻辑时，必须同步更新 `docs/reconcile-execution-flow.zh-CN.md`。
-- 修改人行逐笔校验引擎的规则、表结构 DDL、字段映射、Excel 读取或元数据时，需要同步更新 `src/auto_check/db_validation/rules_document.py` 中的规则文档内容，以及对应的后端测试（`tests/test_db_validation_*.py`），并确认"对账业务设置/业务字段清单"页面展示与实际逻辑一致。
-- 修改流程执行工具、流程链定义、后台执行或浮动提示等逻辑时，需要参照 `docs/flow-bg-execution-design.zh-CN.md` 并同步相关测试。
-- 修改代码前需要写出方案，得到认可后才能改代码。
-- 新增或修改功能菜单、页面入口时，必须在 `src/auto_check/app/capabilities.py` 注册能力码，并在默认矩阵中补全各角色的初始值；前端菜单按 `data-capability` 或 `hasCapability()` 控制显隐，后端接口按 `has_capability()` 或会话下发的 `capabilities` 列表鉴权。新增功能按钮/操作接口时，默认也应在同一处注册能力码并接入权限分配；若用户明确希望某功能不接入权限分配，则需在方案中确认后保留单一入口控制。
+- 仅亮色活力主题，不恢复沉稳主题、暗色或切换入口。图标、按钮形态、背景统一遵循 Logo 蓝（`#3466D9` → `#6AA4FF`）及语义色，不提供自定义主题色/渐变开关。
+- 卡片、弹窗、按钮、输入、选择、日期、标签、图标容器等复用全局圆角（`--ui-radius`）和主题变量，不硬编码另一套；用户明确要求特殊视觉时例外。
+- 系统所有页面及独立模块的结构性背景必须共用统一表面层级：页面 `--ui-page-surface`；主卡片/面板/弹窗主体 `--ui-panel-surface`；内嵌/筛选/只读分组/次级内容 `--ui-subsection-surface`；禁用输入 `--ui-disabled-surface`；中性边框 `--ui-content-border`。模块限自身作用域引用，不另建近似白/灰/浅蓝结构背景；状态色、选中态、图表色和代码预览等语义或专用画布可例外，须限定组件或状态。
+- 所有弹窗禁止点击遮罩层或背景空白处关闭，使用关闭/取消/确认/完成按钮，可按交互保留 `Esc`；改动弹窗须补遮罩点击不关闭的回归测试。
+- 页面/列表/弹窗滚动条与“报送导航”一致：细条、透明轨道、全圆角滑块，复用 `--ui-thin-scrollbar-size` / `--ui-thin-scrollbar-thumb`，不用默认粗条；同时覆盖 Firefox `scrollbar-width` / `scrollbar-color` 与 WebKit `::-webkit-scrollbar`。
+- 渐变仅用于实心主操作等强调表面；空心按钮、可点击纯文字、角色及“我”等身份标签用纯主题色文字/边框和必要浅色背景，禁止渐变或透明文字效果，确保图文清晰。
+- 卡片/面板/按钮悬浮不加主题光晕，只用纯主题色描边、轻微位移及必要中性阴影；管理列表内部布局不得悬浮位移。
+- 操作颜色守语义：主操作主题色，删除/停止红色，警告、成功、中性/次要各用其色。公共主题、按钮、链接、表单选择器须限定范围，避免覆盖用户管理操作、筛选项及弹窗的原有语义。
 
 ## 后台管理列表页统一规范
 
-- 新增或调整后台管理列表页时，以“系统管理 / 角色权限”页面为统一视觉与交互基准；字典管理、定时任务管理、用户管理及后续同类页面不得各自重新设计一套列表或分页样式。
-- 页面主体应使用纵向 flex 布局并占满主内容区可用高度；列表卡片应 `flex: 1`、`min-height: 0`，表格滚动容器应占满剩余空间。数据不足时由列表背景自然撑满，不得通过伪造空白数据行填充高度。
-- 卡片边框、内容背景、表头背景、分隔线、圆角及文字色必须复用现有全局变量，如 `--outline-variant`、`--surface-container-lowest`、`--surface`、`--ui-radius`，不得为单个页面硬编码近似颜色或圆角。
-- 由标题栏和内容区组成的整页卡片必须共用一个外层边框；外层使用 `border-radius: var(--ui-radius)` 与 `overflow: hidden` 裁切内部背景，避免子区域盖住四角。内容区域的悬浮描边统一使用主题色与 `--outline-variant` 混合后的纯色边框，不使用主题光晕，不得让内部布局在悬浮时位移。
-- 标题栏、筛选框、清除按钮和主操作按钮应沿用现有管理页结构与尺寸；表头、行高、状态标签、操作按钮间距及语义色应保持一致，危险、警告、成功和普通操作继续按现有语义色区分。
-- 分页必须复用角色权限页的 `.pagination`、`.pagination-info`、`.pagination-controls`、`.page-btn`、`.page-current`、`.pagination-jump` 结构与公共样式；不得为新页面另建分页样式。
-- 分页栏固定在列表卡片底部，空数据或不足一页时也不得隐藏。左侧文案统一为“共 N 条，第 P / T 页”，空数据时显示“暂无数据”；右侧依次展示上一页、当前页、下一页和“跳至”输入框，当前页只显示页码 P，空数据时显示“-”。
-- 筛选条件变化、清除筛选或页容量变化后应回到第一页；页码越界时应自动收敛到有效范围。页容量优先复用系统设置或所在功能已有配置，不得为了新页面另设无依据的固定值。
-- 新增或修改管理列表页时，必须增加前端结构或行为测试，至少覆盖满高布局、公共分页类名、空数据/单页分页可见、分页文案、前后翻页、跳页及筛选回到第一页。
+- 以“系统管理 / 角色权限”为基准，字典、定时任务、用户及后续列表不得另设计样式。标题、筛选、清除/主按钮沿用既有结构尺寸；表头、行高、状态、操作间距及语义色一致。
+- 纵向 flex 占满内容区，列表卡片 `flex: 1`、`min-height: 0`，表格滚动区填满剩余空间；数据不足由背景自然撑满，禁止伪造空白行。
+- 边框、背景、表头、分隔线、圆角、文字复用全局变量（`--outline-variant`、`--surface-container-lowest`、`--surface`、`--ui-radius` 等），不硬编码近似值。
+- 标题与内容共用一个外框，`border-radius: var(--ui-radius)`、`overflow: hidden` 裁切四角；悬浮描边用主题色与 `--outline-variant` 混合纯色，不加光晕、不移动内部布局。
+- 分页复用 `.pagination`、`.pagination-info`、`.pagination-controls`、`.page-btn`、`.page-current`、`.pagination-jump` 和公共样式；不得为新页面另建分页样式。
+- 分页固定卡片底部，空数据/单页也可见。左侧“共 N 条，第 P / T 页”，空数据“暂无数据”；右侧依次上一页、当前页、下一页、“跳至”输入框；当前页仅 P，空数据“-”。
+- 筛选、清除或页容量变化回第一页；越界收敛；页容量复用系统/既有配置，不另设无依据固定值。
+- 须补前端结构/行为测试，覆盖满高、公共分页类、空数据/单页可见、文案、前后翻页、跳页及筛选回第一页。
 
-## 相关文档
+## 业务与权限
 
-- `docs/ai-modular-development-rules.zh-CN.md`：后续 AI 和开发人员实施独立模块时必须遵守的目录、接口、前端、迁移、权限、测试和协作规则。
-- `docs/reconcile-execution-flow.zh-CN.md`：自动对数执行流程、仓储查询、差异类型与导出逻辑的权威说明，改动对应逻辑时必须同步。
-- `docs/reconcile-rules.zh-CN.md` / `docs/对账逻辑说明.md`：自动对数规则与逻辑历史说明。
-- `docs/reconcile-logic-history.zh-CN.md`：自动对数逻辑演进历史。
-- `docs/flow-bg-execution-design.zh-CN.md`：流程执行工具后台执行与浮动提示设计。
-- `docs/check-history-design.zh-CN.md`：核对历史相关设计。
-- `docs/business-schema-config-roadmap.zh-CN.md`：对账业务设置/业务字段清单路线图。
-- `docs/asset-missing-refinement-*.zh-CN.md`：资产缺失细分相关设计与临时方案。
-- `docs/reconcile-candidate-report-check-mapping.zh-CN.md`：候选不唯一与导出备注映射说明。
-- `docs/deployment.zh-CN.md`：跨平台部署说明。
-- `docs/prototypes/`：原型与设计预览（可包含 HTML 原型），不属于正式产物。
-- `README.md`：对外说明与版本变更记录，修改可见 UI、版本号或更新日志时需同步。
+- 人行全量导入保持“上传文件、字段映射、开始导入、完成”四步；上传、解析、映射、导入改动同步后端与前端静态测试。
+- 自动对数核心、仓储查询、差异类型/具体原因展示或导出改动，同步 `docs/reconcile-execution-flow.zh-CN.md`。
+- 逐笔规则、DDL、字段映射、Excel 或元数据改动，同步 `src/auto_check/db_validation/rules_document.py`、`tests/test_db_validation_*.py`，确认“对账业务设置/业务字段清单”与逻辑一致。
+- 流程工具、流程链、后台执行、浮动提示改动，参照 `docs/flow-bg-execution-design.zh-CN.md` 并同步测试。
+- 新密码至少 6 位且含 1 个字母，适用初始化管理员、新建用户、管理员修改/重置密码；不改变已有密码及登录校验。
+- 新增/修改菜单或入口、默认新增按钮/操作接口，在 `src/auto_check/app/capabilities.py` 注册能力码并补全角色默认矩阵；前端用 `data-capability` / `hasCapability()`，后端用 `has_capability()` 或会话 `capabilities` 鉴权。用户明确要求不接权限分配时，在方案中确认并保留单一入口控制。
 
-## 验证要求
+## 版本与更新记录
 
-- 代码改动后运行：`python -m pytest -q`
-- 影响源码或前端展示且需要交付应用时，运行打包脚本刷新 `dist\auto-check.exe`。
-- 打包前先确认没有正在运行的 `dist\auto-check.exe` 占用文件。
-- `git diff --check` 中的 CRLF/LF 提示通常只是换行符提示；若出现实际 whitespace error，需要修复。
+- 正式应用可见 UI、版本号或日志改动，同步 `README.md`、`src/auto_check/web/app.js` 系统日志及相关测试；用户明确指定某处不更新时例外。独立原型、纯文档整理记在各自文档，不作为正式功能发布。
+- **两处都保持简约**：按版本/日期列主要更新，不展开字段、样式、操作步骤或实现细节。
+- **README**：简述关键功能、优化和修复；原有精细内容完整保存在 `docs/project-history.zh-CN.md`。后续更新维护在 README，不要求向历史文件追加精细记录。
+- **系统日志**（`app.js` 及模块 `release_notes`）：只含正式项目功能相关更新，可与 README 的功能摘要一致；不得包含项目文档、原型图/原型演示、开发流程或打包操作。简述主要新功能；布局、美化、体验优化、问题修复合并概述，通用“系统优化及BUG修复”每版本最多一条。用户指定某版本的确切文案时严格按指定内容。
+- 展示大版本（如 `V1.3`）与日志小版本（如 `v1.3.0`）分开；跨大版本必须经用户明确授权，不得自行推进。
+- 模块更新按 `release_notes.version` 并入同号系统版本，旧版本内容不得灌入最新版本；无对应版本则不展示。不单设“模块更新”块或模块版本号。展示格式“XX模块：具体内容”，清单项只写内容，不重复写模块前缀；名称取 `manifest.name`，末尾无“模块”则补上；同版本不重复，模块 `release_notes` 只列自身功能，不再写通用修复条。
 
-## Git 约定
+## 验证、打包与 Git
 
-- 提交说明必须使用中文。
-- 提交应聚焦当前请求，不混入无关改动。
-- 不要提交 `build/` 等生成目录，除非用户明确要求。
-- 用户要求提交或推送时，先完成测试和必要打包，再提交并推送当前分支。
-- 用户要求推送时，默认将当前分支同时推送到 GitHub（`origin`）和 Gitee（`gitee`）；若 GitHub 连接失败，则至少确保 Gitee 推送成功。
-- 对 Gitee 执行 `fetch`、`pull`、`push`、`ls-remote` 等网络命令时，默认使用命令级 `git -c http.proxy= -c https.proxy= ...` 绕过 HTTP/HTTPS 代理；不得为此修改 Git 全局配置、系统代理或其他远端的代理行为。若直连仍失败，再如实报告网络错误或尝试其他安全连接方式。
-- **AI 助手在没有用户明确许可的情况下，不得主动推送代码；只有用户明确说"推送"或类似授权时，才执行推送操作。**
-- 当 GitHub 连接失败时，从 Gitee 拉取代码（地址：`https://gitee.com/xiaxin8327077-cyber/autocheck.git`）。
+- 代码改动默认运行 `python -m pytest -q`；用户明确要求本次不运行时遵从并说明，保留必要静态检查，不声称测试通过。
+- 提交前 `git diff --check`；CRLF/LF 提示通常只是换行提示，实际 whitespace error 须修复。
+- 日常源码/前端修改不自动打包；仅用户明确要求打包或可执行程序交付时执行，先完成适用验证。Windows 打包前确认无运行中 `dist/auto-check.exe` 占用；使用 `pwsh -NoLogo -NoProfile -File scripts/package-windows.ps1`，可加 `-PythonPath "<path-to-python.exe>"`，产物 `dist/auto-check.exe`。Linux 标准产物 `dist-glibc217/auto-check`，按部署文档及专用打包流程操作。
+- 中文提交说明，只含当前请求，不混入无关改动或 `build/` 等生成目录（用户明确要求除外）。仅要求提交时只提交当前分支；**只有明确推送或同等授权才推送**。
+- 授权推送默认同时推当前分支到 GitHub `origin`、Gitee `gitee`；GitHub 优先 SSH，不擅改保存的远端 URL。GitHub 失败至少确保 Gitee 成功并如实报告；需拉取时从 Gitee `https://gitee.com/xiaxin8327077-cyber/autocheck.git` 获取。
+- Gitee `fetch/pull/push/ls-remote` 用命令级 `git -c http.proxy= -c https.proxy= ...` 绕过代理，不改系统、Git 全局或其他远端代理；直连失败如实报告或尝试不持久修改的安全方式。
+
+## 专项参考
+
+除上文必须同步的文档外，按任务查阅：
+
+- 规则与演进：`docs/reconcile-rules.zh-CN.md`、`docs/对账逻辑说明.md`、`docs/reconcile-logic-history.zh-CN.md`。
+- 历史与导出：`docs/check-history-design.zh-CN.md`、`docs/reconcile-candidate-report-check-mapping.zh-CN.md`。
+- 字段及待实施方案：`docs/business-schema-config-roadmap.zh-CN.md`、`docs/asset-missing-refinement-*.zh-CN.md`。
+- 部署与存储：`docs/intranet-production-deployment.zh-CN.md`、`docs/deployment.zh-CN.md`、`docs/mysql-application-storage.zh-CN.md`。
+- 项目入口及简约版本记录：`README.md`；已有详细历史：`docs/project-history.zh-CN.md`。

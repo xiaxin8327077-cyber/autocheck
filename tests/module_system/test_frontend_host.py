@@ -184,24 +184,35 @@ def test_legacy_changelog_safely_renders_generic_module_release_notes(tmp_path: 
           {{ label: "报表特殊处理录入模块", text: "系统优化及BUG修复" }},
           {{ label: "报表特殊处理录入模块", text: "管理员可删除特殊处理记录" }},
         ]);
-        const base = `<div class="changelog-item"><div><span class="changelog-version">v1.2.15</span></div><ul><li>base</li><li>系统优化及BUG修复。</li></ul></div>`;
+        const latest = `<div class="changelog-item"><div><span class="changelog-version">v1.3.0</span></div><ul><li>报表特殊处理支持字典扩展关联报送，优化统计标签和 Excel 导出。</li></ul></div>`;
+        const older = `<div class="changelog-item"><div><span class="changelog-version">v1.2.15</span></div><ul><li>base</li><li>系统优化及BUG修复。</li></ul></div>`;
+        const base = latest + older;
         const html = mergeModuleReleaseNotesIntoSystemChangelog(base, [
-          {{ module_id: "one", module_name: "<img src=x onerror=1>", version: "1.0.0", items: ["<script>alert(1)</script>"] }},
-          {{ module_id: "two", module_name: "Two", version: "2.0.0", items: ["Second", "Third"] }},
-          {{ module_id: "rsp", module_name: "报表特殊处理录入", version: "1.2.1", items: ["系统优化及BUG修复", "管理员可删除特殊处理记录"] }},
+          {{ module_id: "one", module_name: "<img src=x onerror=1>", version: "1.2.15", items: ["<script>alert(1)</script>"] }},
+          {{ module_id: "two", module_name: "Two", version: "1.2.15", items: ["Second", "Two模块：Second", "Two模块：Two模块：Third"] }},
+          {{ module_id: "rsp", module_name: "报表特殊处理录入", version: "1.2.15", items: ["系统优化及BUG修复", "管理员可删除特殊处理记录"] }},
+          {{ module_id: "unmatched", module_name: "Missing", version: "9.9.9", items: ["Unmatched content"] }},
+          null,
         ]);
+        assert.ok(html.startsWith(latest));
         assert.match(html, /v1\.2\.15/);
         assert.match(html, /base/);
         assert.match(html, /&lt;img src=x onerror=1&gt;模块：&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-        assert.match(html, /Two模块：Second/);
-        assert.match(html, /Two模块：Third/);
+        assert.equal((html.match(/Two模块：Second/g) || []).length, 1);
+        assert.equal((html.match(/Two模块：Third/g) || []).length, 1);
+        assert.doesNotMatch(html, /Two模块：Two模块/);
         assert.match(html, /报表特殊处理录入模块：管理员可删除特殊处理记录/);
         assert.equal((html.match(/系统优化及BUG修复/g) || []).length, 1);
         assert.doesNotMatch(html, /报表特殊处理录入模块：系统优化及BUG修复/);
+        assert.doesNotMatch(html, /Unmatched content|v9\.9\.9/);
         assert.doesNotMatch(html, /<h4>模块更新<\/h4>/);
         assert.doesNotMatch(html, /module-release-notes/);
         assert.doesNotMatch(html, /<script>|<img/);
-        assert.doesNotMatch(html, /v1\.0\.0|v2\.0\.0/);
+        assert.equal(mergeModuleReleaseNotesIntoSystemChangelog(base, []), base);
+        assert.equal(mergeModuleReleaseNotesIntoSystemChangelog(base, null), base);
+        assert.equal(mergeModuleReleaseNotesIntoSystemChangelog(html, [
+          {{ module_name: "Two", version: "1.2.15", items: ["Second", "Third"] }},
+        ]), html);
         """
     )
     scenario_path = tmp_path / "render_module_release_notes.cjs"
