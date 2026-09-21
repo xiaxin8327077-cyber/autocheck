@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -22,8 +23,11 @@ def run_preview(tmp_path: Path, content: dict, field_types: dict | None = None, 
     workdir = tmp_path / "script_preview"
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / "package.json").write_text('{"type":"module"}', encoding="utf-8")
+    # Node 16 resolves module type from the imported file's package scope.
+    # Keep the unmodified source beside the temporary ES module declaration.
+    shutil.copy2(SCRIPT_PREVIEW, workdir / "script_preview.js")
     scenario = f"""
-import {{ buildScriptPreview }} from {json.dumps(SCRIPT_PREVIEW.as_uri())};
+import {{ buildScriptPreview }} from "./script_preview.js";
 const content = {json.dumps(content, ensure_ascii=False)};
 const fieldTypes = {json.dumps(field_types or {}, ensure_ascii=False)};
 process.stdout.write(buildScriptPreview(content, fieldTypes, {json.dumps(report_period)}));
