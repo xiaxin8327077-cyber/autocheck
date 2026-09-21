@@ -89,8 +89,10 @@ def test_module_development_guide_defines_explicit_external_readonly_route_contr
         "external=True",
         "/api/external/v1/",
         "只允许 `GET`",
-        "AUTO_CHECK_EXTERNAL_API_TOKEN",
-        "secrets.compare_digest",
+        "platform.external_api_status",
+        "get_status()",
+        "verify_candidate()",
+        "普通模块不得直接读取或记录环境 Token",
     ]:
         assert fragment in content
 
@@ -99,8 +101,11 @@ def test_dashboard_management_external_api_doc_covers_monitoring():
     content = (ROOT / "docs/dashboard-management-external-api.zh-CN.md").read_text(encoding="utf-8")
 
     for fragment in [
-        "认证通过并命中路由才记录",
-        "401/503 不记录",
+        "Token 缺失或错误 401",
+        "限流 429",
+        "Token 未配置或认证服务异常 503",
+        "精确路径错误方法 405",
+        "未命中精确接口的 404 和内部预览不记录",
         "TCP 对端 IP",
         "X-Forwarded-For",
         "30 天",

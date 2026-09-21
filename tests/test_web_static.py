@@ -26,6 +26,22 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def test_v13_display_version_and_release_notes_are_consistent():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    readme = _read(README_MD)
+    assert 'const DEFAULT_VERSION = "V1.3";' in app_js
+    assert 'id="statusText">V1.3</span>' in html
+    assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
+    assert 'id="sysVersion">V1.3</span>' in html
+    assert "- 应用界面版本：`V1.3`" in readme
+    assert app_js.count('class="changelog-version">v1.3.0</span>') == 1
+    assert app_js.index('>v1.3.0</span>') < app_js.index('>v1.2.31</span>')
+    latest = app_js.split('>v1.3.0</span>', 1)[1].split('</ul>', 1)[0]
+    assert latest.count("系统优化及BUG修复") == 1
+    assert "`v1.3.0` (2026-09-21)" in readme
+
+
 def test_global_content_surface_hierarchy_is_shared_by_every_page_and_documented():
     css = _read(STYLES_CSS)
     constraints = _read(AGENTS_MD)
@@ -4491,7 +4507,7 @@ def test_v21_changelog_documents_interface_radius_concisely():
         "#RRGGBB",
     ]:
         assert verbose_theme_detail not in body
-    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
+    assert 'const DEFAULT_VERSION = "V1.3";' in app_js
 
 
 def test_balanced_modal_refresh_is_documented_with_concise_in_app_changelog():
@@ -4551,9 +4567,9 @@ def test_version_206_documents_db_validation_engine_update():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
-    assert 'id="statusText">V1.2</span>' in html
-    assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
+    assert 'const DEFAULT_VERSION = "V1.3";' in app_js
+    assert 'id="statusText">V1.3</span>' in html
+    assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
 
     for text in [
         "v1.2.13",
@@ -4742,11 +4758,11 @@ def test_version_21_documents_reconcile_schema_and_flow_updates():
     app_js = _read(APP_JS)
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
-    assert 'id="statusText">V1.2</span>' in html
-    assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
-    assert "- 应用界面版本：`V1.2`" in readme
-    assert 'id="sysVersion">V1.2</span>' in html
+    assert 'const DEFAULT_VERSION = "V1.3";' in app_js
+    assert 'id="statusText">V1.3</span>' in html
+    assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
+    assert "- 应用界面版本：`V1.3`" in readme
+    assert 'id="sysVersion">V1.3</span>' in html
 
     change_items = [
         "人行逐笔校验执行历史新增执行人展示",
@@ -4797,9 +4813,9 @@ def test_version_205_documents_scheme_a_logo_update():
     favicon_asset = _read(ROOT / "src" / "auto_check" / "web" / "assets" / "favicon-64x64.svg")
     readme = _read(README_MD)
 
-    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
-    assert 'id="statusText">V1.2</span>' in html
-    assert 'id="topNavStatus" title="V1.2">V1.2</span>' in html
+    assert 'const DEFAULT_VERSION = "V1.3";' in app_js
+    assert 'id="statusText">V1.3</span>' in html
+    assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
 
     for text in [
         "v1.2.9",
@@ -8128,7 +8144,7 @@ def test_role_permissions_page_and_capability_access_are_present():
     # 角色权限页加载
     assert "function loadRolePermissions" in app_js
     # 展示用月度版本号；更新日志条目使用 v1.2.x 小版本编号
-    assert 'const DEFAULT_VERSION = "V1.2"' in app_js
+    assert 'const DEFAULT_VERSION = "V1.3"' in app_js
     assert '<span class="changelog-version">v1.2.30</span>' in app_js
     assert '<span class="changelog-version">v1.2.29</span>' in app_js
     assert '<span class="changelog-version">v1.2.28</span>' in app_js
@@ -10518,8 +10534,8 @@ def test_changelog_has_single_v1223_entry_with_recovery_feature():
     assert entry.count("系统优化及BUG修复") == 1
     # v1.2.23 必须排在 v1.2.22 之前（最新条目在最上）。
     assert app_js.index("v1.2.23") < app_js.index("v1.2.22")
-    # 顶栏展示大版本保持 V1.2。
-    assert 'const DEFAULT_VERSION = "V1.2";' in app_js
+    # 顶栏展示大版本保持 V1.3。
+    assert 'const DEFAULT_VERSION = "V1.3";' in app_js
 
 
 def test_pbc_upload_splits_attempt_and_recovers_once():

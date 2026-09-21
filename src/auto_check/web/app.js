@@ -84,7 +84,7 @@ const reportCheckConfigReset = document.getElementById("reportCheckConfigReset")
 const reportCheckConfigSave = document.getElementById("reportCheckConfigSave");
 
 // 顶栏/系统信息展示用月度版本号（约每月更新）；更新日志 changelog 仍用独立版本号，互不影响。
-const DEFAULT_VERSION = "V1.2";
+const DEFAULT_VERSION = "V1.3";
 const sysVersion = document.getElementById("sysVersion");
 if (sysVersion) sysVersion.textContent = DEFAULT_VERSION;
 const USER_AVATAR_SESSION_KEY = "autoCheckUserAvatarVariant";
@@ -14750,6 +14750,16 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
     ? window.AutoCheckModuleHost.releaseNotes()
     : [];
   const changelogHtml = `
+    <div class="changelog-item">
+      <div>
+        <span class="changelog-version">v1.3.0</span>
+        <span class="changelog-date">2026-09-21</span>
+      </div>
+      <ul>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
     <div class="changelog-item">
       <div>
         <span class="changelog-version">v1.2.31</span>
