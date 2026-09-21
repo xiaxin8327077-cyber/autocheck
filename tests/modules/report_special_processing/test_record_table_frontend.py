@@ -80,6 +80,27 @@ def _base_record(**changes) -> dict:
     return record
 
 
+def test_table_uses_same_display_projection_as_export(tmp_path: Path) -> None:
+    from auto_check.modules.report_special_processing.ledger_display import ledger_display
+    from auto_check.modules.report_special_processing.export_workbook import export_rows
+
+    record = _base_record(
+        field_name="金额｜amt；数量｜qty",
+        value_before="001\n0",
+        value_after="002\n1",
+        report_processes=[{"name": "人行大集中报送"}, {"name": "1104报送"}],
+    )
+    record["ledger_display"] = ledger_display(record)
+    rendered = _render_table(tmp_path, [record])
+    groups = _nodes(rendered, "rsp-change-grid-row")
+    exported = export_rows([record])
+    assert len(groups) == len(exported)
+    for group, row in zip(groups, exported):
+        assert _nodes(group, "rsp-change-field-name")[0]["text"] == row[1]
+        assert [node["text"] for node in _nodes(group, "rsp-change-grid-value")] == row[2:4]
+    assert [node["text"] for node in _nodes(rendered, "rsp-process-name-line")] == exported[0][5].split("\n")
+
+
 def test_main_list_uses_three_plain_change_columns_and_deduplicates_fields(tmp_path: Path) -> None:
     record = _base_record(structured_content={"tables": [
         {"table_name": "table_a", "chinese_table_name": "表A", "fields": [

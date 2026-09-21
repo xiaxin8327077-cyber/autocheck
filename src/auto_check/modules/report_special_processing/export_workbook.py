@@ -1,140 +1,157 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from io import BytesIO
+from math import ceil
 from typing import Any, Mapping, Sequence
-from zoneinfo import ZoneInfo
 
-from .contracts import DIMENSION_LABELS, STATUS_LABELS, RecordStatus
+from .contracts import STATUS_LABELS, RecordStatus
+from .bilingual_names import parse_bilingual_groups, parse_bilingual_items, serialize_bilingual_items
+from .ledger_display import display_width, ledger_display
 
 
-SHANGHAI = ZoneInfo("Asia/Shanghai")
 EXPORT_HEADERS = (
-    "所属报送期",
-    "关联报送",
-    "所属维度",
-    "处理摘要",
-    "处理表名",
-    "处理字段名",
-    "修改前",
-    "修改后",
-    "处理人",
-    "数据治理负责人",
-    "处理时间",
-    "状态",
+    "处理表名", "修改字段", "修改前", "修改后", "所属业务系统", "关联报送", "状态", "处理人", "处理时间",
 )
 MAX_EXPORT_ROWS = 5_000
+_COLUMN_WIDTHS = (28, 42, 32, 32, 20, 30, 12, 16, 23)
 
 
-def _period_text(value: Any) -> str:
-    if isinstance(value, date):
-        return value.isoformat()
-    return str(value or "").strip()
+def _display(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text if text.strip() else "—"
 
 
-def _datetime_text(value: Any) -> str:
-    if not value:
-        return ""
-    if isinstance(value, datetime):
-        local = value
-        if local.tzinfo is not None:
-            local = local.astimezone(SHANGHAI).replace(tzinfo=None)
-        return local.strftime("%Y-%m-%d %H:%M:%S")
-    text = str(value)
-    return (
-        text.replace("T", " ")
-        .split(".", 1)[0]
-        .replace("+08:00", "")
-        .replace("Z", "")
-        .strip()
-    )
-
-
-def _status_text(value: Any) -> str:
-    code = str(value or "").strip()
+def _table_sections(record: Mapping[str, Any]) -> list[tuple[str, Mapping[str, Any]]]:
+    """导出按表保留字段归属；每个表内部复用列表的同值分组规则。"""
+    structured = record.get("structured_content")
+    tables = structured.get("tables") if isinstance(structured, Mapping) else None
+    if isinstance(tables, list) and tables:
+        return [
+            (
+                _display(str(table.get("chinese_table_name") or "").strip() or str(table.get("table_name") or "").strip()),
+                {**record, "structured_content": {"tables": [table]}},
+            )
+            for table in tables if isinstance(table, Mapping)
+        ] or [("—", record)]
+    table_text = str(record.get("table_name") or "").strip()
     try:
-        return STATUS_LABELS[RecordStatus(code)]
+        names = parse_bilingual_items(table_text)
     except ValueError:
-        return code
-
-
-def _dimension_text(value: Any) -> str:
-    code = str(value or "").strip()
-    return DIMENSION_LABELS.get(code, code)
-
-
-def _bilingual_multiline(value: Any) -> str:
-    """将双语规范串拆为多行“中文｜英文”；分组串按组拆块，组间用空行分隔；旧值原样返回。"""
-    from .bilingual_names import (
-        BILINGUAL_GROUP_SEPARATOR,
-        BILINGUAL_PART_SEPARATOR,
-        parse_bilingual_groups,
-        parse_bilingual_items,
-    )
-
-    text = str(value or "").strip()
-    if not text:
-        return ""
+        return [(_display(table_text), record)]
+    table_label = "\n".join(zh or en for zh, en in names)
     try:
-        if BILINGUAL_GROUP_SEPARATOR in text:
-            groups = parse_bilingual_groups(text)
-            blocks = [
-                "\n".join(f"{zh}{BILINGUAL_PART_SEPARATOR}{en}" for zh, en in group)
-                for group in groups
-                if group
-            ]
-            return "\n\n".join(blocks)
-        items = parse_bilingual_items(text)
+        field_groups = parse_bilingual_groups(str(record.get("field_name") or ""))
     except ValueError:
-        return text
-    return "\n".join(f"{zh}{BILINGUAL_PART_SEPARATOR}{en}" for zh, en in items)
+        return [(_display(table_label), record)]
+    if not names or len(names) != len(field_groups):
+        return [(_display(table_label), record)]
+    before = "" if record.get("value_before") is None else str(record["value_before"])
+    after = "" if record.get("value_after") is None else str(record["value_after"])
+    before_lines, after_lines = before.split("\n"), after.split("\n")
+    global_values = len(before_lines) == len(after_lines) == 1
+    field_count = sum(len(fields) for fields in field_groups)
+    if not global_values and not (field_count == len(before_lines) == len(after_lines)):
+        return [(_display(table_label), record)]
+    sections = []
+    offset = 0
+    for (zh, en), fields in zip(names, field_groups):
+        length = len(fields)
+        sections.append((zh or en, {
+            **record,
+            "structured_content": None,
+            "field_name": serialize_bilingual_items(fields),
+            "value_before": before if global_values else "\n".join(before_lines[offset:offset + length]),
+            "value_after": after if global_values else "\n".join(after_lines[offset:offset + length]),
+        }))
+        offset += length
+    return sections
 
 
-def export_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
-    rows: list[list[Any]] = []
-    for record in records:
-        rows.append(
-            [
-                _period_text(record.get("report_period")),
-                str(record.get("report_process_name_snapshot") or record.get("report_process_name") or ""),
-                _dimension_text(record.get("dimension")),
-                str(record.get("summary") or ""),
-                _bilingual_multiline(record.get("table_name")),
-                _bilingual_multiline(record.get("field_name")),
-                str(record.get("value_before") or ""),
-                str(record.get("value_after") or ""),
-                str(
-                    record.get("handler_display_name_snapshot")
-                    or record.get("handler_username_snapshot")
-                    or ""
-                ),
-                str(
-                    record.get("governance_owner_display_name_snapshot")
-                    or record.get("governance_owner_username_snapshot")
-                    or ""
-                ),
-                _datetime_text(record.get("special_handling_at")),
-                _status_text(record.get("status")),
-            ]
+def _record_rows(record: Mapping[str, Any]) -> list[list[str]]:
+    display = ledger_display(record)
+    code = str(record.get("status") or "")
+    try:
+        status = STATUS_LABELS[RecordStatus(code)]
+    except ValueError:
+        status = code
+    metadata = [
+        _display(record.get("business_system_name_snapshot")),
+        _display("\n".join(display["process_names"])),
+        _display(status),
+        _display(record.get("handler_display_name_snapshot") or record.get("handler_username_snapshot")),
+        _display(display["handled_at"]),
+    ]
+    rows = []
+    for table_name, section in _table_sections(record):
+        groups = ledger_display(section)["change_groups"]
+        rows.extend(
+            [table_name, "\n".join(group["fields"]), _display(group["before"]), _display(group["after"]), *metadata]
+            for group in groups
         )
     return rows
 
 
+def export_rows(records: Sequence[Mapping[str, Any]]) -> list[list[Any]]:
+    return [row for record in records for row in _record_rows(record)]
+
+
+def _line_count(value: str, width: float) -> int:
+    return sum(max(1, ceil(display_width(line) / (width - 2))) for line in value.split("\n"))
+
+
 def build_export_xlsx(records: Sequence[Mapping[str, Any]], *, title: str = "报表特殊处理") -> bytes:
     from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
 
     workbook = Workbook()
+    workbook.properties.title = title
     sheet = workbook.active
     sheet.title = "报表特殊处理"
     sheet.append(list(EXPORT_HEADERS))
-    for row in export_rows(records):
-        sheet.append(row)
     sheet.freeze_panes = "A2"
-    from openpyxl.styles import Alignment
+    sheet.sheet_view.showGridLines = False
+    edge = Side(style="thin", color="AEB8C8")
+    border = Border(left=edge, right=edge, top=edge, bottom=edge)
+    for index, width in enumerate(_COLUMN_WIDTHS, 1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    for cell in sheet[1]:
+        cell.font = Font(name="微软雅黑", size=11, bold=True, color="244578")
+        cell.fill = PatternFill("solid", fgColor="F0F5FA")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    sheet.row_dimensions[1].height = 30
 
-    for column_index in (5, 6):  # 处理表名、处理字段名
-        for cell in sheet[chr(ord("A") + column_index - 1)][1:]:
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
+    for record in records:
+        rows = _record_rows(record)
+        start = sheet.max_row + 1
+        metadata_lines = max(_line_count(value, _COLUMN_WIDTHS[index]) for index, value in enumerate(rows[0][4:], 4))
+        for values in rows:
+            sheet.append(values)
+            row_number = sheet.max_row
+            lines = max(_line_count(value, _COLUMN_WIDTHS[index]) for index, value in enumerate(values[:4]))
+            lines = max(lines, ceil(metadata_lines / len(rows)))
+            sheet.row_dimensions[row_number].height = min(409, max(36, lines * 16 + 12))
+            for cell in sheet[row_number]:
+                # 所有业务值均为文本，保留零、前导零和以等号开头的原始内容。
+                cell.data_type = "s"
+                cell.number_format = "@"
+                cell.font = Font(name="微软雅黑", size=11, color="244578")
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                cell.border = border
+        if len(rows) > 1:
+            for column in range(5, 10):
+                sheet.merge_cells(start_row=start, end_row=sheet.max_row, start_column=column, end_column=column)
+        status_cell = sheet.cell(start, 7)
+        status_color = {"completed": "008C69", "pending": "C67500", "voided": "C53B46"}.get(str(record.get("status")), "244578")
+        status_cell.font = Font(name="微软雅黑", size=11, color=status_color)
+
+    sheet.print_title_rows = "1:1"
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.paperSize = sheet.PAPERSIZE_A3
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
     buffer = BytesIO()
     workbook.save(buffer)
     return buffer.getvalue()

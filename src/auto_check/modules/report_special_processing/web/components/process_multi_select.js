@@ -3,7 +3,7 @@ import { element } from "./dom.js";
 function selectedLabel(options, selected) {
   const names = options
     .filter((item) => selected.has(String(item.code)))
-    .map((item) => item.name || item.code);
+    .map((item) => `${item.name || item.code}${item.historical ? "（历史项）" : ""}`);
   return names.length ? names.join("；") : "请选择关联报送";
 }
 
@@ -39,6 +39,7 @@ export function createProcessMultiSelect(documentRef, {
     const active = selected.has(code);
     row.classList.toggle("is-selected", active);
     row.setAttribute("aria-selected", String(active));
+    row.disabled = Boolean(disabled || (row.dataset.historical === "true" && !active));
   }
 
   function syncTrigger() {
@@ -57,14 +58,17 @@ export function createProcessMultiSelect(documentRef, {
 
   options.forEach((item) => {
     const code = String(item.code);
+    const historical = Boolean(item.historical);
+    const canToggle = !disabled && (!historical || selected.has(code));
     const row = element(documentRef, "button", {
       type: "button",
-      className: "rsp-multi-select-option",
+      className: historical ? "rsp-multi-select-option is-historical" : "rsp-multi-select-option",
       role: "option",
       "aria-selected": String(selected.has(code)),
       "data-code": code,
-      disabled,
-      text: item.name || code,
+      dataset: { historical: String(historical) },
+      disabled: !canToggle,
+      text: `${item.name || code}${historical ? "（历史项）" : ""}`,
     });
     if (selected.has(code)) row.classList.add("is-selected");
     row.addEventListener("click", (event) => {

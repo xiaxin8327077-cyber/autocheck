@@ -1108,6 +1108,7 @@ def _run_ledger_scenario(tmp_path: Path, scenario: str, name: str) -> subprocess
         "metadata_picker.js",
         "script_preview.js",
         "audit_detail.js",
+        "report_tabs.js",
     ):
         shutil.copy(WEB / "components" / js, workdir / "components" / js)
     shutil.copy(WEB / "api.js", workdir / "api.js")

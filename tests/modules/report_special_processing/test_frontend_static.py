@@ -114,6 +114,7 @@ def test_candidate_a_is_dynamic_full_width_and_accessible():
             "components/filters.js",
             "components/record_table.js",
             "components/record_drawer.js",
+            "components/report_tabs.js",
         )
     )
 

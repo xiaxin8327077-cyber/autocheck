@@ -3,6 +3,7 @@ import { element } from "../components/dom.js";
 import { createFilters } from "../components/filters.js";
 import { createRecordTable } from "../components/record_table.js";
 import { createRecordDrawer } from "../components/record_drawer.js";
+import { createReportTabs, normalizeActiveTabCode } from "../components/report_tabs.js";
 
 const ALL_PROCESS_CODE = "";
 const ALL_PROCESS_TAB = Object.freeze({ code: ALL_PROCESS_CODE, name: "全部" });
@@ -39,10 +40,16 @@ function readLocateQuery(route, documentRef) {
 
 export function createLedgerPage({ root, api, state, user, notify, confirm, prompt, navigate }) {
   const documentRef = root.ownerDocument;
+  let reportTabs = null;
 
   async function loadCatalog() {
     try {
       state.catalog = dataOf(await api.catalog(), {});
+      const activeProcessCode = normalizeActiveTabCode(state.activeProcessCode, state.catalog);
+      if (activeProcessCode !== state.activeProcessCode) {
+        state.activeProcessCode = activeProcessCode;
+        state.page = 1;
+      }
       state.catalogAvailable = Array.isArray(state.catalog.report_processes)
         && state.catalog.report_processes.some((item) => item.active !== false)
         && Array.isArray(state.catalog.users)
@@ -408,46 +415,31 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
         + Number(state.summary.voided || 0)
       )
       : Number(state.summary.record_total) || 0;
-    const tabs = element(documentRef, "div", { className: "rsp-report-tabs", role: "tablist", "aria-label": "关联报送" });
-    const report_processes = (state.catalog?.report_processes || []).filter((item) => item.active !== false);
-    const tabItems = [ALL_PROCESS_TAB, ...report_processes];
-
-    tabItems.forEach((processItem) => {
-      const active = processItem.code === state.activeProcessCode;
-      const count = processItem.code === ALL_PROCESS_CODE ? allCount : (counts.get(processItem.code) || 0);
-      const tab = element(documentRef, "button", {
-        type: "button",
-        role: "tab",
-        "aria-selected": String(active),
-        tabIndex: active ? "0" : "-1",
-        className: active ? "is-active" : "",
-        onClick: () => {
-          state.activeProcessCode = processItem.code;
-          state.page = 1;
-          state.drawer = null;
-          loadLedger();
-        },
-      }, [
-        element(documentRef, "span", { text: processItem.name }),
-        element(documentRef, "small", { text: String(count) }),
-      ]);
-      tab.addEventListener("keydown", (event) => {
-        if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-        event.preventDefault();
-        const index = tabItems.findIndex((item) => item.code === processItem.code);
-        const offset = event.key === "ArrowRight" ? 1 : -1;
-        const next = tabItems[(index + offset + tabItems.length) % tabItems.length];
-        state.activeProcessCode = next.code;
+    reportTabs?.destroy();
+    const catalog = state.catalog || {};
+    // Tabs are a display-only catalog. The ungrouped report_processes catalog
+    // remains the source for create/edit selection and historical detail.
+    const reportProcesses = (catalog?.report_process_tabs ?? catalog?.report_processes ?? [])
+      .filter((item) => item.active !== false);
+    const tabItems = [ALL_PROCESS_TAB, ...reportProcesses].map((item) => ({
+      ...item,
+      count: item.code === ALL_PROCESS_CODE ? allCount : (counts.get(item.code) || 0),
+    }));
+    reportTabs = createReportTabs(documentRef, {
+      items: tabItems,
+      activeCode: state.activeProcessCode,
+      onSelect: (code) => {
+        state.activeProcessCode = code;
         state.page = 1;
+        state.drawer = null;
         loadLedger();
-      });
-      tabs.append(tab);
+      },
     });
     const header = element(documentRef, "div", { className: "rsp-tabs-header" }, [
       element(documentRef, "h2", { className: "rsp-tabs-title", text: title }),
       element(documentRef, "div", { className: "rsp-tabs-actions" }, actions),
     ]);
-    const card = element(documentRef, "div", { className: "rsp-tabs-card" }, [header, tabs]);
+    const card = element(documentRef, "div", { className: "rsp-tabs-card" }, [header, reportTabs.root]);
     return card;
   }
 
@@ -503,6 +495,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
 
   function render() {
     if (!state.active) return;
+    const restoreReportTabFocus = Boolean(reportTabs?.root?.contains?.(documentRef.activeElement));
     const canCreate = Boolean(state.catalogAvailable && (state.catalog?.capabilities?.can_create ?? true));
     const createButton = element(documentRef, "button", {
       type: "button",
@@ -564,6 +557,7 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       })
       : null;
     root.replaceChildren(...[availability, layout, modal].filter(Boolean));
+    if (restoreReportTabFocus) reportTabs?.focusActive();
   }
 
   return Object.freeze({
@@ -603,12 +597,16 @@ export function createLedgerPage({ root, api, state, user, notify, confirm, prom
       state.locateHighlight = false;
       state.locateOpenConfirm = false;
       api.cancelAll();
+      reportTabs?.destroy();
+      reportTabs = null;
       root.replaceChildren();
     },
     destroy() {
       if (state.todoConfirmHost) closeTodoConfirmHost();
       state.active = false;
       api.cancelAll();
+      reportTabs?.destroy();
+      reportTabs = null;
       root.replaceChildren();
     },
     openConfirmOverlay,

@@ -457,14 +457,49 @@ export function createRecordDrawer(documentRef, options) {
     ? "新建报表特殊处理"
     : (confirming ? "确认特殊处理" : (canEdit ? "编辑" : "查看"));
 
-  const report_processes = catalog?.report_processes || [];
+  const report_processes = (catalog?.report_processes || []).filter((item) => item.active !== false);
+  const activeProcessCodes = new Set(report_processes.map((item) => String(item.code)));
   const initialProcessCodes = Array.isArray(current.report_process_codes) && current.report_process_codes.length
     ? current.report_process_codes
     : (current.report_process_code
       ? [current.report_process_code]
-      : (options.activeProcessCode ? [options.activeProcessCode] : []));
+      : (activeProcessCodes.has(String(options.activeProcessCode || "")) ? [options.activeProcessCode] : []));
+  const historyByCode = new Map();
+  const selectedSnapshotByCode = new Map();
+  const recordProcesses = Array.isArray(record?.report_processes) ? record.report_processes : [];
+  recordProcesses.forEach((item) => {
+    const code = String(item?.code || "").trim();
+    const snapshot = item?.name_snapshot || item?.name || "";
+    if (code && snapshot) selectedSnapshotByCode.set(code, snapshot);
+    if (!code || activeProcessCodes.has(code) || historyByCode.has(code)) return;
+    historyByCode.set(code, {
+      code,
+      name: snapshot || current.report_process_name_snapshot || code,
+      historical: true,
+    });
+  });
+  initialProcessCodes.forEach((value) => {
+    const code = String(value || "").trim();
+    if (!code || activeProcessCodes.has(code) || historyByCode.has(code)) return;
+    // A legacy record may only retain a combined snapshot. Keep that snapshot
+    // visible and submittable, but do not make its removed code selectable again.
+    historyByCode.set(code, {
+      code,
+      name: current.report_process_name_snapshot || code,
+      historical: true,
+    });
+  });
+  const displayReportProcesses = report_processes.map((item) => {
+    const code = String(item.code);
+    // Existing records preserve their saved display snapshot even if an active
+    // dictionary entry has since been renamed. It remains an ordinary option.
+    const snapshot = initialProcessCodes.some((value) => String(value) === code)
+      ? selectedSnapshotByCode.get(code)
+      : "";
+    return snapshot ? { ...item, name: snapshot } : item;
+  });
   const process = createProcessMultiSelect(documentRef, {
-    options: report_processes,
+    options: [...displayReportProcesses, ...historyByCode.values()],
     values: initialProcessCodes,
     disabled: !canEdit,
     "aria-label": "关联报送",
@@ -788,6 +823,7 @@ export function createRecordDrawer(documentRef, options) {
       await onSaved(response?.data || response);
       // 保存成功后抽屉关闭，释放附件组件的 Blob URL 与监听器。
       attachmentSection?.destroy();
+      process.destroy();
     } catch (error) {
       // 保存失败（含普通业务 409、400 与网络错误）不销毁附件组件，
       // 表单与未保存附件保留在当前标签页内，允许修正后重试。
@@ -1338,6 +1374,7 @@ export function createRecordDrawer(documentRef, options) {
   };
   function closeWithCleanup() {
     attachmentSection?.destroy();
+    process.destroy();
     const view = documentRef?.defaultView || globalThis;
     thumbCache.forEach((url) => {
       try {

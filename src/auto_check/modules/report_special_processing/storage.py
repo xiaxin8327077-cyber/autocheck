@@ -182,6 +182,9 @@ SORTS = {
     "updated_at_desc": (RECORDS.c.updated_at.desc(), RECORDS.c.id.desc()),
     "created_at_desc": (RECORDS.c.created_at.desc(), RECORDS.c.id.desc()),
 }
+_PBC_REPORT_PROCESS_CODES = ("pbc_central", "pbc_template")
+_PBC_REPORT_PROCESS_TAB_CODE = "group:pbc"
+_PBC_REPORT_PROCESS_TAB_NAME = "人行报送"
 
 
 def generate_record_no(now: datetime) -> str:
@@ -877,20 +880,46 @@ class SpecialProcessingStorage:
             )
             .group_by(PROCESSES.c.report_process_code, PROCESSES.c.report_process_name_snapshot)
         )
+        pbc_process_statement = (
+            select(func.count(func.distinct(RECORDS.c.id)).label("effective_count"))
+            .where(
+                and_(
+                    RECORDS.c.report_period == period,
+                    RECORDS.c.status.in_(("pending", "processing", "completed")),
+                    or_(
+                        RECORDS.c.report_process_code.in_(_PBC_REPORT_PROCESS_CODES),
+                        RECORDS.c.id.in_(
+                            select(PROCESSES.c.record_id).where(
+                                PROCESSES.c.report_process_code.in_(_PBC_REPORT_PROCESS_CODES)
+                            )
+                        ),
+                    ),
+                )
+            )
+        )
         with self.database.connect() as connection:
             counts_rows = _rows(connection.execute(counts_statement))
             total_row = _row(connection.execute(total_statement)) or {}
             process_rows = _rows(connection.execute(process_statement))
+            pbc_row = _row(connection.execute(pbc_process_statement)) or {}
+        by_process: dict[str, dict[str, Any]] = {}
+        for row in process_rows:
+            code = str(row["report_process_code"])
+            if code not in by_process:
+                by_process[code] = {
+                    "code": code,
+                    "name": str(row["report_process_name_snapshot"]),
+                    "effective_count": 0,
+                }
+            by_process[code]["effective_count"] += int(row["effective_count"] or 0)
+        by_process[_PBC_REPORT_PROCESS_TAB_CODE] = {
+            "code": _PBC_REPORT_PROCESS_TAB_CODE,
+            "name": _PBC_REPORT_PROCESS_TAB_NAME,
+            "effective_count": int(pbc_row.get("effective_count") or 0),
+        }
         return (
             {str(row["status"]): int(row["count"]) for row in counts_rows},
-            [
-                {
-                    "code": str(row["report_process_code"]),
-                    "name": str(row["report_process_name_snapshot"]),
-                    "effective_count": int(row["effective_count"] or 0),
-                }
-                for row in process_rows
-            ],
+            list(by_process.values()),
             int(total_row.get("record_total") or 0),
         )
 
@@ -1210,12 +1239,17 @@ class SpecialProcessingStorage:
         conditions = []
         process_code = filters.get("report_process_code")
         if process_code not in {None, ""}:
+            process_codes = (
+                _PBC_REPORT_PROCESS_CODES
+                if process_code == _PBC_REPORT_PROCESS_TAB_CODE
+                else (process_code,)
+            )
             process_match = select(PROCESSES.c.record_id).where(
-                PROCESSES.c.report_process_code == process_code
+                PROCESSES.c.report_process_code.in_(process_codes)
             )
             conditions.append(
                 or_(
-                    RECORDS.c.report_process_code == process_code,
+                    RECORDS.c.report_process_code.in_(process_codes),
                     RECORDS.c.id.in_(process_match),
                 )
             )

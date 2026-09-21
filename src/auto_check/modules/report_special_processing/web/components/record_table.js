@@ -215,6 +215,13 @@ function legacyChangeGroups(record) {
 }
 
 function recordChangeGroups(record) {
+  if (Array.isArray(record?.ledger_display?.change_groups)) {
+    return record.ledger_display.change_groups.map((group) => ({
+      before: group.before,
+      after: group.after,
+      parts: group.fields.map((name) => ({ chinese: name, english: "" })),
+    }));
+  }
   const structured = Array.isArray(record?.structured_content?.tables);
   const groups = structured ? structuredChangeGroups(record) : legacyChangeGroups(record);
   const nonempty = groups.length ? groups : [{
@@ -268,6 +275,9 @@ function compareByDisplayWidth(left, right) {
 }
 
 function processNameList(record) {
+  if (Array.isArray(record?.ledger_display?.process_names)) {
+    return record.ledger_display.process_names;
+  }
   const items = Array.isArray(record?.report_processes) ? record.report_processes : [];
   const ordered = items
     .map((item) => ({
@@ -353,7 +363,7 @@ export function createRecordTable(documentRef, records, { selectedId, highlightI
   ]);
   const body = element(documentRef, "tbody");
   records.forEach((record) => {
-    const handledAt = formatDisplayDateTime(record.special_handling_at);
+    const handledAt = record.ledger_display?.handled_at ?? formatDisplayDateTime(record.special_handling_at);
     const selected = String(record.id) === String(selectedId);
     const highlighted = String(record.id) === String(highlightId);
     const rowClass = [

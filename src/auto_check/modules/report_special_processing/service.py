@@ -44,6 +44,7 @@ from .bilingual_names import (
     serialize_bilingual_items,
 )
 from .display_summary import ownership_system_field_summary
+from .ledger_display import ledger_display
 from .structured_content import (
     StructuredContentError,
     SUPPORTED_DATASOURCE_TYPES,
@@ -51,6 +52,7 @@ from .structured_content import (
 )
 from .audit_diff import build_structured_audit_diff
 from .sql_builder import ScriptGenerationError, generate_script
+from auto_check.app.report_navigation_platform import ReportProcess
 
 _RE_PHYSICAL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]{0,127}$")
 from .validator import (
@@ -122,6 +124,10 @@ _STRUCTURED_DERIVED_AUDIT_KEYS = frozenset({
 _GOVERNANCE_ROLE_DISPLAY_PROJECT_ASSET = "数据治理_项目资产"
 _GOVERNANCE_ROLE_DISPLAY_FUND_FINANCE = "数据治理_资金财务"
 _DIMENSION_ORDER = ("project", "fund", "asset", "finance")
+_EXTRA_REPORT_PROCESS_DICTIONARY = "rsp_extra_report_process"
+_PBC_REPORT_PROCESS_CODES = frozenset({"pbc_central", "pbc_template"})
+_PBC_REPORT_PROCESS_TAB_CODE = "group:pbc"
+_PBC_REPORT_PROCESS_TAB_NAME = "人行报送"
 
 
 class SpecialProcessingService:
@@ -163,7 +169,7 @@ class SpecialProcessingService:
     def catalog(self, current_user: Mapping[str, Any] | None = None) -> dict[str, Any]:
         actor = self._actor(current_user)
         try:
-            processes = tuple(self._reports.list_report_processes())
+            processes = self._merged_report_processes()
             users = tuple(self._users.list_active_users())
         except Exception:
             raise PlatformUnavailableError() from None
@@ -174,6 +180,7 @@ class SpecialProcessingService:
                 for item in processes
                 if item.active
             ],
+            "report_process_tabs": self._report_process_tabs(processes),
             "users": [
                 {"id": item.id, "username": item.username, "display_name": item.display_name}
                 for item in users
@@ -214,6 +221,73 @@ class SpecialProcessingService:
                 "can_delete": can_delete(actor),
             },
         }
+
+    def _merged_report_processes(self) -> tuple[ReportProcess, ...]:
+        """保留平台目录原样，并在末尾追加无冲突的启用扩展字典项。"""
+        try:
+            original = tuple(self._reports.list_report_processes())
+        except Exception:
+            raise PlatformUnavailableError() from None
+        reserved_codes = {
+            str(item.code or "").strip().casefold()
+            for item in original
+            if str(item.code or "").strip()
+        }
+        reserved_names = {
+            str(item.name or "").strip()
+            for item in original
+            if str(item.name or "").strip()
+        }
+        reserved_names.add(_PBC_REPORT_PROCESS_TAB_NAME)
+        merged = list(original)
+        try:
+            next_order = max(int(item.order) for item in original) + 1
+        except (TypeError, ValueError):
+            next_order = len(original) + 1
+        # Stable partition: keep dictionary ordering, except “其他报送” is last.
+        extra_items = sorted(
+            self._active_dictionary_items(_EXTRA_REPORT_PROCESS_DICTIONARY),
+            key=lambda item: str(getattr(item, "label", "") or "").strip() == "其他报送",
+        )
+        for item in extra_items:
+            code = str(getattr(item, "code", "") or "").strip()
+            name = str(getattr(item, "label", "") or "").strip()
+            code_key = code.casefold()
+            if (
+                not code
+                or not name
+                or len(code) > 64
+                or len(name) > 100
+                or ":" in code
+                or code_key in reserved_codes
+                or name in reserved_names
+            ):
+                continue
+            merged.append(ReportProcess(code, name, next_order, True))
+            next_order += 1
+            reserved_codes.add(code_key)
+            reserved_names.add(name)
+        return tuple(merged)
+
+    @staticmethod
+    def _report_process_tabs(processes: Sequence[ReportProcess]) -> list[dict[str, Any]]:
+        tabs: list[dict[str, Any]] = []
+        has_pbc_tab = False
+        for item in processes:
+            if not item.active:
+                continue
+            if item.code in _PBC_REPORT_PROCESS_CODES:
+                if not has_pbc_tab:
+                    tabs.append({
+                        "code": _PBC_REPORT_PROCESS_TAB_CODE,
+                        "name": _PBC_REPORT_PROCESS_TAB_NAME,
+                        "order": item.order,
+                        "active": True,
+                    })
+                    has_pbc_tab = True
+                continue
+            tabs.append({"code": item.code, "name": item.name, "order": item.order, "active": True})
+        return tabs
 
     def _active_business_system_items(self) -> tuple[Any, ...]:
         return self._active_dictionary_items("business_system")
@@ -362,7 +436,7 @@ class SpecialProcessingService:
         return {
             **result,
             "items": [
-                self._with_capabilities(item, actor)
+                {**self._with_capabilities(item, actor), "ledger_display": ledger_display(item)}
                 for item in result.get("items", [])
             ],
         }
@@ -710,7 +784,7 @@ class SpecialProcessingService:
             raise ValidationError(fields={"row_version": "不能为空"})
         if current["status"] != "draft" and value.save_mode != "record":
             raise InvalidTransitionError()
-        processes = self._processes(value.report_process_codes)
+        processes = self._processes(value.report_process_codes, current=current)
         handler = self._user(value.handler_user_id) if value.handler_user_id else None
         governance_owner = (
             self._user(value.governance_owner_user_id, field="governance_owner_user_id")
@@ -1009,22 +1083,38 @@ class SpecialProcessingService:
             raise ValidationError(fields={field: "用户不存在或已停用"})
         return user
 
-    def _process(self, code: str) -> Any:
-        try:
-            process = next(
-                (item for item in self._reports.list_report_processes() if item.code == code and item.active),
-                None,
-            )
-        except Exception:
-            raise PlatformUnavailableError() from None
-        if process is None:
-            raise ValidationError(fields={"report_process_codes": "关联报送无效"})
-        return process
-
-    def _processes(self, codes: tuple[str, ...]) -> tuple[dict[str, str], ...]:
-        resolved = []
+    def _processes(
+        self,
+        codes: tuple[str, ...],
+        *,
+        current: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, str], ...]:
+        available = {
+            item.code: item
+            for item in self._merged_report_processes()
+            if item.active
+        }
+        snapshots: dict[str, str] = {}
+        if current is not None:
+            raw_processes = current.get("report_processes") or ()
+            if isinstance(raw_processes, Sequence) and not isinstance(raw_processes, (str, bytes)):
+                for item in raw_processes:
+                    if isinstance(item, Mapping):
+                        code = str(item.get("code") or "").strip()
+                        if code and code not in snapshots:
+                            snapshots[code] = str(item.get("name") or "")
+            if not snapshots:
+                code = str(current.get("report_process_code") or "").strip()
+                if code:
+                    snapshots[code] = str(current.get("report_process_name_snapshot") or "")
+        resolved: list[dict[str, str]] = []
         for code in codes:
-            process = self._process(code)
+            if code in snapshots:
+                resolved.append({"code": code, "name": snapshots[code]})
+                continue
+            process = available.get(code)
+            if process is None:
+                raise ValidationError(fields={"report_process_codes": "关联报送无效"})
             resolved.append({"code": process.code, "name": process.name})
         return tuple(resolved)
 

@@ -169,7 +169,7 @@ def _process_codes(payload: Mapping[str, Any]) -> tuple[str, ...]:
         if not isinstance(item, str):
             raise _error("report_process_codes")
         code = item.strip()
-        if not code or len(code) > 64:
+        if not code or len(code) > 64 or ":" in code:
             raise _error("report_process_codes")
         codes.append(code)
     if not codes:
