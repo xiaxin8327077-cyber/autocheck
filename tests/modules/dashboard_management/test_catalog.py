@@ -50,7 +50,11 @@ def test_builtin_month_fields_describe_the_required_display_format() -> None:
     }
 
     assert month_descriptions == {
-        "monthly_trust_projects": "统计月份。格式：1月～12月，例如：8月。",
+        "monthly_trust_projects": (
+            "接口展示格式：1月～12月，例如：8月。"
+            "来源 SQL 推荐返回 YYYY-MM，例如：2026-08，用于明确年份；"
+            "兼容仅月份时须由 SQL 限定业务年份。"
+        ),
         "report_reconciliation_completion_time": "统计月份。格式：YYYY-MM，例如：2026-08。",
         "report_validation_issue_handling": "统计月份。格式：YYYY-MM，例如：2026-08。",
     }

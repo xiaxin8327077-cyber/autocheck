@@ -27,7 +27,11 @@ from sqlalchemy.exc import IntegrityError
 
 from .catalog import BOARD_CATALOG, BUILTIN_FIELD_SEEDS, BUILTIN_REGION_SEEDS
 from .contracts import VersionConflictError
-from .year_snapshots import INITIAL_2026_SNAPSHOT_ROWS, SnapshotRow
+from .year_snapshots import (
+    INITIAL_2026_SNAPSHOT_ROWS,
+    QUARTERLY_SPECIAL_PROCESSING,
+    SnapshotRow,
+)
 
 
 class SchemaVersionConflictError(VersionConflictError):
@@ -448,6 +452,9 @@ class DashboardManagementStorage:
         regions_by_code: Mapping[str, int],
         now: datetime,
     ) -> None:
+        DashboardManagementStorage._upgrade_legacy_special_processing_baseline(
+            connection, regions_by_code.get(QUARTERLY_SPECIAL_PROCESSING), now
+        )
         for region_code, snapshots in INITIAL_2026_SNAPSHOT_ROWS.items():
             region_id = regions_by_code.get(region_code)
             if region_id is None:
@@ -475,6 +482,75 @@ class DashboardManagementStorage:
                     created_at=now,
                     updated_at=now,
                 ))
+
+    @staticmethod
+    def _upgrade_legacy_special_processing_baseline(
+        connection: Any, region_id: int | None, now: datetime
+    ) -> None:
+        """Replace only the original Q1/Q2 seed rows with fixed monthly estimates.
+
+        Older installations may contain quarter snapshots.  Only the two
+        unrefreshed, known default rows are safe to convert: they were the
+        shipped baseline rather than collected data.  Any user-edited or
+        real-time legacy quarter row remains stored for audit, but is excluded
+        from month-based presentation to avoid duplicated totals.
+        """
+        if region_id is None:
+            return
+        expected_totals = {1: 31, 2: 34}
+        legacy_rows = _rows(connection.execute(
+            select(YEAR_SNAPSHOTS).where(and_(
+                YEAR_SNAPSHOTS.c.region_id == region_id,
+                YEAR_SNAPSHOTS.c.period_year == 2026,
+                YEAR_SNAPSHOTS.c.period_type == "quarter",
+                YEAR_SNAPSHOTS.c.period_value.in_(tuple(expected_totals)),
+                YEAR_SNAPSHOTS.c.source_refreshed_at.is_(None),
+            ))
+        ))
+        monthly_baselines = {
+            snapshot.period_value: snapshot
+            for snapshot in INITIAL_2026_SNAPSHOT_ROWS[QUARTERLY_SPECIAL_PROCESSING]
+        }
+        for legacy in legacy_rows:
+            try:
+                legacy_count = json.loads(str(legacy["row_json"])).get(
+                    "special_processing_count"
+                )
+                quarter = int(legacy["period_value"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if legacy_count != expected_totals[quarter]:
+                continue
+            existing_months = {
+                int(value[0])
+                for value in connection.execute(
+                    select(YEAR_SNAPSHOTS.c.period_value).where(and_(
+                        YEAR_SNAPSHOTS.c.region_id == region_id,
+                        YEAR_SNAPSHOTS.c.period_year == 2026,
+                        YEAR_SNAPSHOTS.c.period_type == "month",
+                        YEAR_SNAPSHOTS.c.period_value.between(
+                            (quarter - 1) * 3 + 1, quarter * 3
+                        ),
+                    ))
+                ).all()
+            }
+            for month in range((quarter - 1) * 3 + 1, quarter * 3 + 1):
+                if month in existing_months:
+                    continue
+                snapshot = monthly_baselines[month]
+                connection.execute(insert(YEAR_SNAPSHOTS).values(
+                    region_id=region_id,
+                    period_year=snapshot.period_year,
+                    period_type=snapshot.period_type,
+                    period_value=snapshot.period_value,
+                    row_json=_snapshot_json(snapshot.row),
+                    source_refreshed_at=None,
+                    created_at=now,
+                    updated_at=now,
+                ))
+            connection.execute(delete(YEAR_SNAPSHOTS).where(
+                YEAR_SNAPSHOTS.c.id == legacy["id"]
+            ))
 
     def list_regions(
         self, board_code: str, include_disabled: bool = True

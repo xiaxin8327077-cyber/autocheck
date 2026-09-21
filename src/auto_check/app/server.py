@@ -5380,6 +5380,7 @@ def run_server(
             report_navigation_service=router.report_navigation,
             notification_service=notification_service,
             api_router=router,
+            user_directory=user_directory_facade,
         )
         router._scheduled_task_manager = scheduled_task_manager
 

@@ -16,7 +16,7 @@ def test_monthly_trust_rows_accept_supported_formats_and_filter_other_periods() 
     rows = normalize_snapshot_rows(
         "monthly_trust_projects",
         (
-            {"month": "8月", "single_trust_count": 8},
+            {"month": "2026-08", "single_trust_count": 8},
             {"month": "09月", "single_trust_count": 9},
             {"month": "2026-07", "single_trust_count": 7},
             {"month": "2025-12", "single_trust_count": 12},
@@ -32,6 +32,22 @@ def test_monthly_trust_rows_accept_supported_formats_and_filter_other_periods() 
         (2026, "month", 9),
     ]
     assert [row.row["month"] for row in rows] == ["7月", "8月", "9月"]
+
+
+def test_monthly_trust_explicit_year_filters_previous_year_and_keeps_display_month() -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import normalize_snapshot_rows
+
+    rows = normalize_snapshot_rows(
+        "monthly_trust_projects",
+        (
+            {"month": "2026-12", "single_trust_count": 12},
+            {"month": "2027-01", "single_trust_count": 1},
+        ),
+        datetime(2027, 1, 15, 10, 30),
+    )
+
+    assert [(row.period_year, row.period_value) for row in rows] == [(2027, 1)]
+    assert rows[0].row["month"] == "1月"
 
 
 def test_year_month_regions_keep_contract_and_full_completion_datetime() -> None:
@@ -74,7 +90,7 @@ def test_year_month_regions_keep_contract_and_full_completion_datetime() -> None
     assert validation[0].row == {"month": "2026-06", "validation_issue_count": 23}
 
 
-def test_quarter_rows_accept_supported_formats_and_filter_future_quarter() -> None:
+def test_special_processing_rows_require_monthly_report_period_and_filter_future_month() -> None:
     from auto_check.modules.dashboard_management.year_snapshots import (
         normalize_snapshot_rows,
     )
@@ -82,21 +98,77 @@ def test_quarter_rows_accept_supported_formats_and_filter_future_quarter() -> No
     rows = normalize_snapshot_rows(
         "quarterly_special_processing",
         (
-            {"quarter": "2026年第2季度", "special_processing_count": 34},
-            {"quarter": "第1季度", "special_processing_count": 31},
-            {"quarter": "第3季度", "special_processing_count": 8},
-            {"quarter": "第4季度", "special_processing_count": 99},
-            {"quarter": "2025年第4季度", "special_processing_count": 88},
+            {"month": "2026-08", "special_processing_count": 8},
+            {"month": "2025-12", "special_processing_count": 88},
         ),
         NOW,
     )
 
     assert [(row.period_year, row.period_type, row.period_value) for row in rows] == [
-        (2026, "quarter", 1),
-        (2026, "quarter", 2),
-        (2026, "quarter", 3),
+        (2026, "month", 8),
     ]
-    assert [row.row["quarter"] for row in rows] == ["第1季度", "第2季度", "第3季度"]
+    assert [row.row["month"] for row in rows] == ["2026-08"]
+
+
+def test_special_processing_rejects_legacy_quarter_rows_instead_of_marking_them_fresh() -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import (
+        SnapshotValidationError,
+        normalize_snapshot_rows,
+    )
+
+    with pytest.raises(SnapshotValidationError, match="按月报送期"):
+        normalize_snapshot_rows(
+            "quarterly_special_processing",
+            ({"quarter": "第3季度", "special_processing_count": 8},),
+            NOW,
+        )
+
+
+def test_special_processing_rejects_invalid_month_instead_of_zeroing_a_snapshot() -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import (
+        SnapshotValidationError,
+        normalize_snapshot_rows,
+    )
+
+    with pytest.raises(SnapshotValidationError, match="按月报送期"):
+        normalize_snapshot_rows(
+            "quarterly_special_processing",
+            ({"month": "2026-8", "special_processing_count": 8},),
+            NOW,
+        )
+
+
+def test_special_processing_keeps_confirmed_2026_january_to_july_baseline_out_of_live_refresh() -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import normalize_snapshot_rows
+
+    rows = normalize_snapshot_rows(
+        "quarterly_special_processing",
+        (
+            {"month": "2026-07", "special_processing_count": 1},
+            {"month": "2026-08", "special_processing_count": 17},
+        ),
+        NOW,
+    )
+
+    assert [(row.period_year, row.period_value) for row in rows] == [(2026, 8)]
+    assert rows[0].row["special_processing_count"] == 17
+
+
+def test_special_processing_2027_january_to_july_are_not_blocked_by_2026_freeze() -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import normalize_snapshot_rows
+
+    rows = normalize_snapshot_rows(
+        "quarterly_special_processing",
+        (
+            {"month": "2027-01", "special_processing_count": 1},
+            {"month": "2027-07", "special_processing_count": 7},
+        ),
+        datetime(2027, 8, 15, 10, 30),
+    )
+
+    assert [(row.period_year, row.period_value) for row in rows] == [
+        (2027, 1), (2027, 7),
+    ]
 
 
 def test_duplicate_snapshot_period_is_rejected_without_choosing_a_row() -> None:

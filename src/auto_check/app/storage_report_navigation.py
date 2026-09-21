@@ -622,6 +622,7 @@ class ReportNavigationStore:
         source_year: int | None,
         updated_by: str,
         now: datetime,
+        only_if_missing: bool = False,
     ) -> None:
         year, month = _parse_report_month(report_month)
         if (report_date.year, report_date.month) != (year, month):
@@ -636,13 +637,17 @@ class ReportNavigationStore:
             "updated_at": now,
         }
         statement = mysql_insert(REPORT_NAV_MONTHLY_SCHEDULES).values(**values)
-        statement = statement.on_duplicate_key_update(
-            report_date=statement.inserted.report_date,
-            source_type=statement.inserted.source_type,
-            source_year=statement.inserted.source_year,
-            updated_by=statement.inserted.updated_by,
-            updated_at=statement.inserted.updated_at,
-        )
+        if only_if_missing:
+            # 并发人工维护先写入时，不覆盖日期、负责人和来源等任何字段。
+            statement = statement.on_duplicate_key_update(process_code=statement.inserted.process_code)
+        else:
+            statement = statement.on_duplicate_key_update(
+                report_date=statement.inserted.report_date,
+                source_type=statement.inserted.source_type,
+                source_year=statement.inserted.source_year,
+                updated_by=statement.inserted.updated_by,
+                updated_at=statement.inserted.updated_at,
+            )
         with self.database.transaction() as connection:
             connection.execute(statement)
 
@@ -721,12 +726,16 @@ class ReportNavigationStore:
     def ensure_schedule(
         self, report_month: str, process_code: str, *, now: datetime
     ) -> ScheduleConfig | None:
+        year, month = _parse_report_month(report_month)
         current = self.load_schedule(report_month, process_code)
         if current is not None:
+            if (current.report_date.year, current.report_date.month) != (year, month):
+                raise ValueError("报送日期必须属于对应报送月份")
             return current
-        year, month = _parse_report_month(report_month)
         previous = self.load_schedule(f"{year - 1:04d}-{month:02d}", process_code)
         if previous is not None:
+            if (previous.report_date.year, previous.report_date.month) != (year - 1, month):
+                raise ValueError("上年报送日期不属于对应报送月份")
             inherited_date = date(year, month, min(previous.report_date.day, monthrange(year, month)[1]))
             self.upsert_schedule(
                 report_month,
@@ -736,6 +745,7 @@ class ReportNavigationStore:
                 source_year=previous.report_date.year,
                 updated_by="system",
                 now=now,
+                only_if_missing=True,
             )
             return self.load_schedule(report_month, process_code)
         if process_code == "pbc_central":
@@ -747,6 +757,7 @@ class ReportNavigationStore:
                 source_year=year,
                 updated_by="system",
                 now=now,
+                only_if_missing=True,
             )
             return self.load_schedule(report_month, process_code)
         return None

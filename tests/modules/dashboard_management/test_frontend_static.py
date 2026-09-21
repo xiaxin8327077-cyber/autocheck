@@ -83,7 +83,9 @@ def test_dashboard_management_frontend_has_required_contract_and_copy() -> None:
     assert "table_details" not in source_editor
     assert "fieldLabels" in preview
     assert "field.name" in preview
-    assert "renderPreviewTable(draft.preview, draft.source_mode, region.fields || [])" in index
+    assert "function sourcePreviewFields(region)" in index
+    assert 'field_alias: "month", name: "报送期月份"' in index
+    assert "renderPreviewTable(draft.preview, draft.source_mode, sourcePreviewFields(region))" in index
     assert "保存配置" in index
     assert "基本信息" not in index
     assert "dm-region-context" in index

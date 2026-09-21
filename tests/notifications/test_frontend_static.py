@@ -55,6 +55,11 @@ class TestNotificationResources:
         assert "pad(d.getSeconds())" in NOTIFICATION_JS
         assert "${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}" in NOTIFICATION_JS
 
+    def test_report_navigation_notification_passes_the_full_action_object(self):
+        view_action = extract_function(NOTIFICATION_JS, "handleViewAction")
+        assert "window.handleReportNavTodoAction(item.action);" in view_action
+        assert "window.handleReportNavTodoAction(item.action.route, item.action.query);" not in view_action
+
 
 def extract_arrow_body(source, marker):
     """Extract the balanced `{...}` body that follows the `=>` after ``marker``.

@@ -37,7 +37,9 @@
 15. 生产升级必须先完成 MySQL 全库备份，再由运维人员人工执行 `sql/app_storage/mysql/012_module_system.sql`，新增 `app_modules`、`app_module_schema_versions` 和 `app_module_migration_history` 三张模块平台表。
 16. 执行 `sql/app_storage/mysql/013_report_navigation_provider_states.sql`，新增带注册 token 的报送导航统计提供方持久状态表，并为统计运行记录补充 `failed_providers`。再执行 `sql/app_storage/mysql/014_role_capability_settings.sql` 新增角色能力矩阵配置表（单行 JSON 快照）。再执行 `sql/app_storage/mysql/015_role_definitions.sql` 新增角色定义表（自定义角色）。再执行 `sql/app_storage/mysql/016_remove_reserved_builtin_roles.sql`，将历史预留角色（`governance` / `regulatory_report` / `data_middle` / `fund_custody`）账号迁移为普通用户，并清理 `role_definitions` 中对应残留行；不修改 `app_schema_version`，矩阵中的旧角色键由应用运行时合并逻辑自动忽略。
 17. 配置 `config.json` 的 `app_database` 节点。
-18. 继续按编号执行 `017_db_validation_mapping.sql` 至 `022_scheduled_tasks.sql`，再启动应用并确认连接、56 张表、全局结构版本和关键表数据。
+18. 继续按编号执行 `017_db_validation_mapping.sql` 至 `023_report_navigation_schedule_prepare.sql`，再启动应用并确认连接、56 张表、全局结构版本和关键表数据。
+
+报送日期提前准备：在 `022_scheduled_tasks.sql` 后执行 `023_report_navigation_schedule_prepare.sql`，幂等预置“报送日期预生成”（默认每日北京时间 15:00），保留已有任务配置；提前检查下月只提醒管理员维护，最后一天仍缺失才继承；启动时补查当月和下月。完整表数仍为 56，详见 [报送日期预生成](report-navigation-schedule-preparation.zh-CN.md)。
 
 建表/升级脚本不包含 `CREATE DATABASE`、`DROP`、`TRUNCATE`、生产凭据或业务数据。`004`、`006`、`008`、`012_module_system.sql` 和 `013_report_navigation_provider_states.sql` 使用 `CREATE TABLE IF NOT EXISTS`；`005` 与 `007` 通过 `information_schema` 判断字段或约束是否存在后再升级。升级脚本可按顺序重复执行；`008` 会幂等写入年度法定节假日和调休工作日配置，`009` 规范历史人工确认范围，`010` 将第七步改为仅展示并补齐第六步归档时间字段映射，`011` 将归档类完成时间统一改为仅取 `create_date`，`012` 创建模块平台表，`013` 创建报送导航统计提供方状态表，二者均不修改 `app_schema_version`。如果目标表已经存在，仍需人工核对字段和约束是否符合当前规范。
 
@@ -133,7 +135,7 @@ python scripts\export_sqlite_to_mysql.py `
 上线连接 MySQL 后，需要分别确认旧数据迁移结果和当前完整表结构。至少确认：
 
 - `app_schema_version` 当前版本为 `1`。
-- 当前完整 56 张应用存储表结构齐全，已在备份后由运维人员人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 及后续脚本至 `022_scheduled_tasks.sql`；模块业务表不属于全局 `EXPECTED_APP_SCHEMA`。
+- 当前完整 56 张应用存储表结构齐全，已在备份后由运维人员人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 及后续脚本至 `023_report_navigation_schedule_prepare.sql`；模块业务表不属于全局 `EXPECTED_APP_SCHEMA`。
 - `user_interface_preferences` 包含圆角、折线图风格和两个可空个人主题色；主键、默认值、范围/枚举/HEX 检查约束符合本节完整 DDL，现有行数在结构升级前后保持一致。
 - `system_interface_preferences` 包含唯一行约束、两个兼容色默认值/HEX 约束、最后修改人和更新时间；允许零行，不应出现 `id<>1` 或多余记录。
 - 界面设置中不存在自定义主题色或渐变开关；兼容主题色也不写入 `app_settings`。

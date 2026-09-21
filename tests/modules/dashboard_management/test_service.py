@@ -354,6 +354,67 @@ def test_january_writes_previous_december_but_returns_only_current_data_year(sto
     assert storage.list_year_snapshots(completion_region["id"], 2027)[0]["row"]["month"] == "2027-01"
 
 
+def test_january_validation_preview_does_not_leak_2026_baseline_into_2027(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    validation = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "report_validation_issue_handling"
+    )
+    source_config = storage.get_source_config(validation["id"])
+    storage.save_source_config(
+        validation["id"],
+        {
+            "source_mode": "sql",
+            "datasource_id": "safe",
+            "sql_text": "SELECT 2027 validation issue rows",
+            "tested_signature": "valid",
+            "tested_at": datetime(2027, 1, 4, 8, 0),
+            "tested_by": "admin",
+        },
+        source_config["row_version"],
+        expected_region_version=validation["row_version"],
+    )
+
+    class SqlExecutor:
+        def signature_for(self, source, sql, active_fields, shape):
+            return "valid"
+
+        def execute(self, source, sql, active_fields, shape):
+            return QueryPreview(
+                columns=("month", "validation_issue_count"),
+                rows=({"month": "2027-01", "validation_issue_count": 3},),
+                has_more=False,
+                returned_count=1,
+                tested_signature="valid",
+            )
+
+    result = DashboardManagementService(
+        storage,
+        datasource_loader=lambda: [{"id": "safe", "config": object()}],
+        sql_executor=SqlExecutor(),
+        now=lambda: datetime(2027, 1, 4, 9, 0),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region for region in result["regions"]
+        if region["code"] == "report_validation_issue_handling"
+    )
+
+    assert item["status"] == "success"
+    assert item["rows"] == ({
+        "month": "2027-01",
+        "validation_issue_count": 3,
+    },)
+    assert [
+        row["period_value"]
+        for row in storage.list_year_snapshots(validation["id"], 2026)
+    ] == list(range(1, 10))
+    assert [
+        row["row"] for row in storage.list_year_snapshots(validation["id"], 2027)
+    ] == [{"month": "2027-01", "validation_issue_count": 3}]
+
+
 def test_external_board_preview_rejects_unknown_board_code(service):
     from auto_check.modules.dashboard_management.validator import NotFoundError
 
@@ -439,6 +500,66 @@ def test_snapshot_preview_prefers_sql_rows_and_preserves_unreturned_history(stor
     assert [row["period_value"] for row in storage.list_year_snapshots(trust["id"], 2026)] == [
         1, 2, 3, 4, 5, 6, 7,
     ]
+
+
+def test_validation_sql_preview_refreshes_seeded_2026_september_value(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    validation = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "report_validation_issue_handling"
+    )
+    source_config = storage.get_source_config(validation["id"])
+    storage.save_source_config(
+        validation["id"],
+        {
+            "source_mode": "sql",
+            "datasource_id": "safe",
+            "sql_text": "SELECT validation issue rows",
+            "tested_signature": "valid",
+            "tested_at": datetime(2026, 9, 21, 8, 0),
+            "tested_by": "admin",
+        },
+        source_config["row_version"],
+        expected_region_version=validation["row_version"],
+    )
+
+    class SqlExecutor:
+        def signature_for(self, source, sql, active_fields, shape):
+            return "valid"
+
+        def execute(self, source, sql, active_fields, shape):
+            return QueryPreview(
+                columns=("month", "validation_issue_count"),
+                rows=({"month": "2026-09", "validation_issue_count": 40005},),
+                has_more=False,
+                returned_count=1,
+                tested_signature="valid",
+            )
+
+    result = DashboardManagementService(
+        storage,
+        datasource_loader=lambda: [{"id": "safe", "config": object()}],
+        sql_executor=SqlExecutor(),
+        now=lambda: datetime(2026, 9, 21, 9, 0),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region for region in result["regions"]
+        if region["code"] == "report_validation_issue_handling"
+    )
+
+    assert item["status"] == "success"
+    assert [row["month"] for row in item["rows"]] == [
+        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
+        "2026-06", "2026-07", "2026-08", "2026-09",
+    ]
+    assert item["rows"][-1]["validation_issue_count"] == 40005
+    september = next(
+        row for row in storage.list_year_snapshots(validation["id"], 2026)
+        if row["period_value"] == 9
+    )
+    assert september["row"]["validation_issue_count"] == 40005
 
 
 def test_snapshot_preview_falls_back_to_current_year_history_when_live_query_fails(storage):
@@ -532,7 +653,7 @@ def test_data_year_uses_business_timezone_at_calendar_boundary(storage):
     assert completion["error"]["code"] == "data_not_ready"
 
 
-def test_quarterly_snapshot_preview_returns_future_quarter_as_zero_without_persisting(storage):
+def test_monthly_special_processing_snapshot_returns_quarterly_api_rows_without_persisting_future_quarter(storage):
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.sql_executor import QueryPreview
 
@@ -547,8 +668,8 @@ def test_quarterly_snapshot_preview_returns_future_quarter_as_zero_without_persi
             if region_code != "quarterly_special_processing":
                 raise RuntimeError("unrelated system region")
             preview = QueryPreview(
-                columns=("quarter", "special_processing_count"),
-                rows=({"quarter": "第3季度", "special_processing_count": 12},),
+                columns=("month", "special_processing_count"),
+                rows=({"month": "2026-08", "special_processing_count": 4},),
                 has_more=False,
                 returned_count=1,
                 tested_signature="",
@@ -567,6 +688,11 @@ def test_quarterly_snapshot_preview_returns_future_quarter_as_zero_without_persi
     )
 
     assert item["status"] == "success"
+    assert item["fields"] == [
+        {"alias": "quarter", "name": "季度", "value_type": "string"},
+        {"alias": "special_processing_count", "name": "特殊处理数量", "value_type": "integer"},
+    ]
+    assert item["columns"] == ("quarter", "special_processing_count")
     assert item["rows"] == (
         {"quarter": "第1季度", "special_processing_count": 31},
         {"quarter": "第2季度", "special_processing_count": 34},
@@ -574,9 +700,160 @@ def test_quarterly_snapshot_preview_returns_future_quarter_as_zero_without_persi
         {"quarter": "第4季度", "special_processing_count": 0},
     )
     assert [
-        row["period_value"]
+        (row["period_type"], row["period_value"])
         for row in storage.list_year_snapshots(quarterly["id"], 2026)
-    ] == [1, 2, 3]
+    ] == [("month", month) for month in range(1, 9)]
+
+
+def test_special_processing_empty_current_reporting_month_overwrites_stale_month_to_zero(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    quarterly = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+    storage.upsert_year_snapshots(
+        quarterly["id"],
+        (SnapshotRow(2026, "month", 8, {
+            "month": "2026-08", "special_processing_count": 4,
+        }),),
+        datetime(2026, 9, 14, 10, 0),
+    )
+
+    class SystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if region_code != "quarterly_special_processing":
+                raise RuntimeError("unrelated system region")
+            return type("Result", (), {"preview": QueryPreview(
+                columns=("month", "special_processing_count"),
+                rows=({"month": "2026-07", "special_processing_count": 8},),
+                has_more=False,
+                returned_count=1,
+                tested_signature="",
+            )})()
+
+    result = DashboardManagementService(
+        storage,
+        system_executor=SystemExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region for region in result["regions"]
+        if region["code"] == "quarterly_special_processing"
+    )
+
+    assert item["rows"][2] == {
+        "quarter": "第3季度", "special_processing_count": 8,
+    }
+    august = next(
+        row for row in storage.list_year_snapshots(quarterly["id"], 2026)
+        if row["period_type"] == "month" and row["period_value"] == 8
+    )
+    assert august["row"]["special_processing_count"] == 0
+
+
+def test_special_processing_january_does_not_invent_zero_for_previous_december():
+    from auto_check.modules.dashboard_management.service import _with_current_reporting_month_zero
+
+    assert _with_current_reporting_month_zero((), datetime(2027, 1, 15, 10, 30)) == ()
+
+
+def test_special_processing_invalid_month_does_not_replace_current_reporting_month(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    special = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+    storage.upsert_year_snapshots(
+        special["id"],
+        (SnapshotRow(2026, "month", 8, {
+            "month": "2026-08", "special_processing_count": 4,
+        }),),
+        datetime(2026, 9, 14, 10, 0),
+    )
+
+    class SystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if region_code != "quarterly_special_processing":
+                raise RuntimeError("unrelated system region")
+            return type("Result", (), {"preview": QueryPreview(
+                columns=("month", "special_processing_count"),
+                rows=({"month": "2026-8", "special_processing_count": 8},),
+                has_more=False,
+                returned_count=1,
+                tested_signature="",
+            )})()
+
+    result = DashboardManagementService(
+        storage, system_executor=SystemExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region for region in result["regions"]
+        if region["code"] == "quarterly_special_processing"
+    )
+
+    assert item["status"] == "error"
+    august = next(
+        row for row in storage.list_year_snapshots(special["id"], 2026)
+        if row["period_type"] == "month" and row["period_value"] == 8
+    )
+    assert august["row"]["special_processing_count"] == 4
+
+
+def test_special_processing_preserves_confirmed_2026_july_baseline_and_refreshes_august(storage):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    class SystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if region_code != "quarterly_special_processing":
+                raise RuntimeError("unrelated system region")
+            return type("Result", (), {"preview": QueryPreview(
+                columns=("month", "special_processing_count"),
+                rows=(
+                    {"month": "2026-07", "special_processing_count": 1},
+                    {"month": "2026-08", "special_processing_count": 17},
+                ),
+                has_more=False,
+                returned_count=2,
+                tested_signature="",
+            )})()
+
+    result = DashboardManagementService(
+        storage, system_executor=SystemExecutor(),
+        now=lambda: datetime(2026, 9, 15, 10, 30),
+    ).preview_board_data("report_submission", {})
+    item = next(
+        region for region in result["regions"]
+        if region["code"] == "quarterly_special_processing"
+    )
+    special = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+
+    assert item["rows"][2] == {
+        "quarter": "第3季度", "special_processing_count": 25,
+    }
+    values_by_month = {
+        row["period_value"]: row["row"]["special_processing_count"]
+        for row in storage.list_year_snapshots(special["id"], 2026)
+        if row["period_type"] == "month"
+    }
+    assert values_by_month[7] == 8
+    assert values_by_month[8] == 17
+
+
+def test_special_processing_does_not_zero_confirmed_2026_july_when_august_is_current():
+    from auto_check.modules.dashboard_management.service import _with_current_reporting_month_zero
+
+    assert _with_current_reporting_month_zero((), datetime(2026, 8, 15, 10, 30)) == ()
 
 
 def test_snapshot_preview_without_current_year_history_keeps_existing_error(storage):

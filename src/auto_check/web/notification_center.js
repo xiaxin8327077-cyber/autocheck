@@ -219,7 +219,7 @@
     }
     if (item.action && item.action.type === "navigate" && item.action.route) {
       if (typeof window.handleReportNavTodoAction === "function") {
-        window.handleReportNavTodoAction(item.action.route, item.action.query);
+        window.handleReportNavTodoAction(item.action);
       }
     }
   }

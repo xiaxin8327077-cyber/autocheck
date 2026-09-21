@@ -14,6 +14,13 @@ import { openBoardPreviewDialog, openBoardScreenPreviewDialog } from "./componen
 let instance = null;
 function message(error, fallback) { return error?.payload?.error?.message || error?.message || fallback; }
 function aborted(error) { return error?.name === "AbortError"; }
+function sourcePreviewFields(region) {
+  const fields = region?.fields || [];
+  if (region?.region_code !== "quarterly_special_processing") return fields;
+  return fields.map((field) => String(field?.field_alias || field?.alias || "") === "quarter"
+    ? { ...field, field_alias: "month", name: "报送期月份" }
+    : field);
+}
 
 export async function confirmAndRotateToken({ configured, confirm, rotate }) {
   if (configured) {
@@ -293,13 +300,13 @@ function createPage(context) {
       let previewSection;
       let saveButton;
       const invalidateDraftView = (nextDraft) => {
-        if (previewSection) { const nextPreview = renderPreviewTable(nextDraft?.preview, nextDraft?.source_mode, region.fields || []); previewSection.replaceWith(nextPreview); previewSection = nextPreview; }
+        if (previewSection) { const nextPreview = renderPreviewTable(nextDraft?.preview, nextDraft?.source_mode, sourcePreviewFields(region)); previewSection.replaceWith(nextPreview); previewSection = nextPreview; }
         if (saveButton) saveButton.disabled = !canManage || pending;
         return nextDraft;
       };
       const sourcePreviewGrid = node("div", { className: "dm-source-preview-grid" });
       sourcePreviewGrid.append(renderSourceEditor({ region, draft, datasources: state.datasources || [], canManage, canTest, pending, onMode: (mode) => { setSourceMode(state, mode); render(); }, onDatasource: (value) => invalidateDraftView(markDatasourceChanged(state, value)), onSql: (value) => invalidateDraftView(markSqlChanged(state, value)), onTest }));
-      previewSection = renderPreviewTable(draft.preview, draft.source_mode, region.fields || []); sourcePreviewGrid.append(previewSection); detail.append(sourcePreviewGrid);
+      previewSection = renderPreviewTable(draft.preview, draft.source_mode, sourcePreviewFields(region)); sourcePreviewGrid.append(previewSection); detail.append(sourcePreviewGrid);
       const saveBar = node("div", { className: "dm-save-bar" }); saveBar.append(node("p", { text: draft.source_mode === "sql" ? "查询 SQL 可直接保存，测试仅用于预览和校验结果" : "保存当前系统数据配置" })); saveButton = button("保存配置", "dm-button dm-button-primary", onSave, { disabled: !canManage || pending }); saveBar.append(saveButton); detail.append(saveBar);
     }
     const panels = node("div", { className: "dm-detail-panels" });

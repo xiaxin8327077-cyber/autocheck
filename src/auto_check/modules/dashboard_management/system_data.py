@@ -124,20 +124,21 @@ SYSTEM_QUERY_DEFINITIONS: dict[str, SystemQueryDefinition] = {
     ),
     "quarterly_special_processing": SystemQueryDefinition(
         feature="报表特殊处理录入 / 特殊处理记录",
-        description="按季度统计本年度待确认和已确认的报表特殊处理记录。",
+        description="按报送期月份统计待确认和已确认的报表特殊处理记录，并由看板按季度汇总展示。",
         tables=("report_special_processing_records",),
-        fields=(("quarter", "季度"), ("special_processing_count", "特殊处理数量")),
+        fields=(("month", "报送期月份"), ("special_processing_count", "特殊处理数量")),
         sql=_sql(
             """
-            SELECT CONCAT(YEAR(special_handling_at), '年第',
-                          QUARTER(special_handling_at), '季度') AS quarter,
+            SELECT DATE_FORMAT(report_period, '%Y-%m') AS month,
                    COUNT(*) AS special_processing_count
             FROM report_special_processing_records
-            WHERE special_handling_at IS NOT NULL
+            WHERE report_period IS NOT NULL
               AND status IN ('pending', 'completed')
-              AND YEAR(special_handling_at) = YEAR(CURRENT_DATE)
-            GROUP BY YEAR(special_handling_at), QUARTER(special_handling_at)
-            ORDER BY YEAR(special_handling_at), QUARTER(special_handling_at)
+              AND report_period >= '2026-08-01'
+              AND YEAR(report_period) = YEAR(CURRENT_DATE)
+              AND report_period < DATE_FORMAT(CURRENT_DATE, '%Y-%m-01')
+            GROUP BY DATE_FORMAT(report_period, '%Y-%m')
+            ORDER BY month
             """
         ),
     ),

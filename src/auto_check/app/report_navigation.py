@@ -14,6 +14,7 @@ from auto_check.app.app_database import ApplicationDatabase
 from auto_check.app.config import DataSourceEntry, load_store
 from auto_check.app.db import DatabaseClient, qualified_name, quote_identifier
 from auto_check.app.report_check_config import load_report_check_config
+from auto_check.app.report_navigation_schedule_preparation import SchedulePreparationResult, prepare_schedules
 from auto_check.app.report_navigation_platform import (
     CardProviderRegistry,
     CardStatisticsRequest,
@@ -640,6 +641,9 @@ class ReportNavigationService:
     def _default_query_executor(self) -> QueryExecutor:
         config_store = load_store(self.config_path, database=self.database)
         return ConfiguredQueryExecutor(config_store.data_sources)
+
+    def prepare_schedules(self, *, now: datetime | None = None) -> SchedulePreparationResult:
+        return prepare_schedules(self.store, now=now or beijing_now())
 
     def list_report_processes(self) -> tuple[ReportProcess, ...]:
         return tuple(

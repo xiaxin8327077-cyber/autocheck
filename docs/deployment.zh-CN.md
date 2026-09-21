@@ -27,7 +27,9 @@
 15. 在 `config.json` 中配置 `app_database`，`config.json` 仅保留 `app_database` 启动连接信息，不再保存动态配置、用户或历史数据。
 16. 保持 `AUTO_CHECK_SECRET_KEY` 与旧环境一致，避免旧数据源加密密码无法解密。
 17. 本地数据查询页面及入口已隐藏，不再提供 SQLite 查询、导出、备份或旧历史迁移入口，也不新增 MySQL 管理查询页面。
-18. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 56 张应用存储表结构与配置升级齐全，并确认已在备份后由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 及后续脚本至 `022_scheduled_tasks.sql`；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+18. 上线验收需分别确认原 20 张迁移目标表的数据行数与迁移报告一致，以及当前完整 56 张应用存储表结构与配置升级齐全，并确认已在备份后由运维人工执行 `012_module_system.sql`、`013_report_navigation_provider_states.sql` 及后续脚本至 `023_report_navigation_schedule_prepare.sql`；删除旧 SQLite `auto-check.db` 后应用仍应只依赖 MySQL 应用库运行。
+
+报送日期提前准备：在 `022_scheduled_tasks.sql` 后执行 `023_report_navigation_schedule_prepare.sql`，幂等预置“报送日期预生成”（默认每日北京时间 15:00），保留已有任务配置；提前检查下月只提醒管理员维护，最后一天仍缺失才继承；启动时补查当月和下月。完整表数仍为 56，详见 [报送日期预生成](report-navigation-schedule-preparation.zh-CN.md)。
 
 升级脚本中，`004`、`006`、`008`、`012_module_system.sql` 和 `013_report_navigation_provider_states.sql` 使用 `CREATE TABLE IF NOT EXISTS`，`005` 与 `007` 通过 `information_schema` 判断结构是否存在；`004` 至 `013` 均按可重复执行方式编写。上线前仍须停机、备份并按顺序人工执行。`012`、`013` 不修改全局 schema version，生产环境不得由应用自动执行。
 

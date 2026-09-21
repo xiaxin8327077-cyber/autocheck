@@ -33,10 +33,25 @@ from mysql_config_test_support import MemoryApplicationDatabase
 
 
 def _make_database() -> MemoryApplicationDatabase:
-    """创建预置了 3 个内置任务的内存数据库。"""
+    """创建预置了 4 个内置任务的内存数据库。"""
     db = MemoryApplicationDatabase()
     now = beijing_now()
     db.connection.tables["scheduled_tasks"] = [
+        {
+            "task_code": "report_navigation_schedule_prepare",
+            "task_name": "报送日期预生成",
+            "schedule_type": "daily",
+            "interval_minutes": None,
+            "daily_time": "15:00",
+            "enabled": 1,
+            "next_run_at": None,
+            "last_started_at": None,
+            "last_finished_at": None,
+            "last_status": None,
+            "last_error": None,
+            "created_at": now,
+            "updated_at": now,
+        },
         {
             "task_code": "report_navigation_statistics",
             "task_name": "报送导航统计",
@@ -94,11 +109,13 @@ def _make_manager(
     report_nav = MagicMock()
     notification_svc = MagicMock()
     api_router = MagicMock()
+    user_directory = MagicMock()
     manager = ScheduledTaskManager(
         db,
         report_navigation_service=report_nav,
         notification_service=notification_svc,
         api_router=api_router,
+        user_directory=user_directory,
     )
     return manager, report_nav, notification_svc, api_router
 
@@ -128,6 +145,14 @@ def test_scheduled_tasks_user_has_no_capability():
     assert DEFAULT_MATRIX["admin"]["sys.scheduled_tasks"] is True
 
 
+def test_schedule_preparation_template_defaults_to_daily_15_00():
+    template = TASK_TEMPLATES["report_navigation_schedule_prepare"]
+    assert template["task_name"] == "报送日期预生成"
+    assert template["schedule_type"] == "daily"
+    assert template["daily_time"] == "15:00"
+    assert template["interval_minutes"] is None
+
+
 # ------------------------------------------------------------------
 # 列表 / 缺失模板
 # ------------------------------------------------------------------
@@ -136,7 +161,7 @@ def test_scheduled_tasks_user_has_no_capability():
 def test_list_tasks_returns_all_preset_tasks():
     manager, *_ = _make_manager()
     tasks = manager.list_tasks()
-    assert len(tasks) == 3
+    assert len(tasks) == 4
     codes = {t["task_code"] for t in tasks}
     assert codes == set(TASK_TEMPLATES)
 
@@ -271,7 +296,7 @@ def test_delete_task_physical():
     assert deleted is True
     assert manager.get_task("notification_cleanup") is None
     tasks = manager.list_tasks()
-    assert len(tasks) == 2
+    assert len(tasks) == 3
 
 
 def test_delete_unknown_task_raises():
@@ -323,6 +348,17 @@ def test_initial_next_run_field_mapping_next_midnight():
     assert next_run > now
 
 
+def test_initial_next_run_schedule_preparation_uses_next_daily_15_00():
+    db = _make_database()
+    manager, *_ = _make_manager(db)
+    manager._ensure_initial_next_run()
+    task = manager.get_task("report_navigation_schedule_prepare")
+    assert task["next_run_at"] is not None
+    assert task["next_run_at"].hour == 15
+    assert task["next_run_at"].minute == 0
+    assert task["next_run_at"] > beijing_now()
+
+
 # ------------------------------------------------------------------
 # 成功 / 失败状态
 # ------------------------------------------------------------------
@@ -363,6 +399,127 @@ def test_execute_field_mapping_calls_router():
     task = manager.get_task("db_validation_field_mapping_refresh")
     assert task["last_status"] == "success"
     api_router._refresh_db_validation_field_mapping.assert_called_once_with(source="auto")
+
+
+def test_execute_schedule_preparation_does_not_run_statistics_or_sql():
+    manager, report_nav, *_ = _make_manager()
+    report_nav.prepare_schedules.return_value = type("Result", (), {"issues": ()})()
+
+    manager._execute_task("report_navigation_schedule_prepare")
+
+    task = manager.get_task("report_navigation_schedule_prepare")
+    assert task["last_status"] == "success"
+    report_nav.prepare_schedules.assert_called_once()
+    report_nav.collect_once.assert_not_called()
+
+
+def test_execute_schedule_preparation_failure_records_sanitized_failed_status():
+    manager, report_nav, *_ = _make_manager()
+    report_nav.prepare_schedules.side_effect = RuntimeError(
+        "mysql://user:password=secret@internal.example/database"
+    )
+
+    manager._execute_task("report_navigation_schedule_prepare")
+
+    task = manager.get_task("report_navigation_schedule_prepare")
+    assert task["last_status"] == "failed"
+    assert task["last_error"]
+    assert "password=secret" not in task["last_error"]
+    assert "internal.example" not in task["last_error"]
+
+
+def test_awaiting_maintenance_issue_marks_task_failed_with_retry_summary():
+    from auto_check.app.report_navigation_schedule_preparation import (
+        SchedulePreparationIssue,
+        SchedulePreparationResult,
+    )
+
+    manager, report_nav, notification_svc, *_ = _make_manager()
+    manager._user_directory.list_active_users.return_value = [
+        type("Admin", (), {"id": "admin-1", "role": "admin", "active": True})()
+    ]
+    report_nav.prepare_schedules.return_value = SchedulePreparationResult(
+        months=("2026-12", "2027-01"), checked_count=1, ready_count=0,
+        issues=(SchedulePreparationIssue("2027-01", "alpha", "流程甲", "awaiting_maintenance"),),
+    )
+
+    manager._execute_task("report_navigation_schedule_prepare")
+
+    task = manager.get_task("report_navigation_schedule_prepare")
+    assert task["last_status"] == "failed"
+    assert "尚未维护" in task["last_error"]
+    notification_svc.publish.assert_called_once()
+
+
+def test_notification_publish_failure_marks_task_failed_and_redacts_error():
+    from auto_check.app.report_navigation_schedule_preparation import (
+        SchedulePreparationIssue,
+        SchedulePreparationResult,
+    )
+
+    manager, report_nav, notification_svc, *_ = _make_manager()
+    manager._user_directory.list_active_users.return_value = [
+        type("Admin", (), {"id": "admin-1", "role": "admin", "active": True})()
+    ]
+    report_nav.prepare_schedules.return_value = SchedulePreparationResult(
+        months=("2026-12", "2027-01"), checked_count=1, ready_count=0,
+        issues=(SchedulePreparationIssue("2027-01", "alpha", "流程甲", "missing_history"),),
+    )
+    notification_svc.publish.side_effect = RuntimeError("db password=secret")
+
+    manager._execute_task("report_navigation_schedule_prepare")
+
+    task = manager.get_task("report_navigation_schedule_prepare")
+    assert task["last_status"] == "failed"
+    assert "管理员通知发送失败" in task["last_error"]
+    assert "password=secret" not in task["last_error"]
+
+
+def test_start_runs_enabled_schedule_preparation_before_scheduler_thread(monkeypatch):
+    manager, report_nav, *_ = _make_manager()
+    report_nav.prepare_schedules.return_value = type("Result", (), {"issues": ()})()
+    events = []
+    original_execute = manager._execute_task
+
+    def record_execute(task_code):
+        events.append(("execute", task_code))
+        return original_execute(task_code)
+
+    monkeypatch.setattr(manager, "_execute_task", record_execute)
+    original_thread = threading.Thread
+
+    class _ThreadProbe:
+        def __init__(self, *args, **kwargs):
+            self._inner = original_thread(*args, **kwargs)
+
+        def start(self):
+            events.append(("thread", "start"))
+            self._inner.start()
+
+        def is_alive(self):
+            return self._inner.is_alive()
+
+        def join(self, *args, **kwargs):
+            return self._inner.join(*args, **kwargs)
+
+    monkeypatch.setattr("auto_check.app.scheduled_tasks.threading.Thread", _ThreadProbe)
+    manager.start()
+    try:
+        assert events.index(("execute", "report_navigation_schedule_prepare")) < events.index(("thread", "start"))
+    finally:
+        manager.stop()
+
+
+def test_start_continues_to_create_scheduler_thread_when_preparation_lookup_fails():
+    manager, *_ = _make_manager()
+    manager.get_task = MagicMock(side_effect=RuntimeError("mysql password=secret"))
+
+    manager.start()
+    try:
+        assert manager._thread is not None
+        assert manager._thread.is_alive()
+    finally:
+        manager.stop()
 
 
 def test_request_run_now_executes_disabled_task_through_scheduler_queue():
@@ -427,7 +584,7 @@ def test_tick_executes_due_task():
     manager, report_nav, *_ = _make_manager(db)
     # 手动设置 next_run_at 为过去
     past = beijing_now() - timedelta(minutes=1)
-    db.connection.tables["scheduled_tasks"][0]["next_run_at"] = past
+    next(row for row in db.connection.tables["scheduled_tasks"] if row["task_code"] == "report_navigation_statistics")["next_run_at"] = past
     manager._tick()
     report_nav.collect_once.assert_called_once()
 
@@ -437,7 +594,7 @@ def test_tick_does_not_execute_future_task():
     db = _make_database()
     manager, report_nav, *_ = _make_manager(db)
     future = beijing_now() + timedelta(hours=1)
-    db.connection.tables["scheduled_tasks"][0]["next_run_at"] = future
+    next(row for row in db.connection.tables["scheduled_tasks"] if row["task_code"] == "report_navigation_statistics")["next_run_at"] = future
     manager._tick()
     report_nav.collect_once.assert_not_called()
 
@@ -447,8 +604,9 @@ def test_tick_does_not_execute_disabled_task():
     db = _make_database()
     manager, report_nav, *_ = _make_manager(db)
     past = beijing_now() - timedelta(minutes=1)
-    db.connection.tables["scheduled_tasks"][0]["next_run_at"] = past
-    db.connection.tables["scheduled_tasks"][0]["enabled"] = 0
+    report_navigation_task = next(row for row in db.connection.tables["scheduled_tasks"] if row["task_code"] == "report_navigation_statistics")
+    report_navigation_task["next_run_at"] = past
+    report_navigation_task["enabled"] = 0
     manager._tick()
     report_nav.collect_once.assert_not_called()
 
@@ -513,7 +671,7 @@ def test_api_get_scheduled_tasks_returns_tasks_and_missing():
     assert status == 200
     assert "tasks" in payload
     assert "missing_templates" in payload
-    assert len(payload["tasks"]) == 3
+    assert len(payload["tasks"]) == 4
     assert payload["missing_templates"] == []
 
 

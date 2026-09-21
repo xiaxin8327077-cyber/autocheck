@@ -23,8 +23,6 @@ SNAPSHOT_REGION_CODES = frozenset({
 
 _MONTH_ONLY = re.compile(r"^(?P<month>0?[1-9]|1[0-2])月$")
 _YEAR_MONTH = re.compile(r"^(?P<year>\d{4})-(?P<month>0[1-9]|1[0-2])$")
-_QUARTER_ONLY = re.compile(r"^第(?P<quarter>[1-4])季度$")
-_YEAR_QUARTER = re.compile(r"^(?P<year>\d{4})年第(?P<quarter>[1-4])季度$")
 
 
 class SnapshotValidationError(ValueError):
@@ -54,6 +52,7 @@ INITIAL_2026_SNAPSHOT_ROWS: Mapping[str, tuple[SnapshotRow, ...]] = {
             (4, 1, 41, 70),
             (5, 3, 18, 37),
             (6, 4, 52, 77),
+            (7, 3, 49, 36),
         )
     ),
     REPORT_RECONCILIATION_COMPLETION_TIME: tuple(
@@ -85,14 +84,17 @@ INITIAL_2026_SNAPSHOT_ROWS: Mapping[str, tuple[SnapshotRow, ...]] = {
             (6, 23),
             (7, 25),
             (8, 20),
+            (9, 18),
         )
     ),
     QUARTERLY_SPECIAL_PROCESSING: tuple(
-        SnapshotRow(2026, "quarter", quarter, {
-            "quarter": f"第{quarter}季度",
+        SnapshotRow(2026, "month", month, {
+            "month": f"2026-{month:02d}",
             "special_processing_count": count,
         })
-        for quarter, count in ((1, 31), (2, 34))
+        # 1—6 月为已确认季度合计的固定历史估分，7 月为已确认初始值；
+        # 不使用随机数，避免每次启动改变趋势结果。
+        for month, count in ((1, 9), (2, 12), (3, 10), (4, 11), (5, 10), (6, 13), (7, 8))
     ),
 }
 
@@ -131,12 +133,24 @@ def _normalize_row(
 ) -> SnapshotRow | None:
     row = dict(raw_row)
     if region_code == QUARTERLY_SPECIAL_PROCESSING:
-        period = _quarter_period(row.get("quarter"), now)
+        if row.get("quarter") not in (None, ""):
+            raise SnapshotValidationError("季度报表特殊处理必须按月报送期返回 month=YYYY-MM")
+        if _YEAR_MONTH.fullmatch(str(row.get("month") or "").strip()) is None:
+            raise SnapshotValidationError("季度报表特殊处理必须按月报送期返回 month=YYYY-MM")
+        period = _month_period(
+            row.get("month"), now, allow_month_only=False
+        )
         if period is None:
             return None
-        year, quarter = period
-        row["quarter"] = f"第{quarter}季度"
-        return SnapshotRow(year, "quarter", quarter, row)
+        year, month = period
+        if (year, month) > _current_reporting_period(now):
+            return None
+        if year == 2026 and month <= 7:
+            # The confirmed 2026 historical baseline is fixed through July.
+            # Later live queries start with the August reporting period.
+            return None
+        row["month"] = f"{year:04d}-{month:02d}"
+        return SnapshotRow(year, "month", month, row)
 
     allow_month_only = region_code == MONTHLY_TRUST_PROJECTS
     period = _month_period(
@@ -193,22 +207,10 @@ def _month_period(
     return year, month
 
 
-def _quarter_period(value: Any, now: datetime) -> tuple[int, int] | None:
-    text = str(value or "").strip()
-    match = _YEAR_QUARTER.fullmatch(text)
-    if match is not None:
-        year = int(match.group("year"))
-        quarter = int(match.group("quarter"))
-    else:
-        match = _QUARTER_ONLY.fullmatch(text)
-        if match is None:
-            return None
-        year = now.year
-        quarter = int(match.group("quarter"))
-    current_quarter = (now.month - 1) // 3 + 1
-    if year != now.year or quarter > current_quarter:
-        return None
-    return year, quarter
+def _current_reporting_period(now: datetime) -> tuple[int, int]:
+    if now.month == 1:
+        return now.year - 1, 12
+    return now.year, now.month - 1
 
 
 def normalize_reconciliation_completion_row(

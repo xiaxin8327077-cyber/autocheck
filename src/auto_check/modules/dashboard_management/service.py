@@ -167,7 +167,8 @@ class DashboardManagementService:
             snapshot_enabled = str(region["region_code"]) in SNAPSHOT_REGION_CODES
             period_alias = _snapshot_period_alias(str(region["region_code"]))
             if snapshot_enabled and period_alias not in {
-                str(field["field_alias"]) for field in fields
+                str(field["field_alias"])
+                for field in _source_fields(str(region["region_code"]), fields)
             }:
                 item.update(_preview_error(SnapshotValidationError(
                     f"快照区域必须启用周期字段：{period_alias}"
@@ -185,11 +186,18 @@ class DashboardManagementService:
                     normalized = normalize_snapshot_rows(
                         str(region["region_code"]), preview.rows, business_now
                     )
+                    if str(region["region_code"]) == QUARTERLY_SPECIAL_PROCESSING:
+                        normalized = _with_current_reporting_month_zero(
+                            normalized, business_now
+                        )
                     snapshots = self.storage.refresh_year_snapshots(
                         int(region["id"]),
                         normalized,
                         period_year=business_now.year,
                         refreshed_at=refreshed_at,
+                    )
+                    snapshots = _presentation_snapshots(
+                        snapshots, str(region["region_code"])
                     )
                     if not snapshots:
                         raise SnapshotDataNotReadyError()
@@ -264,6 +272,11 @@ class DashboardManagementService:
             )
         except Exception:
             return None
+        if not snapshots:
+            return None
+        snapshots = _presentation_snapshots(
+            snapshots, str(region["region_code"])
+        )
         if not snapshots:
             return None
         return (
@@ -533,6 +546,17 @@ class DashboardManagementService:
 def _source_fields(
     region_code: str, fields: Sequence[Mapping[str, Any]]
 ) -> list[Mapping[str, Any]]:
+    if region_code == QUARTERLY_SPECIAL_PROCESSING:
+        return [
+            {
+                **field,
+                "field_alias": "month",
+                "name": "报送期月份",
+                "description": "内部统计字段。格式：YYYY-MM。",
+            }
+            if str(field.get("field_alias")) == "quarter" else dict(field)
+            for field in fields
+        ]
     if region_code != REPORT_RECONCILIATION_COMPLETION_TIME:
         return list(fields)
     return [
@@ -674,24 +698,39 @@ def _snapshot_preview(
     request_now: datetime,
 ) -> QueryPreview:
     columns = tuple(str(field["field_alias"]) for field in fields)
-    projected_snapshots = list(snapshots)
     if region_code == QUARTERLY_SPECIAL_PROCESSING:
+        monthly_snapshots = [
+            snapshot for snapshot in snapshots
+            if snapshot.get("period_type") == "month"
+        ]
+        quarter_counts: dict[int, int] = {}
+        for snapshot in monthly_snapshots:
+            month = int(snapshot["period_value"])
+            quarter = (month - 1) // 3 + 1
+            count = snapshot["row"].get("special_processing_count")
+            quarter_counts[quarter] = quarter_counts.get(quarter, 0) + int(count or 0)
         current_quarter = (request_now.month - 1) // 3 + 1
-        existing_quarters = {
-            int(snapshot["period_value"]) for snapshot in projected_snapshots
-        }
-        projected_snapshots.extend(
+        projected_snapshots = [
             {
                 "period_value": quarter,
                 "row": {
                     "quarter": f"第{quarter}季度",
-                    "special_processing_count": 0,
+                    "special_processing_count": quarter_counts[quarter],
                 },
             }
+            for quarter in sorted(quarter_counts)
+        ]
+        projected_snapshots.extend(
+            {
+                "period_value": quarter,
+                "row": {"quarter": f"第{quarter}季度", "special_processing_count": 0},
+            }
             for quarter in range(current_quarter + 1, 5)
-            if quarter not in existing_quarters
+            if quarter not in quarter_counts
         )
         projected_snapshots.sort(key=lambda snapshot: int(snapshot["period_value"]))
+    else:
+        projected_snapshots = list(snapshots)
     rows = tuple(
         {
             alias: normalized.get(alias)
@@ -727,7 +766,45 @@ def _latest_snapshot_refresh(snapshots: list[Mapping[str, Any]]) -> str | None:
 
 
 def _snapshot_period_alias(region_code: str) -> str:
-    return "quarter" if region_code == "quarterly_special_processing" else "month"
+    return "month"
+
+
+def _with_current_reporting_month_zero(
+    rows: tuple[Any, ...], business_now: datetime
+) -> tuple[Any, ...]:
+    """Mark the current reporting month as zero when its successful query is empty.
+
+    The current reporting period is the preceding calendar month.  This is the
+    only automatic zero, so a successful empty query cannot erase historical
+    monthly baselines or values outside the active reporting period.
+    """
+    if business_now.month == 1:
+        # The current year's system query intentionally does not include the
+        # prior December.  Never infer a zero that could overwrite its stored
+        # actual result.
+        return rows
+    year = business_now.year
+    month = business_now.month - 1
+    if year == 2026 and month <= 7:
+        return rows
+    if any(row.period_year == year and row.period_value == month for row in rows):
+        return rows
+    from .year_snapshots import SnapshotRow
+    return (*rows, SnapshotRow(year, "month", month, {
+        "month": f"{year:04d}-{month:02d}",
+        "special_processing_count": 0,
+    }))
+
+
+def _presentation_snapshots(
+    snapshots: list[Mapping[str, Any]], region_code: str
+) -> list[Mapping[str, Any]]:
+    if region_code != QUARTERLY_SPECIAL_PROCESSING:
+        return snapshots
+    return [
+        snapshot for snapshot in snapshots
+        if snapshot.get("period_type") == "month"
+    ]
 
 
 def _datetime_text(value: Any) -> str:

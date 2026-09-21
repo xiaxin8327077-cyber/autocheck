@@ -34,6 +34,7 @@ from sqlalchemy import (
 )
 
 from auto_check.app.app_database import ApplicationDatabase
+from auto_check.app.report_navigation_schedule_preparation import run_schedule_preparation
 from auto_check.app.time_utils import beijing_now
 
 
@@ -67,6 +68,13 @@ def _handle_report_navigation_statistics(manager: "ScheduledTaskManager") -> Non
     manager._report_navigation.collect_once()
 
 
+def _handle_report_navigation_schedule_prepare(manager: "ScheduledTaskManager") -> None:
+    run_schedule_preparation(
+        manager._report_navigation, manager._notification_service, manager._user_directory,
+        now=beijing_now(),
+    )
+
+
 def _handle_notification_cleanup(manager: "ScheduledTaskManager") -> None:
     manager._notification_service.cleanup_expired()
 
@@ -77,6 +85,13 @@ def _handle_db_validation_field_mapping_refresh(manager: "ScheduledTaskManager")
 
 #: 内置任务模板注册表。key 为 task_code。
 TASK_TEMPLATES: dict[str, dict[str, Any]] = {
+    "report_navigation_schedule_prepare": {
+        "task_name": "报送日期预生成",
+        "schedule_type": "daily",
+        "interval_minutes": None,
+        "daily_time": "15:00",
+        "handler": _handle_report_navigation_schedule_prepare,
+    },
     "report_navigation_statistics": {
         "task_name": "报送导航统计",
         "schedule_type": "interval",
@@ -161,11 +176,13 @@ class ScheduledTaskManager:
         report_navigation_service: Any = None,
         notification_service: Any = None,
         api_router: Any = None,
+        user_directory: Any = None,
     ) -> None:
         self._database = database
         self._report_navigation = report_navigation_service
         self._notification_service = notification_service
         self._api_router = api_router
+        self._user_directory = user_directory
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
@@ -510,6 +527,13 @@ class ScheduledTaskManager:
         if self._thread is not None and self._thread.is_alive():
             return
         self._ensure_initial_next_run()
+        try:
+            preparation_task = self.get_task("report_navigation_schedule_prepare")
+            if preparation_task and preparation_task["enabled"]:
+                # 先补齐当月缺失日期，再开始后台调度并对外服务。
+                self._execute_task("report_navigation_schedule_prepare")
+        except Exception:
+            logger.error("启动时报送日期补查失败，请检查应用库及定时任务状态")
         self._stop.clear()
         self._wake.clear()
         self._thread = threading.Thread(

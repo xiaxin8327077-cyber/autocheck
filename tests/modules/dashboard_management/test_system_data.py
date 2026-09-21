@@ -79,8 +79,14 @@ def test_system_query_catalog_explains_all_six_system_sources():
     assert "header.status = 'completed'" not in reconciliation.sql
     quarterly = SYSTEM_QUERY_DEFINITIONS["quarterly_special_processing"]
     assert "report_special_processing_records" in quarterly.sql
+    assert "report_period" in quarterly.sql
+    assert "DATE_FORMAT(report_period, '%Y-%m') AS month" in quarterly.sql
+    assert "report_period >= '2026-08-01'" in quarterly.sql
+    assert "special_handling_at" not in quarterly.sql
+    assert "QUARTER(" not in quarterly.sql
     assert "status = 'completed'" not in quarterly.sql
     assert "status IN ('pending', 'completed')" in quarterly.sql
+    assert quarterly.fields == (("month", "报送期月份"), ("special_processing_count", "特殊处理数量"))
     submission_comparison = SYSTEM_QUERY_DEFINITIONS["monthly_report_submission_time_comparison"]
     assert "process.enabled = 1" in submission_comparison.sql
     assert "process.process_code <> 'pbc_central'" in submission_comparison.sql

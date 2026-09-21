@@ -14752,6 +14752,17 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   const changelogHtml = `
     <div class="changelog-item">
       <div>
+        <span class="changelog-version">v1.2.31</span>
+        <span class="changelog-date">2026-09-21</span>
+      </div>
+      <ul>
+        <li>新增报送日期预生成任务，提前通知管理员维护，月末自动继承缺失日期。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
         <span class="changelog-version">v1.2.30</span>
         <span class="changelog-date">2026-09-17</span>
       </div>

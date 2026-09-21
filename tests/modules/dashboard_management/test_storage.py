@@ -62,7 +62,7 @@ def test_seed_builtin_catalog_is_idempotent_and_preserves_admin_enabled_and_orde
     assert storage.get_source_config(trust["id"])["source_mode"] == "sql"
 
 
-def test_initial_year_snapshots_use_confirmed_month_and_quarter_cutoffs(storage) -> None:
+def test_initial_year_snapshots_use_confirmed_month_cutoffs(storage) -> None:
     report_regions = {
         row["region_code"]: row
         for row in storage.list_regions("report_submission")
@@ -81,12 +81,12 @@ def test_initial_year_snapshots_use_confirmed_month_and_quarter_cutoffs(storage)
         report_regions["quarterly_special_processing"]["id"], 2026
     )
 
-    assert [row["period_value"] for row in trust_rows] == [1, 2, 3, 4, 5, 6]
+    assert [row["period_value"] for row in trust_rows] == [1, 2, 3, 4, 5, 6, 7]
     assert trust_rows[-1]["row"] == {
-        "month": "6月",
-        "single_trust_count": 4,
-        "collective_trust_count": 52,
-        "property_trust_count": 77,
+        "month": "7月",
+        "single_trust_count": 3,
+        "collective_trust_count": 49,
+        "property_trust_count": 36,
     }
     assert [row["row"]["reconciliation_completed_time"] for row in completion_rows] == [
         "21:00", "20:00", "19:00", "01:00", "23:00", "20:00",
@@ -94,12 +94,17 @@ def test_initial_year_snapshots_use_confirmed_month_and_quarter_cutoffs(storage)
     assert [row["row"]["reconciliation_completed_at"] for row in completion_rows] == [
         None, None, None, None, None, None,
     ]
-    assert [row["period_value"] for row in validation_rows] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [row["period_value"] for row in validation_rows] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
     assert [row["row"]["validation_issue_count"] for row in validation_rows] == [
-        75, 52, 42, 60, 16, 23, 25, 20,
+        75, 52, 42, 60, 16, 23, 25, 20, 18,
     ]
-    assert [row["period_value"] for row in quarter_rows] == [1, 2]
-    assert [row["row"]["special_processing_count"] for row in quarter_rows] == [31, 34]
+    assert [row["period_type"] for row in quarter_rows] == ["month"] * 7
+    assert [row["period_value"] for row in quarter_rows] == [1, 2, 3, 4, 5, 6, 7]
+    assert [row["row"]["special_processing_count"] for row in quarter_rows] == [
+        9, 12, 10, 11, 10, 13, 8,
+    ]
+    assert sum(row["row"]["special_processing_count"] for row in quarter_rows[:3]) == 31
+    assert sum(row["row"]["special_processing_count"] for row in quarter_rows[3:6]) == 34
 
     before = (trust_rows, completion_rows, validation_rows, quarter_rows)
     storage.seed_initial_year_snapshots()
@@ -113,6 +118,177 @@ def test_initial_year_snapshots_use_confirmed_month_and_quarter_cutoffs(storage)
         )
     )
     assert after == before
+
+
+def test_reseeding_preserves_collected_2026_september_validation_value(storage) -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    validation = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "report_validation_issue_handling"
+    )
+
+    storage.upsert_year_snapshots(
+        validation["id"],
+        (SnapshotRow(2026, "month", 9, {
+            "month": "2026-09",
+            "validation_issue_count": 40005,
+        }),),
+        datetime(2026, 9, 21, 9, 0),
+    )
+
+    storage.seed_initial_year_snapshots()
+
+    september = next(
+        row for row in storage.list_year_snapshots(validation["id"], 2026)
+        if row["period_type"] == "month" and row["period_value"] == 9
+    )
+    assert september["row"]["validation_issue_count"] == 40005
+    assert september["source_refreshed_at"] == datetime(2026, 9, 21, 9, 0)
+
+
+def test_reseeding_preserves_collected_2026_july_trust_values(storage) -> None:
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    trust = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "monthly_trust_projects"
+    )
+
+    storage.upsert_year_snapshots(
+        trust["id"],
+        (SnapshotRow(2026, "month", 7, {
+            "month": "7月",
+            "single_trust_count": 122,
+            "collective_trust_count": 222,
+            "property_trust_count": 322,
+        }),),
+        datetime(2026, 9, 21, 9, 0),
+    )
+
+    storage.seed_initial_year_snapshots()
+
+    july = next(
+        row for row in storage.list_year_snapshots(trust["id"], 2026)
+        if row["period_type"] == "month" and row["period_value"] == 7
+    )
+    assert july["row"] == {
+        "month": "7月",
+        "single_trust_count": 122,
+        "collective_trust_count": 222,
+        "property_trust_count": 322,
+    }
+    assert july["source_refreshed_at"] == datetime(2026, 9, 21, 9, 0)
+
+
+def test_legacy_default_quarter_seed_upgrades_once_to_monthly_estimates(storage) -> None:
+    from sqlalchemy import delete, insert
+
+    from auto_check.modules.dashboard_management.storage import YEAR_SNAPSHOTS
+
+    special = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+    with storage.database.transaction() as connection:
+        connection.execute(delete(YEAR_SNAPSHOTS).where(
+            YEAR_SNAPSHOTS.c.region_id == special["id"],
+            YEAR_SNAPSHOTS.c.period_year == 2026,
+            YEAR_SNAPSHOTS.c.period_type == "month",
+            YEAR_SNAPSHOTS.c.period_value.between(1, 6),
+        ))
+        for quarter, total in ((1, 31), (2, 34)):
+            connection.execute(insert(YEAR_SNAPSHOTS).values(
+                region_id=special["id"], period_year=2026, period_type="quarter",
+                period_value=quarter,
+                row_json=(
+                    '{"quarter":"第' + str(quarter)
+                    + '季度","special_processing_count":' + str(total) + '}'
+                ),
+                source_refreshed_at=None,
+                created_at=datetime(2026, 9, 15, 10, 0),
+                updated_at=datetime(2026, 9, 15, 10, 0),
+            ))
+
+    storage.seed_initial_year_snapshots()
+
+    rows = storage.list_year_snapshots(special["id"], 2026)
+    assert [(row["period_type"], row["period_value"]) for row in rows] == [
+        ("month", month) for month in range(1, 8)
+    ]
+    assert [row["row"]["special_processing_count"] for row in rows[:6]] == [
+        9, 12, 10, 11, 10, 13,
+    ]
+
+
+def test_legacy_nondefault_quarter_snapshot_is_not_rewritten(storage) -> None:
+    from sqlalchemy import insert
+
+    from auto_check.modules.dashboard_management.storage import YEAR_SNAPSHOTS
+
+    special = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+    with storage.database.transaction() as connection:
+        connection.execute(insert(YEAR_SNAPSHOTS).values(
+            region_id=special["id"], period_year=2026, period_type="quarter",
+            period_value=3,
+            row_json='{"quarter":"第3季度","special_processing_count":999}',
+            source_refreshed_at=None,
+            created_at=datetime(2026, 9, 15, 10, 0),
+            updated_at=datetime(2026, 9, 15, 10, 0),
+        ))
+
+    storage.seed_initial_year_snapshots()
+
+    assert any(
+        row["period_type"] == "quarter" and row["period_value"] == 3
+        for row in storage.list_year_snapshots(special["id"], 2026)
+    )
+
+
+def test_legacy_default_quarter_upgrade_keeps_existing_monthly_actual_value(storage) -> None:
+    from sqlalchemy import delete, insert
+
+    from auto_check.modules.dashboard_management.storage import YEAR_SNAPSHOTS
+
+    special = next(
+        row for row in storage.list_regions("report_submission")
+        if row["region_code"] == "quarterly_special_processing"
+    )
+    with storage.database.transaction() as connection:
+        connection.execute(delete(YEAR_SNAPSHOTS).where(
+            YEAR_SNAPSHOTS.c.region_id == special["id"],
+            YEAR_SNAPSHOTS.c.period_year == 2026,
+            YEAR_SNAPSHOTS.c.period_type == "month",
+            YEAR_SNAPSHOTS.c.period_value.between(1, 6),
+        ))
+        connection.execute(insert(YEAR_SNAPSHOTS).values(
+            region_id=special["id"], period_year=2026, period_type="month",
+            period_value=1,
+            row_json='{"month":"2026-01","special_processing_count":99}',
+            source_refreshed_at=datetime(2026, 9, 1, 10, 0),
+            created_at=datetime(2026, 9, 1, 10, 0),
+            updated_at=datetime(2026, 9, 1, 10, 0),
+        ))
+        connection.execute(insert(YEAR_SNAPSHOTS).values(
+            region_id=special["id"], period_year=2026, period_type="quarter",
+            period_value=1,
+            row_json='{"quarter":"第1季度","special_processing_count":31}',
+            source_refreshed_at=None,
+            created_at=datetime(2026, 9, 1, 10, 0),
+            updated_at=datetime(2026, 9, 1, 10, 0),
+        ))
+
+    storage.seed_initial_year_snapshots()
+
+    first_month = next(
+        row for row in storage.list_year_snapshots(special["id"], 2026)
+        if row["period_type"] == "month" and row["period_value"] == 1
+    )
+    assert first_month["row"]["special_processing_count"] == 99
+    assert first_month["source_refreshed_at"] == datetime(2026, 9, 1, 10, 0)
 
 
 def test_year_snapshot_upsert_overwrites_returned_period_and_preserves_missing_period(storage) -> None:
