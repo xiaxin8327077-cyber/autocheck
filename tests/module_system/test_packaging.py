@@ -456,9 +456,7 @@ def test_dashboard_management_manifest_declares_packaged_assets_and_release_note
         / "financial-report-flow.html"
     ).is_file()
     assert manifest["release_notes"]["version"] == "1.2.31"
-    assert "看板管理模块：支持固定看板的数据区域、字段与安全 SQL/系统数据来源配置，自动生成只读 SQL 并支持任意单条 SELECT/WITH 查询" in manifest[
-        "release_notes"
-    ]["items"]
-    assert any("内置看板页面" in item for item in manifest["release_notes"]["items"])
-    assert any("IP 白名单" in item for item in manifest["release_notes"]["items"])
-    assert any("10 次/60 秒" in item and "429" in item for item in manifest["release_notes"]["items"])
+    assert manifest["release_notes"]["items"] == [
+        "支持看板配置、预览与年度趋势统计。",
+        "支持外部只读接口、外部接口监控、访问令牌及 IP 白名单。",
+    ]
