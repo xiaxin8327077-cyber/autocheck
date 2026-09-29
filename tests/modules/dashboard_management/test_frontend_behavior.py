@@ -455,3 +455,113 @@ console.log(JSON.stringify({ ok: true }));
 
 def test_dashboard_management_state_keeps_boards_drafts_permissions_and_requests_isolated(tmp_path: Path) -> None:
     assert _run_scenario(tmp_path) == {"ok": True}
+
+
+def test_token_dialog_copy_falls_back_when_clipboard_api_is_unavailable_or_rejected(tmp_path: Path) -> None:
+    _copy_web_modules(tmp_path)
+    scenario = tmp_path / "token_copy.mjs"
+    scenario.write_text(
+        """
+import assert from "node:assert/strict";
+import { openTokenDialog } from "./components/external_api_token_dialog.mjs";
+
+class FakeElement {
+  constructor(tag) {
+    this.tagName = String(tag).toUpperCase();
+    this.children = [];
+    this.listeners = new Map();
+    this.parentNode = null;
+    this.className = "";
+    this.textContent = "";
+    this.value = "";
+    this.offsetParent = { visible: true };
+  }
+  setAttribute(name, value) {
+    if (name === "class") this.className = String(value);
+    if (name === "value") this.value = String(value);
+  }
+  append(...nodes) { nodes.forEach((child) => { child.parentNode = this; this.children.push(child); }); }
+  appendChild(child) { this.append(child); return child; }
+  removeChild(child) { this.children = this.children.filter((item) => item !== child); child.parentNode = null; }
+  remove() { this.parentNode?.removeChild(this); }
+  addEventListener(type, handler) { this.listeners.set(type, handler); }
+  removeEventListener(type) { this.listeners.delete(type); }
+  querySelectorAll() { return []; }
+  focus() { document.activeElement = this; }
+  select() { this.selected = true; }
+  dispatch(type, event = {}) { return this.listeners.get(type)?.(event); }
+}
+
+let copied = null;
+let execCalls = 0;
+let execResult = true;
+globalThis.document = {
+  activeElement: null,
+  createElement: (tag) => new FakeElement(tag),
+  execCommand: (command) => {
+    assert.equal(command, "copy");
+    execCalls += 1;
+    if (execResult) copied = document.activeElement?.value;
+    return execResult;
+  },
+};
+function find(root, className) {
+  if (root.className.split(/\\s+/).includes(className)) return root;
+  for (const child of root.children) {
+    const result = find(child, className);
+    if (result) return result;
+  }
+  return null;
+}
+function open(secret) {
+  const host = new FakeElement("div");
+  const dialog = openTokenDialog({ host, token: secret, rotated: true });
+  return { host, dialog, button: find(host, "dm-token-dialog__copy"), input: find(host, "dm-token-dialog__token-value") };
+}
+
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+const insecure = open("synthetic-token-insecure");
+await insecure.button.dispatch("click");
+assert.equal(execCalls, 1);
+assert.equal(copied, "synthetic-token-insecure");
+assert.equal(insecure.button.textContent, "已复制");
+insecure.dialog.element.dispatch("click", { target: insecure.dialog.element });
+assert.equal(insecure.dialog.element.parentNode, insecure.host, "点击遮罩不关闭弹窗");
+insecure.dialog.close();
+assert.equal(insecure.input.value, "");
+
+copied = null;
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async () => { throw new Error("denied"); } } } });
+const rejected = open("synthetic-token-rejected");
+await rejected.button.dispatch("click");
+assert.equal(execCalls, 2);
+assert.equal(copied, "synthetic-token-rejected");
+assert.equal(rejected.button.textContent, "已复制");
+rejected.dialog.close();
+
+let clipboardValue = null;
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async (value) => { clipboardValue = value; } } } });
+const secure = open("synthetic-token-secure");
+await secure.button.dispatch("click");
+assert.equal(clipboardValue, "synthetic-token-secure");
+assert.equal(execCalls, 2, "Clipboard API 成功时不调用降级复制");
+assert.equal(secure.button.textContent, "已复制");
+secure.dialog.close();
+
+execResult = false;
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+const failed = open("synthetic-token-failed");
+await failed.button.dispatch("click");
+assert.equal(failed.button.textContent, "复制失败");
+assert.equal(failed.input.selected, true);
+failed.dialog.close();
+
+console.log("ok");
+""".strip(),
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ["node", str(scenario)], cwd=tmp_path, text=True, capture_output=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "ok"

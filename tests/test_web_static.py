@@ -36,11 +36,17 @@ def test_v13_display_version_and_release_notes_are_consistent():
     assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
     assert 'id="sysVersion">V1.3</span>' in html
     assert "| 界面版本 | **V1.3**" in readme
+    assert app_js.count('class="changelog-version">v1.3.1</span>') == 1
     assert app_js.count('class="changelog-version">v1.3.0</span>') == 1
+    assert app_js.index('>v1.3.1</span>') < app_js.index('>v1.3.0</span>')
     assert app_js.index('>v1.3.0</span>') < app_js.index('>v1.2.31</span>')
+    current = app_js.split('>v1.3.1</span>', 1)[1].split('</ul>', 1)[0]
+    assert current.count("<li>") == 1
+    assert current.count("系统优化及BUG修复。") == 1
     latest = app_js.split('>v1.3.0</span>', 1)[1].split('</ul>', 1)[0]
     assert latest.count("<li>") == 1
     assert latest.count("报表特殊处理支持字典扩展关联报送，优化统计标签和 Excel 导出。") == 1
+    assert "`v1.3.1` (2026-09-29)" in readme
     assert "`v1.3.0` (2026-09-21)" in readme
 
 

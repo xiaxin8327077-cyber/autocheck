@@ -70,15 +70,27 @@ export function openTokenDialog({ host, token, rotated, onClose }) {
   dialog.append(tokenField);
 
   const copyBtn = button("复制", `dm-button dm-button-secondary ${CLASS_ROOT}__copy`, async () => {
-    try {
-      await navigator.clipboard.writeText(secret);
-      copyBtn.textContent = "已复制";
-      copyResetTimer = setTimeout(() => { copyBtn.textContent = "复制"; }, 2000);
-    } catch {
-      tokenInput.select();
-      copyBtn.textContent = "复制失败";
-      copyResetTimer = setTimeout(() => { copyBtn.textContent = "复制"; }, 2000);
+    let copied = false;
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(secret);
+        copied = true;
+      } catch {
+        // 非安全上下文或浏览器拒绝时，改用选区复制。
+      }
     }
+    if (closed) return;
+    if (!copied) {
+      tokenInput.focus();
+      tokenInput.select();
+      try {
+        copied = Boolean(document.execCommand("copy"));
+      } catch {
+        copied = false;
+      }
+    }
+    copyBtn.textContent = copied ? "已复制" : "复制失败";
+    copyResetTimer = setTimeout(() => { copyBtn.textContent = "复制"; }, 2000);
   });
   focusables.push(copyBtn);
 
