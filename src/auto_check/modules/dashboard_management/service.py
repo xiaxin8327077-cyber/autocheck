@@ -709,7 +709,10 @@ def _snapshot_preview(
             quarter = (month - 1) // 3 + 1
             count = snapshot["row"].get("special_processing_count")
             quarter_counts[quarter] = quarter_counts.get(quarter, 0) + int(count or 0)
-        current_quarter = (request_now.month - 1) // 3 + 1
+        reporting_month = request_now.month - 1
+        reporting_quarter = (
+            (reporting_month - 1) // 3 + 1 if reporting_month else 0
+        )
         projected_snapshots = [
             {
                 "period_value": quarter,
@@ -725,7 +728,7 @@ def _snapshot_preview(
                 "period_value": quarter,
                 "row": {"quarter": f"第{quarter}季度", "special_processing_count": 0},
             }
-            for quarter in range(current_quarter + 1, 5)
+            for quarter in range(reporting_quarter + 1, 5)
             if quarter not in quarter_counts
         )
         projected_snapshots.sort(key=lambda snapshot: int(snapshot["period_value"]))

@@ -459,4 +459,5 @@ def test_dashboard_management_manifest_declares_packaged_assets_and_release_note
     assert manifest["release_notes"]["items"] == [
         "支持看板配置、预览与年度趋势统计。",
         "支持外部只读接口、外部接口监控、访问令牌及 IP 白名单。",
+        "修复季度切换时看板缺失当前季度的问题。",
     ]

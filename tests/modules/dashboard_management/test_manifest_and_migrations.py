@@ -45,8 +45,9 @@ def test_manifest_declares_optional_dashboard_management_module() -> None:
     assert release_notes == [
         "支持看板配置、预览与年度趋势统计。",
         "支持外部只读接口、外部接口监控、访问令牌及 IP 白名单。",
+        "修复季度切换时看板缺失当前季度的问题。",
     ]
-    assert len(release_notes) == 2
+    assert len(release_notes) == 3
     assert len(set(release_notes)) == len(release_notes)
     assert all(not item.startswith("看板管理模块：") for item in release_notes)
     assert all("原型" not in item and "文档" not in item for item in release_notes)

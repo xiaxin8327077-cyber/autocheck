@@ -2,17 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让季度报表特殊处理的对外看板预览接口为尚未到达的缺失季度返回 0，但不写入年度快照。
+**Goal:** 让季度报表特殊处理的对外看板预览接口为统计截止季度之后的缺失季度返回 0，包括季度首月尚无已完成月份数据的当前季度，但不写入年度快照。
 
-**Architecture:** 在服务层将已持久化快照投影为接口行时，按请求时间计算当前季度，并仅为当前季度之后缺失的季度构造临时行。持久化存储、实时 SQL 归一化和快照覆盖规则保持不变。
+**Architecture:** 在服务层将已持久化月度快照汇总并投影为接口行时，按请求业务时间的上月计算本年度统计截止季度，并仅为该季度之后缺失的季度构造临时行。1 月的本年度截止月份为 0；没有可用快照时由既有规则返回 `data_not_ready`。持久化存储、实时 SQL 归一化和快照覆盖规则保持不变。
 
-**Tech Stack:** Python 3.11、SQLAlchemy、pytest
+**Tech Stack:** Python 3.12、SQLAlchemy、pytest
 
 ## Global Constraints
 
 - 仅修改看板预览接口返回，不补写 `dashboard_management_year_snapshots`。
 - 已有季度数据优先，未来季度只在缺失时补 0。
-- 当前季度与历史季度缺失时不补 0。
+- 统计截止季度及之前的历史季度缺失时不补 0；本年度无快照时不伪造成功。
 
 ---
 
@@ -27,7 +27,7 @@
 
 **Interfaces:**
 - Consumes: `DashboardManagementService.preview_board_data()` 的统一请求时间和 `storage.list_year_snapshots()` 返回的快照列表。
-- Produces: `_snapshot_preview(fields, snapshots, region_code, request_now) -> QueryPreview`，仅在 `quarterly_special_processing` 的未来缺失季度中生成临时 0 值行。
+- Produces: `_snapshot_preview(fields, snapshots, region_code, request_now) -> QueryPreview`，仅在 `quarterly_special_processing` 的统计截止季度之后缺失季度中生成临时 0 值行。
 
 - [x] **Step 1: 写失败测试**
 
@@ -57,14 +57,15 @@ Expected: FAIL，返回行中缺少尚未到达的季度。
 def _snapshot_preview(fields, snapshots, *, region_code, request_now):
     projected = list(snapshots)
     if region_code == "quarterly_special_processing":
-        current_quarter = (request_now.month - 1) // 3 + 1
+        reporting_month = request_now.month - 1
+        reporting_quarter = (reporting_month - 1) // 3 + 1 if reporting_month else 0
         existing = {int(item["period_value"]) for item in projected}
         projected.extend(
             {
                 "period_value": quarter,
                 "row": {"quarter": f"第{quarter}季度", "special_processing_count": 0},
             }
-            for quarter in range(current_quarter + 1, 5)
+            for quarter in range(reporting_quarter + 1, 5)
             if quarter not in existing
         )
         projected.sort(key=lambda item: int(item["period_value"]))
@@ -84,3 +85,9 @@ Expected: PASS。
 - [x] **Step 5: 更新说明并核对差异**
 
 在模块说明、根 README 和模块发布说明中明确“未来季度补零仅为接口投影，不写快照”，然后运行 `git diff --check`，预期无实际空白错误。
+
+### 2026-10-01 季度边界修正
+
+现行实现内部保存月度快照，以上示意中的季度投影在月度汇总之后执行。补零边界改为截至上月的统计季度，SQL、固定历史基线、月度快照写入和跨年隔离保持原规则。
+
+验收覆盖季度首月、北京时间跨季度、正常查询与旧快照回退、已有值及历史缺失、跨年无数据和占位行不持久化；先确认回归测试在旧逻辑下失败，再运行修复后的相关测试、模块测试和全量测试。

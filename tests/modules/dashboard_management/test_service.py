@@ -705,6 +705,215 @@ def test_monthly_special_processing_snapshot_returns_quarterly_api_rows_without_
     ] == [("month", month) for month in range(1, 9)]
 
 
+def _quarterly_region(storage):
+    return next(
+        region for region in storage.list_regions("report_submission")
+        if region["region_code"] == "quarterly_special_processing"
+    )
+
+
+def _quarterly_system_executor(rows=(), *, fails=False):
+    from auto_check.modules.dashboard_management.sql_executor import QueryPreview
+
+    class SystemExecutor:
+        def execute(self, database, region_code, active_fields, shape):
+            if fails or region_code != "quarterly_special_processing":
+                raise RuntimeError("database failure")
+            preview = QueryPreview(
+                columns=("month", "special_processing_count"),
+                rows=tuple(rows),
+                has_more=False,
+                returned_count=len(rows),
+                tested_signature="",
+            )
+            return type("Result", (), {"preview": preview})()
+
+    return SystemExecutor()
+
+
+def _quarterly_preview_item(service, endpoint="internal"):
+    if endpoint == "external":
+        result = service.preview_external_board_data("report_submission")
+    else:
+        result = service.preview_board_data("report_submission", {})
+    return next(
+        region for region in result["regions"]
+        if region["code"] == "quarterly_special_processing"
+    )
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "fails"),
+    [
+        ("internal", False),
+        ("external", False),
+        ("internal", True),
+        ("external", True),
+    ],
+)
+def test_quarterly_preview_uses_shanghai_reporting_cutoff_for_fresh_and_stale_data(
+    storage, endpoint, fails
+):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    quarterly = _quarterly_region(storage)
+    if fails:
+        storage.upsert_year_snapshots(
+            quarterly["id"],
+            (
+                SnapshotRow(2026, "month", 8, {
+                    "month": "2026-08", "special_processing_count": 10,
+                }),
+                SnapshotRow(2026, "month", 9, {
+                    "month": "2026-09", "special_processing_count": 0,
+                }),
+            ),
+            datetime(2026, 9, 30, 16, 0),
+        )
+    service = DashboardManagementService(
+        storage,
+        system_executor=_quarterly_system_executor(({
+            "month": "2026-08", "special_processing_count": 10,
+        },), fails=fails),
+        # 2026-09-30 UTC is 2026-10-01 in Asia/Shanghai.
+        now=lambda: datetime(2026, 9, 30, 16, 30, tzinfo=timezone.utc),
+    )
+
+    item = _quarterly_preview_item(service, endpoint)
+
+    assert item["status"] == "success"
+    assert item["snapshot_status"] == ("stale" if fails else "fresh")
+    assert item["has_more"] is False
+    assert item["returned_count"] == len(item["rows"])
+    assert item["rows"] == (
+        {"quarter": "第1季度", "special_processing_count": 31},
+        {"quarter": "第2季度", "special_processing_count": 34},
+        {"quarter": "第3季度", "special_processing_count": 18},
+        {"quarter": "第4季度", "special_processing_count": 0},
+    )
+    snapshots = storage.list_year_snapshots(quarterly["id"], 2026)
+    assert [snapshot["period_value"] for snapshot in snapshots] == list(range(1, 10))
+    assert {snapshot["period_type"] for snapshot in snapshots} == {"month"}
+
+
+@pytest.mark.parametrize(
+    ("request_now", "reported_month", "expected_rows"),
+    [
+        (
+            datetime(2027, 4, 1, 0, 0), 3,
+            (
+                {"quarter": "第1季度", "special_processing_count": 4},
+                {"quarter": "第2季度", "special_processing_count": 0},
+                {"quarter": "第3季度", "special_processing_count": 0},
+                {"quarter": "第4季度", "special_processing_count": 0},
+            ),
+        ),
+        (
+            datetime(2027, 7, 1, 0, 0), 6,
+            (
+                {"quarter": "第2季度", "special_processing_count": 4},
+                {"quarter": "第3季度", "special_processing_count": 0},
+                {"quarter": "第4季度", "special_processing_count": 0},
+            ),
+        ),
+        (
+            datetime(2027, 10, 1, 0, 0), 9,
+            (
+                {"quarter": "第3季度", "special_processing_count": 4},
+                {"quarter": "第4季度", "special_processing_count": 0},
+            ),
+        ),
+    ],
+)
+def test_quarterly_preview_fills_only_quarters_after_previous_month(
+    storage, request_now, reported_month, expected_rows
+):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    service = DashboardManagementService(
+        storage,
+        system_executor=_quarterly_system_executor(({
+            "month": f"2027-{reported_month:02d}", "special_processing_count": 4,
+        },)),
+        now=lambda: request_now,
+    )
+
+    item = _quarterly_preview_item(service)
+
+    assert item["status"] == "success"
+    assert item["has_more"] is False
+    assert item["returned_count"] == len(item["rows"])
+    assert item["rows"] == expected_rows
+    quarterly = _quarterly_region(storage)
+    snapshots = storage.list_year_snapshots(quarterly["id"], 2027)
+    assert len(snapshots) == 1
+    assert snapshots[0]["period_type"] == "month"
+    assert snapshots[0]["period_value"] == reported_month
+
+
+@pytest.mark.parametrize("existing_future_count", [0, 9])
+def test_quarterly_preview_preserves_existing_future_quarter_value_and_zero(
+    storage, existing_future_count
+):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+    from auto_check.modules.dashboard_management.year_snapshots import SnapshotRow
+
+    quarterly = _quarterly_region(storage)
+    storage.upsert_year_snapshots(
+        quarterly["id"],
+        (
+            SnapshotRow(2027, "month", 3, {
+                "month": "2027-03", "special_processing_count": 4,
+            }),
+            SnapshotRow(2027, "month", 4, {
+                "month": "2027-04", "special_processing_count": existing_future_count,
+            }),
+        ),
+        datetime(2027, 4, 1, 0, 0),
+    )
+    service = DashboardManagementService(
+        storage,
+        system_executor=_quarterly_system_executor(({
+            "month": "2027-03", "special_processing_count": 4,
+        },)),
+        now=lambda: datetime(2027, 4, 1, 0, 0),
+    )
+
+    item = _quarterly_preview_item(service)
+
+    assert item["rows"] == (
+        {"quarter": "第1季度", "special_processing_count": 4},
+        {"quarter": "第2季度", "special_processing_count": existing_future_count},
+        {"quarter": "第3季度", "special_processing_count": 0},
+        {"quarter": "第4季度", "special_processing_count": 0},
+    )
+    april = next(
+        snapshot for snapshot in storage.list_year_snapshots(quarterly["id"], 2027)
+        if snapshot["period_value"] == 4
+    )
+    assert april["row"]["special_processing_count"] == existing_future_count
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_quarterly_preview_without_current_year_snapshots_stays_data_not_ready(storage, fails):
+    from auto_check.modules.dashboard_management.service import DashboardManagementService
+
+    quarterly = _quarterly_region(storage)
+    item = _quarterly_preview_item(DashboardManagementService(
+        storage,
+        system_executor=_quarterly_system_executor(fails=fails),
+        now=lambda: datetime(2027, 1, 15, 10, 30),
+    ))
+
+    assert item["status"] == "error"
+    assert item["error"] == {
+        "code": "data_not_ready",
+        "message": "当前年度数据尚未准备完成",
+    }
+    assert storage.list_year_snapshots(quarterly["id"], 2027) == []
+
+
 def test_special_processing_empty_current_reporting_month_overwrites_stale_month_to_zero(storage):
     from auto_check.modules.dashboard_management.service import DashboardManagementService
     from auto_check.modules.dashboard_management.sql_executor import QueryPreview
