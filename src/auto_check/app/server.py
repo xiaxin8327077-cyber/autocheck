@@ -4817,6 +4817,8 @@ def build_display_details(result: ReconcileResult) -> list[dict[str, Any]]:
             sections.append(_property_right_invest_section(detail.data))
         elif detail.kind == "asset_difference_refinement":
             sections.append(_asset_difference_refinement_section(detail.data))
+        elif detail.kind == "equity_profit_loss" and detail.data.get("rows"):
+            sections.append(_equity_profit_loss_section(detail.data))
         elif detail.kind == "asset_missing_refinement":
             sections.append(_asset_missing_refinement_section(detail.data))
         elif detail.kind == "asset_duplicate_refinement":
@@ -4890,6 +4892,15 @@ def _final_judgement_section(result: ReconcileResult, detail_by_kind: dict[str, 
             {"label": "投融资-估值差异合计", "value": data.get("difference_total", "")},
             {"label": "判断依据", "value": data.get("basis", "")},
         ])
+    if data := detail_by_kind.get("equity_profit_loss"):
+        if data.get("rows"):
+            rows.extend([
+                {"label": "股权损益调整合计", "value": data.get("adjustment_total", "")},
+                {"label": "损益调整解释资产差额", "value": data.get("explained_asset_gap", "")},
+            ])
+        rows.append({"label": "判断依据", "value": data.get("basis", "")})
+        if data.get("remaining_difference") is not None:
+            rows.append({"label": "资产端解释后剩余差额", "value": data.get("remaining_difference", "")})
     if data := detail_by_kind.get("asset_difference_refinement"):
         rows.extend([
             {"label": "资产合计差额(a0001-0004)", "value": data.get("asset_total_gap", "")},
@@ -5020,6 +5031,21 @@ def _property_right_invest_section(data: dict[str, Any]) -> dict[str, Any]:
                     row.get("project_invest_balance", ""),
                     row.get("difference", ""),
                 ]
+                for row in data.get("rows", [])
+            ],
+        },
+    }
+
+
+def _equity_profit_loss_section(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": "股权损益调整核对",
+        "description": "",
+        "table": {
+            "headers": ["序号", "科目代码", "科目名称", "业务代码", "FA损益调整金额", "解释资产差额"],
+            "rows": [
+                [row.get("index", ""), row.get("account_code", ""), row.get("account_name", ""),
+                 row.get("business_code", ""), row.get("market_value", ""), row.get("explained_asset_gap", "")]
                 for row in data.get("rows", [])
             ],
         },

@@ -28,6 +28,52 @@ def test_finds_grouped_account_match_after_single_match_fails():
     assert len(matches.rows) == 2
 
 
+@pytest.mark.parametrize("values", [
+    ["-50", "-50"],
+    ["-50", "-20", "-30"],
+    ["-50", "10", "-10"],
+])
+def test_strict_matching_detects_alternatives_to_a_single_match(values):
+    rows = [row(f"1511.01.03.GQ{index}", value) for index, value in enumerate(values)]
+
+    strict = find_valuation_matches(rows, Decimal("-50"), detect_ambiguous_matches=True)
+    default = find_valuation_matches(rows, Decimal("-50"), detect_ambiguous_combinations=True)
+
+    assert strict.match_type == "ambiguous_combination"
+    assert len(strict.candidate_groups) >= 2
+    assert all(sum((item.market_value for item in group), Decimal("0")) == Decimal("-50")
+               for group in strict.candidate_groups)
+    assert default.match_type == "single"
+
+
+def test_strict_matching_deduplicates_grouped_and_combination_evidence():
+    rows = [row("1511.01.03.GQ1", "-20"), row("1511.01.03.GQ1", "-30")]
+
+    match = find_valuation_matches(rows, Decimal("-50"), detect_ambiguous_matches=True)
+
+    assert match.match_type == "grouped"
+    assert match.total == Decimal("-50")
+
+
+def test_strict_matching_does_not_confirm_a_single_fast_candidate_above_threshold():
+    rows = [row("1511.01.03.GQ1", "-50")] + [
+        row(f"1511.01.03.GQ{index}", "-1") for index in range(2, 8)
+    ]
+
+    match = find_valuation_matches(rows, Decimal("-50"), max_combination_rows=3,
+                                   detect_ambiguous_matches=True)
+
+    assert match.match_type == "combination_overflow"
+
+
+def test_strict_matching_rejects_a_separate_combination_pool_instead_of_losing_single_evidence():
+    rows = [row("1511.01.03.GQ1", "10"), row("1511.01.03.GQ2", "2")]
+
+    with pytest.raises(ValueError, match="combination_rows"):
+        find_valuation_matches(rows, Decimal("10"), combination_rows=[rows[1]],
+                               detect_ambiguous_matches=True)
+
+
 def test_finds_bounded_combination_match():
     rows = [
         row("1001.01.01.01.0001", "2"),

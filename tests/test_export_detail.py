@@ -4,9 +4,103 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPORT_DETAIL_JS = ROOT / "src" / "auto_check" / "web" / "export_detail.js"
+
+
+def _equity_profit_loss_export_item(*, negative=True):
+    amounts = ["-70.21", "20.04"] if negative else ["70.21", "-20.04"]
+    explained_rows = ["70.21", "-20.04"] if negative else ["-70.21", "20.04"]
+    raw_total, explained_total = ("-50.17", "50.17") if negative else ("50.17", "-50.17")
+    raw_rows = [
+        {"index": index, "account_code": f"1511.01.03.GQ.{name}", "account_name": f"股权{name}",
+         "business_code": f"GQ.{name}", "market_value": amount, "explained_asset_gap": explained}
+        for index, name, amount, explained in zip(["①", "②"], ["A", "B"], amounts, explained_rows)
+    ]
+    return {
+        "difference_reason": "资产差异", "match_status": "已解释",
+        "details": [{"kind": "equity_profit_loss", "data": {
+            "adjustment_total": raw_total, "explained_asset_gap": explained_total, "asset_total_gap": explained_total,
+            "remaining_difference": "0", "match_type": "combination", "rows": raw_rows,
+            "specific_reason": "①股权投资损益调整差异：股权A\n②股权投资损益调整差异：股权B",
+        }}],
+        "display_details": [
+            {"title": "最终判断结果", "rows": [
+                {"label": "具体原因", "value": "①股权投资损益调整差异：股权A\n②股权投资损益调整差异：股权B"},
+                {"label": "资负报表资产合计", "value": "1050.17" if negative else "949.83"},
+                {"label": "估值表资产合计", "value": "1000"},
+                {"label": "资产差异金额", "value": "50.17"},
+                {"label": "股权损益调整合计", "value": raw_total},
+                {"label": "损益调整解释资产差额", "value": explained_total},
+                {"label": "资产端解释后剩余差额", "value": "0"},
+            ]},
+            {"title": "股权损益调整核对", "table": {
+                "headers": ["序号", "科目代码", "科目名称", "业务代码", "FA损益调整金额", "解释资产差额"],
+                "rows": [[row[key] for key in ["index", "account_code", "account_name", "business_code", "market_value", "explained_asset_gap"]] for row in raw_rows],
+            }},
+        ],
+    }
+
+
+@pytest.mark.parametrize("negative", [True, False])
+def test_equity_profit_loss_export_contains_signed_totals_and_each_business_row(negative):
+    item = _equity_profit_loss_export_item(negative=negative)
+
+    text = run_export_detail(item)
+
+    assert "股权损益调整核对" in text
+    raw = item["details"][0]["data"]
+    assert raw["adjustment_total"] in text
+    assert raw["explained_asset_gap"] in text
+    assert "剩余差额" in text
+    for row in raw["rows"]:
+        line = next(line for line in text.splitlines() if row["account_code"] in line)
+        assert row["account_name"] in line
+        assert line.count(row["business_code"]) >= 2  # 科目编码一次，独立业务代码一次。
+        assert row["market_value"] in line
+        assert row["explained_asset_gap"] in line
+        assert "FA损益调整金额" in line
+        assert "解释资产差额" in line
+    assert "投融资余额" not in text
+    assert "DM证券余额" not in text
+    assert "资产缺失" not in text
+    assert "成本" not in text
+
+
+@pytest.mark.parametrize("negative", [True, False])
+def test_equity_profit_loss_does_not_generate_stock_code_processing_script(negative):
+    assert run_export_function("buildProcessingScript", _equity_profit_loss_export_item(negative=negative)) == ""
+
+
+def test_equity_profit_loss_engine_display_export_integration():
+    from dataclasses import asdict
+    from auto_check.app.server import build_display_details
+    from auto_check.engine.reconcile import ReconcileEngine
+    from test_reconcile import _equity_profit_loss_repo
+
+    repo = _equity_profit_loss_repo([
+        ("1511.01.03", "调整父级", "-50.17"),
+        ("1511.01.03.GQ.A", "股权A", "-70.21"),
+        ("1511.01.03.GQ.B", "股权B", "20.04"),
+    ], report="1050.17")
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+    item = {"difference_reason": result.difference_reason, "match_status": result.match_status,
+            "details": [asdict(detail) for detail in result.details], "display_details": build_display_details(result)}
+
+    text = run_export_detail(item)
+
+    assert "股权损益调整核对" in text
+    assert "1511.01.03.GQ.A" in text
+    assert "1511.01.03.GQ.B" in text
+    assert "-70.21" in text
+    assert "20.04" in text
+    assert "-50.17" in text
+    assert "50.17" in text
+    assert "投融资余额" not in text
+    assert run_export_function("buildProcessingScript", item) == ""
 
 
 def run_export_detail(item: dict) -> str:

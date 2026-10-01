@@ -226,7 +226,6 @@ class ReconcileEngine:
         # a0001 大于估值表资产：zf_detail 多记资产，预估为“资产重复”。
         asset_gap = abs(project.asset_total - valuation_asset_total)
         expected_reason = "资产缺失" if project.asset_total < valuation_asset_total else "资产重复"
-        self._project_log(project, f"资产端预估方向={expected_reason}，资产差异金额={asset_gap}", "资产端分析")
 
         # 资产端查估值表 1 开头的实际末级科目，以及 3001.XX 正数共同类资产。
         # AM 标的复核仍在后续步骤用四级科目判断是否进入复核。
@@ -238,6 +237,29 @@ class ReconcileEngine:
         )
         self._check_cancelled()
         valuation_rows = _asset_gap_candidate_rows(valuation_rows)
+        adjustment_rows = [
+            row for row in valuation_rows
+            if _is_equity_profit_loss_account(row.account_code) and row.market_value != 0
+        ]
+        if adjustment_rows:
+            signed_target = valuation_asset_total - project.asset_total
+            self._project_log(project, f"股权损益调整核对：目标={signed_target}，候选={len(adjustment_rows)}行", "股权损益调整核对")
+            adjustment_match = find_valuation_matches(
+                adjustment_rows,
+                signed_target,
+                max_combination_rows=self.max_combination_rows,
+                detect_ambiguous_matches=True,
+                max_ambiguous_groups=DISPLAY_CANDIDATE_GROUP_LIMIT,
+                cancel_checker=self._check_cancelled,
+                deadline=self._get_combination_deadline(),
+                progress_callback=lambda message: self._project_log(project, message, "股权损益调整核对"),
+            )
+            self._check_cancelled()
+            if adjustment_match.match_type != "none":
+                return self._reconcile_equity_profit_loss(project, date, valuation_asset_total, adjustment_match)
+        # 损益调整属于估值差异，不能再按正绝对差额解释为资产缺失/重复。
+        valuation_rows = [row for row in valuation_rows if not _is_equity_profit_loss_account(row.account_code)]
+        self._project_log(project, f"资产端预估方向={expected_reason}，资产差异金额={asset_gap}", "资产端分析")
         self._project_log(project, f"估值表资产端候选科目 {len(valuation_rows)} 行", "读取估值表科目")
 
         # 匹配金额使用绝对差额，因为这里已经通过大小关系确定了缺失或重复方向。
@@ -366,54 +388,8 @@ class ReconcileEngine:
         )
         details.append(asset_difference_detail)
         if asset_difference_detail.data.get("is_full_match"):
-            remaining_difference = project.difference - asset_total_gap
-            asset_difference_detail.data["remaining_difference"] = str(remaining_difference)
-            if amounts_equal(remaining_difference, Decimal("0")):
-                return self._result(
-                    project,
-                    difference_reason="资产差异",
-                    match_status="已解释",
-                    details=details,
-                    valuation_match=valuation_match,
-                )
-
-            self._project_log(
-                project,
-                f"资产差异已解释，资产修正后剩余差额={remaining_difference}，继续进入实收/负债权益链路",
-                "资产差异后续核对",
-            )
-            fa4001 = self.repository.get_fa_4001_balance(project.project_code, date)
-            adjusted_project = ProjectBalance(
-                project.project_code,
-                project.project_name,
-                valuation_asset_total,
-                project.liability_equity_total,
-                project.received_trust_balance,
-            )
-            followup_result = self._reconcile_liability_equity_gap(
-                adjusted_project,
-                date,
-                fa4001,
-                valuation_asset_total,
-                detect_main_difference_ambiguity=False,
-            )
-            next_index = len(asset_difference_detail.data.get("rows") or []) + 1
-            followup_details = _shift_detail_indices(followup_result.details, next_index)
-            asset_reason = str(asset_difference_detail.data.get("specific_reason") or "")
-            followup_reason = _last_specific_reason(followup_details)
-            if asset_reason and followup_reason:
-                followup_reason = _ensure_reason_index(followup_reason, next_index)
-                _set_last_specific_reason(
-                    followup_details,
-                    _renumber_specific_reason(f"{asset_reason}\n{followup_reason}"),
-                )
-            return self._result(
-                project,
-                difference_reason=f"资产差异 + {_followup_difference_reason(followup_result)}",
-                match_status=followup_result.match_status,
-                details=details + followup_details,
-                valuation_match=followup_result.valuation_match,
-                valuation_asset_total=valuation_asset_total,
+            return self._finish_explained_asset_gap(
+                project, date, valuation_asset_total, details, asset_difference_detail, valuation_match
             )
 
         match_status = self._status_for_match(valuation_match)
@@ -423,6 +399,115 @@ class ReconcileEngine:
             match_status=match_status,
             details=details,
             valuation_match=valuation_match,
+        )
+
+    def _reconcile_equity_profit_loss(
+        self,
+        project: ProjectBalance,
+        date: str,
+        valuation_asset_total: Decimal,
+        valuation_match: ValuationMatch,
+    ) -> ReconcileResult:
+        resolved = self._is_resolved(valuation_match)
+        asset_total_gap = project.asset_total - valuation_asset_total
+        rows = [
+            {
+                "index": _circled_index(index),
+                "account_code": row.account_code,
+                "account_name": row.account_name,
+                "business_code": row.account_business_code,
+                "market_value": str(row.market_value),
+                "explained_asset_gap": str(-row.market_value),
+            }
+            for index, row in enumerate(valuation_match.rows, start=1)
+        ] if resolved else []
+        specific_reason = "\n".join(
+            f"{row['index']}股权投资损益调整差异：{row['account_name'] or row['account_code']}；"
+            f"FA损益调整金额{row['market_value']}，解释资产差额{row['explained_asset_gap']}"
+            for row in rows
+        )
+        if not resolved:
+            specific_reason = ("股权投资损益调整候选不唯一" if valuation_match.match_type == "ambiguous_combination"
+                               else "股权投资损益调整匹配未完成，暂无法确定")
+        match_message = (
+            f"股权损益调整原始合计={valuation_match.total}，解释资产差额={-valuation_match.total}"
+            if resolved else f"股权损益调整核对目标={-asset_total_gap}；{valuation_match.message}"
+        )
+        gap_detail = DifferenceDetail(kind="asset_gap", data={
+            "reason": "资产差异",
+            "zf_asset_total": str(project.asset_total),
+            "valuation_asset_total": str(valuation_asset_total),
+            "asset_gap": str(abs(asset_total_gap)),
+            "match_type": valuation_match.match_type,
+            "match_total": str(valuation_match.total) if resolved else "",
+            "match_message": match_message,
+            "account_scope": "1511.01.03股权损益调整实际末级科目",
+        })
+        if valuation_match.match_type == "ambiguous_combination":
+            gap_detail.data["candidate_groups"] = _candidate_groups_payload(valuation_match.candidate_groups)
+        adjustment_detail = DifferenceDetail(kind="equity_profit_loss", data={
+            "adjustment_total": str(valuation_match.total) if resolved else "",
+            "explained_asset_gap": str(-valuation_match.total) if resolved else "",
+            "asset_total_gap": str(asset_total_gap),
+            "match_type": valuation_match.match_type,
+            "specific_reason": specific_reason,
+            "rows": rows,
+            "basis": "以股权损益调整原始合计的相反数核对资负报表资产减估值表资产的差额；仅说明金额对应关系。",
+        })
+        details = [gap_detail, adjustment_detail]
+        self._project_log(project, f"股权损益调整匹配结果={valuation_match.match_type}，{match_message}", "股权损益调整核对")
+        if resolved:
+            return self._finish_explained_asset_gap(
+                project, date, valuation_asset_total, details, adjustment_detail, valuation_match
+            )
+        return self._result(
+            project,
+            difference_reason="资产差异 + 暂无法确定" if valuation_match.match_type == "ambiguous_combination" else "资产差异",
+            match_status=self._status_for_match(valuation_match),
+            details=details,
+            valuation_match=valuation_match,
+        )
+
+    def _finish_explained_asset_gap(
+        self,
+        project: ProjectBalance,
+        date: str,
+        valuation_asset_total: Decimal,
+        details: list[DifferenceDetail],
+        asset_detail: DifferenceDetail,
+        valuation_match: ValuationMatch,
+    ) -> ReconcileResult:
+        remaining_difference = valuation_asset_total - project.liability_equity_total
+        asset_detail.data["remaining_difference"] = str(remaining_difference)
+        if amounts_equal(remaining_difference, Decimal("0")):
+            return self._result(project, difference_reason="资产差异", match_status="已解释",
+                                details=details, valuation_match=valuation_match)
+        self._project_log(
+            project,
+            f"资产差异已解释，资产修正后剩余差额={remaining_difference}，继续进入实收/负债权益链路",
+            "资产差异后续核对",
+        )
+        fa4001 = self.repository.get_fa_4001_balance(project.project_code, date)
+        self._check_cancelled()
+        adjusted_project = ProjectBalance(project.project_code, project.project_name, valuation_asset_total,
+                                          project.liability_equity_total, project.received_trust_balance)
+        followup_result = self._reconcile_liability_equity_gap(
+            adjusted_project, date, fa4001, valuation_asset_total, detect_main_difference_ambiguity=False
+        )
+        next_index = len(asset_detail.data.get("rows") or []) + 1
+        followup_details = _shift_detail_indices(followup_result.details, next_index)
+        asset_reason = str(asset_detail.data.get("specific_reason") or "")
+        followup_reason = _last_specific_reason(followup_details)
+        if asset_reason and followup_reason:
+            followup_reason = _ensure_reason_index(followup_reason, next_index)
+            _set_last_specific_reason(followup_details, _renumber_specific_reason(f"{asset_reason}\n{followup_reason}"))
+        return self._result(
+            project,
+            difference_reason=f"资产差异 + {_followup_difference_reason(followup_result)}",
+            match_status=followup_result.match_status,
+            details=details + followup_details,
+            valuation_match=followup_result.valuation_match,
+            valuation_asset_total=valuation_asset_total,
         )
 
     def _asset_difference_refinement_detail(
@@ -2438,6 +2523,10 @@ def _is_common_account_descendant(account_code: str) -> bool:
 
 def _normalize_common_payable_row(row: ValuationRow) -> ValuationRow:
     return ValuationRow(row.account_code, row.account_name, abs(row.market_value))
+
+
+def _is_equity_profit_loss_account(account_code: str) -> bool:
+    return account_code == "1511.01.03" or account_code.startswith("1511.01.03.")
 
 
 def _asset_gap_candidate_rows(rows: list[ValuationRow]) -> list[ValuationRow]:

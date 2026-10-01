@@ -36,6 +36,13 @@ def test_v13_display_version_and_release_notes_are_consistent():
     assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
     assert 'id="sysVersion">V1.3</span>' in html
     assert "| 界面版本 | **V1.3**" in readme
+    assert app_js.count('class="changelog-version">v1.3.2</span>') == 1
+    assert app_js.index('>v1.3.2</span>') < app_js.index('>v1.3.1</span>')
+    fix = app_js.split('>v1.3.2</span>', 1)[1].split('</ul>', 1)[0]
+    assert fix.count("<li>") == 2
+    assert fix.count("修复对账股权损益调整差异识别。") == 1
+    assert fix.count("系统优化及BUG修复。") == 1
+    assert "`v1.3.2` (2026-10-01)" in readme
     assert app_js.count('class="changelog-version">v1.3.1</span>') == 1
     assert app_js.count('class="changelog-version">v1.3.0</span>') == 1
     assert app_js.index('>v1.3.1</span>') < app_js.index('>v1.3.0</span>')

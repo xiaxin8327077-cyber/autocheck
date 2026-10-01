@@ -84,6 +84,7 @@ def find_valuation_matches(
     max_combination_states: int = 500000,
     max_combination_size: int = 30,
     detect_ambiguous_combinations: bool = False,
+    detect_ambiguous_matches: bool = False,
     max_ambiguous_groups: int = 5,
     cancel_checker: Callable[[], None] | None = None,
     deadline: float | None = None,
@@ -92,22 +93,27 @@ def find_valuation_matches(
 ) -> ValuationMatch:
     # 估值表金额匹配优先级保持不变：单行、同科目汇总、少行数组合、深层组合。
     # 候选行阈值限制 6～30 行深层搜索；2～5 行快速层可处理更大的候选池。
-    for row in rows:
-        if amounts_equal(row.market_value, target):
-            return ValuationMatch(match_type="single", rows=[row])
+    # 严格模式在同一候选池核查所有证据，禁止缩小组合池后静默漏掉单行。
+    if detect_ambiguous_matches and combination_rows is not None:
+        raise ValueError("detect_ambiguous_matches does not support separate combination_rows")
+    if not detect_ambiguous_matches:
+        for row in rows:
+            if amounts_equal(row.market_value, target):
+                return ValuationMatch(match_type="single", rows=[row])
 
-    grouped_rows: dict[str, list[ValuationRow]] = defaultdict(list)
-    for row in rows:
-        grouped_rows[row.account_code].append(row)
+        grouped_rows: dict[str, list[ValuationRow]] = defaultdict(list)
+        for row in rows:
+            grouped_rows[row.account_code].append(row)
 
-    for account_rows in grouped_rows.values():
-        total = sum((row.market_value for row in account_rows), Decimal("0"))
-        if len(account_rows) > 1 and amounts_equal(total, target):
-            return ValuationMatch(match_type="grouped", rows=account_rows)
+        for account_rows in grouped_rows.values():
+            total = sum((row.market_value for row in account_rows), Decimal("0"))
+            if len(account_rows) > 1 and amounts_equal(total, target):
+                return ValuationMatch(match_type="grouped", rows=account_rows)
 
     combination_candidates = rows if combination_rows is None else combination_rows
     stable_candidates = _stable_candidates(combination_candidates)
-    group_limit = max(2, max_ambiguous_groups) if detect_ambiguous_combinations else 1
+    detect_ambiguity = detect_ambiguous_combinations or detect_ambiguous_matches
+    group_limit = max(2, max_ambiguous_groups) if detect_ambiguity else 1
     budget = _SearchBudget(
         deadline=deadline,
         max_states=max_combination_states,
@@ -119,6 +125,25 @@ def find_valuation_matches(
 
     try:
         budget.check(1)
+        initial_indexes: list[tuple[int, ...]] = []
+        if detect_ambiguous_matches:
+            # 专用严格核对将单行、汇总和组合放入同一候选集合；旧调用保持优先级。
+            initial_indexes = [
+                (index,) for index, row in enumerate(stable_candidates)
+                if amounts_equal(row.market_value, target)
+            ]
+            grouped_indexes: dict[str, list[int]] = defaultdict(list)
+            for index, row in enumerate(stable_candidates):
+                grouped_indexes[row.account_code].append(index)
+            for indexes in grouped_indexes.values():
+                if len(indexes) > 1 and amounts_equal(
+                    sum((stable_candidates[index].market_value for index in indexes), Decimal("0")), target
+                ):
+                    initial_indexes.append(tuple(indexes))
+            if len(initial_indexes) > 1:
+                return _combination_result(
+                    stable_candidates, initial_indexes, max_ambiguous_groups, classify_matches=True
+                )
         budget.set_stage("2～5条快速组合匹配（当前2条）", announce=True)
         matched_indexes, searched_size = _find_fast_combination_indexes(
             stable_candidates,
@@ -127,11 +152,14 @@ def find_valuation_matches(
             group_limit=group_limit,
             budget=budget,
         )
+        matched_indexes = list(dict.fromkeys(initial_indexes + matched_indexes))
 
         if matched_indexes and (
-            not detect_ambiguous_combinations or len(matched_indexes) >= group_limit
+            not detect_ambiguity or len(matched_indexes) >= group_limit
         ):
-            return _combination_result(stable_candidates, matched_indexes, max_ambiguous_groups)
+            return _combination_result(
+                stable_candidates, matched_indexes, max_ambiguous_groups, classify_matches=detect_ambiguous_matches
+            )
 
         candidate_total = sum((row.market_value for row in stable_candidates), Decimal("0"))
         if (
@@ -145,8 +173,10 @@ def find_valuation_matches(
             return ValuationMatch(match_type="combination", rows=stable_candidates)
 
         if len(stable_candidates) > max_combination_rows:
-            if matched_indexes:
-                return _combination_result(stable_candidates, matched_indexes, max_ambiguous_groups)
+            if matched_indexes and (not detect_ambiguous_matches or len(matched_indexes) > 1):
+                return _combination_result(
+                    stable_candidates, matched_indexes, max_ambiguous_groups, classify_matches=detect_ambiguous_matches
+                )
             return ValuationMatch(
                 match_type="combination_overflow",
                 message=f"组合候选行数 {len(stable_candidates)} 超过上限 {max_combination_rows}",
@@ -165,7 +195,9 @@ def find_valuation_matches(
             searched_size = min(max_combination_size, len(stable_candidates))
 
         if matched_indexes:
-            return _combination_result(stable_candidates, matched_indexes, max_ambiguous_groups)
+            return _combination_result(
+                stable_candidates, matched_indexes, max_ambiguous_groups, classify_matches=detect_ambiguous_matches
+            )
         return ValuationMatch(match_type="none")
     except _CombinationTimeout as exc:
         return ValuationMatch(
@@ -419,6 +451,8 @@ def _combination_result(
     rows: list[ValuationRow],
     matched_indexes: list[tuple[int, ...]],
     max_ambiguous_groups: int,
+    *,
+    classify_matches: bool = False,
 ) -> ValuationMatch:
     ranked_indexes = sorted(matched_indexes, key=lambda indexes: (len(indexes), indexes))
     candidate_groups = [[rows[index] for index in indexes] for indexes in ranked_indexes]
@@ -430,4 +464,11 @@ def _combination_result(
             message="候选不唯一",
             candidate_groups=displayed_groups,
         )
-    return ValuationMatch(match_type="combination", rows=candidate_groups[0])
+    matched_rows = candidate_groups[0]
+    match_type = "combination"
+    if classify_matches:
+        if len(matched_rows) == 1:
+            match_type = "single"
+        elif len({row.account_code for row in matched_rows}) == 1:
+            match_type = "grouped"
+    return ValuationMatch(match_type=match_type, rows=matched_rows)

@@ -14758,6 +14758,17 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   const changelogHtml = `
     <div class="changelog-item">
       <div>
+        <span class="changelog-version">v1.3.2</span>
+        <span class="changelog-date">2026-10-01</span>
+      </div>
+      <ul>
+        <li>修复对账股权损益调整差异识别。</li>
+        <li>系统优化及BUG修复。</li>
+      </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
         <span class="changelog-version">v1.3.1</span>
         <span class="changelog-date">2026-09-29</span>
       </div>

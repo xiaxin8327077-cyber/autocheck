@@ -3758,6 +3758,91 @@ def test_display_details_show_final_asset_gap_and_am_judgement_only():
     assert {"label": "AM 标的代码", "value": "244978"} in details[2]["rows"]
 
 
+@pytest.mark.parametrize("amounts,report", [(["-70.21", "20.04"], "1050.17"), (["70.21", "-20.04"], "949.83")])
+def test_display_details_equity_profit_loss_keeps_signed_summary_and_business_rows(amounts, report):
+    raw_total = sum(map(Decimal, amounts), Decimal("0"))
+    explained = -raw_total
+    reason = "\n".join(
+        f"{index}股权投资损益调整差异：股权{name}；FA损益调整金额{amount}，解释资产差额{-Decimal(amount)}"
+        for index, name, amount in zip(["①", "②"], ["A", "B"], amounts)
+    )
+    result = ReconcileResult(
+        project_code="P1", project_name="股权项目", asset_total=Decimal(report),
+        liability_equity_total=Decimal("1000"), received_trust_balance=Decimal("0"),
+        difference=explained, direction="资产大于负债及权益" if explained > 0 else "资产小于负债及权益",
+        difference_reason="资产差异", match_status="已解释", valuation_asset_total=Decimal("1000"),
+        details=[
+            DifferenceDetail("asset_gap", {
+                "reason": "资产差异", "zf_asset_total": report, "valuation_asset_total": "1000",
+                "asset_gap": str(abs(explained)), "match_type": "combination", "match_total": str(raw_total),
+                "match_message": f"股权损益调整原始合计{raw_total}，解释资产差额{explained}",
+            }),
+            DifferenceDetail("equity_profit_loss", {
+                "adjustment_total": str(raw_total), "explained_asset_gap": str(explained),
+                "asset_total_gap": str(explained), "match_type": "combination", "remaining_difference": "0",
+                "specific_reason": reason,
+                "rows": [
+                    {"index": index, "account_code": f"1511.01.03.GQ.{name}", "account_name": f"股权{name}",
+                     "business_code": f"GQ.{name}", "market_value": amount, "explained_asset_gap": str(-Decimal(amount))}
+                    for index, name, amount in zip(["①", "②"], ["A", "B"], amounts)
+                ],
+            }),
+        ],
+        valuation_match=ValuationMatch("combination", [
+            ValuationRow(f"1511.01.03.GQ.{name}", f"股权{name}", Decimal(amount)) for name, amount in zip(["A", "B"], amounts)
+        ]),
+    )
+
+    details = build_display_details(result)
+
+    final_rows = details[0]["rows"]
+    assert {"label": "股权损益调整合计", "value": str(raw_total)} in final_rows
+    assert {"label": "损益调整解释资产差额", "value": str(explained)} in final_rows
+    assert {"label": "资产端解释后剩余差额", "value": "0"} in final_rows
+    assert {"label": "具体原因", "value": reason} in final_rows
+    equity_section = next(section for section in details if section["title"] == "股权损益调整核对")
+    assert equity_section["table"]["headers"] == ["序号", "科目代码", "科目名称", "业务代码", "FA损益调整金额", "解释资产差额"]
+    assert equity_section["table"]["rows"] == [
+        [index, f"1511.01.03.GQ.{name}", f"股权{name}", f"GQ.{name}", amount, str(-Decimal(amount))]
+        for index, name, amount in zip(["①", "②"], ["A", "B"], amounts)
+    ]
+    labels = [row["label"] for row in final_rows]
+    assert not any("投融资" in label or "DM证券余额" in label for label in labels)
+    assert not any(section["title"] in {"资产缺失细分", "资产重复细分", "合同投融资余额核对"} for section in details)
+
+
+def test_display_details_equity_profit_loss_ambiguity_shows_candidates_without_confirmed_rows():
+    groups = [
+        [ValuationRow("1511.01.03.GQ1", "股权1", Decimal("-50"))],
+        [ValuationRow("1511.01.03.GQ2", "股权2", Decimal("-20")), ValuationRow("1511.01.03.GQ3", "股权3", Decimal("-30"))],
+    ]
+    result = ReconcileResult(
+        project_code="P1", project_name="股权项目", asset_total=Decimal("1050"),
+        liability_equity_total=Decimal("1000"), received_trust_balance=Decimal("0"),
+        difference=Decimal("50"), direction="资产大于负债及权益", difference_reason="资产差异 + 暂无法确定",
+        match_status="候选不唯一", valuation_asset_total=Decimal("1000"),
+        details=[DifferenceDetail("asset_gap", {
+            "reason": "资产差异", "zf_asset_total": "1050", "valuation_asset_total": "1000", "asset_gap": "50",
+            "match_type": "ambiguous_combination", "specific_reason": "候选不唯一",
+            "candidate_groups": [
+                {"index": index, "total": "-50", "rows": [
+                    {"account_code": row.account_code, "account_name": row.account_name,
+                     "account_tail": row.account_business_code, "market_value": str(row.market_value)} for row in group
+                ]} for index, group in enumerate(groups, 1)
+            ],
+        })],
+        valuation_match=ValuationMatch("ambiguous_combination", rows=groups[0], candidate_groups=groups),
+    )
+
+    details = build_display_details(result)
+
+    titles = [section["title"] for section in details]
+    assert "候选组合明细" in titles
+    assert "具体差异明细" not in titles
+    assert "股权损益调整核对" not in titles
+    assert {"label": "具体原因", "value": "候选不唯一"} in details[0]["rows"]
+
+
 def test_display_details_show_asset_type_specific_reason_from_asset_gap():
     result = ReconcileResult(
         project_code="P2",

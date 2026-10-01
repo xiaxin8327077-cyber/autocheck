@@ -285,6 +285,25 @@
     return lines;
   }
 
+  function equityProfitLossLines(item, rows) {
+    const detail = section(item, "股权损益调整核对");
+    if (!detail.title) return [];
+    const headers = detail.table?.headers || [];
+    const lines = [
+      `股权损益调整核对：股权损益调整合计=${formatMoney(rowValue(rows, "股权损益调整合计"))}，损益调整解释资产差额=${formatMoney(rowValue(rows, "损益调整解释资产差额"))}，剩余差额=${formatMoney(rowValue(rows, "资产端解释后剩余差额"))}`,
+    ];
+    (detail.table?.rows || []).forEach((row) => {
+      lines.push([
+        `${tableCell(row, headers, "序号", 0)} 科目代码：${tableCell(row, headers, "科目代码", 1)}`,
+        `科目名称：${tableCell(row, headers, "科目名称", 2)}`,
+        `业务代码：${tableCell(row, headers, "业务代码", 3)}`,
+        `FA损益调整金额：${formatMoney(tableCell(row, headers, "FA损益调整金额", 4))}`,
+        `解释资产差额：${formatMoney(tableCell(row, headers, "解释资产差额", 5))}`,
+      ].join("；"));
+    });
+    return lines;
+  }
+
   function assetDifferenceRefinementLines(item, rows) {
     const finalRows = rows || [];
     const detail = section(item, "资产差异细分");
@@ -443,6 +462,7 @@
       if (propertyRightLines.length) lines.push(...propertyRightLines);
       const assetDifferenceLines = assetDifferenceRefinementLines(item, rows);
       if (assetDifferenceLines.length) lines.push(...assetDifferenceLines);
+      lines.push(...equityProfitLossLines(item, rows));
       lines.push(...candidateGroupLines(item));
     }
 

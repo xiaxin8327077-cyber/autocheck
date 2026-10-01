@@ -1,8 +1,292 @@
 from decimal import Decimal
 
+import pytest
+
 import auto_check.engine.reconcile as reconcile_module
 from auto_check.engine.models import PactAssetRow, ProjectBalance, ValuationMatch, ValuationRow
 from auto_check.engine.reconcile import NoSourceReportData, ReconcileEngine
+
+
+def _equity_profit_loss_repo(adjustments, *, report="1050", valuation="1000", liability="1000"):
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "股权项目", Decimal(report), Decimal(liability))]
+    repo.asset_total["P1"] = Decimal(valuation)
+    repo.valuation["P1"] = [
+        ValuationRow(code, name, Decimal(amount)) for code, name, amount in adjustments
+    ]
+    return repo
+
+
+def _equity_profit_loss_data(result):
+    return next(detail.data for detail in result.details if detail.kind == "equity_profit_loss")
+
+
+def test_equity_profit_loss_screenshot_negative_adjustments_explain_asset_difference():
+    repo = _equity_profit_loss_repo(
+        [
+            ("1511.01.01.GQ523002", "股权A成本", "3646441.38"),
+            ("1511.01.01.GQ523003", "股权B成本", "12762544.83"),
+            ("1511.01.01.GQ523004", "股权C成本", "6837077.58"),
+            ("1511.01.03", "股权损益调整汇总", "-2253936.21"),
+            ("1511.01.03.GQ523002", "股权A", "-353558.62"),
+            ("1511.01.03.GQ523003", "股权B", "-1237455.17"),
+            ("1511.01.03.GQ523004", "股权C", "-662922.42"),
+        ],
+        report="25766472.29", valuation="23512536.08", liability="23512536.08",
+    )
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference == Decimal("2253936.21")
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "已解释"
+    assert [detail.kind for detail in result.details] == ["asset_gap", "equity_profit_loss"]
+    gap, detail = result.details[0].data, _equity_profit_loss_data(result)
+    assert gap["reason"] == "资产差异"
+    assert Decimal(gap["asset_gap"]) == Decimal("2253936.21")
+    assert detail["adjustment_total"] == "-2253936.21"
+    assert detail["explained_asset_gap"] == "2253936.21"
+    assert detail["asset_total_gap"] == "2253936.21"
+    assert Decimal(detail["remaining_difference"]) == 0
+    assert [row["account_code"] for row in detail["rows"]] == [
+        "1511.01.03.GQ523002", "1511.01.03.GQ523003", "1511.01.03.GQ523004",
+    ]
+    assert [row["business_code"] for row in detail["rows"]] == ["GQ523002", "GQ523003", "GQ523004"]
+    assert [row["market_value"] for row in detail["rows"]] == ["-353558.62", "-1237455.17", "-662922.42"]
+    assert [row["explained_asset_gap"] for row in detail["rows"]] == ["353558.62", "1237455.17", "662922.42"]
+    assert [row["index"] for row in detail["rows"]] == ["①", "②", "③"]
+    for name, raw, explained in [("股权A", "-353558.62", "353558.62"), ("股权B", "-1237455.17", "1237455.17"), ("股权C", "-662922.42", "662922.42")]:
+        assert f"股权投资损益调整差异：{name}" in detail["specific_reason"]
+        assert raw in detail["specific_reason"]
+        assert explained in detail["specific_reason"]
+    assert "-2253936.21" in gap["match_message"]
+    assert "2253936.21" in gap["match_message"]
+    assert "成本" not in detail["specific_reason"]
+    assert "project_invest_total" not in detail
+    assert "dm_amount" not in detail
+
+
+@pytest.mark.parametrize(
+    "amounts,report,valuation,liability,raw_total,explained",
+    [
+        (["-50.17"], "1050.17", "1000", "1000", "-50.17", "50.17"),
+        (["50.17"], "949.83", "1000", "1000", "50.17", "-50.17"),
+        (["-70.21", "20.04"], "1050.17", "1000", "1000", "-50.17", "50.17"),
+        (["70.21", "-20.04"], "949.83", "1000", "1000", "50.17", "-50.17"),
+    ],
+)
+def test_equity_profit_loss_preserves_signed_decimal_explanation(amounts, report, valuation, liability, raw_total, explained):
+    repo = _equity_profit_loss_repo(
+        [(f"1511.01.03.GQ{index}", f"股权{index}", amount) for index, amount in enumerate(amounts)],
+        report=report, valuation=valuation, liability=liability,
+    )
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "已解释"
+    detail = _equity_profit_loss_data(result)
+    assert Decimal(detail["adjustment_total"]) == Decimal(raw_total)
+    assert Decimal(detail["explained_asset_gap"]) == Decimal(explained)
+    assert Decimal(detail["asset_total_gap"]) == Decimal(explained)
+    assert [Decimal(row["market_value"]) for row in detail["rows"]] == list(map(Decimal, amounts))
+    assert [Decimal(row["explained_asset_gap"]) for row in detail["rows"]] == [-Decimal(amount) for amount in amounts]
+
+
+@pytest.mark.parametrize("rows", [
+    [("1511.01.03", "无下级的调整", "-50")],
+    [("1511.01.03.GQ.A.01", "深层业务编码", "-50")],
+    [("1511.01.03", "调整父级", "-50"), ("1511.01.03.GQ1", "股权1", "-20"), ("1511.01.03.GQ2", "股权2", "-30")],
+])
+def test_equity_profit_loss_uses_actual_leaf_accounts(rows):
+    repo = _equity_profit_loss_repo(rows)
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "已解释"
+    expected_codes = [code for code, _, _ in rows if not any(other.startswith(code + ".") for other, _, _ in rows)]
+    assert [row["account_code"] for row in _equity_profit_loss_data(result)["rows"]] == expected_codes
+
+
+@pytest.mark.parametrize("code", ["1511.01.030.GQ1", "1511.01.03X.GQ1", "1511.01.01.GQ1", "11511.01.03.GQ1"])
+def test_equity_profit_loss_does_not_treat_cost_or_similar_prefix_as_adjustment(code):
+    repo = _equity_profit_loss_repo([(code, "普通科目", "-50")])
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.match_status == "未解释"
+    assert not any(detail.kind == "equity_profit_loss" for detail in result.details)
+
+
+def test_equity_profit_loss_excludes_zero_leaf_from_confirmed_explanation():
+    repo = _equity_profit_loss_repo([
+        ("1511.01.03.GQ1", "有效调整", "-50"),
+        ("1511.01.03.GQ0", "零额调整", "0"),
+    ])
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.match_status == "已解释"
+    assert [row["account_name"] for row in _equity_profit_loss_data(result)["rows"]] == ["有效调整"]
+
+
+def test_equity_profit_loss_has_priority_over_ordinary_asset_duplicate_candidate():
+    repo = _equity_profit_loss_repo([
+        ("1001.01.01.01.CASH", "现金普通候选", "50"),
+        ("1511.01.03.GQ1", "股权调整", "-50"),
+    ])
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "已解释"
+    assert [detail.kind for detail in result.details] == ["asset_gap", "equity_profit_loss"]
+    assert [row["account_name"] for row in _equity_profit_loss_data(result)["rows"]] == ["股权调整"]
+
+
+@pytest.mark.parametrize("report,adjustment", [("1050", "50"), ("950", "-50")])
+def test_equity_profit_loss_unmatched_adjustment_is_not_missing_or_duplicate_evidence(report, adjustment):
+    repo = _equity_profit_loss_repo([("1511.01.03.GQ1", "反向调整", adjustment)], report=report)
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "未解释"
+    assert not any(detail.kind in {"asset_missing_refinement", "asset_duplicate_refinement"} for detail in result.details)
+    assert not any(detail.kind == "equity_profit_loss" and detail.data.get("rows") for detail in result.details)
+
+
+def test_equity_profit_loss_no_match_continues_ordinary_asset_matching():
+    repo = _equity_profit_loss_repo([
+        ("1511.01.03.GQ1", "不匹配调整", "-20"),
+        ("1001.01.01.01.CASH", "现金", "50"),
+    ])
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产重复"
+    assert result.match_status == "已解释"
+    assert [row.account_name for row in result.valuation_match.rows] == ["现金"]
+
+
+@pytest.mark.parametrize("amounts", [
+    ["-50", "-50"],
+    ["-50", "-20", "-30"],
+    ["-50", "10", "-10"],
+    ["-20", "-30", "-10", "-40"],
+])
+def test_equity_profit_loss_does_not_confirm_nonunique_signed_candidates(amounts):
+    repo = _equity_profit_loss_repo([
+        (f"1511.01.03.GQ{index}", f"股权{index}", amount) for index, amount in enumerate(amounts)
+    ])
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异 + 暂无法确定"
+    assert result.match_status == "候选不唯一"
+    groups = result.details[0].data["candidate_groups"]
+    assert len(groups) >= 2
+    assert all(sum((Decimal(row["market_value"]) for row in group["rows"]), Decimal("0")) == Decimal("-50") for group in groups)
+    assert not any(detail.kind == "equity_profit_loss" and detail.data.get("rows") for detail in result.details)
+
+
+def test_equity_profit_loss_above_candidate_threshold_does_not_claim_unique_single():
+    repo = _equity_profit_loss_repo(
+        [("1511.01.03.GQ0", "快速命中", "-50")]
+        + [(f"1511.01.03.GQ{index}", f"股权{index}", "-1") for index in range(1, 7)]
+    )
+
+    result = ReconcileEngine(repo, max_combination_rows=3).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "组合候选过多"
+    assert not any(detail.kind == "equity_profit_loss" and detail.data.get("rows") for detail in result.details)
+
+
+@pytest.mark.parametrize("match_type", ["combination_timeout", "combination_overflow"])
+def test_equity_profit_loss_budget_exhaustion_does_not_fall_through_to_ordinary_confirmation(monkeypatch, match_type):
+    repo = _equity_profit_loss_repo([
+        ("1511.01.03.GQ1", "调整候选", "-50"),
+        ("1001.01.01.01.CASH", "普通候选", "50"),
+    ])
+    calls = []
+
+    def bounded_match(rows, target, **kwargs):
+        calls.append((rows, target, kwargs))
+        return ValuationMatch(match_type=match_type, message="预算耗尽")
+
+    monkeypatch.setattr(reconcile_module, "find_valuation_matches", bounded_match)
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异"
+    assert result.match_status == "组合候选过多"
+    assert len(calls) == 1
+    assert calls[0][1] == Decimal("-50")
+    assert [row.account_code for row in calls[0][0]] == ["1511.01.03.GQ1"]
+    assert not any(detail.kind == "equity_profit_loss" and detail.data.get("rows") for detail in result.details)
+
+
+def test_equity_profit_loss_and_fallback_searches_share_project_deadline(monkeypatch):
+    repo = _equity_profit_loss_repo([
+        ("1511.01.03.GQ1", "不匹配调整", "-20"),
+        ("1001.01.01.01.CASH", "普通资产", "17"),
+    ])
+    calls = []
+
+    def no_match(rows, target, **kwargs):
+        calls.append((rows, target, kwargs.get("deadline")))
+        return ValuationMatch(match_type="none")
+
+    monkeypatch.setattr(reconcile_module, "find_valuation_matches", no_match)
+
+    ReconcileEngine(repo).run("2026-09-30")
+
+    assert len(calls) >= 2
+    assert calls[0][1] == Decimal("-50")
+    assert calls[0][2] is not None
+    assert all(deadline == calls[0][2] for _, _, deadline in calls)
+
+
+def test_equity_profit_loss_full_match_continues_existing_received_trust_chain():
+    repo = _equity_profit_loss_repo([("1511.01.03.GQ1", "股权调整", "-50")], liability="950")
+    repo.projects = [ProjectBalance("P1", "股权项目", Decimal("1050"), Decimal("950"), Decimal("450"))]
+    repo.fa4001["P1"] = Decimal("500")
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference == Decimal("100")
+    assert result.difference_reason == "资产差异 + 实收本金差异"
+    assert result.match_status == "已解释"
+    assert [detail.kind for detail in result.details] == ["asset_gap", "equity_profit_loss", "received_trust"]
+    detail = _equity_profit_loss_data(result)
+    assert Decimal(detail["remaining_difference"]) == Decimal("50")
+    followup = result.details[-1].data
+    assert followup["refinement_rows"][0]["index"] == "②"
+    assert followup["specific_reason"].startswith(detail["specific_reason"] + "\n②")
+
+
+@pytest.mark.parametrize("business_amount,status", [("150", "已解释"), ("0", "未解释")])
+def test_equity_profit_loss_full_match_preserves_details_through_liability_chain(business_amount, status):
+    repo = _equity_profit_loss_repo([
+        ("1511.01.03.GQ1", "股权调整", "-50"),
+        ("2111.12.34.01.RP1", "卖出回购金融资产款", "200"),
+    ], liability="950")
+    repo.projects = [ProjectBalance("P1", "股权项目", Decimal("1050"), Decimal("950"), Decimal("500"))]
+    repo.fa4001["P1"] = Decimal("500")
+    repo.positive_repo_business_amounts["P1"] = Decimal(business_amount)
+
+    result = ReconcileEngine(repo).run("2026-09-30")[0]
+
+    assert result.difference_reason == "资产差异 + 负债及权益科目差异"
+    assert result.match_status == status
+    assert [detail.kind for detail in result.details] == ["asset_gap", "equity_profit_loss", "liability_equity"]
+    detail = _equity_profit_loss_data(result)
+    assert Decimal(detail["remaining_difference"]) == Decimal("50")
+    assert result.details[-1].data["match_target"] == "50"
+    assert result.details[-1].data["rows"][0]["index"] == "②"
+    assert result.details[-1].data["specific_reason"].startswith(detail["specific_reason"] + "\n②")
 
 
 def test_valuation_row_business_code_preserves_dots_inside_identifier():
