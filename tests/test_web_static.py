@@ -353,6 +353,7 @@ def _run_interface_radius_node_scenario(tmp_path: Path, scenario_source: str) ->
           getElementById: (id) => elements[id] || null,
           documentElement: {
             dataset: {},
+            getAttribute: () => "",
             style: {
               setProperty: (name, value) => cssVariables.set(name, value),
               getPropertyValue: (name) => cssVariables.get(name) || "",
@@ -5047,7 +5048,7 @@ def test_business_settings_displays_current_table_field_mapping():
     assert 'id="saveReconcileSchemaBtn"' not in schema_panel_head
     assert 'id="reconcileSchemaEditor"' not in html
     assert "function renderBusinessSettings()" in app_js
-    assert "function loadReconcileSchemaSettings()" in app_js
+    assert "function loadReconcileSchemaSettings(context = null)" in app_js
     assert "function renderReconcileSchemaForm(" in app_js
     assert "function readReconcileSchemaForm()" in app_js
     assert "function loadReconcileTableColumns(" in app_js
@@ -5314,7 +5315,7 @@ def test_settings_page_uses_space_tech_dashboard_layout_without_extra_theme_mode
 
     assert "对账业务设置" in html
     assert "function getReconcileBusinessSourceName()" in app_js
-    assert "function loadReconcileSchemaSettings()" in app_js
+    assert "function loadReconcileSchemaSettings(context = null)" in app_js
     assert "/api/settings/reconcile-schema/init-from-file" in app_js
     assert "filterRunsByReconcileBusinessSource" not in app_js
     assert "全部数据源" in app_js
@@ -6278,7 +6279,7 @@ def test_interface_radius_loads_before_theme_and_auth_reveal_with_internal_fallb
     assert auth_body.index(load_call) < auth_body.index("revealAuthenticatedApp();")
 
     loader = re.search(
-        r"async function loadInterfaceRadiusPreference\(\{ silent = false \} = \{\}\) \{(?P<body>.*?)\n\}",
+        r"async function loadInterfaceRadiusPreference\(\{ silent = false, context = null \} = \{\}\) \{(?P<body>.*?)\n\}",
         app_js,
         re.S,
     )
@@ -6402,7 +6403,7 @@ def test_interface_radius_state_normalization_rendering_and_api_boundary():
     assert "加载失败，当前使用默认 4px" in body
 
     loader = re.search(
-        r"async function loadInterfaceRadiusPreference\(\{ silent = false \} = \{\}\) \{(?P<body>.*?)\n\}",
+        r"async function loadInterfaceRadiusPreference\(\{ silent = false, context = null \} = \{\}\) \{(?P<body>.*?)\n\}",
         body,
         re.S,
     )
@@ -6554,14 +6555,14 @@ def test_interface_radius_settings_use_server_authority_with_login_display_cache
     app_js = _read(APP_JS)
 
     settings_loader = re.search(
-        r"async function loadSettingsPageData\(\) \{(?P<body>.*?)\n\}",
+        r"async function loadSettingsPageData\(context = createSettingsPageLoadScope\(\)\) \{(?P<body>.*?)\n\}",
         app_js,
         re.S,
     )
     assert settings_loader is not None
     settings_body = settings_loader.group("body")
     assert "Promise.all" in settings_body
-    assert 'loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false }))' in settings_body
+    assert 'loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false, context }), context)' in settings_body
 
     block = re.search(
         r"// Interface radius start(?P<body>.*?)// Interface radius end",
@@ -7584,22 +7585,25 @@ def test_tool_and_settings_page_loaders_are_isolated():
     assert 'loadPageSection("逐笔校验配置", loadDbValidationSettings)' in tools_body
     assert 'loadPageSection("流程执行配置", loadFlowSettings)' in tools_body
 
-    settings_loader = re.search(r"async function loadSettingsPageData\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    settings_loader = re.search(r"async function loadSettingsPageData\(context = createSettingsPageLoadScope\(\)\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert settings_loader is not None
     settings_body = settings_loader.group("body")
     assert "Promise.all" in settings_body
-    assert 'loadPageSection("系统信息", loadSystemInfo)' in settings_body
-    assert 'loadPageSection("数据源配置", loadConfigList)' in settings_body
-    assert 'loadPageSection("逐笔校验配置", loadDbValidationSettings)' in settings_body
-    assert 'loadPageSection("流程执行配置", loadFlowSettings)' in settings_body
-    assert 'loadPageSection("业务字段配置", loadReconcileSchemaSettings)' in settings_body
+    assert 'loadPageSection("系统信息", () => loadSystemInfo(context), context)' in settings_body
+    assert 'loadPageSection("数据源配置", () => loadConfigList(context), context)' in settings_body
+    assert 'loadPageSection("逐笔校验配置", () => loadDbValidationSettings(context), context)' in settings_body
+    assert 'loadPageSection("流程执行配置", () => loadFlowSettings(context), context)' in settings_body
+    assert 'loadPageSection("业务字段配置", () => loadReconcileSchemaSettings(context), context)' in settings_body
     assert "applySettingsRoleAccess();" in settings_body
+    assert settings_body.index("if (!isSettingsLoadCurrent(context)) return;", settings_body.index("await Promise.all")) < settings_body.index("applySettingsRoleAccess();")
 
     switch_page = re.search(r"async function switchPage\(name, options = \{\}\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert switch_page is not None
     switch_body = switch_page.group("body")
     assert 'if (name === "tools") loadToolsPageData();' in switch_body
-    assert "void loadSettingsPageData();" in switch_body
+    assert "void loadSettingsPageData(context);" in switch_body
+    assert switch_body.index("cancelSettingsPageLoad();") < switch_body.index("await window.AutoCheckModuleHost?.deactivate();")
+    assert switch_body.index("const previousPage") < switch_body.index("await window.AutoCheckModuleHost?.deactivate();")
     assert 'if (name === "settings") await loadSettingsPageData();' not in switch_body
     assert 'if (name === "tools") await loadToolsPageData();' not in switch_body
     assert 'await loadPbcImportSettings(); await loadDbValidationSettings(); await loadFlowSettings();' not in switch_body
@@ -7612,10 +7616,10 @@ def test_tool_and_settings_page_loaders_are_isolated():
 def test_system_info_uses_lightweight_summary_api():
     app_js = _read(APP_JS)
 
-    load_system_info = re.search(r"async function loadSystemInfo\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    load_system_info = re.search(r"async function loadSystemInfo\(context = null\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert load_system_info is not None
     body = load_system_info.group("body")
-    assert 'api("/api/system-info")' in body
+    assert 'api("/api/system-info", settingsLoadRequestOptions(context))' in body
     assert 'api("/api/history")' not in body
 
 
@@ -9655,7 +9659,7 @@ def test_system_info_shows_runtime_status_and_history_count():
     html = _read(INDEX_HTML)
     app_js = _read(APP_JS)
 
-    start = app_js.index("async function loadSystemInfo()")
+    start = app_js.index("async function loadSystemInfo(context = null)")
     end = app_js.index("function setSystemInfoFeedback", start)
     body = app_js[start:end]
     assert 'id="historyRunCount"' in html
@@ -9666,7 +9670,7 @@ def test_system_info_shows_runtime_status_and_history_count():
     assert 'id="dwsStatus"' not in html
     assert 'id="bizStatus"' not in html
     assert 'id="historyCount"' not in html
-    assert 'api("/api/system-info")' in body
+    assert 'api("/api/system-info", settingsLoadRequestOptions(context))' in body
     assert 'api("/api/history")' not in body
     assert "historyRunCount" in body
     assert "authState.authenticated" not in body
@@ -10355,14 +10359,14 @@ def test_db_validation_mapping_modal_has_three_filtered_fixed_views():
     assert 'if (filter === "unmapped") return dbValidationMappingIsUnmapped(item);' in app_js
     assert "const totalFieldCount = fieldCount + requiredMissingCount + missingPhysicalCount;" in app_js
     assert "const totalUnmappedCount = unmappedCount + requiredMissingCount + missingPhysicalCount;" in app_js
-    assert "async function loadDbValidationMappingPayload()" in app_js
+    assert "async function loadDbValidationMappingPayload(context = null)" in app_js
     load_settings = re.search(
-        r"async function loadDbValidationSettings\(\)\s*\{(?P<body>.*?)\n\}",
+        r"async function loadDbValidationSettings\(context = null\)\s*\{(?P<body>.*?)\n\}",
         app_js,
         re.S,
     )
     assert load_settings is not None
-    assert "await loadDbValidationMappingPayload()" in load_settings.group("body")
+    assert "await loadDbValidationMappingPayload(context)" in load_settings.group("body")
     for filter_label in ("全部", "已映射", "未映射", "人工修改", "与自动映射不同"):
         assert filter_label in app_js
     assert '["required_missing", "必需缺失"]' in app_js

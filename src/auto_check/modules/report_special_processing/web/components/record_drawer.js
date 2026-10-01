@@ -1233,8 +1233,11 @@ export function createRecordDrawer(documentRef, options) {
 
   // 处理脚本：随上方配置实时自动生成（debounce），仅保存留痕，绝不执行。
   // AUTO：脚本只读，配置有效变化后自动刷新；MANUAL：允许手工编辑并暂停自动覆盖。
-  let scriptMode = "AUTO";
-  let generatedScriptText = fields.script.value || "";
+  // 历史记录未持久化脚本模式；已有文本无法证明自动生成，保守保留至用户主动恢复。
+  let scriptMode = current.processing_script_mode === "MANUAL"
+    || (current.processing_script_mode !== "AUTO" && String(current.processing_script || "").trim())
+    ? "MANUAL" : "AUTO";
+  let generatedScriptText = scriptMode === "MANUAL" ? "" : (fields.script.value || "");
   let autoGenerateTimer = null;
   let autoGenerateRef = null;
   const SCRIPT_DEBOUNCE_MS = 400;
@@ -1295,6 +1298,7 @@ export function createRecordDrawer(documentRef, options) {
       structuredEditor.getStructured(),
       structuredEditor.getFieldTypes ? structuredEditor.getFieldTypes() : {},
       fields.period?.value || "",
+      structuredEditor.getDatasources ? structuredEditor.getDatasources() : {},
     ).trim();
     generatedScriptText = script;
     fields.script.value = script;

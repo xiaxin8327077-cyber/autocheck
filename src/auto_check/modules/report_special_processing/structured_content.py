@@ -26,8 +26,9 @@ SUPPORTED_DATASOURCE_TYPES = ("postgresql", "mysql")
 NAME_SOURCE_DATABASE = "DATABASE"
 NAME_SOURCE_MANUAL = "MANUAL"
 
-# 物理对象名限制为常规标识符字符，禁止混入双语规范串/分组串的分隔符。
-_PHYSICAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$#]{0,127}$")
+# 物理名由数据库元数据选择；允许需引用的真实标识符，禁止控制符和兼容串分隔符。
+# 名称来源 DATABASE/MANUAL 表示中文名来源，不表示物理名是否手填。
+_PHYSICAL_NAME_RE = re.compile(r"[^\x00-\x1f\x7f｜；]{1,128}")
 _ITEM_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -46,11 +47,15 @@ def _text(value: Any, *, max_len: int, message: str) -> str:
     return text
 
 
-def _physical_name(value: Any, *, label: str) -> str:
-    name = _text(value, max_len=MAX_PHYSICAL_NAME_LEN, message=f"{label}过长")
-    if not name:
+def _physical_name(value: Any, *, label: str, allow_separators: bool = False) -> str:
+    name = str(value if value is not None else "")
+    if len(name) > MAX_PHYSICAL_NAME_LEN:
+        raise StructuredContentError({"structured_content": f"{label}过长"})
+    if not name.strip():
         raise StructuredContentError({"structured_content": f"{label}不能为空"})
-    if not _PHYSICAL_NAME_RE.match(name):
+    # 在任何 trim 前检查原文，禁止控制符被悄悄移除后变成另一个物理对象。
+    valid = not re.search(r"[\x00-\x1f\x7f]", name) if allow_separators else _PHYSICAL_NAME_RE.fullmatch(name)
+    if not valid:
         raise StructuredContentError({"structured_content": f"{label}必须是数据库中的真实物理名称"})
     return name
 
@@ -272,7 +277,9 @@ def parse_structured_content(payload: Any) -> StructuredContent:
         if table_name in seen_tables:
             raise StructuredContentError({"table_name": f"处理表 {table_name} 重复"})
         seen_tables.add(table_name)
-        schema = _text(raw_table.get("schema"), max_len=MAX_PHYSICAL_NAME_LEN, message="架构名过长")
+        raw_schema = raw_table.get("schema")
+        # schema 不进入双语派生串，允许全角分隔符作为真实名称字符。
+        schema = _physical_name(raw_schema, label="架构名", allow_separators=True) if raw_schema not in (None, "") else ""
         chinese_table = _text(
             raw_table.get("chinese_table_name"), max_len=MAX_CHINESE_NAME_LEN, message="中文表名过长",
         )
@@ -322,6 +329,7 @@ def parse_structured_content(payload: Any) -> StructuredContent:
                     continue  # 未使用的空条件行
                 if not condition_column:
                     raise StructuredContentError({"table_name": "请选择处理范围字段"})
+                condition_column = _physical_name(raw_condition.get("column_name"), label="处理范围字段")
                 requires_value = condition_operator in CONDITION_OPERATORS_REQUIRING_VALUE
                 if requires_value and not condition_values:
                     raise StructuredContentError({"table_name": "请输入处理范围条件值"})
@@ -340,16 +348,14 @@ def parse_structured_content(payload: Any) -> StructuredContent:
                 ))
         # 限制报送期：仅 limit_report_period=True 时需要报送期字段。
         limit_report_period = bool(raw_table.get("limit_report_period", True))
-        report_period_field = _text(
-            raw_table.get("report_period_field"), max_len=MAX_PHYSICAL_NAME_LEN,
-            message="报送期字段名过长",
-        )
+        raw_report_period_field = raw_table.get("report_period_field")
+        report_period_field = _physical_name(raw_report_period_field, label="报送期字段") if raw_report_period_field not in (None, "") else ""
         report_period_field_source = str(
             raw_table.get("report_period_field_source") or ""
         ).strip().upper()
         if report_period_field_source not in ("AUTO", "MANUAL", ""):
             raise StructuredContentError({"table_name": "报送期字段来源无效"})
-        if report_period_field and not _PHYSICAL_NAME_RE.match(report_period_field):
+        if report_period_field and not _PHYSICAL_NAME_RE.fullmatch(report_period_field):
             raise StructuredContentError({"table_name": "报送期字段必须是数据库中的真实物理名称"})
 
         raw_fields = raw_table.get("fields")

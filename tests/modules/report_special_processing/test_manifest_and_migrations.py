@@ -35,14 +35,13 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.2.16"
-    assert manifest.release_notes.version == "1.2.16"
+    assert manifest.version == "1.3.2"
+    assert manifest.release_notes.version == "1.3.2"
     release_notes = manifest.release_notes.items
     assert release_notes == (
-        "支持字典扩展关联报送，优化统计标签和 Excel 导出。",
-        "支持多表多字段处理、脚本生成与操作记录。",
+        "自动生成脚本使用数据源的模式或数据库限定表名，兼容特殊标识符。",
     )
-    assert len(release_notes) == 2
+    assert len(release_notes) == 1
     assert len(set(release_notes)) == len(release_notes)
     assert all(not item.startswith("报表特殊处理录入模块：") for item in release_notes)
     assert all("原型" not in item and "文档" not in item for item in release_notes)

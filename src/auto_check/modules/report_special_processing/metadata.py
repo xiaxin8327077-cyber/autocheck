@@ -128,8 +128,8 @@ class DatasourceMetadataService:
         )
 
     def list_columns(self, datasource_id: str, table_name: str, *, keyword: str = "", page: int = 1, page_size: int = DEFAULT_COLUMN_PAGE_SIZE) -> dict[str, Any]:
-        table = str(table_name or "").strip()
-        if not table or len(table) > 128:
+        table = str(table_name or "")
+        if not table.strip() or len(table) > 128:
             raise ValidationError(fields={"table_name": "处理表名无效"})
         return self._query(
             datasource_id,
@@ -194,7 +194,9 @@ class DatasourceMetadataService:
 
     @staticmethod
     def _scope(config: Any, dialect: str) -> str:
-        return str(config.schema or (config.database if dialect == "mysql" else "public") or "").strip()
+        if dialect == "mysql":
+            return str(getattr(config, "database", "") or "")
+        return str(getattr(config, "schema", "") or "public")
 
     @staticmethod
     def _build(dialect: str, kind: str, scope: str, target: str, keyword: str, like: str,

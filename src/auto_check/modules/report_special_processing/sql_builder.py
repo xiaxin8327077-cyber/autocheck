@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping, Sequence
 
 from .structured_content import (
@@ -29,6 +30,35 @@ from .structured_content import (
 
 class ScriptGenerationError(ValueError):
     """生成脚本失败；message 面向用户，定位到具体的表或字段。"""
+
+
+def _identifier(name: str, db_type: str) -> str:
+    quote = "`" if db_type == "mysql" else '"'
+    return quote + str(name).replace(quote, quote * 2) + quote
+
+
+def _table_identifier(table: Any, datasource: Mapping[str, str], db_type: str) -> str:
+    # 元数据给出的 schema + table_name 是两个原始标识符；表名里的点不能拆分。
+    scope = table.schema
+    name = table.table_name
+    if scope:
+        if db_type == "mysql" and datasource.get("database"):
+            scope = datasource["database"]
+        parts = (scope, name)
+    else:
+        # 只有没有 schema 快照的历史名称才兼容明确的两段限定写法。
+        token = r'"(?:[^"]|"")+"|`(?:[^`]|``)+`|[A-Za-z_][A-Za-z0-9_$#]*'
+        match = re.fullmatch(rf'({token})\.({token})', name)
+        if match:
+            def unquote(part: str) -> str:
+                if part[0] in ('"', '`'):
+                    return part[1:-1].replace(part[0] * 2, part[0])
+                return part
+            parts = (unquote(match.group(1)), unquote(match.group(2)))
+        else:
+            scope = (datasource.get("database") if db_type == "mysql" else datasource.get("schema")) or ""
+            parts = (scope, name) if scope else (name,)
+    return ".".join(_identifier(part, db_type) for part in parts)
 
 
 def _literal(value: Any) -> str:
@@ -119,6 +149,7 @@ def _build_table_sql(
     conditions: Sequence[Mapping[str, Any]],
     field_types: Mapping[str, str],
     fields: Sequence[StructuredField],
+    db_type: str,
 ) -> str:
     display = chinese_table_name or table_name
     where: list[str] = []
@@ -127,11 +158,11 @@ def _build_table_sql(
         if not report_period_field:
             raise ScriptGenerationError(f"“{display}”：未能确定当前表的报送期字段，请填写报送期字段")
         where.append(
-            f"{report_period_field} = {_report_period_literal(report_period)}"
+            f"{_identifier(report_period_field, db_type)} = {_report_period_literal(report_period)}"
         )
     # 2. 处理范围条件（条件字段 + 运算符 + 条件值，行间 AND）
     for condition in conditions:
-        column = str(condition.get("column_name") or "").strip()
+        column = str(condition.get("column_name") or "")
         operator = str(condition.get("operator") or "=").strip().upper()
         values = tuple(condition.get("values") or ())
         if not column:
@@ -140,14 +171,14 @@ def _build_table_sql(
         if not values and requires_value:
             raise ScriptGenerationError(f"“{display}”：请至少配置一条有效的处理范围条件")
         where.append(
-            _condition_clause(column, operator, values, field_types.get(column, ""))
+            _condition_clause(_identifier(column, db_type), operator, values, field_types.get(column, ""))
         )
     if not where:
         raise ScriptGenerationError(f"“{display}”：请至少配置一条处理范围")
     # 3. SET 修改字段（修改前仅作业务信息保存，不参与 WHERE 校验）
     set_parts: list[str] = []
     for field in fields:
-        set_parts.append(f"{field.column_name} = {_literal(field.value_after)}")
+        set_parts.append(f"{_identifier(field.column_name, db_type)} = {_literal(field.value_after)}")
     if not set_parts:
         raise ScriptGenerationError(f"“{display}”：请至少选择并填写一个修改字段")
     lines = [
@@ -163,11 +194,13 @@ def generate_script(
     *,
     report_period: str = "",
     field_types: Mapping[str, Mapping[str, str]] | None = None,
+    datasources: Mapping[str, Mapping[str, str]] | None = None,
 ) -> str:
     """逐表生成 UPDATE 语句，段首带数据源与表注释分组。
 
     field_types: {datasource_id: {table_name: {column_name: data_type}}} 由前端基于
     已缓存的表字段元数据提供，用于条件值字面量格式判断（仅影响生成文本）。
+    datasources 为应用配置中的脱敏类型与范围，用于空 Schema 回退及 MySQL database。
     """
     if not content.tables:
         raise ScriptGenerationError("请至少选择一张处理表")
@@ -177,11 +210,13 @@ def generate_script(
     }
     segments: list[str] = []
     for table in content.tables:
+        datasource = (datasources or {}).get(table.datasource_id or content.datasource_id, {})
+        db_type = datasource.get("db_type") or table.datasource_type or content.datasource_type
         table_kinds = (
             kinds.get(table.datasource_id, {}).get(str(table.table_name), {})
         )
         sql = _build_table_sql(
-            table_name=table.table_name,
+            table_name=_table_identifier(table, datasource, db_type),
             chinese_table_name=table.chinese_table_name,
             limit_report_period=table.limit_report_period,
             report_period_field=table.report_period_field,
@@ -189,6 +224,7 @@ def generate_script(
             conditions=[item.to_dict() for item in table.conditions],
             field_types=table_kinds,
             fields=table.fields,
+            db_type=db_type,
         )
         segments.append(
             f"-- 数据源：{table.datasource_name or table.datasource_id}\n"

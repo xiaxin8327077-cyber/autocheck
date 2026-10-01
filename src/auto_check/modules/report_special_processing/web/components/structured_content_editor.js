@@ -242,6 +242,8 @@ export function createStructuredContentEditor(documentRef, options = {}) {
           });
         }
       });
+      // 数据源范围抵达后刷新 AUTO 预览；历史表已有 schema 快照无需等待请求。
+      if (typeof onChange === "function") onChange();
       state.tables.forEach((table) => {
         if (table.dsSelect) {
           fillDatasourceSelect(
@@ -1306,6 +1308,14 @@ function emptyCondition() {
     return result;
   }
 
+  function getDatasources() {
+    return Object.fromEntries(state.loadedDatasources.map((item) => [item.id, {
+      db_type: item.db_type || "",
+      schema: item.db_type === "postgresql" && Object.hasOwn(item, "schema") ? (item.schema || "public") : (item.schema || ""),
+      database: item.database || "",
+    }]));
+  }
+
   function getStrings() {
     const content = getStructured();
     if (!content.tables.length) return { table_name: "", field_name: "", value_before: "", value_after: "" };
@@ -1461,6 +1471,7 @@ function emptyCondition() {
   root.getStructured = getStructured;
   root.getStrings = getStrings;
   root.getFieldTypes = getFieldTypes;
+  root.getDatasources = getDatasources;
   root.validate = validate;
   root.focusFirst = () => {
     const first = state.tables[0];

@@ -1459,9 +1459,9 @@ def test_drawer_auto_generates_script_and_supports_manual_mode(tmp_path: Path) -
   // 前端直接生成预览，不调用后端生成接口，也不依赖正式保存校验。
   assert.equal(backendGenerateCalls.length, 0, "实时预览不调用后端生成接口");
   const textarea = findByAriaLabel(overlay, "处理脚本");
-  assert.ok(textarea.value.includes("UPDATE t_customer"), "选表后生成 UPDATE");
-  assert.ok(textarea.value.includes("SET customer_status = '冻结'"), "选修改字段后生成 SET");
-  assert.ok(textarea.value.includes("WHERE project_no IN ('P001') AND contract_no = 'HT001';"), "选条件字段后生成 WHERE");
+  assert.ok(textarea.value.includes('UPDATE "public"."t_customer"'), "选表后生成 UPDATE");
+  assert.ok(textarea.value.includes(`SET "customer_status" = '冻结'`), "选修改字段后生成 SET");
+  assert.ok(textarea.value.includes(`WHERE "project_no" IN ('P001') AND "contract_no" = 'HT001';`), "选条件字段后生成 WHERE");
   assert.equal(textarea.readOnly, true, "AUTO 模式下脚本只读");
   assert.equal(findButtonByText(overlay, "复制脚本").disabled, false, "有脚本后复制可用");
   // 切换手动模式只执行一次：保留内容、解锁输入、切换按钮与输入框上方模式提示。
@@ -1495,6 +1495,39 @@ def test_drawer_auto_generates_script_and_supports_manual_mode(tmp_path: Path) -
     _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_auto_script"))
 
 
+def test_datasource_metadata_updates_qualified_preview_without_touching_manual_script(tmp_path: Path) -> None:
+    scenario = """
+  for (const scriptMode of ["AUTO", "MANUAL", undefined]) {
+    const documentRef = makeDrawerDocument();
+    const hooks = { saved: 0, closed: 0 };
+    const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+    actions.listDatasources = async () => ({ data: { items: [
+      { id: "ds1", name: "展示名", db_type: "mysql", database: "1104report", schema: "wrong" },
+    ] } });
+    const record = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+    record.processing_script_mode = scriptMode;
+    record.processing_script = "手工或历史脚本原文";
+    record.structured_content.tables[0].schema = "wrong";
+    const overlay = createRecordDrawer(documentRef, {
+      ...baseDrawerOptions(actions, hooks), mode: "edit", record,
+      confirm: async () => false,
+    });
+    await sleep(650);
+    const textarea = findByAriaLabel(overlay, "处理脚本");
+    if (scriptMode === "AUTO") {
+      assert.ok(textarea.value.includes("UPDATE `1104report`.`t_customer`"));
+      assert.ok(textarea.value.includes("SET `customer_status`"));
+    } else {
+      assert.equal(textarea.value, "手工或历史脚本原文", "元数据抵达不覆盖手动脚本");
+      findButtonByText(overlay, "恢复自动生成").click();
+      await sleep(30);
+      assert.equal(textarea.value, "手工或历史脚本原文", "拒绝恢复时仍保留历史脚本");
+    }
+  }
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_metadata_qualification"))
+
+
 def test_restore_auto_generate_confirm_is_layered_above_record_drawer(tmp_path: Path) -> None:
     scenario = """
   const documentRef = makeDrawerDocument();
@@ -1507,7 +1540,7 @@ def test_restore_auto_generate_confirm_is_layered_above_record_drawer(tmp_path: 
   const overlay = createRecordDrawer(documentRef, {
     ...base,
     mode: "edit",
-    record: { ...DRAWER_STRUCTURED_RECORD, processing_script: "自动脚本" },
+    record: { ...DRAWER_STRUCTURED_RECORD, processing_script: "自动脚本", processing_script_mode: "AUTO" },
     confirm: async () => new Promise((resolve) => { resolveConfirm = resolve; }),
   });
   const textarea = findByAriaLabel(overlay, "处理脚本");

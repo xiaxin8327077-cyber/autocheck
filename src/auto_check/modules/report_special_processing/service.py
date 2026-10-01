@@ -617,7 +617,7 @@ class SpecialProcessingService:
     def list_datasource_columns(self, datasource_id: str, table_name: str, query: Mapping[str, str]) -> dict[str, Any]:
         keyword, page, page_size = self._metadata_query(query, default_page_size=50)
         return self._require_metadata().list_columns(
-            str(datasource_id or "").strip(), str(table_name or "").strip(),
+            str(datasource_id or "").strip(), str(table_name or ""),
             keyword=keyword, page=page, page_size=page_size,
         )
 
@@ -680,11 +680,29 @@ class SpecialProcessingService:
         field_types = (payload or {}).get("field_types") or {}
         if not isinstance(field_types, Mapping):
             raise ValidationError(fields={"structured_content": "字段类型信息无效"})
+        datasources = {}
+        if self._metadata is not None:
+            for table in content.tables:
+                key = table.datasource_id or content.datasource_id
+                if key in datasources:
+                    continue
+                entry = self._metadata.resolve(key)
+                if entry is None:
+                    raise ValidationError(fields={"datasource_id": "数据源不存在或已被删除，请在系统配置中确认"})
+                db_type = str(getattr(entry.config, "db_type", "") or "").lower()
+                if db_type not in SUPPORTED_DATASOURCE_TYPES:
+                    raise ValidationError(fields={"datasource_id": "该数据源类型暂不支持处理脚本生成"})
+                datasources[key] = {
+                    "db_type": db_type,
+                    "schema": str(getattr(entry.config, "schema", "") or "public"),
+                    "database": str(getattr(entry.config, "database", "") or ""),
+                }
         try:
             script = generate_script(
                 content,
                 report_period=report_period,
                 field_types=field_types,
+                datasources=datasources,
             )
         except ScriptGenerationError as exc:
             raise ValidationError(fields={"processing_script": str(exc)}) from None

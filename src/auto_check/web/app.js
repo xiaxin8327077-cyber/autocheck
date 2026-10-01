@@ -997,6 +997,7 @@ function renderInterfaceRadiusPreference() {
 }
 
 function resetInterfaceRadiusForAuthChange() {
+  if (typeof cancelSettingsPageLoad === "function") cancelSettingsPageLoad();
   interfaceRadiusState.loadRequestId += 1;
   interfaceRadiusState.saveRequestId += 1;
   interfaceRadiusState.authRevision += 1;
@@ -1041,7 +1042,8 @@ function restoreInterfaceRadiusPreference(snapshot, expectedAuthRevision) {
   return true;
 }
 
-async function loadInterfaceRadiusPreference({ silent = false } = {}) {
+async function loadInterfaceRadiusPreference({ silent = false, context = null } = {}) {
+  if (context && !context.isCurrent()) return false;
   if (interfaceRadiusState.saving) return false;
   const requestId = ++interfaceRadiusState.loadRequestId;
   const editRevision = interfaceRadiusState.editRevision;
@@ -1053,11 +1055,15 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     )
   );
   const abortController = new AbortController();
+  const abortOnNavigation = () => abortController.abort();
+  context?.signal.addEventListener("abort", abortOnNavigation, { once: true });
+  if (context?.signal.aborted) abortOnNavigation();
   const timeoutId = setTimeout(() => abortController.abort(), INTERFACE_RADIUS_LOAD_TIMEOUT_MS);
   try {
     const payload = await api("/api/settings/interface", { signal: abortController.signal });
     if (
-      requestId !== interfaceRadiusState.loadRequestId
+      (context && !context.isCurrent())
+      || requestId !== interfaceRadiusState.loadRequestId
       || mutationRevision !== interfaceRadiusState.serverMutationRevision
     ) {
       return false;
@@ -1076,7 +1082,8 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     return true;
   } catch (error) {
     if (
-      requestId !== interfaceRadiusState.loadRequestId
+      (context && !context.isCurrent())
+      || requestId !== interfaceRadiusState.loadRequestId
       || mutationRevision !== interfaceRadiusState.serverMutationRevision
     ) {
       return false;
@@ -1103,6 +1110,7 @@ async function loadInterfaceRadiusPreference({ silent = false } = {}) {
     return false;
   } finally {
     clearTimeout(timeoutId);
+    context?.signal.removeEventListener("abort", abortOnNavigation);
   }
 }
 
@@ -1396,10 +1404,67 @@ function applyRoleAccess() {
   }
 }
 
-async function loadPageSection(label, loader) {
+// Settings page load scope start
+let settingsPageLoadScope = null;
+let settingsPageLoadGeneration = 0;
+
+function settingsLoadSessionKey() {
+  return JSON.stringify([authState.user?.id ?? null, authState.user?.username ?? null]);
+}
+
+function cancelSettingsPageLoad() {
+  const scope = settingsPageLoadScope;
+  settingsPageLoadScope = null;
+  if (!scope) return;
+  if (scope.timer !== null) window.clearTimeout(scope.timer);
+  scope.controller.abort();
+}
+
+function createSettingsPageLoadScope() {
+  cancelSettingsPageLoad();
+  const controller = new AbortController();
+  const generation = ++settingsPageLoadGeneration;
+  const sessionKey = settingsLoadSessionKey();
+  const authRevision = interfaceRadiusState.authRevision;
+  const scope = {
+    controller,
+    signal: controller.signal,
+    timer: null,
+    isCurrent: () => settingsPageLoadScope === scope
+      && settingsPageLoadGeneration === generation
+      && !controller.signal.aborted
+      && document.documentElement.getAttribute("data-page") === "settings"
+      && settingsLoadSessionKey() === sessionKey
+      && interfaceRadiusState.authRevision === authRevision,
+  };
+  settingsPageLoadScope = scope;
+  return scope;
+}
+
+function isSettingsLoadCurrent(context) {
+  return !context || context.isCurrent();
+}
+
+function settingsLoadRequestOptions(context) {
+  return context ? { signal: context.signal } : {};
+}
+
+// 模块导航直接更新 data-page，不经过 switchPage；复用页面状态清理设置加载。
+new MutationObserver(() => {
+  if (settingsPageLoadScope && document.documentElement.getAttribute("data-page") !== "settings") {
+    cancelSettingsPageLoad();
+    discardUnsavedInterfaceRadius();
+  }
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-page"] });
+// Settings page load scope end
+
+async function loadPageSection(label, loader, context = null) {
+  if (!isSettingsLoadCurrent(context)) return null;
   try {
-    return await loader();
+    const result = await loader();
+    return isSettingsLoadCurrent(context) ? result : null;
   } catch (error) {
+    if (!isSettingsLoadCurrent(context)) return null;
     console.error(`${label}加载失败`, error);
     return null;
   }
@@ -1413,15 +1478,17 @@ async function loadToolsPageData() {
   ]);
 }
 
-async function loadSettingsPageData() {
+async function loadSettingsPageData(context = createSettingsPageLoadScope()) {
+  if (!isSettingsLoadCurrent(context)) return;
   await Promise.all([
-    loadPageSection("系统信息", loadSystemInfo),
-    loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false })),
-    loadPageSection("数据源配置", loadConfigList),
-    loadPageSection("逐笔校验配置", loadDbValidationSettings),
-    loadPageSection("流程执行配置", loadFlowSettings),
-    loadPageSection("业务字段配置", loadReconcileSchemaSettings),
+    loadPageSection("系统信息", () => loadSystemInfo(context), context),
+    loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false, context }), context),
+    loadPageSection("数据源配置", () => loadConfigList(context), context),
+    loadPageSection("逐笔校验配置", () => loadDbValidationSettings(context), context),
+    loadPageSection("流程执行配置", () => loadFlowSettings(context), context),
+    loadPageSection("业务字段配置", () => loadReconcileSchemaSettings(context), context),
   ]);
+  if (!isSettingsLoadCurrent(context)) return;
   applySettingsRoleAccess();
   applyCapabilityAccess();
 }
@@ -1483,8 +1550,9 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function switchPage(name, options = {}) {
-  await window.AutoCheckModuleHost?.deactivate();
   const previousPage = document.documentElement.getAttribute("data-page") || "";
+  cancelSettingsPageLoad();
+  await window.AutoCheckModuleHost?.deactivate();
   if (name === "users" && !hasCapability("sys.users")) {
     showToast("无权访问用户管理", "error");
     name = "report-navigation";
@@ -1527,8 +1595,11 @@ async function switchPage(name, options = {}) {
   if (name === "tools") loadToolsPageData();
   // 延后加载，避免设置页并发请求卡住顶栏 :hover/:focus-within 状态刷新。
   if (name === "settings") {
-    window.setTimeout(() => {
-      void loadSettingsPageData();
+    const context = createSettingsPageLoadScope();
+    context.timer = window.setTimeout(() => {
+      context.timer = null;
+      if (!context.isCurrent()) return;
+      void loadSettingsPageData(context);
     }, 0);
   }
   if (name === "role-permissions") await loadRolePermissions();
@@ -1781,6 +1852,8 @@ async function authenticateOriginalUser({ username, password }) {
 }
 
 async function applyReauthenticatedSession(payload) {
+  if (String(authState.user?.id ?? "") !== String(payload.user?.id ?? "")
+      || authState.user?.username !== payload.user?.username) cancelSettingsPageLoad();
   authState.csrfToken = payload.csrf_token || "";
   authState.user = payload.user || null;
   document.documentElement.dataset.role =
@@ -1796,6 +1869,7 @@ async function applyReauthenticatedSession(payload) {
 }
 
 async function discardAuthenticatedSession(payload) {
+  cancelSettingsPageLoad();
   const csrfToken = (payload && payload.csrf_token) || "";
   // 先停止新会话通知并清空本地认证、角色、权限与用户界面状态；即使注销失败也不恢复。
   if (window.AutoCheckNotificationCenter) window.AutoCheckNotificationCenter.stop();
@@ -1818,6 +1892,7 @@ async function discardAuthenticatedSession(payload) {
 }
 
 function exitExpiredSession() {
+  cancelSettingsPageLoad();
   if (window.AutoCheckNotificationCenter) window.AutoCheckNotificationCenter.stop();
   authState.csrfToken = "";
   authState.user = null;
@@ -3795,6 +3870,8 @@ async function logout() {
     window.AutoCheckNotificationCenter.stop();
   }
   const interfaceRadiusSnapshot = captureInterfaceRadiusPreference();
+  const logoutUserId = authState.user?.id;
+  const logoutUsername = authState.user?.username;
   const logoutAuthRevision = resetInterfaceRadiusForAuthChange();
   try {
     await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
@@ -3802,6 +3879,11 @@ async function logout() {
     const restoredInterface = restoreInterfaceRadiusPreference(interfaceRadiusSnapshot, logoutAuthRevision);
     if (restoredInterface) {
       showToast(error.message, "error");
+      if (authState.user?.id === logoutUserId
+          && authState.user?.username === logoutUsername
+          && document.documentElement.getAttribute("data-page") === "settings") {
+        void loadSettingsPageData();
+      }
     }
     return;
   }
@@ -8212,15 +8294,24 @@ async function encryptDataSourcePasswordsForTransport(config) {
   return payload;
 }
 
-async function loadConfigList() {
+async function loadConfigList(context = null) {
+  if (!isSettingsLoadCurrent(context)) return;
   try {
-    const data = await api("/api/configs");
+    const data = await api("/api/configs", settingsLoadRequestOptions(context));
+    if (!isSettingsLoadCurrent(context)) return;
     allConfigs = sortConfigsForDisplay(data.data_sources || data.configs || []);
     renderConfigList();
     if (!runDate.value) {
-      try { const d = await api("/api/config"); if (d.default_run_date && !runDate.value) runDate.value = d.default_run_date; } catch (_) {}
+      try {
+        const d = await api("/api/config", settingsLoadRequestOptions(context));
+        if (!isSettingsLoadCurrent(context)) return;
+        if (d.default_run_date && !runDate.value) runDate.value = d.default_run_date;
+      } catch (_) {}
     }
-  } catch (e) { configList.innerHTML = '<p class="placeholder-text">加载失败</p>'; }
+  } catch (e) {
+    if (!isSettingsLoadCurrent(context)) return;
+    configList.innerHTML = '<p class="placeholder-text">加载失败</p>';
+  }
 }
 
 function sortConfigsForDisplay(configs) {
@@ -8810,13 +8901,16 @@ async function loadReconcileTableColumns(key, options = {}) {
   }
 }
 
-async function loadReconcileSchemaSettings() {
+async function loadReconcileSchemaSettings(context = null) {
+  if (!isSettingsLoadCurrent(context)) return;
   if (!reconcileSchemaForm) return;
   try {
-    const payload = await api("/api/settings/reconcile-schema");
+    const payload = await api("/api/settings/reconcile-schema", settingsLoadRequestOptions(context));
+    if (!isSettingsLoadCurrent(context)) return;
     renderReconcileSchemaForm(payload.schema || {}, payload.data_sources || []);
     if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = "";
   } catch (e) {
+    if (!isSettingsLoadCurrent(context)) return;
     if (reconcileSchemaStatus) reconcileSchemaStatus.textContent = e.message;
   }
 }
@@ -11433,9 +11527,11 @@ function showInfo(title, content, options = {}) {
 }
 
 // System Info
-async function loadSystemInfo() {
+async function loadSystemInfo(context = null) {
+  if (!isSettingsLoadCurrent(context)) return false;
   try {
-    const payload = await api("/api/system-info");
+    const payload = await api("/api/system-info", settingsLoadRequestOptions(context));
+    if (!isSettingsLoadCurrent(context)) return false;
     const settings = serverSettingsToClient(payload.settings || {});
     document.getElementById("historyRunCount").textContent = String(payload.history_run_count || 0);
     document.getElementById("loginUserInfo").textContent = userDisplayName(authState.user || {});
@@ -11851,9 +11947,11 @@ function renderDbValidationSettingsError(message = "逐笔校验配置加载失�
   }
 }
 
-async function loadDbValidationMappingPayload() {
+async function loadDbValidationMappingPayload(context = null) {
+  if (!isSettingsLoadCurrent(context)) return null;
   try {
-    const payload = await api("/api/tools/db-validation/field-mapping");
+    const payload = await api("/api/tools/db-validation/field-mapping", settingsLoadRequestOptions(context));
+    if (!isSettingsLoadCurrent(context)) return null;
     dbValidationMappingPayload = {
       tables: payload.tables || [],
       fields: payload.fields || [],
@@ -11862,16 +11960,19 @@ async function loadDbValidationMappingPayload() {
     updateDbValidationMappingEntryDots();
     return payload;
   } catch (error) {
+    if (!isSettingsLoadCurrent(context)) return null;
     console.warn("映射关系状态加载失败", error);
     return null;
   }
 }
 
-async function loadDbValidationSettings() {
+async function loadDbValidationSettings(context = null) {
+  if (!isSettingsLoadCurrent(context)) return null;
   if (!toolCardDbValidation && !dbValidationMetadataSource) return;
   renderDbValidationSettingsLoading();
   try {
-    const payload = await api("/api/tools/db-validation/settings");
+    const payload = await api("/api/tools/db-validation/settings", settingsLoadRequestOptions(context));
+    if (!isSettingsLoadCurrent(context)) return null;
     renderDbValidationSettings(
       payload.settings || {},
       payload.data_sources || [],
@@ -11879,9 +11980,11 @@ async function loadDbValidationSettings() {
       payload.default_report_date || "",
       payload.field_mapping || {}
     );
-    await loadDbValidationMappingPayload();
+    await loadDbValidationMappingPayload(context);
+    if (!isSettingsLoadCurrent(context)) return null;
     return payload;
   } catch (e) {
+    if (!isSettingsLoadCurrent(context)) return null;
     console.error("数据库校验配置加载失败", e);
     renderDbValidationSettingsError(e.message || "请检查本地服务状态");
     return null;
@@ -12696,10 +12799,12 @@ function renderFlowSettingsLoadError(message = "流程链配置加载失败") {
   updateFlowChainSelectionSummary();
 }
 
-async function loadFlowSettings() {
+async function loadFlowSettings(context = null) {
+  if (!isSettingsLoadCurrent(context)) return null;
   if (!flowSource && !toolCardFlow) return null;
   try {
-    const payload = await api("/api/tools/flow/settings");
+    const payload = await api("/api/tools/flow/settings", settingsLoadRequestOptions(context));
+    if (!isSettingsLoadCurrent(context)) return null;
     flowSettings = payload.settings || {};
     flowDataSources = payload.data_sources || [];
     fillFlowSourceSelect(flowSource, flowDataSources, flowSettings.source_id || "");
@@ -12715,8 +12820,10 @@ async function loadFlowSettings() {
     renderFlowChainSettings(flowSettings.chains || []);
     renderFlowChainPicker();
     await loadFlowToastStatus();
+    if (!isSettingsLoadCurrent(context)) return null;
     return flowSettings;
   } catch (e) {
+    if (!isSettingsLoadCurrent(context)) return null;
     console.error("流程链配置加载失败", e);
     renderFlowSettingsLoadError(e.message || "请检查本地服务状态");
     return null;
