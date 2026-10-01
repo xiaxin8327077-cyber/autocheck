@@ -5364,6 +5364,7 @@ def run_server(
                 _notification_platform_module.create_notification_platform_service(notification_service),
                 create_external_api_status_service(),
             ),
+            bootstrap_timeout_seconds=30.0,
         )
         module_runtime.start()
 

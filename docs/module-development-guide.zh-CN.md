@@ -103,6 +103,8 @@ src/auto_check/modules/<module_id>/
 
 每条外部路由必须注册平台定义的认证器契约，由 HTTP 入口在精确路由预检后调用；认证器分别返回“是否已配置”和“是否认证成功”，平台据此统一生成 503、401 challenge 与 `Cache-Control: no-store`。环境变量兼容认证应通过 `platform.external_api_status` v2 只读 facade 的 `get_status()` 与 `verify_candidate()` 完成，普通模块不得直接读取或记录环境 Token。业务模块可在自身表中保存专属 Token 摘要，但不得保存或回显明文、不得把业务白名单写入平台内核、不得自行开放 CORS，也不得建议浏览器直接调用。新增外部路由必须同时测试：GET-only 登记、未标记路由隔离、认证生命周期、业务白名单、错误脱敏和内部接口兼容性。
 
+应用启动时，模块初始化（工厂构造、路由与结构注册、数据库迁移）的等待上限为 30 秒；`start()` 和 `stop()` 回调仍为 1 秒，健康检查与后台任务退出预算保持原设置。宿主可通过 `ModuleRuntime` 的 `bootstrap_timeout_seconds` 单独指定初始化预算；未提供时沿用 `lifecycle_timeout_seconds`，保持既有调用的超时行为。初始化超时仍隔离该模块，迟到结果不会发布，未结束前不得重复启用。
+
 ## 4. 数据库迁移与运维
 
 应用库先由运维在备份后人工执行 `sql/app_storage/mysql/012_module_system.sql`，再执行 `013_report_navigation_provider_states.sql`，平台应用表共 43 张，`app_schema_version` 仍为 `1`。前者建立模块注册、模块 schema 版本和迁移历史，后者建立带注册 token 的报送导航统计提供方持久状态并为统计运行记录补充 `failed_providers`；生产环境禁止由应用自动执行。模块业务表**不加入**全局 `EXPECTED_APP_SCHEMA`，而由模块自己的 `migrations/` 和清单 `schema_version` 管理。

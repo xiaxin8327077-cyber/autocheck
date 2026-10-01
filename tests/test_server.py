@@ -985,13 +985,14 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         events.append("external_api_status_platform")
         return external_api_status_spec
 
-    def build_module_runtime(context, *, platform_services):
+    def build_module_runtime(context, *, platform_services, bootstrap_timeout_seconds):
         events.append(
             (
                 "module_build",
                 context.application_database,
                 context.config_path,
                 platform_services,
+                bootstrap_timeout_seconds,
             )
         )
         return FakeModuleRuntime()
@@ -1097,6 +1098,7 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
             application_database,
             config_path,
             (user_directory_spec, dictionary_spec, report_navigation_spec, notification_platform_spec, external_api_status_spec),
+            30.0,
         ),
         "module_start",
         ("router", application_database, report_navigation_service),

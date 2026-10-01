@@ -1510,9 +1510,87 @@ def test_bootstrap_exception_is_sanitized_and_does_not_hide_healthy_sibling(
     runtime.stop()
 
 
+def test_bootstrap_budget_allows_migration_beyond_callback_budget(
+    monkeypatch,
+    isolated_runtime_factory,
+):
+    calls = []
+    module = _LifecycleModule(_manifest("alpha"), calls)
+    runtime = isolated_runtime_factory([module], bootstrap_timeout_seconds=30.0)
+
+    def run_migration(self, manifest, package_name):
+        # Real first-install migrations can take longer than the 1s callback budget.
+        sleep(1.1)
+        return manifest.schema_version
+
+    monkeypatch.setattr(_MigrationRunner, "run", run_migration)
+    try:
+        runtime.start()
+        assert runtime.status("alpha").value == "enabled"
+        assert calls == ["alpha:start"]
+        assert runtime.admin_statuses({"role": "admin"})[0]["health"]["healthy"]
+    finally:
+        runtime.stop()
+
+
+@pytest.mark.parametrize("callback", ["start", "stop"])
+def test_long_bootstrap_budget_preserves_default_callback_timeout(
+    isolated_runtime_factory, callback
+):
+    entered = Event()
+    release = Event()
+    completed = Event()
+    calls = []
+    module = _LifecycleModule(_manifest("alpha"), calls)
+
+    def block_callback(*args):
+        entered.set()
+        try:
+            release.wait()
+        finally:
+            completed.set()
+
+    if callback == "start":
+        module.start_action = block_callback
+    else:
+        module.stop = block_callback
+    runtime = isolated_runtime_factory([module], bootstrap_timeout_seconds=30.0)
+    if callback == "stop":
+        runtime.start()
+    watchdog = Timer(2.0, release.set)
+    watchdog.start()
+    try:
+        if callback == "start":
+            runtime.start()
+            assert runtime.status("alpha").value == "startup_failed"
+        else:
+            runtime.stop()
+            assert runtime.status("alpha").value == "discovered"
+            assert runtime._contexts == {}
+        assert entered.is_set()
+        # The normal 1s deadline must fire before the 2s safety watchdog.
+        assert not release.is_set()
+    finally:
+        release.set()
+        watchdog.cancel()
+        watchdog.join(0.1)
+        assert completed.wait(1.0)
+        runtime.stop()
+
+
+@pytest.mark.parametrize("bootstrap_timeout", [0, -1])
+def test_runtime_rejects_nonpositive_bootstrap_budget(
+    isolated_runtime_factory, bootstrap_timeout
+):
+    with pytest.raises(ValueError, match="module timeouts must be positive"):
+        isolated_runtime_factory([], bootstrap_timeout_seconds=bootstrap_timeout)
+
+
+@pytest.mark.parametrize("bootstrap_timeout", [None, 0.05])
 def test_timed_out_migration_cannot_retry_concurrently_or_publish_late_result(
     monkeypatch,
     isolated_runtime_factory,
+    bootstrap_timeout,
 ):
     release_migration = Event()
     migration_entered = Event()
@@ -1521,9 +1599,12 @@ def test_timed_out_migration_cannot_retry_concurrently_or_publish_late_result(
     maximum_active_migrations = 0
     calls = []
     module = _LifecycleModule(_manifest("alpha"), calls)
-    runtime = isolated_runtime_factory(
-        [module], lifecycle_timeout_seconds=0.05, task_shutdown_timeout_seconds=0.05
-    )
+    runtime_options = {"task_shutdown_timeout_seconds": 0.05}
+    if bootstrap_timeout is None:
+        runtime_options["lifecycle_timeout_seconds"] = 0.05
+    else:
+        runtime_options["bootstrap_timeout_seconds"] = bootstrap_timeout
+    runtime = isolated_runtime_factory([module], **runtime_options)
 
     def run_migration(self, manifest, package_name):
         nonlocal migration_calls, active_migrations, maximum_active_migrations
@@ -1541,10 +1622,12 @@ def test_timed_out_migration_cannot_retry_concurrently_or_publish_late_result(
     monkeypatch.setattr(_MigrationRunner, "run", run_migration)
     watchdog = Timer(0.4, release_migration.set)
     watchdog.start()
+    started_at = monotonic()
     runtime.start()
     watchdog.cancel()
     watchdog.join(0.1)
 
+    assert monotonic() - started_at < 0.3
     assert migration_entered.is_set()
     assert runtime.status("alpha").value == "migration_failed"
     with pytest.raises(ModuleRuntimeError, match="isolated"):

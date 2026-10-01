@@ -251,11 +251,15 @@ class ModuleRuntime:
         preflight_incompatibilities: Mapping[str, str] | None = None,
         platform_services: tuple[PlatformServiceSpec, ...] = (),
         lifecycle_timeout_seconds: float = 1.0,
+        bootstrap_timeout_seconds: float | None = None,
         health_timeout_seconds: float = 0.5,
         task_shutdown_timeout_seconds: float = 1.0,
     ) -> None:
+        if bootstrap_timeout_seconds is None:
+            bootstrap_timeout_seconds = lifecycle_timeout_seconds
         if (
             lifecycle_timeout_seconds <= 0
+            or bootstrap_timeout_seconds <= 0
             or health_timeout_seconds <= 0
             or task_shutdown_timeout_seconds <= 0
         ):
@@ -280,6 +284,7 @@ class ModuleRuntime:
         self._shared_executor = _DaemonTaskPool(maximum_workers=4, maximum_tasks=8)
         self._shared_executor_shutdown = False
         self._lifecycle_timeout_seconds = lifecycle_timeout_seconds
+        self._bootstrap_timeout_seconds = bootstrap_timeout_seconds
         self._health_timeout_seconds = health_timeout_seconds
         self._task_shutdown_timeout_seconds = task_shutdown_timeout_seconds
         self._contexts: dict[str, ModuleContext] = {}
@@ -681,7 +686,7 @@ class ModuleRuntime:
             name=f"module-{manifest.id}-bootstrap",
         )
         try:
-            bootstrap = bootstrap_future.result(timeout=self._lifecycle_timeout_seconds)
+            bootstrap = bootstrap_future.result(timeout=self._bootstrap_timeout_seconds)
         except FutureTimeoutError:
             self._record_isolation_until_complete(loaded, bootstrap_future)
             if bootstrap_progress.current_stage() == "migration":
