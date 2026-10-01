@@ -6,7 +6,7 @@
 
 ### v1.3.2：自动脚本限定表名
 
-自动预览和兼容生成接口按所选数据源生成限定表名：PostgreSQL 使用 Schema，MySQL 使用 database；每段表名和全部字段分别用双引号／反引号引用，内部引用符加倍，保留物理名大小写。数字开头、保留字、连字符、空格、点号和引用符均按真实标识符处理，例如 `UPDATE "dws"."ta_pact_detail_dws"`、`UPDATE "reg-report-analysis"."ta_pact_detail_dws"`、``UPDATE `1104report`.`ta_pact_detail_dws` ``。
+自动预览和兼容生成接口按所选数据源生成限定表名：PostgreSQL 使用实际 Schema，MySQL 使用实际 database。普通的小写 ASCII 标识符且不是该方言保留字时原样输出；数字开头、特殊字符和保留字按方言引用并转义内部引用符。PostgreSQL 的物理名含大写字母时保留双引号以避免折叠为小写，MySQL 普通大写标识符不加反引号。示例：`UPDATE dws.am_order_dws`、`UPDATE "reg-report-analysis".am_order_dws`、`UPDATE ass_man_reg_24.am_projinvest_dm`、``UPDATE `1104report`.am_projinvest_dm``。
 
 表元数据快照中的 Schema 与物理表名分段保存，因此表名含点号时仍是单个标识符。只有缺少 Schema 快照的历史内容才识别明确的两段限定名，避免再次拼接。PostgreSQL 优先选表 Schema、为空时取配置 Schema；MySQL 有当前配置时以真实 database 为准，避免旧通用 Schema 值误当数据库。当前元信息不可用时使用已保存的类型与 Schema；范围也缺失时只引用表名，不猜测库名，不使用数据源展示名。
 

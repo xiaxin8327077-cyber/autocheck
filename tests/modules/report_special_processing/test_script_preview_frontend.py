@@ -48,6 +48,7 @@ def table(**overrides) -> dict:
     value = {
         "datasource_id": "ds1",
         "datasource_name": "TCMP生产库",
+        "schema": "",
         "table_name": "t_customer",
         "chinese_table_name": "客户信息表",
         "limit_report_period": False,
@@ -59,8 +60,8 @@ def table(**overrides) -> dict:
     return value
 
 
-def content(*tables: dict) -> dict:
-    return {"datasource_id": "ds1", "datasource_type": "postgresql", "tables": list(tables)}
+def content(*tables: dict, datasource_type: str = "postgresql") -> dict:
+    return {"datasource_id": "ds1", "datasource_type": datasource_type, "tables": list(tables)}
 
 
 def test_table_selection_immediately_generates_update(tmp_path: Path) -> None:
@@ -68,7 +69,7 @@ def test_table_selection_immediately_generates_update(tmp_path: Path) -> None:
 
     assert "-- 数据源：TCMP生产库" in script
     assert "-- 表：t_customer（客户信息表）" in script
-    assert script.rstrip().endswith('UPDATE "t_customer"')
+    assert script.rstrip().endswith("UPDATE t_customer")
     assert "\nSET " not in script
     assert "\nWHERE " not in script
 
@@ -82,8 +83,8 @@ def test_selected_fields_immediately_generate_set_and_where_with_empty_values(tm
         )),
     )
 
-    assert 'SET "customer_status" = \'\'' in script
-    assert 'WHERE "project_no" = \'\';' in script
+    assert "SET customer_status = ''" in script
+    assert "WHERE project_no = '';" in script
 
 
 def test_without_selected_condition_field_does_not_generate_where(tmp_path: Path) -> None:
@@ -92,7 +93,7 @@ def test_without_selected_condition_field_does_not_generate_where(tmp_path: Path
         content(table(fields=[{"column_name": "customer_status", "value_after": "冻结"}])),
     )
 
-    assert 'SET "customer_status" = \'冻结\';' in script
+    assert "SET customer_status = '冻结';" in script
     assert "WHERE" not in script
 
 
@@ -108,7 +109,7 @@ def test_report_period_always_uses_hyphenated_date(tmp_path: Path) -> None:
         "2026-08-31",
     )
 
-    assert 'WHERE "jrcode" = \'2026-08-31\';' in script
+    assert "WHERE jrcode = '2026-08-31';" in script
     assert "20260831" not in script
 
 
@@ -133,9 +134,44 @@ def test_tables_generate_independently_and_literals_follow_current_rules(tmp_pat
         {"ds1": {"t_contract": {"amount": "decimal", "contract_no": "varchar"}}},
     )
 
-    assert 'UPDATE "table_only"' in script
-    assert 'UPDATE "t_contract"' in script
-    assert '"remark" = \'Bob\'\'s\'' in script
-    assert '"amount" = \'120\'' in script
-    assert '"contract_no" IN (\'C1\', \'C2\')' in script
-    assert '"closed_at" IS NULL' in script
+    assert "UPDATE table_only" in script
+    assert "UPDATE t_contract" in script
+    assert "remark = 'Bob''s'" in script
+    assert "amount = '120'" in script
+    assert "contract_no IN ('C1', 'C2')" in script
+    assert "closed_at IS NULL" in script
+
+
+def test_postgresql_common_report_identifiers_preview_without_quotes(tmp_path: Path) -> None:
+    script = run_preview(
+        tmp_path,
+        content(table(
+            schema="dws",
+            table_name="am_order_dws",
+            limit_report_period=True,
+            report_period_field="d_cldate",
+            fields=[{"column_name": "order_status", "value_after": "done"}],
+            conditions=[{"column_name": "project_no", "operator": "=", "values": ["P001"]}],
+        )),
+        report_period="2026-09-30",
+    )
+
+    assert "UPDATE dws.am_order_dws\nSET order_status = 'done'\nWHERE d_cldate = '2026-09-30' AND project_no = 'P001';" in script
+
+
+def test_mysql_common_report_identifiers_preview_uses_real_database_without_backticks(tmp_path: Path) -> None:
+    script = run_preview(
+        tmp_path,
+        content(table(
+            schema="stale_schema",
+            table_name="am_projinvest_dm",
+            limit_report_period=True,
+            report_period_field="pin_cldate",
+            fields=[{"column_name": "invest_status", "value_after": "done"}],
+            conditions=[{"column_name": "project_no", "operator": "=", "values": ["P001"]}],
+        ), datasource_type="mysql"),
+        report_period="2026-09-30",
+        datasources={"ds1": {"db_type": "mysql", "database": "ass_man_reg_24"}},
+    )
+
+    assert "UPDATE ass_man_reg_24.am_projinvest_dm\nSET invest_status = 'done'\nWHERE pin_cldate = '2026-09-30' AND project_no = 'P001';" in script

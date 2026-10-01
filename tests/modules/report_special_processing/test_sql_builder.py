@@ -17,8 +17,8 @@ from auto_check.modules.report_special_processing.structured_content import (
 )
 
 
-def _content(*tables: StructuredTable) -> StructuredContent:
-    return StructuredContent(datasource_id="ds1", datasource_type="postgresql", tables=tables)
+def _content(*tables: StructuredTable, datasource_type: str = "postgresql") -> StructuredContent:
+    return StructuredContent(datasource_id="ds1", datasource_type=datasource_type, tables=tables)
 
 
 def _table(
@@ -26,6 +26,8 @@ def _table(
     table_name: str = "apply_contract_info",
     chinese_table_name: str = "运用合同信息",
     datasource_name: str = "TCMP生产库",
+    schema: str = "public",
+    datasource_type: str = "postgresql",
     limit_report_period: bool = False,
     report_period_field: str = "",
     report_period_field_source: str = "",
@@ -41,9 +43,9 @@ def _table(
         table_name=table_name,
         chinese_table_name=chinese_table_name,
         table_name_source="MANUAL",
-        schema="public",
+        schema=schema,
         datasource_id="ds1",
-        datasource_type="postgresql",
+        datasource_type=datasource_type,
         datasource_name=datasource_name,
         limit_report_period=limit_report_period,
         report_period_field=report_period_field,
@@ -64,10 +66,10 @@ def test_parse_scope_values_splits_deduplicates_and_strips():
 def test_generate_single_value_uses_equals_multi_uses_in():
     single = _table(conditions=(StructuredCondition(column_name="project_no", values=("P001",)),))
     script = generate_script(_content(single), report_period="", field_types={})
-    assert '"project_no" = \'P001\'' in script
+    assert "project_no = 'P001'" in script
     multi = _table(conditions=(StructuredCondition(column_name="project_no", operator="IN", values=("P001", "P002")),))
     script = generate_script(_content(multi), report_period="", field_types={})
-    assert '"project_no" IN (\'P001\', \'P002\')' in script
+    assert "project_no IN ('P001', 'P002')" in script
 
 
 def test_generate_comparison_and_like_and_null_operators():
@@ -79,9 +81,9 @@ def test_generate_comparison_and_like_and_null_operators():
     script = generate_script(_content(table), report_period="", field_types={
         "ds1": {"apply_contract_info": {"amount": "decimal"}},
     })
-    assert '"amount" > 100' in script
-    assert '"name" LIKE \'%ABC%\'' in script
-    assert '"closed_at" IS NULL' in script
+    assert "amount > 100" in script
+    assert "name LIKE '%ABC%'" in script
+    assert "closed_at IS NULL" in script
 
 
 def test_literals_keep_types_and_escape_quotes():
@@ -95,15 +97,15 @@ def test_literals_keep_types_and_escape_quotes():
     script = generate_script(_content(table), report_period="", field_types={
         "ds1": {"apply_contract_info": {"amount": "decimal"}},
     })
-    assert '"remark" = \'done\'' in script
-    assert 'WHERE "amount" = 100' in script
+    assert "remark = 'done'" in script
+    assert "WHERE amount = 100" in script
 
 
 def test_before_values_are_not_merged_into_where():
     table = _table()
     script = generate_script(_content(table), report_period="", field_types={})
-    assert 'SET "status" = \'终止\'' in script
-    assert '"status" = \'正常\'' not in script
+    assert "SET status = '终止'" in script
+    assert "status = '正常'" not in script
     assert "value_before" not in script
 
 
@@ -116,7 +118,7 @@ def test_report_period_condition_when_limited():
     script = generate_script(_content(table), report_period="2026-08-31", field_types={
         "ds1": {"apply_contract_info": {"d_cldate": "date"}},
     })
-    assert '"d_cldate" = \'2026-08-31\'' in script
+    assert "d_cldate = '2026-08-31'" in script
     # 顺序：报送期在前，处理范围在后
     assert script.index("d_cldate") < script.index("project_no")
     # 字符型报送期同样统一使用 YYYY-MM-DD
@@ -124,7 +126,7 @@ def test_report_period_condition_when_limited():
     script2 = generate_script(_content(table2), report_period="2026-08-31", field_types={
         "ds1": {"apply_contract_info": {"d_cldate": "varchar"}},
     })
-    assert '"d_cldate" = \'2026-08-31\'' in script2
+    assert "d_cldate = '2026-08-31'" in script2
 
 
 def test_limited_without_period_field_rejected():
@@ -152,11 +154,48 @@ def test_multi_tables_generate_segmented_scripts_with_names():
     assert script.count("-- 表：") == 2
     assert "-- 数据源：TCMP生产库" in script
     assert "-- 数据源：核算库" in script
-    assert 'UPDATE "public"."apply_contract_info"' in script
-    assert 'UPDATE "public"."customer_info"' in script
+    assert "UPDATE public.apply_contract_info" in script
+    assert "UPDATE public.customer_info" in script
 
 
 def test_generate_rejects_empty_tables():
     content = StructuredContent(datasource_id="", datasource_type="", tables=())
     with pytest.raises(ScriptGenerationError):
         generate_script(content, report_period="", field_types={})
+
+
+def test_postgresql_common_identifiers_match_report_period_example():
+    table = _table(
+        table_name="am_order_dws",
+        schema="dws",
+        limit_report_period=True,
+        report_period_field="d_cldate",
+        conditions=(StructuredCondition(column_name="project_no", values=("P001",)),),
+        fields=(StructuredField(column_name="status", chinese_column_name="状态",
+                                column_name_source="MANUAL", value_after="done"),),
+    )
+
+    script = generate_script(_content(table), report_period="2026-09-30")
+
+    assert "UPDATE dws.am_order_dws\nSET status = 'done'\nWHERE d_cldate = '2026-09-30' AND project_no = 'P001';" in script
+
+
+def test_mysql_common_identifiers_use_configured_database_without_backticks():
+    table = _table(
+        table_name="am_projinvest_dm",
+        schema="stale_schema",
+        datasource_type="mysql",
+        limit_report_period=True,
+        report_period_field="pin_cldate",
+        conditions=(StructuredCondition(column_name="project_no", values=("P001",)),),
+        fields=(StructuredField(column_name="invest_status", chinese_column_name="投资状态",
+                                column_name_source="MANUAL", value_after="done"),),
+    )
+
+    script = generate_script(
+        _content(table, datasource_type="mysql"),
+        report_period="2026-09-30",
+        datasources={"ds1": {"db_type": "mysql", "database": "ass_man_reg_24"}},
+    )
+
+    assert "UPDATE ass_man_reg_24.am_projinvest_dm\nSET invest_status = 'done'\nWHERE pin_cldate = '2026-09-30' AND project_no = 'P001';" in script

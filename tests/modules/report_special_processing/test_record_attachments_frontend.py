@@ -1459,9 +1459,9 @@ def test_drawer_auto_generates_script_and_supports_manual_mode(tmp_path: Path) -
   // 前端直接生成预览，不调用后端生成接口，也不依赖正式保存校验。
   assert.equal(backendGenerateCalls.length, 0, "实时预览不调用后端生成接口");
   const textarea = findByAriaLabel(overlay, "处理脚本");
-  assert.ok(textarea.value.includes('UPDATE "public"."t_customer"'), "选表后生成 UPDATE");
-  assert.ok(textarea.value.includes(`SET "customer_status" = '冻结'`), "选修改字段后生成 SET");
-  assert.ok(textarea.value.includes(`WHERE "project_no" IN ('P001') AND "contract_no" = 'HT001';`), "选条件字段后生成 WHERE");
+  assert.ok(textarea.value.includes("UPDATE public.t_customer"), "选表后生成 UPDATE");
+  assert.ok(textarea.value.includes(`SET customer_status = '冻结'`), "选修改字段后生成 SET");
+  assert.ok(textarea.value.includes("WHERE project_no IN ('P001') AND contract_no = 'HT001';"), "选条件字段后生成 WHERE");
   assert.equal(textarea.readOnly, true, "AUTO 模式下脚本只读");
   assert.equal(findButtonByText(overlay, "复制脚本").disabled, false, "有脚本后复制可用");
   // 切换手动模式只执行一次：保留内容、解锁输入、切换按钮与输入框上方模式提示。
@@ -1515,8 +1515,8 @@ def test_datasource_metadata_updates_qualified_preview_without_touching_manual_s
     await sleep(650);
     const textarea = findByAriaLabel(overlay, "处理脚本");
     if (scriptMode === "AUTO") {
-      assert.ok(textarea.value.includes("UPDATE `1104report`.`t_customer`"));
-      assert.ok(textarea.value.includes("SET `customer_status`"));
+      assert.ok(textarea.value.includes("UPDATE `1104report`.t_customer"));
+      assert.ok(textarea.value.includes("SET customer_status"));
     } else {
       assert.equal(textarea.value, "手工或历史脚本原文", "元数据抵达不覆盖手动脚本");
       findButtonByText(overlay, "恢复自动生成").click();

@@ -44,7 +44,8 @@ def test_v13_display_version_and_release_notes_are_consistent():
     assert fix.count("对齐逐笔跨期收益率和新增编码校验的源程序结果。") == 1
     assert "对齐逐笔跨期收益率和新增编码校验的源程序结果。" in readme
     assert fix.count("修复对账股权损益调整差异识别，统一金额显示及结果滚动条。") == 1
-    assert fix.count("系统优化及BUG修复。") == 1
+    assert fix.count("优化系统设置切页响应及界面体验，修复已知问题。") == 1
+    assert "优化系统设置控件加载与切页响应" in readme
     assert "`v1.3.2` (2026-10-01)" in readme
     assert app_js.count('class="changelog-version">v1.3.1</span>') == 1
     assert app_js.count('class="changelog-version">v1.3.0</span>') == 1
@@ -9425,8 +9426,8 @@ def test_selects_use_scheme_5_glass_style_without_particles():
 
     for text in [
         "function initializeCustomSelects()",
-        "function enhanceCustomSelect(select)",
-        "function enhanceCustomInput(input)",
+        "function enhanceCustomSelect(select, measurement = null)",
+        "function enhanceCustomInput(input, measurement = null)",
         "function shouldEnhanceCustomInput(input)",
         "function renderCustomDatePicker(input)",
         "function openCustomDatePicker(input)",
@@ -9452,8 +9453,8 @@ def test_selects_use_scheme_5_glass_style_without_particles():
         "custom-date-shell",
         "custom-date-dropdown",
         "custom-date-day",
-        "customSelectMeasure(select, shell)",
-        "customInputMeasure(input, shell)",
+        "customSelectMeasure(select, shell, measurement)",
+        "customInputMeasure(input, shell, measurement)",
         "shell.style.setProperty(\"--select-width\"",
         "shell.style.setProperty(\"--select-height\"",
         "shell.style.setProperty(\"--input-width\"",

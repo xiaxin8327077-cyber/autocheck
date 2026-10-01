@@ -20,6 +20,9 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Sequence
 
+from sqlalchemy.dialects.mysql.base import RESERVED_WORDS_MYSQL as _MYSQL_RESERVED_WORDS
+from sqlalchemy.dialects.postgresql.base import RESERVED_WORDS as _PG_RESERVED_WORDS
+
 from .structured_content import (
     CONDITION_OPERATORS,
     CONDITION_OPERATORS_REQUIRING_VALUE,
@@ -33,8 +36,17 @@ class ScriptGenerationError(ValueError):
 
 
 def _identifier(name: str, db_type: str) -> str:
-    quote = "`" if db_type == "mysql" else '"'
-    return quote + str(name).replace(quote, quote * 2) + quote
+    value = str(name)
+    dialect = str(db_type or "").strip().lower()
+    quote = "`" if dialect == "mysql" else '"'
+    is_simple_ascii = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", value) is not None
+    needs_quote = not is_simple_ascii
+    if dialect == "mysql":
+        needs_quote = needs_quote or value.lower() in _MYSQL_RESERVED_WORDS
+    else:
+        has_ascii_uppercase = any("A" <= character <= "Z" for character in value)
+        needs_quote = needs_quote or has_ascii_uppercase or value.lower() in _PG_RESERVED_WORDS
+    return quote + value.replace(quote, quote * 2) + quote if needs_quote else value
 
 
 def _table_identifier(table: Any, datasource: Mapping[str, str], db_type: str) -> str:

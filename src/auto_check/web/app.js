@@ -1413,6 +1413,7 @@ function settingsLoadSessionKey() {
 }
 
 function cancelSettingsPageLoad() {
+  if (typeof cancelSettingsControlEnhancement === "function") cancelSettingsControlEnhancement();
   const scope = settingsPageLoadScope;
   settingsPageLoadScope = null;
   if (!scope) return;
@@ -5482,8 +5483,15 @@ function escapeHtml(v) {
 /* ===== Custom Selects ===== */
 const customSelectStates = new WeakMap();
 const customDateStates = new WeakMap();
+const openCustomSelects = new Set();
+const openCustomDateInputs = new Set();
 let customSelectObserver = null;
 let customSelectRaf = 0;
+const pendingCustomControlRoots = new Map();
+const pendingCustomControls = new Set();
+let settingsControlEnhancementGeneration = 0;
+const CUSTOM_CONTROL_BATCH_SIZE = 12;
+let customControlCleanupNeeded = false;
 const CUSTOM_INPUT_TYPES = new Set(["text", "search", "number", "date", "password", "email", "tel", "url"]);
 const CUSTOM_DATE_WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 
@@ -5491,34 +5499,38 @@ function customSelectText(select) {
   return select.selectedOptions?.[0]?.textContent || select.options?.[select.selectedIndex]?.textContent || "";
 }
 
-function customSelectMeasure(select, shell) {
+function customSelectMeasure(select, shell, measurement = null) {
+  const size = measurement || measureCustomControl(select);
+  shell.style.setProperty("--select-width", size.width > 0 ? `${size.width}px` : "100%");
+  shell.style.setProperty("--select-height", `${Math.max(size.height, 1)}px`);
+  shell.style.setProperty("--select-font-size", size.fontSize);
+  shell.style.setProperty("--select-font-weight", size.fontWeight);
+}
+
+function measureCustomControl(select) {
   const rect = select.getBoundingClientRect();
   const style = window.getComputedStyle(select);
   const width = rect.width || parseFloat(style.width) || 0;
-  const height = rect.height || parseFloat(style.height) || 32;
-  shell.style.setProperty("--select-width", width > 0 ? `${width}px` : "100%");
-  shell.style.setProperty("--select-height", `${Math.max(height, 1)}px`);
-  shell.style.setProperty("--select-font-size", style.fontSize || "13px");
-  shell.style.setProperty("--select-font-weight", style.fontWeight || "400");
+  const height = rect.height || parseFloat(style.height)
+    || (select.tagName === "INPUT" ? parseFloat(style.minHeight) : 0) || 32;
+  return { width, height, fontSize: style.fontSize || "13px", fontWeight: style.fontWeight || "400" };
 }
 
-function customInputMeasure(input, shell) {
-  const rect = input.getBoundingClientRect();
-  const style = window.getComputedStyle(input);
-  const width = rect.width || parseFloat(style.width) || 0;
-  const height = rect.height || parseFloat(style.height) || parseFloat(style.minHeight) || 32;
-  shell.style.setProperty("--input-width", width > 0 ? `${width}px` : "100%");
-  shell.style.setProperty("--input-height", `${Math.max(height, 1)}px`);
-  shell.style.setProperty("--input-font-size", style.fontSize || "13px");
-  shell.style.setProperty("--input-font-weight", style.fontWeight || "400");
+function customInputMeasure(input, shell, measurement = null) {
+  const size = measurement || measureCustomControl(input);
+  shell.style.setProperty("--input-width", size.width > 0 ? `${size.width}px` : "100%");
+  shell.style.setProperty("--input-height", `${Math.max(size.height, 1)}px`);
+  shell.style.setProperty("--input-font-size", size.fontSize);
+  shell.style.setProperty("--input-font-weight", size.fontWeight);
 }
 
 function closeCustomSelect(select) {
   const state = customSelectStates.get(select);
-  if (!state) return;
+  if (!state || state.dropdown.hidden) return;
   state.shell.classList.remove("custom-select-open");
   state.trigger.setAttribute("aria-expanded", "false");
   state.dropdown.hidden = true;
+  openCustomSelects.delete(select);
 }
 
 function destroyCustomSelect(select) {
@@ -5527,11 +5539,12 @@ function destroyCustomSelect(select) {
   state.shell?.classList?.remove("custom-select-open");
   state.trigger?.setAttribute?.("aria-expanded", "false");
   state.dropdown.remove();
+  openCustomSelects.delete(select);
   customSelectStates.delete(select);
 }
 
 function closeOtherCustomSelects(currentSelect = null) {
-  document.querySelectorAll("select.custom-select-native").forEach((select) => {
+  openCustomSelects.forEach((select) => {
     if (select !== currentSelect) closeCustomSelect(select);
   });
 }
@@ -5542,6 +5555,7 @@ function cleanupDetachedCustomSelects() {
     const state = select ? customSelectStates.get(select) : null;
     if (select && select.isConnected && state?.shell?.isConnected) return;
     dropdown.remove();
+    openCustomSelects.delete(select);
     if (select) customSelectStates.delete(select);
   });
 }
@@ -5566,9 +5580,10 @@ function formatCustomDateValue(date) {
 
 function closeCustomDatePicker(input) {
   const state = customDateStates.get(input);
-  if (!state) return;
+  if (!state || state.dropdown.hidden) return;
   state.shell.classList.remove("custom-date-open");
   state.dropdown.hidden = true;
+  openCustomDateInputs.delete(input);
 }
 
 function destroyCustomDatePicker(input) {
@@ -5576,11 +5591,12 @@ function destroyCustomDatePicker(input) {
   if (!state) return;
   state.shell?.classList?.remove("custom-date-open");
   state.dropdown.remove();
+  openCustomDateInputs.delete(input);
   customDateStates.delete(input);
 }
 
 function closeOtherCustomDatePickers(currentInput = null) {
-  document.querySelectorAll("input.custom-date-input").forEach((input) => {
+  openCustomDateInputs.forEach((input) => {
     if (input !== currentInput) closeCustomDatePicker(input);
   });
 }
@@ -5591,6 +5607,7 @@ function cleanupDetachedCustomDatePickers() {
     const state = input ? customDateStates.get(input) : null;
     if (input && input.isConnected && state?.shell?.isConnected) return;
     dropdown.remove();
+    openCustomDateInputs.delete(input);
     if (input) customDateStates.delete(input);
   });
 }
@@ -5660,6 +5677,7 @@ function openCustomSelect(select) {
   state.dropdown.hidden = false;
   state.shell.classList.add("custom-select-open");
   state.trigger.setAttribute("aria-expanded", "true");
+  openCustomSelects.add(select);
 }
 
 function toggleCustomSelect(select) {
@@ -5669,11 +5687,33 @@ function toggleCustomSelect(select) {
   else closeCustomSelect(select);
 }
 
-function enhanceCustomSelect(select) {
+function captureCustomControlFocus(control) {
+  if (document.activeElement !== control) return null;
+  return {
+    start: control.selectionStart,
+    end: control.selectionEnd,
+    direction: control.selectionDirection,
+  };
+}
+
+function restoreCustomControlFocus(control, focus, target = control) {
+  if (!focus || !control.isConnected) return;
+  // A blur handler may deliberately focus a different control; do not override it.
+  if (document.activeElement !== document.body && document.activeElement !== control) return;
+  if (document.activeElement !== target) target.focus({ preventScroll: true });
+  if (document.activeElement === control && Number.isInteger(focus.start) && Number.isInteger(focus.end)
+    && ["text", "search", "tel", "url", "password"].includes(control.type)
+    && typeof control.setSelectionRange === "function") {
+    control.setSelectionRange(focus.start, focus.end, focus.direction);
+  }
+}
+
+function enhanceCustomSelect(select, measurement = null) {
   if (!select || customSelectStates.has(select) || select.closest(".custom-select-shell")) return;
+  const focus = captureCustomControlFocus(select);
   const shell = document.createElement("div");
   shell.className = `custom-select-shell ${select.className || ""}`.trim();
-  customSelectMeasure(select, shell);
+  customSelectMeasure(select, shell, measurement);
 
   select.parentNode.insertBefore(shell, select);
   shell.appendChild(select);
@@ -5719,6 +5759,7 @@ function enhanceCustomSelect(select) {
   new MutationObserver(() => {
     syncCustomSelect(select);
   }).observe(select, { childList: true, subtree: true, attributes: true, attributeFilter: ["selected", "disabled", "label", "value"] });
+  restoreCustomControlFocus(select, focus, trigger);
 }
 
 function positionCustomDateDropdown(input) {
@@ -5797,6 +5838,7 @@ function openCustomDatePicker(input) {
   positionCustomDateDropdown(input);
   state.dropdown.hidden = false;
   state.shell.classList.add("custom-date-open");
+  openCustomDateInputs.add(input);
 }
 
 function toggleCustomDatePicker(input) {
@@ -5869,51 +5911,119 @@ function shouldEnhanceCustomInput(input) {
   return CUSTOM_INPUT_TYPES.has(type) && !input.hidden;
 }
 
-function enhanceCustomInput(input) {
+function enhanceCustomInput(input, measurement = null) {
   if (!shouldEnhanceCustomInput(input)) return;
+  const focus = captureCustomControlFocus(input);
   const type = (input.getAttribute("type") || "text").toLowerCase();
   const shell = document.createElement("div");
   shell.className = `custom-input-shell ${input.className || ""}`.trim();
   if (type === "date") shell.classList.add("custom-date-shell");
-  customInputMeasure(input, shell);
+  customInputMeasure(input, shell, measurement);
 
   input.parentNode.insertBefore(shell, input);
   shell.appendChild(input);
   input.classList.add("custom-input-native");
   if (type === "date") enhanceCustomDateInput(input, shell);
-
+  restoreCustomControlFocus(input, focus);
 }
 
-function enhanceCustomSelects(root = document) {
-  root.querySelectorAll?.("select:not(.custom-select-native)").forEach(enhanceCustomSelect);
-}
-
-function enhanceCustomInputs(root = document) {
-  root.querySelectorAll?.("input:not(.custom-input-native)").forEach(enhanceCustomInput);
+function shouldEnhanceCustomControl(control) {
+  if (!control?.isConnected || control.closest("[hidden], .collapsible-body.collapsed")) return false;
+  const page = control.closest(".page");
+  if (page && page.id !== `page-${document.documentElement.getAttribute("data-page")}`) return false;
+  if (control.tagName === "SELECT") {
+    return !customSelectStates.has(control) && !control.closest(".custom-select-shell");
+  }
+  return control.tagName === "INPUT" && shouldEnhanceCustomInput(control);
 }
 
 function enhanceCustomControls(root = document) {
-  enhanceCustomSelects(root);
-  enhanceCustomInputs(root);
+  pendingCustomControlRoots.set(root, settingsControlEnhancementGeneration);
+  scheduleCustomControlFrame();
 }
 
-function scheduleCustomSelectEnhancement() {
-  cleanupDetachedCustomDatePickers();
-  cleanupDetachedCustomSelects();
+function cancelSettingsControlEnhancement() {
+  settingsControlEnhancementGeneration += 1;
+  for (const [root] of pendingCustomControlRoots) {
+    if (root.id === "page-settings" || root.closest?.("#page-settings")) pendingCustomControlRoots.delete(root);
+  }
+  for (const control of pendingCustomControls) {
+    if (control.closest("#page-settings")) pendingCustomControls.delete(control);
+  }
+}
+
+function scheduleCustomControlFrame() {
   if (customSelectRaf) return;
   customSelectRaf = requestAnimationFrame(() => {
     customSelectRaf = 0;
-    cleanupDetachedCustomDatePickers();
-    cleanupDetachedCustomSelects();
-    enhanceCustomControls();
+    for (const [root, generation] of pendingCustomControlRoots) {
+      const collect = (control) => {
+        if (generation !== settingsControlEnhancementGeneration && control.closest("#page-settings")) return;
+        pendingCustomControls.add(control);
+      };
+      if (root.matches?.("select, input")) collect(root);
+      root.querySelectorAll?.("select:not(.custom-select-native), input:not(.custom-input-native)")
+        .forEach(collect);
+    }
+    pendingCustomControlRoots.clear();
+    const batch = [];
+    for (const control of pendingCustomControls) {
+      pendingCustomControls.delete(control);
+      if (!shouldEnhanceCustomControl(control)) continue;
+      batch.push({ control, measurement: measureCustomControl(control) });
+      if (batch.length >= CUSTOM_CONTROL_BATCH_SIZE) break;
+    }
+    // Read every size before changing connected DOM to avoid per-control layout flushes.
+    if (customControlCleanupNeeded) {
+      customControlCleanupNeeded = false;
+      cleanupDetachedCustomDatePickers();
+      cleanupDetachedCustomSelects();
+    }
+    batch.forEach(({ control, measurement }) => {
+      if (control.tagName === "SELECT") enhanceCustomSelect(control, measurement);
+      else enhanceCustomInput(control, measurement);
+    });
+    if (pendingCustomControls.size || pendingCustomControlRoots.size) scheduleCustomControlFrame();
   });
+}
+
+function scheduleCustomSelectEnhancement(records) {
+  for (const record of records) {
+    const target = record.target;
+    if (target.closest?.(".custom-select-dropdown, .custom-date-dropdown")) continue;
+    for (const node of record.removedNodes || []) {
+      if (node.nodeType !== 1 || node.isConnected) continue;
+      if (node.matches(".custom-select-shell, .custom-input-shell, .custom-select-native, .custom-date-input")
+        || node.querySelector(".custom-select-native, .custom-date-input")) customControlCleanupNeeded = true;
+    }
+    if (target.closest?.(".custom-select-shell, .custom-input-shell")) continue;
+    if (record.type === "attributes") {
+      const expanded = record.attributeName === "hidden" && !target.hidden
+        || record.attributeName === "class" && /\bcollapsed\b/.test(record.oldValue || "")
+          && !target.classList.contains("collapsed");
+      if (expanded) enhanceCustomControls(target);
+      continue;
+    }
+    for (const node of record.addedNodes) {
+      if (node.nodeType !== 1 || node.matches(".custom-select-shell, .custom-input-shell, .custom-select-dropdown, .custom-date-dropdown")) continue;
+      if (node.matches("select, input") || node.querySelector("select:not(.custom-select-native), input:not(.custom-input-native)")) enhanceCustomControls(node);
+    }
+  }
+  if (customControlCleanupNeeded) scheduleCustomControlFrame();
 }
 
 function initializeCustomSelects() {
   enhanceCustomControls();
   if (!customSelectObserver) {
     customSelectObserver = new MutationObserver(scheduleCustomSelectEnhancement);
-    customSelectObserver.observe(document.body, { childList: true, subtree: true });
+    customSelectObserver.observe(document.body, {
+      childList: true, subtree: true, attributes: true, attributeOldValue: true, attributeFilter: ["hidden", "class"],
+    });
+    new MutationObserver(() => {
+      if (document.documentElement.getAttribute("data-page") !== "settings") cancelSettingsControlEnhancement();
+      const page = document.getElementById(`page-${document.documentElement.getAttribute("data-page")}`);
+      if (page) enhanceCustomControls(page);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-page"] });
   }
   document.addEventListener("click", (event) => {
     const target = event.target;
@@ -14878,7 +14988,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>人行逐笔校验同步20260930规则，新增内部编码判空及查重，正确实现Rule19。</li>
         <li>对齐逐笔跨期收益率和新增编码校验的源程序结果。</li>
         <li>修复对账股权损益调整差异识别，统一金额显示及结果滚动条。</li>
-        <li>系统优化及BUG修复。</li>
+        <li>优化系统设置切页响应及界面体验，修复已知问题。</li>
       </ul>
     </div>
 

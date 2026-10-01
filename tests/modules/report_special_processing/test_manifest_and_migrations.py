@@ -39,7 +39,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.release_notes.version == "1.3.2"
     release_notes = manifest.release_notes.items
     assert release_notes == (
-        "自动生成脚本使用数据源的模式或数据库限定表名，兼容特殊标识符。",
+        "自动脚本按数据源限定表名，仅必要时引用名称。",
     )
     assert len(release_notes) == 1
     assert len(set(release_notes)) == len(release_notes)
