@@ -382,21 +382,23 @@ def test_zg04_yield_rules_use_summary_rows_and_zero_amount_product_list():
         "ZG04",
         date(2026, 5, 31),
         [
-            {"projcode": "P5", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "4.5"},
+            {"projcode": "P5", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "12"},
             {"projcode": "P6", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "0.00000"},
             {"projcode": "P7", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "1.5"},
             {"projcode": "P7", "areacode": "000000", "clientkind": "1", "moneytype": "BWB", "projamtcny": "0"},
         ],
         [
             {"projcode": "P5", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "1.0"},
+            {"projcode": "P6", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "4.5"},
             {"projcode": "P7", "areacode": "", "clientkind": "", "moneytype": "", "dyshouyi": "1.0"},
         ],
     )
 
-    marks = [row.mark.split("-")[-1] for row in rows]
-    assert "Zg04_Rule15\uff1a\u5f53\u6708\u5e74\u5316\u6536\u76ca\u7387\u8de8\u671f\u53d8\u52a8\u8fc7\u5927\uff08\u8d85\u8fc7200%\uff09\uff0c\u9700\u6838\u5b9e" in marks
-    assert "Zg04_Rule17\uff1a\u5f53\u6708\u5e74\u5316\u6536\u76ca\u7387\u4e3a0\uff0c\u9700\u6838\u5b9e" in marks
-    assert "Zg04_Rule19\uff1a\u671f\u672b\u4ea7\u54c1\u91d1\u989d\u6298\u4eba\u6c11\u5e01\u4e3a0\u65f6\uff0c\u5f53\u6708\u5e74\u5316\u6536\u76ca\u7387\u6bd4\u4e0a\u671f\u6ce2\u52a8\u8d85\u8fc720%\uff0c\u9700\u6838\u5b9e" in marks
+    rules = [row.rule for row in rows]
+    assert "Zg04_Rule15：当月年化收益率跨期变动过大（环比变动绝对值超过10），需核实" in rules
+    assert "Zg04_Rule17：上期年化收益率不等于0、当月年化收益率为0，需核实。" in rules
+    assert "Zg04_Rule19\uff1a\u671f\u672b\u4ea7\u54c1\u91d1\u989d\u6298\u4eba\u6c11\u5e01\u4e3a0\u65f6\uff0c\u5f53\u6708\u5e74\u5316\u6536\u76ca\u7387\u6bd4\u4e0a\u671f\u6ce2\u52a8\u8d85\u8fc720%\uff0c\u9700\u6838\u5b9e" in rules
+    assert {_result_rule_id(row) for row in rows} == {"Zg04_Rule15", "Zg04_Rule17", "Zg04_Rule19"}
 
 
 def test_zg04_remaining_legacy_rules_are_triggerable_from_database_rows():
@@ -539,13 +541,12 @@ def test_zg06_selected_rules_follow_legacy_conditions_and_output_format():
     )
 
     marks = [row.mark.split("-")[-1] for row in rows]
-    assert marks == ["Zg06_Rule3", "Zg06_Rule3", "Zg06_Rule6", "Zg06_Rule9", "Zg06_Rule14"]
+    assert marks == ["Zg06_Rule3", "Zg06_Rule3", "Zg06_Rule6", "Zg06_Rule9"]
     assert rows[2].value1 == "利率水平:0.00000"
     assert rows[2].value2 == ""
     assert "_B4_" in rows[3].detail
     assert rows[3].value2 == "转让展期到期日期:nan"
-    assert rows[4].detail.endswith("_5_nan_nan_nan")
-    assert rows[4].value1 == "养老产业标识:nan"
+    assert not any(_result_rule_id(row) == "Zg06_Rule14" for row in rows)
 
 
 def test_zg06_uses_official_asset_beneficial_rights_inner_code_name():
@@ -1309,7 +1310,7 @@ def _zg08_row(
     }
 
 
-def test_zg13_financial_institution_code_rules_use_legacy_name_exceptions():
+def test_zg13_removed_financial_institution_code_rules_no_longer_report_legacy_name_cases():
     rows = run_basic_rules(
         "ZG13",
         date(2026, 5, 31),
@@ -1345,10 +1346,7 @@ def test_zg13_financial_institution_code_rules_use_legacy_name_exceptions():
         [],
     )
 
-    assert [row.mark.split("-")[-1] for row in rows] == ["Zg13_Rule15", "Zg13_Rule16"]
-    assert rows[0].detail == "产品代码_标的企业代码_其他股权投资内部编码:P1_91310000100019382F_I1"
-    assert rows[0].value1 == "标的企业代码:91310000100019382F"
-    assert rows[0].value2 == "标的企业名称:光大证券股份有限公司"
+    assert rows == []
 
 
 def test_zg13_public_info_contract_end_date_rule_matches_legacy_output():

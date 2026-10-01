@@ -10,6 +10,7 @@
 | --- | --- |
 | 界面版本 | **V1.3**；Python 包版本 `0.1.0` |
 | 规则版本 | `logic-2026-06-12-v1` |
+| 人行逐笔规则版本 | `Ver.20260930` |
 | 源码运行环境 | Python **3.12 及以上**，常规开发使用 3.12 |
 | 生产交付 | Linux x86_64 单文件 `dist-glibc217/auto-check`，兼容 glibc 2.17 及以上 |
 | 默认端口 | `8765` |
@@ -79,6 +80,7 @@ python -m venv .venv
 | 数据库初始化、迁移和旧数据处理 | [MySQL 应用存储](docs/mysql-application-storage.zh-CN.md) |
 | 服务安装、升级、备份和回滚 | [内网生产部署](docs/intranet-production-deployment.zh-CN.md) · [跨平台部署参考](docs/deployment.zh-CN.md) |
 | 当前对数流程与规则 | [执行流程](docs/reconcile-execution-flow.zh-CN.md) · [规则说明](docs/reconcile-rules.zh-CN.md) · [规则历史](docs/reconcile-logic-history.zh-CN.md) |
+| 人行逐笔校验规则更新 | [20260930规则同步说明](docs/pbc-validation-rules-20260930.zh-CN.md) |
 | 核对历史与差异对比 | [历史记录设计](docs/check-history-design.zh-CN.md) |
 | 特殊处理的录入、关联报送和导出 | [模块使用说明](src/auto_check/modules/report_special_processing/README.md) · [设计说明](docs/report-special-processing-module.zh-CN.md) |
 | 看板与外部接口 | [模块说明](src/auto_check/modules/dashboard_management/README.md) · [外部 API](docs/dashboard-management-external-api.zh-CN.md) |
@@ -108,6 +110,7 @@ docs/prototypes/              独立原型，不属于正式应用入口
 
 ### `v1.3.2` (2026-10-01)
 
+- 人行逐笔校验同步20260930规则，新增三类内部编码判空及查重，正确实现ZG07、ZG12 Rule19。
 - 修复对账股权损益调整差异识别。
 - 修复看板季度切换时缺失当前季度的问题。
 - 修复独立模块首次初始化时迁移超时的问题。

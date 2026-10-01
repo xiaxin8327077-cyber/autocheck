@@ -160,6 +160,9 @@ def _mapping_from_rows(*row_groups: list[dict[str, Any]] | None) -> dict[str, st
 def _specialize_mapping(zg_code: str, rows: list[dict[str, Any]] | None, mapping: dict[str, str]) -> dict[str, str]:
     specialized = dict(mapping)
     if zg_code == "ZG12":
+        if _rows_have(rows, "incode"):
+            specialized["除资产收益权外其他债权内部编码"] = "incode"
+            specialized.pop("内部编码", None)
         if _rows_have(rows, "startdate"):
             specialized["除资产收益权外其他债权起始日期"] = "startdate"
             specialized.pop("转让起始日期", None)

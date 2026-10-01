@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
+from math import isnan
 from typing import Any, Iterable
 
 from auto_check.db_validation.legacy_resources import get_indicator_names, get_org_codes, get_org_info, get_zg05_zg08_mappings
@@ -341,6 +343,8 @@ IMPLEMENTED_RULE_IDS: frozenset[str] = frozenset(
         "Zg06_Rule14",
         "Zg06_Rule15",
         "Zg06_Rule16",
+        "Zg06_Rule17",
+        "Zg06_Rule18",
         "Zg07_Rule1",
         "Zg07_Rule2",
         "Zg07_Rule3",
@@ -358,6 +362,8 @@ IMPLEMENTED_RULE_IDS: frozenset[str] = frozenset(
         "Zg07_Rule16",
         "Zg07_Rule17",
         "Zg07_Rule18",
+        "Zg07_Rule19",
+        "Zg07_Rule20",
         "Zg08_Rule2",
         "Zg08_Rule1",
         "Zg08_Rule3",
@@ -390,6 +396,8 @@ IMPLEMENTED_RULE_IDS: frozenset[str] = frozenset(
         "Zg12_Rule16",
         "Zg12_Rule17",
         "Zg12_Rule18",
+        "Zg12_Rule19",
+        "Zg12_Rule20",
         "Zg13_Rule1",
         "Zg13_Rule2",
         "Zg13_Rule3",
@@ -402,8 +410,6 @@ IMPLEMENTED_RULE_IDS: frozenset[str] = frozenset(
         "Zg13_Rule11",
         "Zg13_Rule12",
         "Zg13_Rule13",
-        "Zg13_Rule15",
-        "Zg13_Rule16",
     }
 )
 _LEGACY_RULE_ORDER = (
@@ -934,6 +940,11 @@ def _zg04(
         (_zg04_product_code(r), _zg04_area_code(r), _zg04_client_kind(r), _zg04_currency(r)): r
         for r in previous_rows
     }
+    # Rule17按产品总计匹配，保留所有候选，不能借四键字典静默覆盖。
+    previous_totals_by_product: dict[str, list[dict[str, Any]]] = {}
+    for previous in previous_rows:
+        if _zg04_area_code(previous) == "" and _zg04_currency(previous) == "":
+            previous_totals_by_product.setdefault(_zg04_product_code(previous), []).append(previous)
     summary_nav_by_product_currency = _zg04_summary_nav_by_product_currency(rows)
     terminated_products = {_zg04_product_code(row) for row in related_rows.get("ZG03", []) if _zg04_product_code(row)}
     zero_share_products = {
@@ -1178,26 +1189,36 @@ def _zg04(
                     error="净值型产品期末净值或累计净值为0，需核实",
                 )
 
-        if prev and key[1] == "":
+        if key[1] == "":
             current_yield = _legacy_float(_row_value(row, "当月年化收益率"))
-            previous_yield = _legacy_float(_row_value(prev, "当月年化收益率"))
-            if previous_yield != 0:
-                yield_diff = current_yield - previous_yield
+            previous_yield = _legacy_float(_row_value(prev, "当月年化收益率")) if prev else 0.0
+            yield_diff = current_yield - previous_yield
+            key_text = "_".join(_legacy_key_part(part) for part in key)
+            # Rule15从原始数值转十进制再相减，避免16.01-6.01略大于10的浮点误报。
+            current_absolute_yield = _finite_yield_value(_row_value(row, "当月年化收益率")) or Decimal("0")
+            previous_absolute_yield = (
+                _finite_yield_value(_row_value(prev, "当月年化收益率")) if prev else None
+            ) or Decimal("0")
+            absolute_yield_diff = current_absolute_yield - previous_absolute_yield
+            if abs(absolute_yield_diff) > Decimal("10"):
+                rule = "Zg04_Rule15：当月年化收益率跨期变动过大（环比变动绝对值超过10），需核实"
+                result = make_row(
+                    report_date=report_date,
+                    zg_code="ZG04",
+                    rule_id="Zg04_Rule15",
+                    form="资管产品存续期募集信息上下期校验",
+                    detail=f"产品代码_地区_客户类型_币种_当月年化收益率跨期差值:{key_text}_{absolute_yield_diff}",
+                    value1=f"当月年化收益率:{_legacy_number_text(_row_value(row, '当月年化收益率'))}",
+                    value2=f"当月年化收益率上期数:{_legacy_number_text(previous_yield)}",
+                    rule=rule,
+                    error="当月年化收益率跨期变动过大（环比变动绝对值超过10），需核实",
+                )
+                if not prev:
+                    result = replace(result, note="未匹配上期，按0比较")
+                yield result
+            # Rule19仍使用真实匹配的非零上期和相对差，与Rule15的绝对差分开。
+            if prev and previous_yield != 0:
                 yield_ratio = yield_diff / previous_yield
-                key_text = "_".join(_legacy_key_part(part) for part in key)
-                if abs(yield_ratio) > 2 and abs(previous_yield) > 0:
-                    rule = "Zg04_Rule15：当月年化收益率跨期变动过大（超过200%），需核实"
-                    yield make_row(
-                        report_date=report_date,
-                        zg_code="ZG04",
-                        rule_id=rule,
-                        form="资管产品存续期募集信息上下期校验",
-                        detail=f"产品代码_地区_客户类型_币种_当月年化收益率跨期差值_当月年化收益率跨期差值波动幅度:{key_text}_{yield_diff}_{yield_ratio}",
-                        value1=f"当月年化收益率:{_legacy_number_text(_row_value(row, '当月年化收益率'))}",
-                        value2=f"当月年化收益率上期数:{_legacy_number_text(_row_value(prev, '当月年化收益率'))}",
-                        rule=rule,
-                        error="当月年化收益率跨期变动过大（超过200%），需核实",
-                    )
                 if _row_text(row, "产品代码") in zero_amount_products and abs(yield_ratio) > 0.2 and abs(previous_yield) > 0:
                     rule = "Zg04_Rule19：期末产品金额折人民币为0时，当月年化收益率比上期波动超过20%，需核实"
                     yield make_row(
@@ -1212,18 +1233,27 @@ def _zg04(
                         error="期末产品金额折人民币为0时，当月年化收益率比上期波动超过20%，需核实",
                     )
 
-        if key[1] == "" and key[3] == "" and _legacy_has_text(_row_value(row, "当月年化收益率")) and _legacy_float(_row_value(row, "当月年化收益率")) == 0:
-            rule = "Zg04_Rule17：当月年化收益率为0，需核实"
-            yield make_row(
-                report_date=report_date,
-                zg_code="ZG04",
-                rule_id=rule,
-                form="资管产品存续期募集信息",
-                detail=f"产品代码:{key[0]}",
-                value1=f"当月年化收益率:{_legacy_number_text(_row_value(row, '当月年化收益率'))}",
-                rule=rule,
-                error="当月年化收益率为0，需核实",
-            )
+        if key[1] == "" and key[3] == "" and _finite_yield_value(_row_value(row, "当月年化收益率")) == 0:
+            candidates = previous_totals_by_product.get(key[0], [])
+            for previous in candidates:
+                previous_total_yield = _finite_yield_value(_row_value(previous, "当月年化收益率"))
+                if previous_total_yield is None or previous_total_yield == 0:
+                    continue
+                rule = "Zg04_Rule17：上期年化收益率不等于0、当月年化收益率为0，需核实。"
+                result = make_row(
+                    report_date=report_date,
+                    zg_code="ZG04",
+                    rule_id="Zg04_Rule17",
+                    form="资管产品存续期募集信息",
+                    detail=f"产品代码:{key[0]}",
+                    value1=f"当月年化收益率:{_legacy_number_text(_row_value(row, '当月年化收益率'))}",
+                    value2=f"当月年化收益率上期数:{_legacy_number_text(previous_total_yield)}",
+                    rule=rule,
+                    error="上期年化收益率不等于0、当月年化收益率为0，需核实。",
+                )
+                if len(candidates) > 1:
+                    result = replace(result, note=f"上期同产品总计记录{len(candidates)}条，逐条比较有效非零收益率")
+                yield result
 
         if _row_has_any(row, "当期申购金额") and _row_has_any(row, "当期申购份额") and (
             has_value(_row_value(row, "当期申购金额")) != has_value(_row_value(row, "当期申购份额"))
@@ -1447,6 +1477,79 @@ def _legacy_has_text(value: Any) -> bool:
     return raw != "" and raw.lower() != "none"
 
 
+def _finite_yield_value(value: Any) -> Decimal | None:
+    """局部收益率解析：未知或无效值返回None，不改其他旧数值规则。"""
+    if value is None:
+        return None
+    try:
+        result = Decimal(str(value).replace(",", ""))
+    except (ArithmeticError, ValueError):
+        return None
+    return result if result.is_finite() else None
+
+
+def _raw_is_null(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, Decimal):
+        return value.is_nan()
+    return isinstance(value, float) and isnan(value)
+
+
+def _raw_is_empty(value: Any) -> bool:
+    # 原始空串为空；数值0、空格及文字None/nan都是已填值。
+    return _raw_is_null(value) or value == ""
+
+
+def _raw_field_text(row: dict[str, Any], field: str) -> str:
+    value = _row_value(row, field)
+    return "" if _raw_is_null(value) else str(value)
+
+
+def _code_integrity_rules(
+    report_date: date,
+    rows: list[dict[str, Any]],
+    *,
+    zg_code: str,
+    code_field: str,
+    empty_rule_id: str,
+    duplicate_rule_id: str,
+    form: str,
+    detail_fields: tuple[str, ...],
+) -> Iterable[ValidationResultRow]:
+    """本机构按产品和原始编码查重，并保留每条命中明细。"""
+    counts: dict[tuple[Any, Any], int] = {}
+    for row in rows:
+        product = _row_value(row, "产品代码")
+        code = _row_value(row, code_field)
+        # 对齐分组的NULL边界；空串仍参与计数。
+        if not _raw_is_null(product) and not _raw_is_null(code):
+            key = (product, code)
+            counts[key] = counts.get(key, 0) + 1
+    for row in rows:
+        product = _row_value(row, "产品代码")
+        code = _row_value(row, code_field)
+        count = 0 if _raw_is_null(product) or _raw_is_null(code) else counts.get((product, code), 0)
+        matches = []
+        if _raw_is_empty(code):
+            matches.append((empty_rule_id, "为空", ""))
+        if count >= 2:
+            matches.append((duplicate_rule_id, "不唯一", f"重复次数:{count}"))
+        for rule_id, description, value2 in matches:
+            error = f"{code_field}{description}，需核实"
+            yield make_row(
+                report_date=report_date,
+                zg_code=zg_code,
+                rule_id=rule_id,
+                form=form,
+                detail=f"{'_'.join(detail_fields)}:{'_'.join(_raw_field_text(row, field) for field in detail_fields)}",
+                value1=f"{code_field}:{_raw_field_text(row, code_field)}",
+                value2=value2,
+                rule=f"{rule_id}:{error}",
+                error=error,
+            )
+
+
 def _currency_total_rules(
     report_date: date,
     zg_code: str,
@@ -1587,6 +1690,12 @@ def _zg06(
 ) -> Iterable[ValidationResultRow]:
     seen: set[tuple[str, str, str, str]] = set()
 
+    yield from _code_integrity_rules(
+        report_date, rows, zg_code="ZG06", code_field="资产收益权内部编码",
+        empty_rule_id="Zg06_Rule17", duplicate_rule_id="Zg06_Rule18",
+        form="资产收益权明细信息",
+        detail_fields=("产品代码", "资产收益权内部编码", "基础资产出让机构名称"),
+    )
     for row in rows:
         issuer_type = _row_text(row, "基础资产出让机构类型")
         issuer_industry = _row_text(row, "基础资产出让机构行业")
@@ -1789,13 +1898,15 @@ def _zg06(
                 value1=f"转让预计终止日期:{_legacy_df_text(_row_text(row, '转让预计终止日期'))}",
                 value2=f"转让展期到期日期:{_legacy_df_text(_row_value(row, '转让展期到期日期'))}",
                 rule=rule,
-                error=rule,
+                error="转让预计终止日期，转让展期到期日期大于、等于2090，需核实",
             )
             if _unique_result(seen, result):
                 yield result
 
     for row in rows:
-        if _row_text(row, "基础资产出让机构类型") in {"4", "5"}:
+        if _row_text(row, "基础资产出让机构类型") in {"4", "5"} and any(
+            not _raw_is_empty(_row_value(row, field)) for field in five_article_fields
+        ):
             result = make_row(
                 report_date=report_date,
                 zg_code="ZG06",
@@ -1961,6 +2072,11 @@ def _zg07(
     previous_rows: list[dict[str, Any]],
     related_rows: dict[str, list[dict[str, Any]]],
 ) -> Iterable[ValidationResultRow]:
+    yield from _code_integrity_rules(
+        report_date, rows, zg_code="ZG07", code_field="贷款借据编码",
+        empty_rule_id="Zg07_Rule19", duplicate_rule_id="Zg07_Rule20",
+        form="除回购和拆借外贷款明细信息", detail_fields=("产品代码", "贷款借据编码"),
+    )
     previous_by_key = {
         (_row_text(row, "产品代码"), _row_text(row, "贷款借据编码")): row
         for row in previous_rows
@@ -2282,6 +2398,12 @@ def _zg12(
     previous_rows: list[dict[str, Any]],
     related_rows: dict[str, list[dict[str, Any]]],
 ) -> Iterable[ValidationResultRow]:
+    yield from _code_integrity_rules(
+        report_date, rows, zg_code="ZG12", code_field="除资产收益权外其他债权内部编码",
+        empty_rule_id="Zg12_Rule19", duplicate_rule_id="Zg12_Rule20",
+        form="除资产收益权外其他债权明细信息",
+        detail_fields=("产品代码", "借款人代码", "除资产收益权外其他债权内部编码"),
+    )
     seen: set[tuple[str, str, str, str]] = set()
     for row in rows:
         borrower_type = _row_text(row, "借款人类型")
@@ -3264,39 +3386,6 @@ def _zg13(
         if _unique_result(seen, result):
             yield result
 
-    for row in rows:
-        if _zg13_financial_code_mismatch(row, "标的企业代码", "标的企业名称"):
-            result = make_row(
-                report_date=report_date,
-                zg_code="ZG13",
-                rule_id="Zg13_Rule15",
-                form="其他股权投资明细信息",
-                detail=_legacy_zg13_detail(row),
-                value1=f"标的企业代码:{_legacy_df_text(_row_value(row, '标的企业代码'))}",
-                value2=f"标的企业名称:{_legacy_df_text(_row_value(row, '标的企业名称'))}",
-                rule="Zg13_Rule15:境内金融机构标的企业代码未填报金融机构编码，需核实。",
-                error="境内金融机构标的企业代码应填报金融机构编码",
-            )
-            if _unique_result(seen, result):
-                yield result
-
-    for row in rows:
-        if _zg13_financial_code_mismatch(row, "股权出让方代码", "股权出让方名称"):
-            result = make_row(
-                report_date=report_date,
-                zg_code="ZG13",
-                rule_id="Zg13_Rule16",
-                form="其他股权投资明细信息",
-                detail=_legacy_zg13_detail(row),
-                value1=f"股权出让方代码:{_legacy_df_text(_row_value(row, '股权出让方代码'))}",
-                value2=f"股权出让方名称:{_legacy_df_text(_row_value(row, '股权出让方名称'))}",
-                rule="Zg13_Rule16:境内金融机构标的股权出让方代码未填报金融机构编码，需核实。",
-                error="境内金融机构标的股权出让方代码未填报金融机构编码，需核实",
-            )
-            if _unique_result(seen, result):
-                yield result
-
-
 _ZG07_CROSS_PERIOD_FIELDS: tuple[str, ...] = (
     "贷款种类",
     "贷款转让方机构代码",
@@ -3394,13 +3483,6 @@ def _parse_date(value: Any) -> date | None:
             except ValueError:
                 return None
         return None
-
-
-def _zg13_financial_code_mismatch(row: dict[str, Any], code_chinese: str, name_chinese: str) -> bool:
-    code = _row_text(row, code_chinese)
-    name = _row_text(row, name_chinese)
-    excluded = ("融资租赁", "国际租赁", "担保", "典当", "小额贷款")
-    return len(code) != 14 and _row_text(row, "行业信息") == "J" and not any(keyword in name for keyword in excluded)
 
 
 def _legacy_zg13_detail(row: dict[str, Any]) -> str:

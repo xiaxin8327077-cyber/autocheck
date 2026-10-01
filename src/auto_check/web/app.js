@@ -14762,6 +14762,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <span class="changelog-date">2026-10-01</span>
       </div>
       <ul>
+        <li>人行逐笔校验同步20260930规则，新增内部编码判空及查重，正确实现Rule19。</li>
         <li>修复对账股权损益调整差异识别。</li>
         <li>系统优化及BUG修复。</li>
       </ul>

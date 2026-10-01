@@ -51,5 +51,5 @@ def test_excel_writer_matches_old_result_structure(tmp_path):
 
 def test_result_filename_uses_old_program_format():
     assert result_filename(date(2026, 5, 31)) == (
-        "20260531-资管产品数据审核结果-模板校验（否）-公开信息校验（否）(Ver.20260202).xlsx"
+        "20260531-资管产品数据审核结果-模板校验（否）-公开信息校验（否）(Ver.20260930).xlsx"
     )
