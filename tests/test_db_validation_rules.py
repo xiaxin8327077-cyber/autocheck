@@ -545,7 +545,7 @@ def test_zg06_selected_rules_follow_legacy_conditions_and_output_format():
     assert rows[2].value1 == "利率水平:0.00000"
     assert rows[2].value2 == ""
     assert "_B4_" in rows[3].detail
-    assert rows[3].value2 == "转让展期到期日期:nan"
+    assert rows[3].value2 == "转让展期到期日期:"
     assert not any(_result_rule_id(row) == "Zg06_Rule14" for row in rows)
 
 

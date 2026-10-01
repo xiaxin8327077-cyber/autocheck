@@ -5,12 +5,21 @@
   }
   root.buildExportDetailText = api.buildExportDetailText;
   root.buildProcessingScript = api.buildProcessingScript;
+  root.formatReconcileAmountText = api.formatReconcileAmountText;
 })(typeof globalThis !== "undefined" ? globalThis : this, function buildExportDetailApi() {
   function formatMoney(value) {
     if (value === null || value === undefined || value === "") return "";
-    const number = Number(String(value));
+    const number = Number(String(value).replaceAll(",", ""));
     if (!Number.isFinite(number)) return String(value);
-    return number.toLocaleString("zh-CN", { maximumFractionDigits: 8 });
+    const formatted = number.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return formatted === "-0.00" ? "0.00" : formatted;
+  }
+
+  function formatReconcileAmountText(value) {
+    const text = String(value ?? "");
+    // Format monetary phrases only; account codes, names and counts retain their text.
+    const amount = /((?:股权损益调整原始合计|股权损益调整核对目标|FA损益调整金额|解释资产差额|剩余差额|FA 4001科目余额|FA债券本金科目余额|DM证券余额|FA科目余额|AM投融资余额|重复金额|差异值)\s*[:：=]?\s*)([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?)(?!,\d)(?=$|[\s，；。,:：;、)）元])/g;
+    return text.replace(amount, (_match, prefix, number) => `${prefix}${formatMoney(number)}`);
   }
 
   const circledNumbers = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
@@ -58,7 +67,7 @@
   function specificReasonLine(rows) {
     const reason = rowValue(rows, "具体原因");
     if (!reason) return "";
-    const normalized = normalizeSpecificReason(reason);
+    const normalized = formatReconcileAmountText(normalizeSpecificReason(reason));
     if (normalized.includes("\n") || isNumberedSpecificReason(normalized)) {
       return `具体原因：\n${normalized}`;
     }
@@ -68,7 +77,7 @@
   function matchExplanationLine(rows) {
     const message = rowValue(rows, "匹配说明");
     if (!message) return "";
-    return `匹配说明：${message}`;
+    return `匹配说明：${formatReconcileAmountText(message)}`;
   }
 
   function accountLines(item) {
@@ -497,5 +506,5 @@
     return "";
   }
 
-  return { buildExportDetailText, buildProcessingScript };
+  return { buildExportDetailText, buildProcessingScript, formatReconcileAmountText };
 });

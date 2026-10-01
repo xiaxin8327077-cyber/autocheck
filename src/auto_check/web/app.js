@@ -5468,10 +5468,11 @@ function formatAmount(v) {
   if (v === null || v === undefined || v === "") return "";
   const n = Number(String(v).replaceAll(",", ""));
   if (!Number.isFinite(n)) return String(v);
-  return n.toLocaleString("zh-CN", {
+  const formatted = n.toLocaleString("zh-CN", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+  return formatted === "-0.00" ? "0.00" : formatted;
 }
 
 function escapeHtml(v) {
@@ -6125,11 +6126,16 @@ function displayDetailLabel(label) {
 }
 
 function isAmountDisplayLabel(label) {
-  return /金额|余额|资产合计|负债及权益合计/.test(String(label || ""));
+  return /金额|余额|合计|差额|差异值|差异$/.test(String(label || ""));
 }
 
 function formatResultDetailValue(label, value) {
-  return isAmountDisplayLabel(label) ? formatAmount(value) : String(value ?? "");
+  if (isAmountDisplayLabel(label)) return formatAmount(value);
+  if (["具体原因", "匹配说明", "原因", "核查结果", "判定结果", "核对结果"].includes(label)
+      && typeof window.formatReconcileAmountText === "function") {
+    return window.formatReconcileAmountText(value);
+  }
+  return String(value ?? "");
 }
 
 function renderDetails(ds) {
@@ -6198,7 +6204,7 @@ function buildProcessingScriptText(item) {
 function specificReasonText(item) {
   const finalSection = (item.display_details || []).find((detail) => detail.title === "最终判断结果");
   const row = (finalSection?.rows || []).find((candidate) => candidate.label === "具体原因");
-  return row?.value || "";
+  return formatResultDetailValue("具体原因", row?.value || "");
 }
 
 function remarkText(item) {
@@ -14870,7 +14876,8 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       </div>
       <ul>
         <li>人行逐笔校验同步20260930规则，新增内部编码判空及查重，正确实现Rule19。</li>
-        <li>修复对账股权损益调整差异识别。</li>
+        <li>对齐逐笔跨期收益率和新增编码校验的源程序结果。</li>
+        <li>修复对账股权损益调整差异识别，统一金额显示及结果滚动条。</li>
         <li>系统优化及BUG修复。</li>
       </ul>
     </div>

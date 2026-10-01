@@ -3655,6 +3655,23 @@ th {
 
 #page-auto-check .result-card > .table-wrap {
   --result-sticky-row-top: 49px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-thin-scrollbar-thumb) transparent;
+}
+
+#page-auto-check .result-card > .table-wrap::-webkit-scrollbar {
+  width: var(--ui-thin-scrollbar-size);
+  height: var(--ui-thin-scrollbar-size);
+}
+
+#page-auto-check .result-card > .table-wrap::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--ui-thin-scrollbar-thumb);
+}
+
+#page-auto-check .result-card > .table-wrap::-webkit-scrollbar-track,
+#page-auto-check .result-card > .table-wrap::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 #page-auto-check .result-card > .table-wrap > .result-table {

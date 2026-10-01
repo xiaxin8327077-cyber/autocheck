@@ -101,7 +101,7 @@ def test_20260930_document_describes_raw_encoding_checks_inside_one_institution(
     assert "空串" in duplicate[10] and "同时" in duplicate[10]
     assert "金融机构编码、数据管理机构不作为必需字段" in duplicate[10]
     assert "任一分组键" in duplicate[10]
-    assert "每条原始记录" in duplicate[10] and "重复次数" in duplicate[10]
+    assert "每条原始记录" in duplicate[10] and "数据值2保持为空" in duplicate[10]
 
 
 def test_20260930_document_removes_retired_rules_and_corrects_zg12_form_name():
@@ -130,13 +130,15 @@ def test_20260930_document_explains_yield_formulas_and_previous_period_policies(
     assert "产品代码、地区、客户类型、币种" in absolute[10]
     assert "上期数据源不可读" in absolute[10]
     assert absolute[7] == zero[7] == "是"
-    assert "有效上期" in zero[5] and "不等于0" in zero[5]
+    assert "上期不等于0" in zero[5] and "NaN" in zero[5]
     assert "当期为0" in zero[5]
     assert "地区、币种为空" in zero[5]
     assert "按产品代码" in zero[10]
-    assert "缺失或无效上期" in zero[10] and "不提示" in zero[10]
+    assert "未匹配上期按NaN参与比较" in zero[10]
+    assert "纯空格不算空" in zero[10]
     assert "多个上期总计候选逐条比较并输出" in zero[10]
-    assert "候选记录数" in zero[10]
+    assert "不增加候选记录数" in zero[10]
+    assert "float" in absolute[10] and "浮点边界" in absolute[10]
     assert "20%" in ratio[5]
     assert "上期收益率非0" in ratio[5]
     assert "绝对差" not in ratio[5]
@@ -166,7 +168,8 @@ def test_20260930_document_overview_identifies_source_version_and_corrected_boun
         )
         assert "20260930" in overview
         assert "自己机构内" in overview
-        assert "纠错差异" in overview
+        assert "兼容口径" in overview
+        assert "Rule17未匹配上期的NaN提示" in overview
         assert workbook.sheetnames == ["使用说明", "规则清单", "规则明细"]
     finally:
         workbook.close()
