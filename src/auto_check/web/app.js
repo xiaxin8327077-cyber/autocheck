@@ -14989,6 +14989,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>对齐逐笔跨期收益率和新增编码校验的源程序结果。</li>
         <li>修复对账股权损益调整差异识别，统一金额显示及结果滚动条。</li>
         <li>优化系统设置切页响应及界面体验，修复已知问题。</li>
+        <li>人行大集中报送完成时间固定为首次全步骤完成时记录的时间。</li>
       </ul>
     </div>
 

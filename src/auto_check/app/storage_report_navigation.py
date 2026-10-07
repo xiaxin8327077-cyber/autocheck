@@ -771,14 +771,20 @@ class ReportNavigationStore:
         existing = self.load_process_snapshot(snapshot.report_month, snapshot.process_code)
         completed_at = snapshot.completed_at
         if (
+            snapshot.process_code == "pbc_central"
+            and existing is not None
+            and existing.completed_at is not None
+        ):
+            # 人行大集中按月保留首次全步骤完成时间，刷新或状态回退均不重置。
+            completed_at = existing.completed_at
+        elif snapshot.status != "completed":
+            completed_at = None
+        elif (
             preserve_completed_at
-            and snapshot.status == "completed"
             and existing
             and existing.status == "completed"
         ):
             completed_at = existing.completed_at
-        if snapshot.status != "completed":
-            completed_at = None
         values = {
             "report_month": snapshot.report_month,
             "process_code": snapshot.process_code,

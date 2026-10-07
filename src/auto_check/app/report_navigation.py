@@ -1173,7 +1173,11 @@ class ReportNavigationService:
                     "status": process_snapshot.status if process_snapshot else "pending",
                     "total_steps": process_snapshot.total_steps if process_snapshot else len(judged_steps),
                     "completed_steps": process_snapshot.completed_steps if process_snapshot else 0,
-                    "completed_at": _datetime_text(process_snapshot.completed_at) if process_snapshot else "",
+                    "completed_at": (
+                        _datetime_text(process_snapshot.completed_at)
+                        if process_snapshot and process_snapshot.status == COMPLETED
+                        else ""
+                    ),
                     "report_date": schedule.report_date.isoformat() if schedule else "",
                     "report_date_source": schedule.source_type if schedule else "",
                     "schedule_editable": is_admin,

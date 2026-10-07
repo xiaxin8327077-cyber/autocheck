@@ -846,6 +846,30 @@ def _seed_collection_configuration(database):
     )
 
 
+def _rename_seeded_collection_process(database, old_code, new_code):
+    tables = database.connection.tables
+    for row in tables["report_nav_processes"]:
+        if row["process_code"] == old_code:
+            row["process_code"] = new_code
+    for row in tables["report_nav_process_months"]:
+        if row["process_code"] == old_code:
+            row["process_code"] = new_code
+    step_codes = {}
+    for row in tables["report_nav_steps"]:
+        if row["process_code"] == old_code:
+            old_step_code = row["step_code"]
+            new_step_code = old_step_code.replace(f"{old_code}_", f"{new_code}_", 1)
+            row["process_code"] = new_code
+            row["step_code"] = new_step_code
+            step_codes[old_step_code] = new_step_code
+    for row in tables["report_nav_step_dependencies"]:
+        row["step_code"] = step_codes.get(row["step_code"], row["step_code"])
+        row["depends_on_step_code"] = step_codes.get(
+            row["depends_on_step_code"], row["depends_on_step_code"]
+        )
+    return step_codes
+
+
 def test_collection_is_strictly_serial_and_writes_process_and_four_period_card_snapshots():
     report_module = _report_navigation()
     storage_module = _storage()
@@ -969,6 +993,193 @@ def test_collection_uses_and_refreshes_final_archive_step_completion_time():
 
     assert refreshed_step.auto_completed_at == archive_times[0]
     assert refreshed_process.completed_at == archive_times[0]
+
+
+def test_pbc_central_storage_keeps_existing_completion_even_without_preserve_flag():
+    storage_module = _storage()
+    store = storage_module.ReportNavigationStore(_database())
+    first = datetime(2026, 7, 1, 9, 0)
+    refreshed = datetime(2026, 7, 7, 9, 0)
+
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-07", "pbc_central", 2, 2, "completed", first, first, 1
+        )
+    )
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-07", "pbc_central", 2, 2, "completed", refreshed, refreshed, 2
+        ),
+        preserve_completed_at=False,
+    )
+
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == first
+
+
+def test_pbc_central_keeps_first_completion_across_status_changes_and_months():
+    storage_module = _storage()
+    store = storage_module.ReportNavigationStore(_database())
+    first = datetime(2026, 7, 1, 9, 0)
+    refreshed = datetime(2026, 7, 7, 9, 0)
+    august = datetime(2026, 8, 1, 9, 0)
+
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-07", "pbc_central", 2, 2, "completed", first, first, 1
+        )
+    )
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-07", "pbc_central", 2, 1, "incomplete", None, refreshed, 2
+        )
+    )
+    incomplete = store.load_process_snapshot("2026-07", "pbc_central")
+    assert incomplete.status == "incomplete"
+    assert incomplete.completed_at == first
+
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-07", "pbc_central", 2, 1, "error", None, refreshed, 3
+        )
+    )
+    failed = store.load_process_snapshot("2026-07", "pbc_central")
+    assert failed.status == "error"
+    assert failed.completed_at == first
+
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-07", "pbc_central", 2, 2, "completed", refreshed, refreshed, 4
+        )
+    )
+    store.save_process_snapshot(
+        storage_module.ProcessSnapshot(
+            "2026-08", "pbc_central", 2, 2, "completed", august, august, 5
+        )
+    )
+
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == first
+    assert store.load_process_snapshot("2026-08", "pbc_central").completed_at == august
+
+
+def test_collection_locks_pbc_central_first_completion_but_keeps_refreshing_step_time():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    step_codes = _rename_seeded_collection_process(database, "p1", "pbc_central")
+    database.connection.tables["report_nav_process_months"].append(
+        {"process_code": "pbc_central", "month_no": 8}
+    )
+    store = storage_module.ReportNavigationStore(database)
+    final_step_code = step_codes["p1_s2"]
+    archive_times = [
+        datetime(2026, 7, 1, 8, 0),
+        datetime(2026, 7, 7, 8, 0),
+        datetime(2026, 7, 10, 8, 0),
+        datetime(2026, 8, 1, 8, 0),
+    ]
+    phase = {"status": "completed"}
+
+    def evaluator(context):
+        if context.step.step_code != final_step_code:
+            return report_module.EvaluationResult("completed", "完成")
+        status = phase["status"]
+        if status == "completed":
+            return report_module.EvaluationResult(
+                "completed", "完成", completed_at=archive_times[0]
+            )
+        if status == "error":
+            return report_module.EvaluationResult("error", "判断异常", "源不可用")
+        return report_module.EvaluationResult("incomplete", "未完成")
+
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+    first = archive_times[0]
+    service.collect_once(now=datetime(2026, 7, 1, 9, 0))
+
+    archive_times.pop(0)
+    service.collect_once(now=datetime(2026, 7, 7, 9, 0))
+    refreshed_step = store.load_step_snapshot("2026-07", final_step_code)
+    assert refreshed_step.auto_completed_at == archive_times[0]
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == first
+
+    phase["status"] = "incomplete"
+    service.collect_once(now=datetime(2026, 7, 8, 9, 0))
+    incomplete = store.load_process_snapshot("2026-07", "pbc_central")
+    assert incomplete.status == "incomplete"
+    assert incomplete.completed_at == first
+    incomplete_payload = service.dashboard(
+        period="month",
+        current_user={"role": "user"},
+        now=datetime(2026, 7, 8, 9, 0),
+    )
+    pbc_payload = next(
+        process
+        for process in incomplete_payload["processes"]
+        if process["process_code"] == "pbc_central"
+    )
+    assert pbc_payload["completed_at"] == ""
+
+    phase["status"] = "error"
+    service.collect_once(now=datetime(2026, 7, 9, 9, 0))
+    failed = store.load_process_snapshot("2026-07", "pbc_central")
+    assert failed.status == "error"
+    assert failed.completed_at == first
+
+    phase["status"] = "completed"
+    archive_times.pop(0)
+    service.collect_once(now=datetime(2026, 7, 10, 9, 0))
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == first
+
+    archive_times.pop(0)
+    service.collect_once(now=datetime(2026, 8, 1, 9, 0))
+    assert store.load_process_snapshot("2026-08", "pbc_central").completed_at == archive_times[0]
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == first
+
+
+def test_manual_pbc_central_completion_time_survives_later_archive_refresh():
+    report_module = _report_navigation()
+    storage_module = _storage()
+    database = _database()
+    _seed_collection_configuration(database)
+    step_codes = _rename_seeded_collection_process(database, "p1", "pbc_central")
+    store = storage_module.ReportNavigationStore(database)
+    final_step_code = step_codes["p1_s2"]
+    archive_times = [datetime(2026, 7, 1, 8, 0), datetime(2026, 7, 7, 8, 0)]
+
+    def evaluator(context):
+        if context.step.step_code == final_step_code:
+            return report_module.EvaluationResult(
+                "completed", "完成", completed_at=archive_times[0]
+            )
+        return report_module.EvaluationResult("incomplete", "未完成")
+
+    service = report_module.ReportNavigationService(
+        database,
+        store=store,
+        query_executor_factory=SupplementQueryExecutor,
+        evaluator=evaluator,
+    )
+    service.collect_once(now=datetime(2026, 7, 1, 8, 30))
+    manual_completion_time = datetime(2026, 7, 1, 9, 0)
+    service.set_manual_state(
+        step_codes["p1_s1"],
+        "manual-complete",
+        "2026-07",
+        {"id": "u1", "username": "admin", "display_name": "管理员", "role": "admin"},
+        now=manual_completion_time,
+    )
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == manual_completion_time
+
+    archive_times.pop(0)
+    service.collect_once(now=datetime(2026, 7, 7, 9, 0))
+    refreshed_step = store.load_step_snapshot("2026-07", final_step_code)
+    assert refreshed_step.auto_completed_at == archive_times[0]
+    assert store.load_process_snapshot("2026-07", "pbc_central").completed_at == manual_completion_time
 
 
 def test_collection_continues_after_one_step_error_and_marks_partial_run():
