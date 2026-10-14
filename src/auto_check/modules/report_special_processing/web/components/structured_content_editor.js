@@ -2055,17 +2055,24 @@ function emptyCondition() {
   root.getStrings = getStrings;
   root.getFieldTypes = getFieldTypes;
   root.getDatasources = getDatasources;
-  async function promptEmptyAfter() {
+  function promptEmptyAfter() {
+    const pending = [];
     for (const table of state.tables) {
       for (const field of table.fields) {
         if (!field.physical || typeof field.chooseEmptyFill !== "function") continue;
         const text = String(field.afterInput?.value ?? field.after ?? "");
         if (field.afterNull || field.afterBlank || text.length) continue;
+        pending.push(field);
+      }
+    }
+    if (!pending.length) return true;
+    return (async () => {
+      for (const field of pending) {
         const choice = await field.chooseEmptyFill();
         if (choice !== "null" && choice !== "blank") return false;
       }
-    }
-    return true;
+      return true;
+    })();
   }
 
   root.validate = validate;

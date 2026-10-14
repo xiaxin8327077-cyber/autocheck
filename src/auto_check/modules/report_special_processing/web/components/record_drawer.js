@@ -600,6 +600,12 @@ export function createRecordDrawer(documentRef, options) {
     ? current.structured_content
     : null;
   const useStructured = creating || Boolean(recordStructured);
+  const periodInput = element(documentRef, "input", {
+    type: "date",
+    value: current.report_period || options.reportPeriod || "",
+    "aria-label": "所处报送期",
+    disabled: !canEdit,
+  });
   let structuredEditor = null;
   let tableFieldGroups = null;
   let contentPreview = null;
@@ -614,7 +620,7 @@ export function createRecordDrawer(documentRef, options) {
         getHost: () => overlayNode,
         datasourceNameSnapshot: current.datasource_name_snapshot || "",
         reportPeriodFieldMatchers: catalog?.report_period_fields || [],
-        getReportPeriod: () => fields.period?.value || "",
+        getReportPeriod: () => periodInput.value || "",
         onChange: () => {
           if (typeof autoGenerateRef === "function") autoGenerateRef();
         },
@@ -675,7 +681,7 @@ export function createRecordDrawer(documentRef, options) {
     dimension,
     businessSystem,
     governanceOwner,
-    period: element(documentRef, "input", { type: "date", value: current.report_period || options.reportPeriod || "", "aria-label": "所处报送期", disabled: !canEdit }),
+    period: periodInput,
     summary: element(documentRef, "textarea", {
       className: "rsp-summary",
       rows: "3",
@@ -897,18 +903,22 @@ export function createRecordDrawer(documentRef, options) {
         : actions.updateRecord(current.id, payload);
     }, "草稿已保存");
   };
-  const saveRecord = async () => {
-    if (structuredEditor?.promptEmptyAfter) {
-      const ready = await structuredEditor.promptEmptyAfter();
-      if (!ready) return;
+  const saveRecord = () => {
+    const startSave = () => {
+      if (!validateForm({ formal: true })) return;
+      return run(async () => {
+        const payload = await buildSavePayload("record");
+        return creating
+          ? actions.createRecord(payload)
+          : actions.updateRecord(current.id, payload);
+      }, creating ? "特殊处理记录已创建" : "修改已保存");
+    };
+    const pending = structuredEditor?.promptEmptyAfter ? structuredEditor.promptEmptyAfter() : true;
+    if (pending && typeof pending.then === "function") {
+      return pending.then((ready) => { if (ready) return startSave(); });
     }
-    if (!validateForm({ formal: true })) return;
-    return run(async () => {
-      const payload = await buildSavePayload("record");
-      return creating
-        ? actions.createRecord(payload)
-        : actions.updateRecord(current.id, payload);
-    }, creating ? "特殊处理记录已创建" : "修改已保存");
+    if (!pending) return;
+    return startSave();
   };
   const confirmImages = [];
   const confirmNoteInput = confirming ? element(documentRef, "textarea", {
