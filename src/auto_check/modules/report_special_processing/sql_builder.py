@@ -11,6 +11,10 @@
 - WHERE 条件顺序：报送期 → 处理范围；
 - 条件值按字段数据类型生成字面量：varchar/char/text 加引号并转义，数值不加引号，
   日期/时间按日期串；未知类型按字符串安全处理。
+- 修改后文本按普通字面量生成，填写 null 得到字符串 'null'。
+  仅当用户确认设置为空（value_after_null）时，SET 写成 SQL NULL。
+  整数和数值的空修改后也写成 NULL：MySQL 与 PostgreSQL 都不能把空字符串赋给这类字段。
+  日期、时间仍按字符串字面量生成。
 
 方言差异：当前 PostgreSQL 与 MySQL 的 UPDATE 与比较运算符语法一致。
 """
@@ -87,7 +91,45 @@ def _literal(value: Any) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-_NUMERIC_TYPES = ("int", "decimal", "numeric", "float", "double", "real", "number", "money")
+_NULL_TOKENS = frozenset({"null", "空", "空白", "空值"})
+
+
+def _is_null_token(text: str) -> bool:
+    token = str(text or "").strip()
+    return token.lower() in _NULL_TOKENS
+
+
+def _is_numeric_type(data_type: str) -> bool:
+    """整数和数值。用词边界，避免把 interval、point 当成 int。"""
+    return _NUMERIC_TYPE_RE.search(str(data_type or "").strip()) is not None
+
+
+def _assignment_literal(value: Any, *, clear: bool, data_type: str = "") -> str:
+    """修改后按字段类型生成字面量。确认为空时写 NULL；字符串保留原样，含空格。"""
+    if clear or value is None:
+        return "NULL"
+    kind = str(data_type or "").strip().lower()
+    raw = str(value)
+    text = raw.strip()
+    if _is_numeric_type(kind):
+        if not text or _is_null_token(text):
+            return "NULL"
+        try:
+            float(text)
+        except ValueError:
+            return _literal(raw)
+        return text
+    if kind and any(token in kind for token in _DATE_TYPES):
+        return _literal((text or raw)[:10])
+    return _literal(raw)
+
+
+_NUMERIC_TYPE_RE = re.compile(
+    r"\b(?:tinyint|smallint|mediumint|bigint|bigserial|smallserial|serial|integer|"
+    r"int2|int4|int8|int|decimal|numeric|number|money|float4|float8|float|"
+    r"double precision|double|real)\b",
+    re.IGNORECASE,
+)
 _DATE_TYPES = ("date", "time", "timestamp")
 
 
@@ -97,7 +139,7 @@ def _typed_literal(value: Any, data_type: str) -> str:
         return "NULL"
     kind = str(data_type or "").strip().lower()
     text = str(value).strip()
-    if kind and any(token in kind for token in _NUMERIC_TYPES):
+    if _is_numeric_type(kind):
         # 数值字段：仅接受合法数值，否则按字符串兜底（避免生成非法 SQL）。
         try:
             float(text)
@@ -138,17 +180,20 @@ def _condition_clause(column: str, operator: str, values: Sequence[str], data_ty
     return f"{column} {operator} {_typed_literal(values[0], data_type)}"
 
 
-def _report_period_literal(report_period: str) -> str:
-    """报送期 = 所属报送期：所有字段类型统一输出 YYYY-MM-DD。"""
+def _report_period_text(report_period: str) -> str:
+    """报送期统一为 YYYY-MM-DD 文本。"""
     value = str(report_period or "").strip()
     if not value:
         raise ScriptGenerationError("缺少所属报送期，无法生成报送期条件")
     compact = value.replace("-", "")[:8]
     if len(compact) == 8 and compact.isdigit():
-        value = f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}"
-    else:
-        value = value[:10]
-    return _literal(value)
+        return f"{compact[:4]}-{compact[4:6]}-{compact[6:8]}"
+    return value[:10]
+
+
+def _report_period_literal(report_period: str) -> str:
+    """报送期 = 所属报送期：所有字段类型统一输出 YYYY-MM-DD。"""
+    return _literal(_report_period_text(report_period))
 
 
 def _build_table_sql(
@@ -190,7 +235,10 @@ def _build_table_sql(
     # 3. SET 修改字段（修改前仅作业务信息保存，不参与 WHERE 校验）
     set_parts: list[str] = []
     for field in fields:
-        set_parts.append(f"{_identifier(field.column_name, db_type)} = {_literal(field.value_after)}")
+        set_parts.append(
+            f"{_identifier(field.column_name, db_type)} = "
+            f"{_assignment_literal(field.value_after, clear=field.value_after_null, data_type=field_types.get(field.column_name, ''))}"
+        )
     if not set_parts:
         raise ScriptGenerationError(f"“{display}”：请至少选择并填写一个修改字段")
     lines = [
@@ -244,3 +292,61 @@ def generate_script(
             f"{sql}"
         )
     return "\n\n".join(segments)
+
+
+def build_distinct_value_query(
+    *,
+    db_type: str,
+    schema: str,
+    table_name: str,
+    column_name: str,
+    conditions: Sequence[Mapping[str, Any]],
+    report_period_field: str = "",
+    report_period: str = "",
+    limit_report_period: bool = False,
+) -> tuple[str, tuple[Any, ...]]:
+    """按与处理脚本相同的条件生成只读 DISTINCT 查询，最多两行以判断当前值是否一致。"""
+    if not str(table_name or "").strip() or not str(column_name or "").strip():
+        raise ScriptGenerationError("请先选择处理表和修改字段")
+    where: list[str] = []
+    params: list[Any] = []
+    if limit_report_period:
+        if not str(report_period_field or "").strip():
+            raise ScriptGenerationError("请先确定报送期字段")
+        where.append(f"{_identifier(report_period_field, db_type)} = %s")
+        params.append(_report_period_text(report_period))
+    for condition in conditions:
+        column = str(condition.get("column_name") or "").strip()
+        operator = str(condition.get("operator") or "=").strip().upper()
+        values = tuple(str(item) for item in (condition.get("values") or ()) if str(item) != "")
+        if not column:
+            continue
+        if operator not in CONDITION_OPERATORS:
+            raise ScriptGenerationError("条件运算符无效")
+        quoted = _identifier(column, db_type)
+        if operator in ("IS NULL", "IS NOT NULL"):
+            where.append(f"{quoted} {operator}")
+            continue
+        if operator in CONDITION_OPERATORS_REQUIRING_VALUE and not values:
+            continue
+        if operator == "LIKE":
+            like = values[0]
+            if not like.startswith("%") and not like.endswith("%"):
+                like = f"%{like}%"
+            where.append(f"{quoted} LIKE %s")
+            params.append(like)
+            continue
+        if operator == "IN":
+            where.append(f"{quoted} IN ({', '.join(['%s'] * len(values))})")
+            params.extend(values)
+            continue
+        where.append(f"{quoted} {operator} %s")
+        params.append(values[0])
+    if not where:
+        raise ScriptGenerationError("请至少配置一条处理范围")
+    table = _identifier(schema, db_type) + "." + _identifier(table_name, db_type) if schema else _identifier(table_name, db_type)
+    sql = (
+        f"SELECT DISTINCT {_identifier(column_name, db_type)} AS current_value "
+        f"FROM {table} WHERE {' AND '.join(where)} LIMIT 2"
+    )
+    return sql, tuple(params)

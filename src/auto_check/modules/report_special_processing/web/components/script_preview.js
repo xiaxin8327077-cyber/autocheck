@@ -2,12 +2,16 @@
  *
  * 这里只拼接用户当前已选择的表和字段，不参与记录保存与正式校验：
  * - 选表即输出 UPDATE；
- * - 选修改字段即输出 SET，空修改后按空字符串展示；
+ * - 选修改字段即输出 SET；空修改后默认按空字符串展示，整数和数值改为 NULL；
  * - 选条件字段即输出 WHERE，空条件值按空字符串展示；
  * - 未选条件字段时允许不输出 WHERE。
  */
 
-const NUMERIC_TYPES = ["int", "decimal", "numeric", "float", "double", "real", "number", "money"];
+const NUMERIC_TYPE_RE = /\b(?:tinyint|smallint|mediumint|bigint|bigserial|smallserial|serial|integer|int2|int4|int8|int|decimal|numeric|number|money|float4|float8|float|double precision|double|real)\b/i;
+
+export function isNumericType(dataType) {
+  return NUMERIC_TYPE_RE.test(String(dataType || "").trim());
+}
 const NO_VALUE_OPERATORS = new Set(["IS NULL", "IS NOT NULL"]);
 const VALID_OPERATORS = new Set(["=", "<>", ">", ">=", "<", "<=", "LIKE", "IN", "IS NULL", "IS NOT NULL"]);
 
@@ -108,10 +112,27 @@ function literal(value) {
   return `'${String(value ?? "").replaceAll("'", "''")}'`;
 }
 
+const DATE_TYPES = ["date", "time", "timestamp"];
+
+function assignmentLiteral(field, dataType) {
+  if (field?.value_after_null === true) return "NULL";
+  const raw = String(field?.value_after ?? "");
+  const text = raw.trim();
+  const kind = String(dataType || "").trim().toLowerCase();
+  if (isNumericType(kind)) {
+    if (!text || ["null", "空", "空白", "空值"].includes(text.toLowerCase())) return "NULL";
+    if (Number.isFinite(Number(text))) return text;
+  }
+  if (DATE_TYPES.some((token) => kind.includes(token))) {
+    return literal((text || raw).slice(0, 10));
+  }
+  return literal(raw);
+}
+
 function typedLiteral(value, dataType) {
   const text = String(value ?? "").trim();
   const kind = String(dataType || "").trim().toLowerCase();
-  if (text && NUMERIC_TYPES.some((token) => kind.includes(token)) && Number.isFinite(Number(text))) {
+  if (text && isNumericType(kind) && Number.isFinite(Number(text))) {
     return text;
   }
   return literal(text);
@@ -164,7 +185,7 @@ function tablePreview(table, fieldTypes, reportPeriod, structuredContent, dataso
 
   const assignments = (Array.isArray(table?.fields) ? table.fields : [])
     .filter((field) => String(field?.column_name || "").trim())
-    .map((field) => `${identifier(String(field.column_name), dbType)} = ${literal(field.value_after)}`);
+    .map((field) => `${identifier(String(field.column_name), dbType)} = ${assignmentLiteral(field, tableTypes[String(field.column_name)])}`);
   if (assignments.length) lines.push(`SET ${assignments.join(", ")}`);
 
   const where = [];

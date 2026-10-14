@@ -144,6 +144,33 @@ def test_parse_table_and_field_limits():
     assert "field_name" in exc.value.fields
 
 
+def test_confirmed_empty_counts_as_filled_and_literal_null_stays_text():
+    confirmed = parse_structured_content({**_content(), "tables": [{
+        **_content()["tables"][0],
+        "conditions": [{"column_name": "project_no", "operator": "=", "values": ["P001"]}],
+        "fields": [{
+            "column_name": "customer_status", "chinese_column_name": "客户状态",
+            "column_name_source": "DATABASE", "value_before": "null", "value_after": "null",
+            "value_before_null": True, "value_after_null": True,
+        }],
+    }]})
+    validate_formal_values(confirmed)
+    field = confirmed.tables[0].fields[0]
+    assert field.value_before == "" and field.value_after == ""
+    assert field.value_before_null is True and field.value_after_null is True
+
+    literal = parse_structured_content({**_content(), "tables": [{
+        **_content()["tables"][0],
+        "fields": [{
+            "column_name": "customer_status", "chinese_column_name": "客户状态",
+            "column_name_source": "DATABASE", "value_before": "null", "value_after": "null",
+            "value_after_null": "true",
+        }],
+    }]})
+    assert literal.tables[0].fields[0].value_after == "null"
+    assert literal.tables[0].fields[0].value_after_null is False
+
+
 def test_validate_formal_values_reports_field_labels():
     content = parse_structured_content({**_content(), "tables": [{
         **_content()["tables"][0],

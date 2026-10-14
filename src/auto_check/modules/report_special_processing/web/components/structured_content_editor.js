@@ -17,6 +17,7 @@
  *   validate({formal})（错误定位消息）。 */
 
 import { element } from "./dom.js";
+import { isNumericType } from "./script_preview.js";
 
 export const MAX_SC_TABLES = 5;
 export const MAX_SC_FIELDS = 5;
@@ -116,6 +117,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     notify = () => {},
     confirm = null,
     getHost = null,
+    getReportPeriod = () => "",
     datasourceNameSnapshot = "",
     reportPeriodFieldMatchers = [],
     onChange = null,
@@ -537,6 +539,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       if (item?.column_name) types[item.column_name] = String(item.data_type || "");
     });
     table.fieldTypes = types;
+    (table.fields || []).forEach((field) => field.releaseNumericBlank?.());
   }
 
   function filterFieldMeta(table, keyword) {
@@ -584,7 +587,10 @@ export function createStructuredContentEditor(documentRef, options = {}) {
   function emptyField() {
     return {
       itemId: createItemId("field"),
-      physical: "", chinese: "", before: "", after: "", comboInput: null, cnInput: null,
+      physical: "", chinese: "", before: "", after: "",
+      beforeNull: false, afterNull: false, afterBlank: false,
+      beforeManual: false, beforeMultiple: false, beforeKey: "",
+      comboInput: null, cnInput: null,
     };
   }
 
@@ -784,6 +790,7 @@ function emptyCondition() {
             renderConditions(table);
             if (table.renderReportPeriodRow) table.renderReportPeriodRow();
             if (table.updateCardTitle) table.updateCardTitle();
+            if (typeof onChange === "function") onChange();
           })
           .catch((error) => {
             notify(error?.message || "字段信息获取失败，请稍后重试", "error");
@@ -872,6 +879,7 @@ function emptyCondition() {
         table.reportPeriodFieldSource = "MANUAL";
         periodFieldCombo.input.value = columnDisplayLabel(item);
         if (table.renderReportPeriodRow) table.renderReportPeriodRow();
+        reloadBeforeForConditionChange(table);
       },
     });
     periodFieldCombo.shell.classList.add("rsp-sc-date-field-picker");
@@ -882,6 +890,7 @@ function emptyCondition() {
       if (String(periodFieldInput.value || "").trim() !== table.reportPeriodField) {
         table.reportPeriodField = "";
         table.reportPeriodFieldSource = "";
+        reloadBeforeForConditionChange(table);
       }
     });
     periodYes.addEventListener("change", () => {
@@ -891,6 +900,7 @@ function emptyCondition() {
       if (table.periodFieldInput) table.periodFieldInput.value = "";
       if (table.renderReportPeriodRow) table.renderReportPeriodRow();
       if (!table.reportPeriodField) table.periodFieldInput?.focus?.();
+      reloadBeforeForConditionChange(table);
     });
     periodNo.addEventListener("change", () => {
       table.limitReportPeriod = false;
@@ -898,6 +908,7 @@ function emptyCondition() {
       table.reportPeriodFieldSource = "";
       if (table.periodFieldInput) table.periodFieldInput.value = "";
       if (table.renderReportPeriodRow) table.renderReportPeriodRow();
+      reloadBeforeForConditionChange(table);
     });
     function renderReportPeriodRow() {
       periodYes.checked = table.limitReportPeriod;
@@ -1047,6 +1058,7 @@ function emptyCondition() {
         condition.chinese = String(item.column_comment || item.secondary || "");
         combo.input.value = columnDisplayLabel(item);
         if (condition.valueInput) condition.valueInput.focus?.();
+        reloadBeforeForConditionChange(table);
       },
     });
     condition.comboInput = combo.input;
@@ -1094,6 +1106,7 @@ function emptyCondition() {
       condition.operatorMode = "MANUAL"; // 用户主动选择即锁定，后续不自动覆盖
       condition.operator = operatorSelect.value;
       syncOperatorState();
+      reloadBeforeForConditionChange(table);
     });
     function applyOperatorProgrammatically(nextOperator) {
       condition.operator = nextOperator;
@@ -1107,6 +1120,7 @@ function emptyCondition() {
       // 用户手动修改条件类型时仍允许覆盖（下一次输入重新智能切换）。
       condition.values = parseScopeText(valueInput.value);
       applyOperatorProgrammatically(autoOperator(condition.values));
+      reloadBeforeForConditionChange(table);
     });
     syncOperatorState();
 
@@ -1136,6 +1150,417 @@ function emptyCondition() {
     );
   }
 
+  let activeNullPrompt = null;
+
+  const EMPTY_INTENT_TOKENS = new Set(["null", "空", "空白", "空值"]);
+
+  function isEmptyIntent(value) {
+    return EMPTY_INTENT_TOKENS.has(String(value ?? "").trim().toLowerCase());
+  }
+
+  function placeNullBubble(bubble, input, placement) {
+    if (typeof input.getBoundingClientRect !== "function") return;
+    const rect = input.getBoundingClientRect();
+    if (!rect || typeof rect.bottom !== "number") return;
+    const gap = 6;
+    bubble.style.width = "max-content";
+    const width = bubble.offsetWidth || bubble.scrollWidth || 220;
+    const height = Math.max(bubble.offsetHeight || 0, bubble.scrollHeight || 0, 72);
+    const view = documentRef.defaultView;
+    const viewportHeight = view?.innerHeight || 800;
+    const viewportWidth = view?.innerWidth || 1280;
+    if (placement.openUp === null) {
+      const spaceBelow = viewportHeight - rect.bottom - gap;
+      const spaceAbove = rect.top - gap;
+      placement.openUp = spaceBelow < height && spaceAbove >= height;
+    }
+    let left = Math.round(rect.left);
+    const maxLeft = Math.max(8, viewportWidth - width - 8);
+    if (left > maxLeft) left = maxLeft;
+    if (left < 8) left = 8;
+    const arrow = Math.min(width - 14, Math.max(12, Math.round(rect.left + 16 - left)));
+    bubble.style.width = `${width}px`;
+    bubble.style.left = `${left}px`;
+    bubble.style.setProperty?.("--rsp-null-arrow", `${arrow}px`);
+    bubble.style.top = placement.openUp
+      ? `${Math.round(rect.top - gap - height)}px`
+      : `${Math.round(rect.bottom + gap)}px`;
+  }
+
+  function nullAnchorVisible(input) {
+    if (typeof input.getBoundingClientRect !== "function") return true;
+    const rect = input.getBoundingClientRect();
+    if (!rect || typeof rect.top !== "number") return true;
+    const host = typeof getHost === "function" ? getHost() : null;
+    const scroller = host?.querySelector?.(".rsp-modal-body");
+    if (!scroller || typeof scroller.getBoundingClientRect !== "function") return true;
+    const box = scroller.getBoundingClientRect();
+    if (!box || typeof box.top !== "number" || !(Number(box.height) > 0)) return true;
+    return rect.bottom > box.top && rect.top < box.bottom;
+  }
+
+  function bindNullableValue(input, field, side, table) {
+    const valueKey = side === "before" ? "before" : "after";
+    const nullKey = side === "before" ? "beforeNull" : "afterNull";
+    const placeholder = side === "before" ? "修改前" : "修改后";
+    let dismissed = false;
+    let committed = false;
+    let applying = false;
+    let literalText = "";
+    let bubble = null;
+    const mark = element(documentRef, "button", {
+      type: "button",
+      className: "rsp-sc-null-mark is-hidden",
+      title: "点击修改空值选择",
+    });
+    let onPointerDown = null;
+    let scrollListening = false;
+    let scrollRaf = 0;
+    const placement = { openUp: null };
+
+    function followNullBubble() {
+      if (!bubble) return;
+      if (!nullAnchorVisible(input)) {
+        bubble.hidden = true;
+        return;
+      }
+      bubble.hidden = false;
+      placeNullBubble(bubble, input, placement);
+    }
+
+    function onNullBubbleScroll(event) {
+      if (!bubble || (event?.target && bubble.contains(event.target))) return;
+      if (scrollRaf) return;
+      const view = documentRef.defaultView;
+      const step = () => {
+        scrollRaf = 0;
+        followNullBubble();
+      };
+      scrollRaf = view?.requestAnimationFrame ? view.requestAnimationFrame(step) : setTimeout(step, 16);
+    }
+
+    function attachNullBubbleScroll() {
+      if (scrollListening) return;
+      scrollListening = true;
+      const host = typeof getHost === "function" ? getHost() : null;
+      host?.addEventListener?.("scroll", onNullBubbleScroll, true);
+      documentRef.defaultView?.addEventListener?.("resize", onNullBubbleScroll);
+    }
+
+    function detachNullBubbleScroll() {
+      if (!scrollListening) return;
+      scrollListening = false;
+      const host = typeof getHost === "function" ? getHost() : null;
+      host?.removeEventListener?.("scroll", onNullBubbleScroll, true);
+      documentRef.defaultView?.removeEventListener?.("resize", onNullBubbleScroll);
+      const view = documentRef.defaultView;
+      if (scrollRaf && view?.cancelAnimationFrame) view.cancelAnimationFrame(scrollRaf);
+      else if (scrollRaf) clearTimeout(scrollRaf);
+      scrollRaf = 0;
+    }
+
+    function syncMark(mode) {
+      mark.classList.add("is-hidden");
+      mark.textContent = "";
+      mark.classList.remove("is-empty");
+      mark.classList.remove("is-literal");
+      input.classList.remove("has-null-mark");
+      input.classList.toggle("is-sql-null", mode === "empty");
+    }
+
+    function hideBubble() {
+      if (onPointerDown && typeof documentRef.removeEventListener === "function") {
+        documentRef.removeEventListener("mousedown", onPointerDown);
+      }
+      onPointerDown = null;
+      if (activeNullPrompt === dismissPrompt) activeNullPrompt = null;
+      detachNullBubbleScroll();
+      placement.openUp = null;
+      bubble?.remove();
+      bubble = null;
+    }
+
+    function publishInput() {
+      applying = true;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      applying = false;
+    }
+
+    function columnIsNumeric() {
+      return isNumericType(table?.fieldTypes?.[field.physical]);
+    }
+
+    let confirmedText = "";
+
+    function quotedIntent(value) {
+      return `'${String(value ?? "").trim().replaceAll("'", "''")}'`;
+    }
+
+    function dismissPrompt() {
+      field[nullKey] = false;
+      field.afterBlank = false;
+      const typed = String(input.value ?? "").trim();
+      if (columnIsNumeric() && isEmptyIntent(typed)) {
+        input.value = "";
+        literalText = "";
+        confirmedText = "";
+        field[valueKey] = "";
+        committed = false;
+        dismissed = false;
+      } else if (isEmptyIntent(typed)) {
+        confirmedText = typed;
+        input.value = quotedIntent(typed);
+        literalText = input.value;
+        field[valueKey] = typed;
+        committed = true;
+        dismissed = true;
+      } else {
+        confirmedText = "";
+        literalText = input.value;
+        field[valueKey] = input.value;
+        committed = Boolean(String(input.value || ""));
+        dismissed = true;
+      }
+      hideBubble();
+      syncMark("none");
+      publishInput();
+    }
+
+    function confirmNull() {
+      confirmedText = "";
+      input.value = "NULL";
+      literalText = "NULL";
+      field[nullKey] = true;
+      field.afterBlank = false;
+      field[valueKey] = "NULL";
+      committed = true;
+      dismissed = true;
+      hideBubble();
+      syncMark("empty");
+      publishInput();
+    }
+
+    function applySaveChoice(choice) {
+      applying = true;
+      if (choice === "null") {
+        input.value = "NULL";
+        field[valueKey] = "NULL";
+        field[nullKey] = true;
+        field.afterBlank = false;
+        literalText = "NULL";
+        syncMark("empty");
+      } else {
+        input.value = "''";
+        field[valueKey] = "";
+        field[nullKey] = false;
+        field.afterBlank = true;
+        literalText = "''";
+        syncMark("blank");
+      }
+      committed = true;
+      dismissed = true;
+      hideBubble();
+      applying = false;
+      publishInput();
+    }
+
+    function chooseEmptyFill() {
+      return new Promise((resolve) => {
+        if (bubble) hideBubble();
+        const numeric = columnIsNumeric();
+        const nullButton = element(documentRef, "button", {
+          type: "button", className: "rsp-sc-null-choice rsp-sc-null-no", text: "null",
+        });
+        const blankButton = numeric ? null : element(documentRef, "button", {
+          type: "button", className: "rsp-sc-null-choice rsp-sc-null-yes", text: "空字符串",
+        });
+        const promptText = numeric ? "金额和整数只能设置为 null" : "是否设置为 null 还是空字符串";
+        let settled = false;
+        const finish = (choice) => {
+          if (settled) return;
+          settled = true;
+          if (choice) applySaveChoice(choice);
+          else hideBubble();
+          resolve(choice || null);
+        };
+        nullButton.addEventListener("click", () => finish("null"));
+        blankButton?.addEventListener("click", () => finish("blank"));
+        const actions = [nullButton];
+        if (blankButton) actions.push(blankButton);
+        bubble = element(documentRef, "div", {
+          className: "rsp-sc-null-bubble",
+          role: "dialog",
+          "aria-label": promptText,
+        }, [
+          element(documentRef, "p", { className: "rsp-sc-null-bubble-text", text: promptText }),
+          element(documentRef, "div", { className: "rsp-sc-null-bubble-actions" }, actions),
+        ]);
+        (input.parentNode || root).append(bubble);
+        placement.openUp = null;
+        attachNullBubbleScroll();
+        followNullBubble();
+        onPointerDown = (event) => {
+          const target = event?.target;
+          if (!target || bubble?.contains?.(target) || target === mark) return;
+          finish(null);
+        };
+        if (typeof documentRef.addEventListener === "function") {
+          documentRef.addEventListener("mousedown", onPointerDown);
+        }
+        activeNullPrompt = () => finish(null);
+        input.focus?.();
+      });
+    }
+    field.chooseEmptyFill = chooseEmptyFill;
+
+    function showBubble() {
+      if (bubble || disabled || !isEmptyIntent(input.value)) return;
+      if (typeof activeNullPrompt === "function") activeNullPrompt();
+      const name = String(field.chinese || field.physical || placeholder).trim() || placeholder;
+      const numeric = columnIsNumeric();
+      const typed = String(input.value ?? "").trim();
+      const question = numeric ? `是否将「${name}」设置为 NULL？` : `是否将「${name}」设置为空？`;
+      const note = numeric
+        ? "金额和整数不能设为字符串"
+        : `「是」设为 NULL，「否」设为'${typed}'`;
+      const noButton = element(documentRef, "button", {
+        type: "button", className: "rsp-sc-null-choice rsp-sc-null-no", text: "否",
+      });
+      const yesButton = element(documentRef, "button", {
+        type: "button", className: "rsp-sc-null-choice rsp-sc-null-yes", text: "是",
+      });
+      noButton.addEventListener("click", dismissPrompt);
+      yesButton.addEventListener("click", confirmNull);
+      bubble = element(documentRef, "div", {
+        className: "rsp-sc-null-bubble",
+        role: "dialog",
+        "aria-label": question,
+      }, [
+        element(documentRef, "p", { className: "rsp-sc-null-bubble-text" }, [
+          element(documentRef, "span", { text: "是否将" }),
+          element(documentRef, "span", { className: "rsp-sc-null-name", text: `「${name}」` }),
+          element(documentRef, "span", { text: "设置为空？" }),
+        ]),
+        element(documentRef, "p", { className: "rsp-sc-null-bubble-note", text: note }),
+        element(documentRef, "div", { className: "rsp-sc-null-bubble-actions" }, [noButton, yesButton]),
+      ]);
+      (input.parentNode || root).append(bubble);
+      placement.openUp = null;
+      attachNullBubbleScroll();
+      followNullBubble();
+      onPointerDown = (event) => {
+        const target = event?.target;
+        if (!target || bubble?.contains?.(target) || target === input || target === mark) return;
+        if (committed) hideBubble();
+        else dismissPrompt();
+      };
+      if (typeof documentRef.addEventListener === "function") {
+        documentRef.addEventListener("mousedown", onPointerDown);
+      }
+      activeNullPrompt = dismissPrompt;
+    }
+
+    field.releaseNumericBlank = () => {
+      if (!field.afterBlank || !columnIsNumeric()) return;
+      field.afterBlank = false;
+      field.after = "";
+      literalText = "";
+      committed = false;
+      dismissed = false;
+      if (input.value === "''") input.value = "";
+      hideBubble();
+      syncMark("none");
+    };
+    mark.addEventListener("click", () => {
+      syncMark(field[nullKey] ? "empty" : "none");
+    });
+    input.addEventListener("input", () => {
+      if (applying) return;
+      const text = input.value;
+      if (!String(text || "")) {
+        field[valueKey] = "";
+        field[nullKey] = false;
+        field.afterBlank = false;
+        committed = false;
+        dismissed = false;
+        literalText = "";
+        hideBubble();
+        syncMark("none");
+        return;
+      }
+      if (field.afterBlank && text === "''") {
+        field[valueKey] = "";
+        committed = true;
+        dismissed = true;
+        hideBubble();
+        syncMark("none");
+        return;
+      }
+      if (field[nullKey] && text === "NULL") {
+        field[valueKey] = "NULL";
+        committed = true;
+        dismissed = true;
+        hideBubble();
+        syncMark("empty");
+        return;
+      }
+      if (confirmedText && text === quotedIntent(confirmedText)) {
+        field[nullKey] = false;
+        field.afterBlank = false;
+        field[valueKey] = confirmedText;
+        committed = true;
+        dismissed = true;
+        hideBubble();
+        syncMark("none");
+        return;
+      }
+      field[nullKey] = false;
+      field.afterBlank = false;
+      field[valueKey] = text;
+      committed = false;
+      dismissed = false;
+      literalText = "";
+      if (!isEmptyIntent(text)) {
+        hideBubble();
+        syncMark("none");
+        return;
+      }
+      literalText = text;
+      showBubble();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event?.key === "Escape" && bubble) {
+        if (committed) hideBubble();
+        else dismissPrompt();
+      }
+    });
+    if (field[nullKey]) {
+      input.value = "NULL";
+      literalText = "NULL";
+      field[valueKey] = "NULL";
+      committed = true;
+      dismissed = true;
+      syncMark("empty");
+    } else if (field.afterBlank) {
+      input.value = "''";
+      literalText = "''";
+      field[valueKey] = "";
+      committed = true;
+      dismissed = true;
+      syncMark("none");
+    } else if (isEmptyIntent(input.value)) {
+      const typed = String(input.value).trim();
+      confirmedText = typed;
+      input.value = quotedIntent(typed);
+      literalText = input.value;
+      field[valueKey] = typed;
+      committed = true;
+      dismissed = true;
+      syncMark("none");
+    }
+    return mark;
+  }
+
   function renderFieldRow(table, field, isLast) {
     const combo = makeCombo({
       placeholder: "请选择字段",
@@ -1150,6 +1575,9 @@ function emptyCondition() {
         field.physical = String(item.primary || item.column_name || "");
         field.chinese = String(item.secondary || item.column_comment || "");
         if (field.cnInput) field.cnInput.value = field.chinese;
+        field.beforeManual = false;
+        field.beforeKey = "";
+        scheduleCurrentValueLookup(table);
       },
     });
     field.comboInput = combo.input;
@@ -1186,15 +1614,22 @@ function emptyCondition() {
     });
     field.beforeInput = beforeInput;
     field.afterInput = afterInput;
-    beforeInput.addEventListener("input", () => { field.before = beforeInput.value; });
-    afterInput.addEventListener("input", () => { field.after = afterInput.value; });
+    beforeInput.addEventListener("input", () => {
+      field.before = beforeInput.value;
+      field.beforeManual = true;
+      field.beforeKey = currentValueKey(table, field);
+      field.beforeEditSeq = (field.beforeEditSeq || 0) + 1;
+      field.beforeMultiple = false;
+      clearBeforeHint(beforeInput);
+    });
+    const afterMark = bindNullableValue(afterInput, field, "after", table);
 
     const canRemove = !disabled && table.fields.length > 1;
     return element(documentRef, "div", { className: "rsp-sc-row rsp-sc-field-row" }, [
       combo.shell,
       cnInput,
       element(documentRef, "div", { className: "rsp-sc-value-cell" }, [beforeInput]),
-      element(documentRef, "div", { className: "rsp-sc-value-cell" }, [afterInput]),
+      element(documentRef, "div", { className: "rsp-sc-value-cell" }, [afterInput, afterMark]),
       disabled
         ? element(documentRef, "span")
         : rowActions({
@@ -1286,8 +1721,11 @@ function emptyCondition() {
             column_name: field.physical,
             chinese_column_name: field.chinese,
             column_name_source: "MANUAL",
-            value_before: field.before,
-            value_after: field.after,
+            value_before: field.beforeNull ? "" : field.before,
+            value_after: field.afterNull || field.afterBlank ? "" : field.after,
+            value_before_null: Boolean(field.beforeNull),
+            value_after_null: Boolean(field.afterNull),
+            value_after_blank: Boolean(field.afterBlank) && !field.afterNull,
           })),
       }));
     const first = state.tables.find((table) => table.datasourceId) || state.tables[0] || {};
@@ -1391,15 +1829,153 @@ function emptyCondition() {
         if (!field.chinese) {
           return { message: "请输入中文字段名", control: field.cnInput || null };
         }
-        if (formal && !String(field.before || "").trim()) {
+        if (formal && !field.beforeNull && !String(field.before || "").trim()) {
           return { message: `${label}：请输入修改前内容`, control: field.beforeInput || null };
         }
-        if (formal && !String(field.after || "").trim()) {
+        if (formal && !field.afterNull && !field.afterBlank && String(field.after ?? "").length === 0) {
           return { message: `${label}：请输入修改后内容`, control: field.afterInput || null };
         }
       }
     }
     return null;
+  }
+
+  const NO_VALUE_OPERATORS = new Set(["IS NULL", "IS NOT NULL"]);
+
+  function currentValueKey(table, field) {
+    if (!table?.datasourceId || !table.physical || !field?.physical) return "";
+    const conditions = (table.conditions || []).filter((condition) => {
+      const operator = String(condition.operator || "=").toUpperCase();
+      return condition.column && (NO_VALUE_OPERATORS.has(operator) || (condition.values || []).length);
+    });
+    if (!conditions.length) return "";
+    const period = table.limitReportPeriod ? String(getReportPeriod() || "").trim() : "";
+    if (table.limitReportPeriod && (!table.reportPeriodField || !period)) return "";
+    return JSON.stringify({
+      datasourceId: table.datasourceId,
+      schema: table.schema || "",
+      table: table.physical,
+      column: field.physical,
+      period,
+      periodField: table.limitReportPeriod ? table.reportPeriodField : "",
+      conditions: conditions.map((condition) => ({
+        column: condition.column,
+        operator: String(condition.operator || "=").toUpperCase(),
+        values: condition.values || [],
+      })),
+    });
+  }
+
+  function markBeforeLoading(input) {
+    if (!input || input.disabled) return;
+    input.placeholder = "字段值加载中...";
+    input.classList?.add?.("is-before-loading");
+  }
+
+  const BEFORE_MULTIPLE_HINT = "存在多个值，请手填";
+
+  function clearBeforeHint(input) {
+    if (!input) return;
+    input.classList?.remove?.("is-before-loading", "is-before-multiple");
+    if (input.placeholder === "字段值加载中..." || input.placeholder === BEFORE_MULTIPLE_HINT) {
+      input.placeholder = "修改前";
+    }
+  }
+
+  function showBeforeMultiple(input) {
+    if (!input || input.disabled) return;
+    input.classList?.remove?.("is-before-loading");
+    input.classList?.add?.("is-before-multiple");
+    input.placeholder = BEFORE_MULTIPLE_HINT;
+  }
+
+  function applyReadBefore(field, value, key) {
+    field.before = value;
+    field.beforeManual = false;
+    field.beforeKey = key;
+    if (field.beforeInput) {
+      field.beforeInput.value = value;
+      field.beforeInput.title = "";
+    }
+  }
+
+  async function lookupCurrentValues(table) {
+    if (disabled || typeof api?.lookupCurrentValue !== "function") return;
+    const token = (table.lookupToken = (table.lookupToken || 0) + 1);
+    const fields = table.fields.filter((field) => currentValueKey(table, field));
+    await Promise.all(fields.map(async (field) => {
+      const key = currentValueKey(table, field);
+      if (!key || (field.beforeKey === key && (field.beforeManual || field.beforeMultiple))) return;
+      const editSeq = field.beforeEditSeq || 0;
+      if (field.beforeInput && !field.beforeManual && !field.beforeInput.value) {
+        markBeforeLoading(field.beforeInput);
+      }
+      try {
+        const response = await api.lookupCurrentValue(table.datasourceId, {
+          schema: table.schema || "",
+          table_name: table.physical,
+          column_name: field.physical,
+          limit_report_period: Boolean(table.limitReportPeriod),
+          report_period_field: table.limitReportPeriod ? table.reportPeriodField : "",
+          report_period: table.limitReportPeriod ? String(getReportPeriod() || "") : "",
+          conditions: (table.conditions || [])
+            .filter((condition) => condition.column)
+            .map((condition) => ({
+              column_name: condition.column,
+              operator: condition.operator || "=",
+              values: condition.values || [],
+            })),
+        });
+        if (table.lookupToken !== token || currentValueKey(table, field) !== key) return;
+        // 请求返回前用户已经改过修改前，保留用户输入。
+        if ((field.beforeEditSeq || 0) !== editSeq || field.beforeManual) return;
+        const data = response?.data || response || {};
+        if (data.status === "single") {
+          clearBeforeHint(field.beforeInput);
+          field.beforeMultiple = false;
+          applyReadBefore(field, String(data.value ?? ""), key);
+          return;
+        }
+        if (data.status === "multiple") {
+          field.before = "";
+          field.beforeManual = false;
+          field.beforeMultiple = true;
+          field.beforeKey = key;
+          if (field.beforeInput) {
+            field.beforeInput.value = "";
+            field.beforeInput.title = BEFORE_MULTIPLE_HINT;
+            showBeforeMultiple(field.beforeInput);
+          }
+          return;
+        }
+        clearBeforeHint(field.beforeInput);
+      } catch (_) {
+        if ((field.beforeEditSeq || 0) === editSeq && !field.beforeManual) {
+          clearBeforeHint(field.beforeInput);
+        }
+      }
+    }));
+  }
+
+  function reloadBeforeForConditionChange(table) {
+    (table?.fields || []).forEach((field) => {
+      const editing = field.beforeInput && documentRef.activeElement === field.beforeInput;
+      if (editing) return;
+      field.beforeManual = false;
+      field.beforeMultiple = false;
+      field.beforeKey = "";
+    });
+    scheduleCurrentValueLookup(table);
+  }
+
+  function scheduleCurrentValueLookup(table) {
+    if (!table || disabled) return;
+    clearTimeout(table.lookupTimer);
+    table.lookupTimer = setTimeout(() => { lookupCurrentValues(table); }, 400);
+  }
+
+  function refreshCurrentValues() {
+    state.tables.forEach((table) => scheduleCurrentValueLookup(table));
   }
 
   function applyInitial() {
@@ -1435,8 +2011,13 @@ function emptyCondition() {
         item.itemId = String(field?.item_id || item.itemId);
         item.physical = String(field?.column_name || "");
         item.chinese = String(field?.chinese_column_name || "");
-        item.before = String(field?.value_before || "");
-        item.after = String(field?.value_after || "");
+        item.beforeNull = field?.value_before_null === true;
+        item.afterNull = field?.value_after_null === true;
+        item.afterBlank = field?.value_after_blank === true && !item.afterNull;
+        item.before = item.beforeNull ? "" : String(field?.value_before || "");
+        item.after = item.afterNull ? "NULL" : (item.afterBlank ? "''" : String(field?.value_after || ""));
+        item.beforeManual = Boolean(item.before);
+        item.beforeKey = item.beforeManual ? currentValueKey(table, item) : "";
         return item;
       });
       if (!table.fields.length) table.fields.push(emptyField());
@@ -1457,6 +2038,7 @@ function emptyCondition() {
             }
             renderConditions(table);
             if (table.renderReportPeriodRow) table.renderReportPeriodRow();
+            if (typeof onChange === "function") onChange();
           })
           .catch(() => {});
       }
@@ -1464,6 +2046,7 @@ function emptyCondition() {
   }
 
   applyInitial();
+  refreshCurrentValues();
   if (!state.tables.length && !disabled) addTable();
   updateTableRemoveButtons();
   loadDatasources();
@@ -1472,7 +2055,22 @@ function emptyCondition() {
   root.getStrings = getStrings;
   root.getFieldTypes = getFieldTypes;
   root.getDatasources = getDatasources;
+  async function promptEmptyAfter() {
+    for (const table of state.tables) {
+      for (const field of table.fields) {
+        if (!field.physical || typeof field.chooseEmptyFill !== "function") continue;
+        const text = String(field.afterInput?.value ?? field.after ?? "");
+        if (field.afterNull || field.afterBlank || text.length) continue;
+        const choice = await field.chooseEmptyFill();
+        if (choice !== "null" && choice !== "blank") return false;
+      }
+    }
+    return true;
+  }
+
   root.validate = validate;
+  root.promptEmptyAfter = promptEmptyAfter;
+  root.refreshCurrentValues = refreshCurrentValues;
   root.focusFirst = () => {
     const first = state.tables[0];
     (first?.dsSelect || addTableButton).focus?.();

@@ -101,6 +101,118 @@ def test_literals_keep_types_and_escape_quotes():
     assert "WHERE amount = 100" in script
 
 
+def test_distinct_value_query_keeps_conditions_as_parameters():
+    from auto_check.modules.report_special_processing.sql_builder import build_distinct_value_query
+
+    sql, params = build_distinct_value_query(
+        db_type="postgresql",
+        schema="dws",
+        table_name="pm_project_detail_dws",
+        column_name="l_wpdwz_type",
+        conditions=({"column_name": "c_projcode", "operator": "=", "values": ("2026JDQ0334",)},),
+        report_period_field="d_cldate",
+        report_period="2026-09-30",
+        limit_report_period=True,
+    )
+    assert sql.startswith("SELECT DISTINCT l_wpdwz_type AS current_value")
+    assert "LIMIT 2" in sql
+    assert params == ("2026-09-30", "2026JDQ0334")
+
+
+def test_read_value_displays_null_and_empty_string_as_text():
+    from auto_check.modules.report_special_processing.metadata import _display_current_value
+
+    assert _display_current_value(None) == "null"
+    assert _display_current_value("") == "空字符串"
+    assert _display_current_value("5") == "5"
+    assert _display_current_value(" ") == " "
+
+
+def test_set_literals_follow_field_types():
+    table = _table(
+        fields=(
+            StructuredField(column_name="endp_amt", chinese_column_name="科目余额",
+                            column_name_source="MANUAL", value_after="1003857.08000000"),
+            StructuredField(column_name="remark", chinese_column_name="备注",
+                            column_name_source="MANUAL", value_after=" vvvv "),
+            StructuredField(column_name="bad_amt", chinese_column_name="非法金额",
+                            column_name_source="MANUAL", value_after="vvvv"),
+            StructuredField(column_name="biz_date", chinese_column_name="日期",
+                            column_name_source="MANUAL", value_after="2026-09-30 10:00"),
+            StructuredField(column_name="cleared", chinese_column_name="清空",
+                            column_name_source="MANUAL", value_after="", value_after_null=True),
+        ),
+    )
+    script = generate_script(_content(table), report_period="", field_types={
+        "ds1": {"apply_contract_info": {
+            "endp_amt": "decimal(20,8)",
+            "remark": "varchar(100)",
+            "bad_amt": "decimal(20,8)",
+            "biz_date": "datetime",
+            "cleared": "decimal(20,8)",
+        }},
+    })
+    assert "endp_amt = 1003857.08000000" in script
+    assert "remark = ' vvvv '" in script
+    assert "bad_amt = 'vvvv'" in script
+    assert "biz_date = '2026-09-30'" in script
+    assert "cleared = NULL" in script
+
+
+def test_numeric_empty_is_null_and_dates_stay_strings():
+    table = _table(
+        fields=(
+            StructuredField(column_name="endp_amt", chinese_column_name="科目余额",
+                            column_name_source="MANUAL", value_after=""),
+            StructuredField(column_name="qty", chinese_column_name="数量",
+                            column_name_source="MANUAL", value_after="null"),
+            StructuredField(column_name="biz_date", chinese_column_name="日期",
+                            column_name_source="MANUAL", value_after=""),
+            StructuredField(column_name="remark", chinese_column_name="备注",
+                            column_name_source="MANUAL", value_after="", value_after_blank=True),
+            StructuredField(column_name="span", chinese_column_name="间隔",
+                            column_name_source="MANUAL", value_after=""),
+        ),
+    )
+    script = generate_script(_content(table), report_period="", field_types={
+        "ds1": {"apply_contract_info": {
+            "endp_amt": "decimal(23,8)",
+            "qty": "integer",
+            "biz_date": "timestamp without time zone",
+            "remark": "character varying(100)",
+            "span": "interval",
+        }},
+    })
+    assert "endp_amt = NULL" in script
+    assert "qty = NULL" in script
+    assert "biz_date = ''" in script
+    assert "remark = ''" in script
+    assert "span = ''" in script
+    assert "endp_amt = ''" not in script
+    assert "qty = 'null'" not in script
+
+
+def test_null_text_stays_quoted_until_empty_is_confirmed():
+    table = _table(
+        conditions=(StructuredCondition(column_name="project_no", operator="=", values=("null",)),),
+        fields=(
+            StructuredField(column_name="type_code", chinese_column_name="一级分类",
+                            column_name_source="MANUAL", value_before="5", value_after="null"),
+            StructuredField(column_name="type_detail", chinese_column_name="二级分类",
+                            column_name_source="MANUAL", value_before="null", value_after=" NULL "),
+            StructuredField(column_name="remark", chinese_column_name="备注",
+                            column_name_source="MANUAL", value_before="15", value_after="",
+                            value_after_null=True),
+            StructuredField(column_name="blank_note", chinese_column_name="空白",
+                            column_name_source="MANUAL", value_before="", value_after="nullable"),
+        ),
+    )
+    script = generate_script(_content(table), report_period="", field_types={})
+    assert "SET type_code = 'null', type_detail = ' NULL ', remark = NULL, blank_note = 'nullable'" in script
+    assert "project_no = 'null'" in script
+    assert "status = 'null'" not in script
+
+
 def test_before_values_are_not_merged_into_where():
     table = _table()
     script = generate_script(_content(table), report_period="", field_types={})

@@ -614,6 +614,21 @@ class SpecialProcessingService:
             str(datasource_id or "").strip(), keyword=keyword, page=page, page_size=page_size,
         )
 
+    def lookup_current_value(self, datasource_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+        conditions = payload.get("conditions") or []
+        if not isinstance(conditions, Sequence) or isinstance(conditions, (str, bytes)):
+            raise ValidationError(fields={"conditions": "处理范围无效"})
+        return self._require_metadata().lookup_current_value(
+            str(datasource_id or "").strip(),
+            schema=str(payload.get("schema") or ""),
+            table_name=str(payload.get("table_name") or ""),
+            column_name=str(payload.get("column_name") or ""),
+            conditions=tuple(item for item in conditions if isinstance(item, Mapping)),
+            report_period_field=str(payload.get("report_period_field") or ""),
+            report_period=str(payload.get("report_period") or ""),
+            limit_report_period=bool(payload.get("limit_report_period")),
+        )
+
     def list_datasource_columns(self, datasource_id: str, table_name: str, query: Mapping[str, str]) -> dict[str, Any]:
         keyword, page, page_size = self._metadata_query(query, default_page_size=50)
         return self._require_metadata().list_columns(

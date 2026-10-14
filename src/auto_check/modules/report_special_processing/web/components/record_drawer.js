@@ -614,6 +614,7 @@ export function createRecordDrawer(documentRef, options) {
         getHost: () => overlayNode,
         datasourceNameSnapshot: current.datasource_name_snapshot || "",
         reportPeriodFieldMatchers: catalog?.report_period_fields || [],
+        getReportPeriod: () => fields.period?.value || "",
         onChange: () => {
           if (typeof autoGenerateRef === "function") autoGenerateRef();
         },
@@ -896,7 +897,11 @@ export function createRecordDrawer(documentRef, options) {
         : actions.updateRecord(current.id, payload);
     }, "草稿已保存");
   };
-  const saveRecord = () => {
+  const saveRecord = async () => {
+    if (structuredEditor?.promptEmptyAfter) {
+      const ready = await structuredEditor.promptEmptyAfter();
+      if (!ready) return;
+    }
     if (!validateForm({ formal: true })) return;
     return run(async () => {
       const payload = await buildSavePayload("record");
@@ -1233,10 +1238,9 @@ export function createRecordDrawer(documentRef, options) {
 
   // 处理脚本：随上方配置实时自动生成（debounce），仅保存留痕，绝不执行。
   // AUTO：脚本只读，配置有效变化后自动刷新；MANUAL：允许手工编辑并暂停自动覆盖。
-  // 历史记录未持久化脚本模式；已有文本无法证明自动生成，保守保留至用户主动恢复。
-  let scriptMode = current.processing_script_mode === "MANUAL"
-    || (current.processing_script_mode !== "AUTO" && String(current.processing_script || "").trim())
-    ? "MANUAL" : "AUTO";
+  // 脚本模式不入库。从列表打开编辑时一律自动生成；只有当前弹窗里点击“手动编辑”才暂停。
+  const persistedScriptMode = String(current.processing_script_mode || "").trim().toUpperCase();
+  let scriptMode = persistedScriptMode === "MANUAL" ? "MANUAL" : "AUTO";
   let generatedScriptText = scriptMode === "MANUAL" ? "" : (fields.script.value || "");
   let autoGenerateTimer = null;
   let autoGenerateRef = null;
@@ -1288,8 +1292,11 @@ export function createRecordDrawer(documentRef, options) {
     }, SCRIPT_DEBOUNCE_MS);
   }
   autoGenerateRef = scheduleAutoGenerate;
+  const refreshReadBefore = () => structuredEditor?.refreshCurrentValues?.();
   fields.period.addEventListener("change", scheduleAutoGenerate);
   fields.period.addEventListener("input", scheduleAutoGenerate);
+  fields.period.addEventListener("change", refreshReadBefore);
+  fields.period.addEventListener("input", refreshReadBefore);
   function autoGenerateScript() {
     if (!structuredEditor || scriptMode !== "AUTO") return;
     // 脚本预览与正式保存校验解耦：表/字段刚选中便生成对应片段，

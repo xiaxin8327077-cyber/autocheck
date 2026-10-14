@@ -75,6 +75,10 @@ class StructuredField:
     value_before: str = ""
     value_after: str = ""
     item_id: str = ""
+    # 用户在气泡中确认“设置为空”后为 True；文本 null 本身仍是普通字符串。
+    value_before_null: bool = False
+    value_after_null: bool = False
+    value_after_blank: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +88,9 @@ class StructuredField:
             "column_name_source": self.column_name_source,
             "value_before": self.value_before,
             "value_after": self.value_after,
+            "value_before_null": self.value_before_null,
+            "value_after_null": self.value_after_null,
+            "value_after_blank": self.value_after_blank,
         }
 
     @property
@@ -388,6 +395,15 @@ def parse_structured_content(payload: Any) -> StructuredContent:
             _require_chinese_name(chinese_column, column_source, label="字段", field_key="field_name")
             value_before = _text(raw_field.get("value_before"), max_len=MAX_FIELD_VALUE_LEN, message="修改前内容过长")
             value_after = _text(raw_field.get("value_after"), max_len=MAX_FIELD_VALUE_LEN, message="修改后内容过长")
+            value_before_null = raw_field.get("value_before_null") is True
+            value_after_null = raw_field.get("value_after_null") is True
+            value_after_blank = raw_field.get("value_after_blank") is True
+            if value_after_null:
+                value_after_blank = False
+            if value_before_null:
+                value_before = ""
+            if value_after_null or value_after_blank:
+                value_after = ""
             fields.append(StructuredField(
                 column_name=column_name,
                 chinese_column_name=chinese_column,
@@ -395,6 +411,9 @@ def parse_structured_content(payload: Any) -> StructuredContent:
                 value_before=value_before,
                 value_after=value_after,
                 item_id=_item_id(raw_field.get("item_id")),
+                value_before_null=value_before_null,
+                value_after_null=value_after_null,
+                value_after_blank=value_after_blank,
             ))
         tables.append(StructuredTable(
             table_name=table_name,
@@ -483,9 +502,9 @@ def validate_formal_values(content: StructuredContent) -> None:
             )
     for _, field in content.flattened_fields():
         label = field.display_name
-        if not field.value_before:
+        if not field.value_before and not field.value_before_null:
             errors.setdefault("value_before", f"{label}：请输入修改前内容")
-        if not field.value_after:
+        if not field.value_after and not field.value_after_null and not field.value_after_blank:
             errors.setdefault("value_after", f"{label}：请输入修改后内容")
     if errors:
         raise StructuredContentError(errors)

@@ -3445,6 +3445,13 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input:focus {
   border-color: var(--rsp-brand);
 }
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input.is-before-loading {
+  color: var(--rsp-text);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input.is-before-loading::placeholder,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input.is-before-multiple::placeholder {
+  color: #b7c0ce;
+}
 
 /* 处理范围作为处理表卡片内的轻量分区，仅保留顶部浅分割线。 */
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-scope {
@@ -3596,6 +3603,111 @@
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-value-cell .rsp-sc-value-input {
   flex: 1 1 auto;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-bubble {
+  position: fixed;
+  z-index: 120;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  flex: none;
+  padding: 6px 10px;
+  background: var(--rsp-panel);
+  border: 1px solid #d5dde8;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(31, 46, 71, 0.12);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-bubble::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: var(--rsp-null-arrow, 16px);
+  width: 8px;
+  height: 8px;
+  background: var(--rsp-panel);
+  border-top: 1px solid #d5dde8;
+  border-left: 1px solid #d5dde8;
+  transform: rotate(45deg);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-bubble-text,
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-bubble-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-bubble-note {
+  margin-top: 2px;
+  color: var(--rsp-muted);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-name {
+  color: var(--rsp-brand);
+  font-weight: 600;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-bubble-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-choice {
+  height: 24px;
+  min-width: 44px;
+  padding: 0 10px;
+  border-radius: var(--ui-radius);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-no {
+  border: 1px solid #c8d3e2;
+  background: var(--rsp-panel);
+  color: #344158;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-no:hover {
+  border-color: var(--rsp-brand);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-yes {
+  border: 0;
+  color: #fff;
+  background: linear-gradient(135deg, #3466d9, #6aa4ff);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input.has-null-mark {
+  padding-right: 52px;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-mark.is-hidden {
+  display: none;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-mark {
+  position: absolute;
+  z-index: 2;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 72px;
+  height: 20px;
+  padding: 0 6px;
+  overflow: hidden;
+  border: 1px solid var(--rsp-line);
+  border-radius: var(--ui-radius);
+  background: var(--rsp-subsection, #f4f7fb);
+  color: var(--rsp-text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-null-mark.is-empty {
+  border-color: var(--rsp-brand);
+  background: #edf4ff;
+  color: var(--rsp-brand);
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-value-input.is-sql-null {
+  color: var(--rsp-brand);
 }
 /* 表级删除（垃圾桶图标）：删除语义统一使用危险色，与行级减号同色；
  * 层级区分依靠图标形态（垃圾桶 vs 减号）与位置（标题栏 vs 行内），不靠颜色弱化。 */

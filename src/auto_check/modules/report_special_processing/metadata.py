@@ -11,11 +11,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Mapping, Sequence
 
 from auto_check.app.db import DatabaseClient
 
 from .contracts import DataSourceConnectionError, DataSourceMetadataError, ValidationError
+from .sql_builder import ScriptGenerationError, build_distinct_value_query
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +88,20 @@ _COLUMNS_COUNT_PG = (
 )
 
 
+def _display_current_value(value: Any) -> str:
+    """把读到的当前值直接写成修改前文字。NULL 显示为 null，空字符串显示为“空字符串”。"""
+    if value is None:
+        return "null"
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ")[:19]
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    text = str(value)
+    return "空字符串" if text == "" else text
+
+
 class DatasourceMetadataService:
     """基于应用库中已配置的数据源提供表/字段元数据查询。"""
 
@@ -126,6 +143,51 @@ class DatasourceMetadataService:
             sql_by_dialect=("TABLES", "table", ("table_name", "table_comment", "schema")),
             column_error="表信息获取失败，请稍后重试",
         )
+
+    def lookup_current_value(
+        self,
+        datasource_id: str,
+        *,
+        schema: str,
+        table_name: str,
+        column_name: str,
+        conditions: Sequence[Mapping[str, Any]],
+        report_period_field: str = "",
+        report_period: str = "",
+        limit_report_period: bool = False,
+    ) -> dict[str, Any]:
+        """只读查询条件命中的当前值。多行但值一致（含 NULL 与空字符串）仍返回该值。"""
+        entry = self.resolve(datasource_id)
+        if entry is None:
+            raise ValidationError(fields={"datasource_id": "数据源不存在或已被删除，请在系统配置中维护后重试"})
+        dialect = self._dialect(entry.config.db_type)
+        db_type = "postgresql" if dialect == "pg" else "mysql"
+        scope = str(schema or "").strip() or self._scope(entry.config, dialect)
+        try:
+            sql, params = build_distinct_value_query(
+                db_type=db_type,
+                schema=scope,
+                table_name=table_name,
+                column_name=column_name,
+                conditions=conditions,
+                report_period_field=report_period_field,
+                report_period=report_period,
+                limit_report_period=limit_report_period,
+            )
+        except ScriptGenerationError as exc:
+            raise ValidationError(fields={"table_name": str(exc)}) from None
+        client = DatabaseClient(entry.config, connect_timeout_seconds=8)
+        try:
+            client.test_connection()
+            rows = client.fetch_all(sql, params)
+        except Exception as exc:  # noqa: BLE001 - 统一脱敏
+            logger.warning("datasource %s current value read failed: %s", datasource_id, type(exc).__name__)
+            raise DataSourceMetadataError(message="修改前读取失败，请稍后重试") from None
+        if not rows:
+            return {"status": "none", "value": None}
+        if len(rows) > 1:
+            return {"status": "multiple", "value": None}
+        return {"status": "single", "value": _display_current_value(rows[0].get("current_value"))}
 
     def list_columns(self, datasource_id: str, table_name: str, *, keyword: str = "", page: int = 1, page_size: int = DEFAULT_COLUMN_PAGE_SIZE) -> dict[str, Any]:
         table = str(table_name or "")

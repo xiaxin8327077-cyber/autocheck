@@ -1514,18 +1514,307 @@ def test_datasource_metadata_updates_qualified_preview_without_touching_manual_s
     });
     await sleep(650);
     const textarea = findByAriaLabel(overlay, "处理脚本");
-    if (scriptMode === "AUTO") {
-      assert.ok(textarea.value.includes("UPDATE `1104report`.t_customer"));
-      assert.ok(textarea.value.includes("SET customer_status"));
-    } else {
-      assert.equal(textarea.value, "手工或历史脚本原文", "元数据抵达不覆盖手动脚本");
+    if (scriptMode === "MANUAL") {
+      assert.equal(textarea.value, "手工或历史脚本原文", "已点手动编辑的脚本不被元数据覆盖");
+      assert.ok(findButtonByText(overlay, "恢复自动生成"), "手动模式才显示恢复自动生成");
       findButtonByText(overlay, "恢复自动生成").click();
       await sleep(30);
       assert.equal(textarea.value, "手工或历史脚本原文", "拒绝恢复时仍保留历史脚本");
+    } else {
+      assert.ok(findButtonByText(overlay, "手动编辑"), "未点手动编辑时保持自动生成");
+      assert.equal(findButtonByText(overlay, "恢复自动生成"), null, "打开编辑不得自动进入手动模式");
+      assert.ok(textarea.value.includes("UPDATE `1104report`.t_customer"));
+      assert.ok(textarea.value.includes("SET customer_status"));
+      assert.equal(textarea.value.includes("手工或历史脚本原文"), false);
     }
   }
 """
     _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_metadata_qualification"))
+
+
+def test_current_before_keeps_user_input_typed_while_loading(tmp_path: Path) -> None:
+    scenario = """
+  let releaseLookup = null;
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  actions.lookupCurrentValue = () => new Promise((resolve) => { releaseLookup = resolve; });
+  const record = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+  record.value_before = "";
+  record.structured_content.tables[0].fields[0].value_before = "";
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks), mode: "edit", record,
+  });
+  await sleep(500);
+  const beforeInput = findByAriaLabel(overlay, "修改前");
+  assert.equal(beforeInput.disabled, false, "加载修改前时不禁止输入");
+  assert.equal(beforeInput.placeholder, "字段值加载中...", "空的修改前用浅灰提示加载中");
+  assert.equal(beforeInput.classList.contains("is-before-loading"), true);
+  beforeInput.value = "用户手填";
+  beforeInput.dispatchEvent({ type: "input" });
+  releaseLookup({ data: { status: "single", value: "库里的值" } });
+  await sleep(30);
+  assert.equal(beforeInput.value, "用户手填", "加载返回后不得覆盖用户已输入的修改前");
+  assert.equal(findByAriaLabel(overlay, "修改前").value, "用户手填");
+
+  const multipleRecord = JSON.parse(JSON.stringify(record));
+  multipleRecord.structured_content.tables[0].fields[0].column_name = "customer_name";
+  const actions2 = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  actions2.lookupCurrentValue = async () => ({ data: { status: "multiple", value: null } });
+  const overlay2 = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions2, hooks), mode: "edit", record: multipleRecord,
+  });
+  await sleep(500);
+  const multipleInput = findByAriaLabel(overlay2, "修改前");
+  assert.equal(multipleInput.disabled, false, "多个不同值时仍可输入");
+  assert.equal(multipleInput.value, "", "多个不同值时不自动填写");
+  assert.equal(multipleInput.placeholder, "存在多个值，请手填");
+  assert.equal(multipleInput.classList.contains("is-before-multiple"), true);
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_before_loading_input"))
+
+
+def test_changing_condition_value_reloads_before_value(tmp_path: Path) -> None:
+    scenario = """
+  const calls = [];
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  actions.lookupCurrentValue = async (_id, payload) => {
+    const code = payload.conditions?.[0]?.values?.[0] || "";
+    calls.push(code);
+    return { data: { status: "single", value: code === "NEWCODE" ? "222" : "111" } };
+  };
+  const record = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+  record.value_before = "";
+  record.structured_content.tables[0].fields[0].value_before = "";
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks), mode: "edit", record,
+  });
+  await sleep(500);
+  const beforeInput = findByAriaLabel(overlay, "修改前");
+  assert.equal(beforeInput.value, "111", "初次按条件读出修改前");
+  const conditionInput = findByAriaLabel(overlay, "条件值");
+  conditionInput.value = "NEWCODE";
+  conditionInput.dispatchEvent({ type: "input" });
+  await sleep(500);
+  assert.equal(beforeInput.value, "222", "修改条件值后重新加载修改前");
+  assert.ok(calls.includes("NEWCODE"), "新条件值进入读取请求");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_before_reloads_on_condition"))
+
+
+def test_toggling_report_period_limit_reloads_before_value(tmp_path: Path) -> None:
+    scenario = """
+  const calls = [];
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  actions.listColumns = async () => ({ data: { items: [
+    { column_name: "d_cldate", column_comment: "数据日期", data_type: "date" },
+    { column_name: "customer_status", column_comment: "客户状态", data_type: "varchar" },
+    { column_name: "project_no", column_comment: "项目编号", data_type: "varchar" },
+  ], total: 3, page: 1, total_pages: 1 } });
+  actions.lookupCurrentValue = async (_id, payload) => {
+    calls.push(Boolean(payload.limit_report_period));
+    return { data: { status: "single", value: payload.limit_report_period ? "WITH-DATE" : "NO-DATE" } };
+  };
+  const record = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+  record.report_period = "2026-09-30";
+  record.value_before = "";
+  record.structured_content.tables[0].limit_report_period = false;
+  record.structured_content.tables[0].fields[0].value_before = "";
+  const options = baseDrawerOptions(actions, hooks);
+  options.catalog = { ...options.catalog, report_period_fields: [{ code: "d_cldate" }] };
+  options.mode = "edit";
+  options.record = record;
+  const overlay = createRecordDrawer(documentRef, options);
+  await sleep(500);
+  const beforeInput = findByAriaLabel(overlay, "修改前");
+  assert.equal(beforeInput.value, "NO-DATE", "未指定数据日期时按条件读取修改前");
+  const yes = findByAriaLabel(overlay, "限制报送期是");
+  yes.checked = true;
+  yes.dispatchEvent({ type: "change" });
+  await sleep(500);
+  assert.equal(beforeInput.value, "WITH-DATE", "改为指定数据日期后重新读取修改前");
+  assert.equal(calls.at(-1), true);
+  const no = findByAriaLabel(overlay, "限制报送期否");
+  no.checked = true;
+  no.dispatchEvent({ type: "change" });
+  await sleep(500);
+  assert.equal(beforeInput.value, "NO-DATE", "取消指定数据日期后重新读取修改前");
+  assert.equal(calls.at(-1), false);
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_before_reloads_on_period_limit"))
+
+
+def test_save_asks_null_or_empty_string_when_after_is_blank(tmp_path: Path) -> None:
+    scenario = """
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const record = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+  record.value_after = "";
+  record.structured_content.tables[0].fields[0].value_after = "";
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(makeDrawerActions(async () => ({ data: { id: 1 } })), hooks),
+    mode: "edit",
+    record,
+  });
+  findButtonByText(overlay, "保存修改").click();
+  await sleep(20);
+  const bubble = findButtonByText(overlay, "空字符串")?.parentNode?.parentNode;
+  assert.equal(bubble?.getAttribute("aria-label"), "是否设置为 null 还是空字符串");
+  findButtonByText(overlay, "null").click();
+  assert.equal(findByAriaLabel(overlay, "修改后").value, "NULL", "选择 null 后写入 NULL");
+
+  const record2 = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+  record2.value_after = "";
+  record2.structured_content.tables[0].fields[0].value_after = "";
+  const overlay2 = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(makeDrawerActions(async () => ({ data: { id: 1 } })), hooks),
+    mode: "edit",
+    record: record2,
+  });
+  findButtonByText(overlay2, "保存修改").click();
+  await sleep(20);
+  findButtonByText(overlay2, "空字符串").click();
+  assert.equal(findByAriaLabel(overlay2, "修改后").value, "''", "选择空字符串后显示 ''");
+  findByAriaLabel(overlay2, "修改后").value = "";
+  findByAriaLabel(overlay2, "修改后").dispatchEvent({ type: "input" });
+  assert.equal(findButtonByText(overlay2, "''"), null, "清空后不再显示标签");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_save_empty_after_choice"))
+
+
+def test_numeric_null_prompt_does_not_keep_a_string(tmp_path: Path) -> None:
+    scenario = """
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  actions.listColumns = async () => ({ data: { items: [
+    { column_name: "customer_status", column_comment: "客户状态", data_type: "decimal(23,8)" },
+  ], total: 1, page: 1, total_pages: 1 } });
+  const record = JSON.parse(JSON.stringify(DRAWER_STRUCTURED_RECORD));
+  record.value_after = "";
+  record.structured_content.tables[0].fields[0].value_after = "";
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks),
+    mode: "edit",
+    record,
+  });
+  const editor = findByAriaLabel(overlay, "数据源与处理表字段");
+  let typed = "";
+  for (let i = 0; i < 10; i += 1) {
+    typed = editor.getFieldTypes()?.ds1?.t_customer?.customer_status || "";
+    if (typed) break;
+    await sleep(50);
+  }
+  assert.equal(typed, "decimal(23,8)", "金额字段类型已加载");
+  const afterInput = findByAriaLabel(overlay, "修改后");
+  afterInput.value = "220";
+  afterInput.dispatchEvent({ type: "input" });
+  assert.equal(findButtonByText(overlay, "否"), null, "普通数值不弹意图气泡");
+  afterInput.value = "空";
+  afterInput.dispatchEvent({ type: "input" });
+  const bubble = findButtonByText(overlay, "否")?.parentNode?.parentNode;
+  assert.equal(bubble?.getAttribute("aria-label"), "是否将「客户状态」设置为 NULL？");
+  findButtonByText(overlay, "否").click();
+  assert.equal(afterInput.value, "", "金额字段拒绝后不保留空字符串");
+  afterInput.value = "null";
+  afterInput.dispatchEvent({ type: "input" });
+  findButtonByText(overlay, "是").click();
+  assert.equal(afterInput.value, "NULL", "确认为空后输入框改为 NULL");
+  assert.equal(findButtonByText(overlay, "是"), null, "确认后不再弹出");
+  let mark = null;
+  walkAll(overlay, (node) => {
+    if (String(node.className || "").includes("rsp-sc-null-mark")) mark = node;
+  });
+  assert.equal(mark.classList.contains("is-hidden"), true, "确认后不再显示可点击标签");
+  assert.equal(mark.textContent, "");
+  mark.click();
+  assert.equal(findButtonByText(overlay, "是"), null, "点击隐藏标签不再弹出气泡");
+  afterInput.value = "";
+  afterInput.dispatchEvent({ type: "input" });
+  findButtonByText(overlay, "保存修改").click();
+  await sleep(20);
+  assert.equal(findButtonByText(overlay, "null")?.parentNode?.parentNode?.getAttribute("aria-label"), "金额和整数只能设置为 null");
+  assert.equal(findButtonByText(overlay, "空字符串"), null, "保存时空的金额字段不能选空字符串");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_numeric_null_prompt"))
+
+
+def test_null_text_asks_before_generating_sql_null(tmp_path: Path) -> None:
+    scenario = """
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(makeDrawerActions(async () => ({ data: { id: 1 } })), hooks),
+    mode: "edit",
+    record: DRAWER_STRUCTURED_RECORD,
+  });
+  const editor = findByAriaLabel(overlay, "数据源与处理表字段");
+  const afterInput = findByAriaLabel(overlay, "修改后");
+  const refreshScript = async () => {
+    editor.dispatchEvent({ type: "click" });
+    await sleep(600);
+    return findByAriaLabel(overlay, "处理脚本").value;
+  };
+  afterInput.value = "null";
+  afterInput.dispatchEvent({ type: "input" });
+  const bubble = findButtonByText(overlay, "否")?.parentNode?.parentNode;
+  assert.ok(bubble, "填写 null 后出现确认气泡");
+  assert.equal(bubble.getAttribute("aria-label"), "是否将「客户状态」设置为空？");
+  let note = null;
+  walkAll(bubble, (node) => {
+    if (String(node.className || "").includes("rsp-sc-null-bubble-note")) note = node;
+  });
+  assert.equal(note?.textContent, "「是」设为 NULL，「否」设为'null'");
+  findButtonByText(overlay, "否").click();
+  assert.equal(findButtonByText(overlay, "否"), null, "拒绝后气泡关闭");
+  assert.equal(afterInput.value, "'null'", "确认为字符后给填写值加单引号");
+  afterInput.dispatchEvent({ type: "input" });
+  assert.equal(findButtonByText(overlay, "否"), null, "内容未改不再确认");
+  afterInput.value = "空";
+  afterInput.dispatchEvent({ type: "input" });
+  assert.ok(findButtonByText(overlay, "否"), "改成空后再次确认");
+  findButtonByText(overlay, "否").click();
+  assert.equal(afterInput.value, "'空'", "否按填写的词加单引号");
+  afterInput.dispatchEvent({ type: "input" });
+  assert.equal(findButtonByText(overlay, "否"), null, "加引号后不再确认");
+  let script = await refreshScript();
+  assert.ok(script.includes("customer_status = '空'"), "否后按填写的词生成字符串");
+  assert.equal(script.includes("= NULL"), false);
+  afterInput.value = "5";
+  afterInput.dispatchEvent({ type: "input" });
+  afterInput.value = "NULL";
+  afterInput.dispatchEvent({ type: "input" });
+  findButtonByText(overlay, "是").click();
+  assert.equal(afterInput.value, "NULL", "选是后输入框改为 NULL");
+  assert.equal(afterInput.classList.contains("is-sql-null"), true, "确认后标记为空");
+  script = await refreshScript();
+  assert.ok(script.includes("customer_status = NULL"), "确认后生成 SQL NULL");
+  assert.equal(script.includes("'null'"), false);
+  assert.equal(script.includes("'NULL'"), false);
+  afterInput.dispatchEvent({ type: "input" });
+  assert.equal(findButtonByText(overlay, "是"), null, "NULL 未修改不再确认");
+  afterInput.value = "空白";
+  afterInput.dispatchEvent({ type: "input" });
+  assert.ok(findButtonByText(overlay, "否"), "确认后再改成关键词会重新确认");
+  findButtonByText(overlay, "否").click();
+  assert.equal(afterInput.value, "'空白'");
+  let mark = null;
+  walkAll(overlay, (node) => {
+    if (String(node.className || "").includes("rsp-sc-null-mark")) mark = node;
+  });
+  assert.equal(mark.classList.contains("is-hidden"), true, "确认后不再显示可点击标签");
+  assert.equal(mark.textContent, "");
+  afterInput.value = "''";
+  afterInput.dispatchEvent({ type: "input" });
+  assert.equal(findButtonByText(overlay, "否"), null, "填写 '' 后不弹空值气泡");
+  assert.equal(mark.textContent, "", "正常值旁边不再显示可点击标签");
+  assert.equal(afterInput.classList.contains("is-sql-null"), false);
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "drawer_null_bubble"))
 
 
 def test_restore_auto_generate_confirm_is_layered_above_record_drawer(tmp_path: Path) -> None:

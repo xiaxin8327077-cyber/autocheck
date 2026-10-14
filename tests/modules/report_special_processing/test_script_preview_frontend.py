@@ -97,6 +97,79 @@ def test_without_selected_condition_field_does_not_generate_where(tmp_path: Path
     assert "WHERE" not in script
 
 
+def test_set_literals_follow_field_types(tmp_path: Path) -> None:
+    script = run_preview(
+        tmp_path,
+        content(table(
+            fields=[
+                {"column_name": "endp_amt", "value_after": "1003857.08000000"},
+                {"column_name": "remark", "value_after": " vvvv "},
+                {"column_name": "bad_amt", "value_after": "vvvv"},
+                {"column_name": "biz_date", "value_after": "2026-09-30 10:00"},
+            ],
+        )),
+        {"ds1": {"t_customer": {
+            "endp_amt": "decimal(20,8)",
+            "remark": "varchar",
+            "bad_amt": "decimal(20,8)",
+            "biz_date": "datetime",
+        }}},
+    )
+
+    assert "endp_amt = 1003857.08000000" in script
+    assert "remark = ' vvvv '" in script
+    assert "bad_amt = 'vvvv'" in script
+    assert "biz_date = '2026-09-30'" in script
+
+
+def test_numeric_empty_is_null_and_dates_stay_strings(tmp_path: Path) -> None:
+    script = run_preview(
+        tmp_path,
+        content(table(
+            fields=[
+                {"column_name": "endp_amt", "value_after": ""},
+                {"column_name": "qty", "value_after": "null"},
+                {"column_name": "biz_date", "value_after": "", "value_after_blank": True},
+                {"column_name": "remark", "value_after": "", "value_after_blank": True},
+                {"column_name": "span", "value_after": ""},
+            ],
+        )),
+        {"ds1": {"t_customer": {
+            "endp_amt": "decimal(23,8)",
+            "qty": "int",
+            "biz_date": "datetime",
+            "remark": "varchar(100)",
+            "span": "interval",
+        }}},
+    )
+
+    assert "endp_amt = NULL" in script
+    assert "qty = NULL" in script
+    assert "biz_date = ''" in script
+    assert "remark = ''" in script
+    assert "span = ''" in script
+    assert "endp_amt = ''" not in script
+    assert "qty = 'null'" not in script
+
+
+def test_null_text_stays_quoted_until_empty_is_confirmed(tmp_path: Path) -> None:
+    script = run_preview(
+        tmp_path,
+        content(table(
+            fields=[
+                {"column_name": "type_code", "value_after": "null"},
+                {"column_name": "type_detail", "value_after": " NULL "},
+                {"column_name": "remark", "value_after": "", "value_after_null": True},
+                {"column_name": "blank_note", "value_after": "nullable"},
+            ],
+            conditions=[{"column_name": "project_no", "operator": "=", "values": ["null"]}],
+        )),
+    )
+
+    assert "SET type_code = 'null', type_detail = ' NULL ', remark = NULL, blank_note = 'nullable'" in script
+    assert "WHERE project_no = 'null';" in script
+
+
 def test_report_period_always_uses_hyphenated_date(tmp_path: Path) -> None:
     script = run_preview(
         tmp_path,
@@ -137,7 +210,7 @@ def test_tables_generate_independently_and_literals_follow_current_rules(tmp_pat
     assert "UPDATE table_only" in script
     assert "UPDATE t_contract" in script
     assert "remark = 'Bob''s'" in script
-    assert "amount = '120'" in script
+    assert "amount = 120" in script
     assert "contract_no IN ('C1', 'C2')" in script
     assert "closed_at IS NULL" in script
 

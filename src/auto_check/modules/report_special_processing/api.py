@@ -200,6 +200,14 @@ def register_routes(router: Any, service_provider: Callable[[], Any]) -> None:
         ),
         (
             "POST",
+            "/datasources/{datasource_id}/current-value",
+            lambda service, request, rid: service.lookup_current_value(
+                request.path_params.get("datasource_id") or "", _body(request),
+            ),
+            edit, MAX_REQUEST_BYTES, 200,
+        ),
+        (
+            "POST",
             "/script/generate",
             lambda service, request, rid: service.generate_script(_body(request), request.current_user),
             edit, MAX_REQUEST_BYTES, 200,

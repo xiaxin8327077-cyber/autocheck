@@ -167,6 +167,7 @@ export function createApi(context) {
     listDatasources: () => request("/datasources"),
     listTables: (datasourceId, parameters) => request(`/datasources/${encodeURIComponent(datasourceId)}/tables${queryString(parameters)}`),
     listColumns: (datasourceId, tableName, parameters) => request(`/datasources/${encodeURIComponent(datasourceId)}/tables/${encodeURIComponent(tableName)}/columns${queryString(parameters)}`),
+    lookupCurrentValue: (datasourceId, payload) => request(`/datasources/${encodeURIComponent(datasourceId)}/current-value`, bodyOptions("POST", payload)),
     cancelAll() {
       controllers.forEach((controller) => controller.abort());
       controllers.clear();

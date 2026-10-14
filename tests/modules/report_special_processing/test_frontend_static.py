@@ -876,6 +876,17 @@ def test_structured_content_editor_contract():
     assert "暂无关联字段" not in source
     # 修改前/后为字段级输入；新字段默认留空，不继承上一个字段
     assert "rsp-sc-value-input" in source
+    assert "rsp-sc-null-bubble" in source
+    assert "是否将「" in source
+    assert "设置为空？" in source
+    assert "rsp-sc-null-bubble-actions" in source
+    assert "function followNullBubble()" in source
+    assert "function onNullBubbleScroll(event)" in source
+    assert 'host?.addEventListener?.("scroll", onNullBubbleScroll, true)' in source
+    assert "placement.openUp === null" in source
+    assert "bubble.hidden = true" in source
+    assert 'bubble.style.width = "max-content"' in source
+    assert "const width = 286;" not in source
     assert "table.fields.push(emptyField())" in source
     # 保存校验逐条定位
     for message in ("请选择数据源", "请选择处理表", "请输入中文表名", "请至少为", "请输入中文字段名", "请输入修改前内容", "请输入修改后内容"):
@@ -1047,6 +1058,8 @@ def test_drawer_switches_between_structured_and_legacy_modes():
     assert "function showFormHint(message, focusControl = null, { focus = true } = {})" in drawer
     assert "if (focus) focusControl?.focus?.();" in drawer
     assert 'documentRef, "手动编辑", "rsp-button-secondary", null,' in drawer
+    assert 'persistedScriptMode === "MANUAL" ? "MANUAL" : "AUTO"' in drawer
+    assert 'processing_script_mode !== "AUTO"' not in drawer
     assert drawer.count('manualEditButton.addEventListener("click"') == 1
     # 结构化模式不再渲染全局修改前/后
     assert "rsp-sc-field" in drawer
