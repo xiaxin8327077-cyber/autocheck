@@ -91,6 +91,8 @@ def _page_functions() -> str:
         "loadReconcileHistoryRun",
         "applyReconcileHistoryRun",
         "findChangedSameDateRun",
+        "showReconcileDateWithoutResults",
+        "loadReconcileResultsForDate",
         "refreshLatestReconcileResults",
         "noteReconcileCompletion",
         "flushPendingReconcileCompletion",
@@ -120,6 +122,8 @@ def _run_page_scenarios() -> list[dict]:
         let reconcileCompletionPending = false;
         let reconcileWatchChecking = false;
         let reconcileRefreshInFlight = false;
+        let reconcileDateLoadToken = 0;
+        let hasReconciled = false;
         let runJobId = null;
         let latestRunAt = '';
         let latestRunExecutor = '';
@@ -135,6 +139,7 @@ def _run_page_scenarios() -> list[dict]:
         const reasonFilter = { value: '' };
         const statusFilter = { value: '' };
         const refreshResultsBtn = { disabled: false };
+        const lastRunTime = { hidden: false };
         const document = {
           get hidden() { return documentHidden; },
           documentElement: { getAttribute: () => pageName },
@@ -346,6 +351,61 @@ def _run_page_scenarios() -> list[dict]:
           }
           assert.equal(calls.confirms.length, 2);
           assert.match(calls.confirms[1].message, /是否加载这批结果/);
+        });
+
+        scenario('切换日期加载该日期的最新结果', async () => {
+          reset();
+          showRun(old930);
+          apiImpl = async (path) => {
+            if (path.includes('run_date=2026-10-01')) return { same_date: run1001 };
+            if (path.includes('/api/history/latest-1001')) return { history: run1001 };
+            throw new Error(path);
+          };
+          await loadReconcileResultsForDate('2026-10-01');
+          assert.equal(calls.confirms.length, 0);
+          assert.equal(displayedReconcileRun.id, 'latest-1001');
+          assert.equal(runDate.value, '2026-10-01');
+          assert.equal(results[0].project_code, 'P9');
+        });
+
+        scenario('切换到全对上的日期显示已核对且没有差异', async () => {
+          reset();
+          showRun(old930);
+          const perfect = {
+            id: 'perfect-1001',
+            run_date: '2026-10-01',
+            run_at: '2026-11-01 09:00:00',
+            executor_name: '张三',
+            results: [],
+          };
+          apiImpl = async (path) => {
+            if (path.includes('run_date=2026-10-01')) return { same_date: perfect };
+            if (path.includes('/api/history/perfect-1001')) return { history: perfect };
+            throw new Error(path);
+          };
+          await loadReconcileResultsForDate('2026-10-01');
+          assert.equal(hasReconciled, true);
+          assert.equal(results.length, 0);
+          assert.equal(displayedReconcileRun.id, 'perfect-1001');
+          assert.equal(calls.statuses.includes('该日期暂无对数结果'), false);
+        });
+
+        scenario('切换到没有结果的日期会清空列表', async () => {
+          reset();
+          showRun(old930);
+          apiImpl = async () => ({ same_date: null });
+          await loadReconcileResultsForDate('2026-08-31');
+          assert.equal(results.length, 0);
+          assert.equal(displayedReconcileRun.runDate, '2026-08-31');
+          assert.equal(calls.statuses.at(-1), '该日期暂无对数结果');
+          assert.equal(calls.confirms.length, 0);
+        });
+
+        scenario('切换到当前已显示的日期不会重新请求', async () => {
+          reset();
+          showRun(old930);
+          await loadReconcileResultsForDate('2026-09-30');
+          assert.equal(calls.api.length, 0);
         });
 
         scenario('手动刷新加载最新校验日期的最新结果', async () => {

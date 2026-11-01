@@ -3062,6 +3062,23 @@ h1, h2, h3, p { margin: 0; }
   flex-shrink: 0;
 }
 
+.run-bar #refreshResultsBtn {
+  box-sizing: border-box;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  line-height: 1;
+}
+
+.run-bar #refreshResultsBtn .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+  line-height: 1;
+}
+
 .run-start-icon {
   display: inline-flex;
   width: 14px;

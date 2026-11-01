@@ -8721,6 +8721,7 @@ def test_history_restore_marks_result_list_and_keeps_latest_snapshot():
     assert "clearResultHistoryRestoreState();" in apply_body
     assert 'homeResultListFilterLabel = "";' in apply_body
     assert "setLastRunTime(run.run_at, historyExecutorName(run))" in apply_body
+    assert "hasReconciled = true;" in apply_body
 
 
 def test_auto_check_refresh_prompts_before_loading_and_manual_refresh_uses_latest_date():
@@ -8738,12 +8739,19 @@ def test_auto_check_refresh_prompts_before_loading_and_manual_refresh_uses_lates
     assert "开始" in start_button
     assert "&#8635;" in refresh_button
     assert "刷新" in refresh_button
+    css = _read(STYLES_CSS)
+    refresh_rule = re.search(r"\.run-bar #refreshResultsBtn\s*\{(?P<body>.*?)\}", css, re.S)
+    assert refresh_rule is not None
+    assert "padding-top: 5px;" in refresh_rule.group("body")
+    assert "padding-bottom: 5px;" in refresh_rule.group("body")
 
     refresh = re.search(r"async function refreshLatestReconcileResults\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert refresh is not None
     refresh_body = refresh.group("body")
     assert 'api("/api/history/watch")' in refresh_body
     assert "watch.latest_date" in refresh_body
+    assert 'runDate?.addEventListener("change", () => {' in app_js
+    assert "loadReconcileResultsForDate(runDate.value)" in app_js
     assert "showConfirm(" not in refresh_body
     assert refresh_body.index("loadReconcileHistoryRun(brief.id)") < refresh_body.index("applyReconcileHistoryRun(run)")
 

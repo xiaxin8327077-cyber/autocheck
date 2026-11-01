@@ -8223,6 +8223,7 @@ function applyReconcileHistoryRun(run) {
   syncCustomSelect(statusFilter);
   results = run.results || [];
   resultEmptyState = "";
+  hasReconciled = true;
   hideLastRunTimeForNoSourceData = false;
   if (run.run_date) runDate.value = String(run.run_date).slice(0, 10);
   currentPage = 1;
@@ -8262,6 +8263,53 @@ async function findChangedSameDateRun(same) {
   }
   return run;
 }
+
+let reconcileDateLoadToken = 0;
+
+function showReconcileDateWithoutResults(date) {
+  clearResultHistoryRestoreState();
+  homeResultListFilterLabel = "";
+  results = [];
+  hasReconciled = false;
+  resultEmptyState = "";
+  hideLastRunTimeForNoSourceData = true;
+  if (lastRunTime) lastRunTime.hidden = true;
+  currentPage = 1;
+  renderResults();
+  rememberDisplayedReconcileRun({ id: "", run_date: date, run_at: "" }, []);
+  setStatus("该日期暂无对数结果");
+}
+
+async function loadReconcileResultsForDate(date) {
+  const selected = String(date || "").slice(0, 10);
+  if (!selected || selected === displayedReconcileRun.runDate) return;
+  const token = ++reconcileDateLoadToken;
+  try {
+    const watch = await api(`/api/history/watch?run_date=${encodeURIComponent(selected)}`);
+    if (token !== reconcileDateLoadToken) return;
+    const brief = watch.same_date;
+    if (!brief?.id) {
+      showReconcileDateWithoutResults(selected);
+      return;
+    }
+    if (brief.id === displayedReconcileRun.id) return;
+    const run = await loadReconcileHistoryRun(brief.id);
+    if (token !== reconcileDateLoadToken) return;
+    if (!run) {
+      showReconcileDateWithoutResults(selected);
+      return;
+    }
+    applyReconcileHistoryRun(run);
+  } catch (error) {
+    if (token !== reconcileDateLoadToken) return;
+    setStatus(error.message);
+    showToast(error.message, "error");
+  }
+}
+
+runDate?.addEventListener("change", () => {
+  void loadReconcileResultsForDate(runDate.value);
+});
 
 async function refreshLatestReconcileResults() {
   if (reconcileRefreshInFlight) return;
