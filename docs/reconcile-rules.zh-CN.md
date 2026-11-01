@@ -195,13 +195,15 @@ AM 合同投融资表：`am_projinvest_dws`
 
 核对逻辑：
 
-- 债券本金：只在全末级组合超限，且前四段自然分组后的债券本金分组仍超限时触发；FA 科目仅限 `1501.01.XX.01*` 或 `1101.02.XX.01*`，用“剥离科目层级后的完整业务代码 + 科目名称”匹配 DM `sbm_stockcode + sbm_sename`；DM 侧仅保留 `TRIM(COALESCE(sbm_seclas_h2024, '')) <> ''` 的真实债券记录。
-- 债券 DM 金额：查 DWS 数据源 `dm.fa_security_balance_zgxg_dm`，按项目和日期过滤，按 `sbm_stockcode + sbm_sename` 汇总 `sbm_balamoney_cost + sbm_balamoney_fair + sbm_balamoney_inte`。
+- 债券本金：只在全末级组合超限，且前四段自然分组后的债券本金分组仍超限时触发；FA 科目仅限 `1501.01.XX.01*` 或 `1101.02.XX.01*`，固定剥离前四段科目层级，允许 `1C`、`5B` 等含字母层级，保留业务代码内的点号和前导零；用“完整业务代码 + 科目名称”匹配 DM `sbm_stockcode + sbm_sename`；DM 侧仅保留 `TRIM(COALESCE(sbm_seclas_h2024, '')) <> ''` 的真实债券记录。
+- 债券 DM 金额：查 DWS 数据源 `dm.fa_security_balance_zgxg_dm`，按项目和日期过滤，按 `sbm_stockcode + sbm_sename` 汇总 `COALESCE(sbm_balamoney_cost, 0) + COALESCE(sbm_balamoney_fair, 0) + COALESCE(sbm_balamoney_inte, 0)`。
+- 债券成本备用核对：仅 `reconcile_bond_cost_projects` 启用分类下的启用项目项生效，编码 `all`（名称“所有”）表示全部项目，默认不添加 `all`。先比较 FA 本金末级科目 `f_marketvalue` 合计，金额不一致再用同组完整非空的 `f_cost` 合计与相同 DM 金额比较；任一一致则不列差异，均不一致保留原估值差额。字典停用、项目不命中、成本缺失或 DM 缺失时不使用备用成本认定一致。每次执行读取当前字典；首次启动初始化指定五个项目，后续保留人工维护状态。详见执行流程 5.1。
 - 债券双边补零：DM 缺少某债券时 DM 金额按 0；FA 缺少某债券时 FA 科目金额按 0；逐项计算 `DM证券余额 - FA债券本金科目余额`。
 - 贷款合同：估值表实际末级科目以 `1303.01.01` 或 `1501.04.05.01` 开头，且完整业务代码以 `DK` 或 `ZQ` 开头；业务代码作为合同代码，查 `dm.am_projinvest_zgxg_dm.pin_acbalance`。
 - 财产权合同：估值表实际末级科目以 `1541` 开头；完整业务代码作为合同代码，查 `am_projinvest_dws.f_acbalance`。
 - 逆回购：汇总估值表实际末级科目中满足 `1111.xx.xx.01*` 的 FA 科目余额；再查业务报表数据源 `ass_man_reg.ex_pledge_back`，按 `project_code = 项目编号`、`subcode LIKE '7%'` 汇总 `buyback_money + expenses`。
 - 债券逐项计算 `DM证券余额 - FA债券本金科目余额`；贷款和财产权逐项计算 `AM投融资余额 - FA科目余额`；逆回购计算 `存续回购业务表逆回购金额 - FA逆回购科目余额`；再汇总为资产差异合计。
+- 单项差异与主差异 `a0001 - d0000` 同方向且金额相等时，明细和具体原因优先展示该项；多项匹配全部优先，同权重保留原顺序并连续编号。整体未完整解释时，具体原因明确提示“该行差异与资产负债差异XXX完全匹配（同方向且金额相等）”，随后保留合计判断；排序本身不改变完整解释状态。
 
 命中后：
 

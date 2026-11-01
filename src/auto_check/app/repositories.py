@@ -683,7 +683,35 @@ class AutoCheckRepository:
         )
         return dict(row) if row else None
 
-    def list_security_balance_amounts(self, project_code: str, date: str) -> list[dict[str, Decimal | str]]:
+    def list_bond_valuation_cost_rows(
+        self, project_code: str, date: str, account_codes: list[str]
+    ) -> list[dict[str, object]]:
+        if not account_codes:
+            return []
+        client, table = self._client_table("fa_valuation")
+        cost = self._field("fa_valuation", "cost", optional=True)
+        if cost is None and safe_table_ref(self._table_schema("fa_valuation").table).parts[-1] == "fa_valuationreport_dws":
+            cost = "f_cost"
+        if cost is None:
+            self._log_query("自定义估值表未配置成本字段，跳过债券成本备用核对")
+            return []
+        placeholders = ", ".join("%s" for _ in account_codes)
+        return client.fetch_all(
+            f"""
+            SELECT {self._field('fa_valuation', 'account_code')} AS account_code,
+                   {self._field('fa_valuation', 'account_name')} AS account_name,
+                   {cost} AS cost
+            FROM {table}
+            WHERE {self._field('fa_valuation', 'project_code')} = %s
+              AND {self._field('fa_valuation', 'valuation_date')} = %s
+              AND {self._field('fa_valuation', 'account_code')} IN ({placeholders})
+            """,
+            (project_code, date, *account_codes),
+        )
+
+    def list_security_balance_amounts(
+        self, project_code: str, date: str, *, include_zero: bool = False
+    ) -> list[dict[str, Decimal | str]]:
         client, table = self._client_table("fa_security_balance_dm")
         project_code_field = self._field("fa_security_balance_dm", "project_code")
         check_date = self._field("fa_security_balance_dm", "check_date")
@@ -696,6 +724,7 @@ class AutoCheckRepository:
             "balance_interest",
         )
         bond_category = self._field("fa_security_balance_dm", "bond_category")
+        having = "" if include_zero else f"HAVING SUM({amount_expression}) <> 0"
         rows = client.fetch_all(
             f"""
             SELECT
@@ -707,7 +736,7 @@ class AutoCheckRepository:
               AND {check_date} = %s
               AND TRIM(COALESCE({bond_category}, '')) <> ''
             GROUP BY {stock_code_field}, {security_name_field}
-            HAVING SUM({amount_expression}) <> 0
+            {having}
             """,
             (project_code, date),
         )

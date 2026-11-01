@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 import time
 import unicodedata
+from collections import Counter
 from decimal import Decimal
 from difflib import SequenceMatcher
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 from auto_check.engine.matching import find_valuation_matches
 from auto_check.engine.models import (
@@ -92,7 +93,9 @@ class ReconcileRepository(Protocol):
         security_name: str,
     ) -> dict[str, Any] | None: ...
 
-    def list_security_balance_amounts(self, project_code: str, date: str) -> list[dict[str, Any]]: ...
+    def list_security_balance_amounts(self, project_code: str, date: str, *, include_zero: bool = False) -> list[dict[str, Any]]: ...
+
+    def list_bond_valuation_cost_rows(self, project_code: str, date: str, account_codes: list[str]) -> list[dict[str, Any]]: ...
 
     def get_dm_project_invest_refinement(self, project_code: str, date: str, pact_id: str) -> dict[str, Any] | None: ...
 
@@ -133,11 +136,13 @@ class ReconcileEngine:
         max_combination_rows: int = 50,
         progress_logger: Callable[[str, int | None, str | None], None] | None = None,
         cancel_event: Any | None = None,
+        bond_cost_projects: Iterable[str] = (),
     ):
         self.repository = repository
         self.max_combination_rows = max_combination_rows
         self.progress_logger = progress_logger
         self.cancel_event = cancel_event
+        self.bond_cost_projects = frozenset(bond_cost_projects)
         self._combination_deadline: float | None = None
 
     def run(self, date: str) -> list[ReconcileResult]:
@@ -606,6 +611,15 @@ class ReconcileEngine:
                 }
             )
 
+        priority_rows = [
+            row for row in detail_rows
+            if amounts_equal(Decimal(row["difference"]), project.difference)
+        ]
+        if priority_rows:
+            detail_rows.sort(key=lambda row: not amounts_equal(Decimal(row["difference"]), project.difference))
+            for index, row in enumerate(detail_rows, start=1):
+                row["index"] = _circled_index(index)
+
         difference_total = invest_total - market_total
         self._project_log(
             project,
@@ -614,11 +628,17 @@ class ReconcileEngine:
         )
         is_full_match = bool(detail_rows) and amounts_equal(difference_total, asset_total_gap)
         if is_full_match:
-            specific_reason = _asset_difference_full_reason(detail_rows)
+            specific_reason = _asset_difference_full_reason(detail_rows, priority_count=len(priority_rows))
         elif not amounts_equal(difference_total, Decimal("0")):
             specific_reason = _asset_difference_partial_reason(detail_rows, difference_total)
         else:
             specific_reason = "暂不明确具体资产差异"
+        if priority_rows and not is_full_match:
+            priority_reasons = [
+                f"{row['index']}{row['reason']}；该行差异与资产负债差异{project.difference}完全匹配（同方向且金额相等）"
+                for row in priority_rows
+            ]
+            specific_reason = "\n".join([*priority_reasons, specific_reason])
 
         return DifferenceDetail(
             kind="asset_difference_refinement",
@@ -629,7 +649,7 @@ class ReconcileEngine:
                 "asset_total_gap": str(asset_total_gap),
                 "specific_reason": specific_reason,
                 "is_full_match": is_full_match,
-                "basis": "债券比较 DM证券余额 - FA债券本金科目余额；贷款、财产权合同分别比较 AM投融资余额 - FA科目余额；逆回购比较存续回购业务表金额 - FA科目余额；差异合计与 a0001-估值表0004 同方向且相等时视为完整解释。",
+                "basis": "债券比较DM证券余额与FA本金科目f_marketvalue，字典启用项目在估值金额不一致时再比较完整非空的f_cost，任一一致则不列差异，否则按DM减FA估值计算；贷款、财产权合同分别比较 AM投融资余额 - FA科目余额；逆回购比较存续回购业务表金额 - FA科目余额；差异合计与 a0001-估值表0004 同方向且相等时视为完整解释。单项差异与a0001-d0000同方向且相等时优先展示，不改变完整解释判定。",
                 "rows": detail_rows,
             },
         )
@@ -1328,7 +1348,11 @@ class ReconcileEngine:
             "资产差异债券DM核对",
         )
         dm_query_start = time.perf_counter()
-        dm_balance_rows = self.repository.list_security_balance_amounts(project.project_code, date)
+        cost_enabled = "all" in self.bond_cost_projects or project.project_code in self.bond_cost_projects
+        if cost_enabled:
+            dm_balance_rows = self.repository.list_security_balance_amounts(project.project_code, date, include_zero=True)
+        else:
+            dm_balance_rows = self.repository.list_security_balance_amounts(project.project_code, date)
         self._project_log(
             project,
             f"DM证券余额查询完成：{len(dm_balance_rows)} 条，耗时 {time.perf_counter() - dm_query_start:.1f}s",
@@ -1342,6 +1366,30 @@ class ReconcileEngine:
             key = (stock_code, security_name)
             dm_amounts[key] = dm_amounts.get(key, Decimal("0")) + to_decimal(row.get("amount"))
 
+        fa_costs: dict[tuple[str, str], Decimal | None] = {}
+        cost_counts: Counter = Counter()
+        cost_candidates = [
+            row for row in fa_rows
+            if (row.account_business_code, row.account_name) in dm_amounts
+            and not amounts_equal(
+                fa_amounts[(row.account_business_code, row.account_name)],
+                dm_amounts[(row.account_business_code, row.account_name)],
+            )
+        ] if cost_enabled else []
+        expected_cost_counts = Counter((row.account_business_code, row.account_name) for row in cost_candidates)
+        if cost_candidates:
+            account_codes = sorted({row.account_code for row in cost_candidates})
+            cost_rows = self.repository.list_bond_valuation_cost_rows(project.project_code, date, account_codes)
+            self._check_cancelled()
+            for row in cost_rows:
+                account = ValuationRow(str(row.get("account_code") or ""), str(row.get("account_name") or ""), Decimal("0"))
+                key = (account.account_business_code, account.account_name)
+                if key not in expected_cost_counts:
+                    continue
+                cost_counts[key] += 1
+                previous_cost = fa_costs.get(key, Decimal("0"))
+                fa_costs[key] = previous_cost + to_decimal(row["cost"]) if previous_cost is not None and row.get("cost") is not None else None
+
         detail_rows: list[dict[str, str]] = []
         for stock_code, security_name in sorted(set(fa_amounts) | set(dm_amounts), key=lambda item: (item[1], item[0])):
             key = (stock_code, security_name)
@@ -1349,6 +1397,13 @@ class ReconcileEngine:
             dm_amount = dm_amounts.get(key, Decimal("0"))
             difference = dm_amount - fa_amount
             if amounts_equal(difference, Decimal("0")):
+                continue
+            fa_cost = fa_costs.get(key)
+            if fa_cost is not None and cost_counts[key] == expected_cost_counts[key] and amounts_equal(fa_cost, dm_amount):
+                self._project_log(
+                    project, f"债券{security_name}：估值金额不一致，字典已启用成本备用核对；FA成本={fa_cost}与DM证券余额={dm_amount}一致",
+                    "资产差异债券DM核对",
+                )
                 continue
             reason = _bond_security_difference_reason(security_name, stock_code, fa_amount, dm_amount, difference)
             self._project_log(
@@ -2360,7 +2415,14 @@ def _asset_difference_partial_reason(detail_rows: list[dict[str, str]], differen
     return f"暂不明确具体资产差异，但{joined_types}，FA科目余额与AM投融资余额有差异，差异值{difference_total}"
 
 
-def _asset_difference_full_reason(detail_rows: list[dict[str, str]]) -> str:
+def _asset_difference_full_reason(detail_rows: list[dict[str, str]], *, priority_count: int = 0) -> str:
+    if priority_count:
+        priority_reason = "\n".join(
+            f"{_circled_index(index)}{row['reason']}"
+            for index, row in enumerate(detail_rows[:priority_count], start=1)
+        )
+        other_reason = _asset_difference_full_reason(detail_rows[priority_count:])
+        return _renumber_specific_reason("\n".join(part for part in (priority_reason, other_reason) if part))
     bond_rows = [row for row in detail_rows if row.get("asset_type") == "债券"]
     if len(bond_rows) <= 1:
         return "\n".join(

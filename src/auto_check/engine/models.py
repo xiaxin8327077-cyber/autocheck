@@ -39,6 +39,9 @@ class ValuationRow:
     @property
     def account_business_code(self) -> str:
         parts = self.account_code.split(".")
+        if len(parts) > 4 and (parts[0], parts[1]) in {("1501", "01"), ("1101", "02")}:
+            # 债券固定剥离前四段科目层级；第三段可为 1C、5B 等含字母代码。
+            return ".".join(parts[4:])
         hierarchy_end = 1
         for part in parts[1:4]:
             if len(part) != 2 or not part.isdigit():

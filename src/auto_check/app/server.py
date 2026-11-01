@@ -129,6 +129,7 @@ from auto_check.app.pbc_import import (
     projected_columns,
 )
 from auto_check.app.repositories import AutoCheckRepository, DEFAULT_RECONCILE_TABLES
+from auto_check.app.reconcile_policy import initialize_bond_cost_dictionary, load_bond_cost_projects
 from auto_check.app.report_check_config import (
     default_report_check_config,
     load_report_check_config,
@@ -2192,6 +2193,7 @@ class ApiRouter:
             max_combination_rows=max_combination_rows,
             progress_logger=progress_logger,
             cancel_event=cancel_event,
+            bond_cost_projects=load_bond_cost_projects(self.application_database),
         )
 
     def _run_once(
@@ -5337,6 +5339,7 @@ def run_server(
     try:
         application_database.test_connection()
         application_database.validate_schema()
+        initialize_bond_cost_dictionary(application_database)
         auth_manager = AuthManager(
             resolved_config_path,
             database=application_database,

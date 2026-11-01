@@ -25,6 +25,7 @@ class FakeClient:
             {"c_projcode": "P2", "c_accountcode": "1001.01.01.01.0002", "c_accountname": "资产2", "f_marketvalue": Decimal("7")},
             {"c_projcode": "P2", "c_accountcode": "2203.01", "c_accountname": "费用2", "f_marketvalue": Decimal("8")},
         ]
+        self.valuation_cost_rows = []
         self.pact_assets = [
             {"c_projcode": "P1", "c_udlyasset": "资产1", "c_stockcode": "0001", "c_pactid": "PACT1", "c_spv_type": "10", "c_assettype": "31", "c_datasource": "am"},
             {"c_projcode": "P2", "c_udlyasset": "资产2", "c_stockcode": "0002", "c_pactid": "PACT2", "c_spv_type": "11", "c_assettype": "32", "c_datasource": "ht"},
@@ -64,6 +65,8 @@ class FakeClient:
             return self._fa4001_rows(sql, tuple(params))
         if "fa_valuationreport_dws" in sql and "c_accountcode = '0004'" in sql:
             return self._asset_total_rows(sql, tuple(params))
+        if "fa_valuationreport_dws" in sql and " AS cost" in sql:
+            return self.valuation_cost_rows
         if "fa_valuationreport_dws" in sql:
             return self._valuation_rows(sql, tuple(params))
         if "am_pactasset_dws" in sql:
@@ -370,6 +373,49 @@ def test_repository_loads_ta_balance_totals_from_dm_and_dws_tables():
     assert '"dws"."ta_pact_detail_dws"' in ta_queries[1]
     assert dws_client.fetch_all_calls[-2][1] == ("2026-04-30", "P1")
     assert dws_client.fetch_all_calls[-1][1] == ("2026-04-30", "P1")
+
+
+def test_repository_reads_costs_only_for_requested_project_date_and_account_codes():
+    client = FakeClient()
+    client.valuation_cost_rows = [{"account_code": "1501.01.1C.01.253096", "account_name": "23姜交03", "cost": None}]
+    repository = AutoCheckRepository(config(), dws_client=client, business_client=FakeClient())
+    rows = repository.list_bond_valuation_cost_rows("2020HJC0446", "2026-10-31", ["1501.01.1C.01.253096"])
+    assert rows[0]["cost"] is None
+    sql, params = client.fetch_all_calls[-1]
+    assert "f_cost AS cost" in sql
+    assert "c_accountcode IN (%s)" in sql
+    assert params == ("2020HJC0446", "2026-10-31", "1501.01.1C.01.253096")
+    assert repository.list_bond_valuation_cost_rows("P1", "2026-10-31", []) == []
+    assert len(client.fetch_all_calls) == 1
+
+
+def test_custom_valuation_without_cost_mapping_skips_cost_fallback():
+    client = FakeClient()
+    schema = ReconcileSchemaSettings(tables={
+        "fa_valuation": ReconcileTableSchema(table="custom.valuation"),
+    })
+    repository = AutoCheckRepository(config(), schema=schema, dws_client=client, business_client=FakeClient())
+    assert repository.list_bond_valuation_cost_rows("P1", "2026-10-31", ["1501.01.1C.01.253096"]) == []
+    assert client.fetch_all_calls == []
+
+
+def test_custom_valuation_uses_configured_cost_column():
+    client = FakeClient()
+    schema = ReconcileSchemaSettings(tables={
+        "fa_valuation": ReconcileTableSchema(table="custom.valuation", optional_fields={"cost": "custom_cost"}),
+    })
+    repository = AutoCheckRepository(config(), schema=schema, dws_client=client, business_client=FakeClient())
+    repository.list_bond_valuation_cost_rows("P1", "2026-10-31", ["1501.01.1C.01.253096"])
+    assert "custom_cost AS cost" in client.fetch_all_calls[0][0]
+
+
+def test_repository_keeps_existing_zero_dm_balances_for_cost_fallback():
+    client = FakeClient()
+    client.security_balance_amount_rows = [{"stock_code": "253096", "security_name": "23姜交03", "amount": Decimal("0")}]
+    repository = AutoCheckRepository(config(), dws_client=client, business_client=FakeClient())
+    rows = repository.list_security_balance_amounts("P1", "2026-10-31", include_zero=True)
+    assert rows[0]["amount"] == Decimal("0")
+    assert "HAVING" not in client.fetch_all_calls[-1][0]
 
 
 def test_repository_loads_security_balance_amounts_from_dm_table():

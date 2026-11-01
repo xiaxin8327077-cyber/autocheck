@@ -39,11 +39,14 @@ def test_v13_display_version_and_release_notes_are_consistent():
     assert app_js.count('class="changelog-version">v1.3.2</span>') == 1
     assert app_js.index('>v1.3.2</span>') < app_js.index('>v1.3.1</span>')
     fix = app_js.split('>v1.3.2</span>', 1)[1].split('</ul>', 1)[0]
-    assert fix.count("<li>") == 5
+    assert fix.count("<li>") == 6
     assert fix.count("人行逐笔校验同步20260930规则，新增内部编码判空及查重，正确实现Rule19。") == 1
     assert fix.count("对齐逐笔跨期收益率和新增编码校验的源程序结果。") == 1
     assert "对齐逐笔跨期收益率和新增编码校验的源程序结果。" in readme
     assert fix.count("修复对账股权损益调整差异识别，统一金额显示及结果滚动条。") == 1
+    bond_fix = "修复债券匹配异常，支持字典控制成本备用核对，优先展示完全匹配的差异。"
+    assert fix.count(bond_fix) == 1
+    assert bond_fix in readme
     assert fix.count("优化系统设置切页响应及界面体验，修复已知问题。") == 1
     assert fix.count("人行大集中报送完成时间固定为首次全步骤完成时记录的时间。") == 1
     assert "人行大集中报送完成时间固定为首次全步骤完成时记录的时间。" in readme

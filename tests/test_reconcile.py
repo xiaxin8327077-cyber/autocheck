@@ -301,6 +301,29 @@ def test_valuation_row_business_code_preserves_dots_inside_identifier():
     assert ValuationRow("1541.01.CC8250MX", "财产权", Decimal("1")).account_business_code == "CC8250MX"
 
 
+@pytest.mark.parametrize(
+    "account_code,security_code",
+    [
+        ("1501.01.1C.01.253096", "253096"),
+        ("1501.01.1C.01.254352", "254352"),
+        ("1501.01.5B.01.032480533", "032480533"),
+        ("1501.01.1C.01.280442", "280442"),
+        ("1101.02.1C.01.253096", "253096"),
+        ("1501.01.1C.01.JS.01", "JS.01"),
+    ],
+)
+def test_bond_business_code_skips_alphanumeric_account_levels(account_code, security_code):
+    row = ValuationRow(account_code, "债券", Decimal("1"))
+
+    assert row.account_business_code == security_code
+
+
+def test_non_bond_business_code_keeps_two_letter_identifier_segment():
+    row = ValuationRow("1541.01.CC.8250MX", "财产权", Decimal("1"))
+
+    assert row.account_business_code == "CC.8250MX"
+
+
 def test_am_candidate_group_progress_logs_are_throttled():
     logged = [
         index
@@ -380,6 +403,8 @@ class FakeRepo:
         self.ta_blank_client_type_rows = {}
         self.security_refinements = {}
         self.security_balance_amounts = {}
+        self.valuation_cost_rows = {}
+        self.valuation_cost_calls = []
         self.dm_project_invest_refinements = {}
         self.spv_project_invest_refinements = {}
         self.property_right_refinements = {}
@@ -446,8 +471,12 @@ class FakeRepo:
     def get_security_balance_refinement(self, project_code, date, stock_code, security_name):
         return self.security_refinements.get((project_code, stock_code, security_name))
 
-    def list_security_balance_amounts(self, project_code, date):
+    def list_security_balance_amounts(self, project_code, date, *, include_zero=False):
         return self.security_balance_amounts.get(project_code, [])
+
+    def list_bond_valuation_cost_rows(self, project_code, date, account_codes):
+        self.valuation_cost_calls.append((project_code, date, tuple(account_codes)))
+        return self.valuation_cost_rows.get(project_code, [])
 
     def get_dm_project_invest_refinement(self, project_code, date, pact_id):
         return self.dm_project_invest_refinements.get((project_code, pact_id))
@@ -1261,6 +1290,146 @@ def test_asset_difference_refinement_summarizes_multiple_bond_dm_differences_whe
     assert [row["asset_name"] for row in detail.data["rows"]] == ["24产业债001", "24产业债002"]
 
 
+def test_asset_difference_bonds_with_alphanumeric_levels_match_existing_dm_records():
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "截图项目", Decimal("442716974.77"), Decimal("442716775.77"))]
+    repo.asset_total["P1"] = Decimal("442716775.77")
+    repo.valuation["P1"] = [
+        ValuationRow("1501.01.1C.01.253096", "23姜交03", Decimal("16036304.00")),
+        ValuationRow("1501.01.1C.01.254352", "24丹阳01", Decimal("30851040.00")),
+        ValuationRow("1501.01.5B.01.032480533", "24安市淮阴PPN001", Decimal("10058130.00")),
+        ValuationRow("1501.01.1C.01.280442", "25太港05", Decimal("20257600.00")),
+        ValuationRow("1501.01.1C.02.253096", "23姜交03", Decimal("546367.12")),
+        ValuationRow("1501.01.1C.02.254352", "24丹阳01", Decimal("486945.20")),
+        ValuationRow("1111.03.01.01", "逆回购", Decimal("18000000.00")),
+    ]
+    repo.security_balance_amounts["P1"] = [
+        {"stock_code": "253096", "security_name": "23姜交03", "amount": Decimal("16008989.25")},
+        {"stock_code": "254352", "security_name": "24丹阳01", "amount": Decimal("30486079.58")},
+        {"stock_code": "032480533", "security_name": "24安市淮阴PPN001", "amount": Decimal("10020867.05")},
+        {"stock_code": "280442", "security_name": "25太港05", "amount": Decimal("20048323.07")},
+    ]
+    repo.reverse_repo_business_amounts["P1"] = Decimal("18000199.00")
+
+    result = ReconcileEngine(repo).run("2026-10-31")[0]
+
+    detail = result.details[-1].data
+    bond_rows = [row for row in detail["rows"] if row["asset_type"] == "债券"]
+    assert len(bond_rows) == 4
+    assert {row["security_code"]: row["difference"] for row in bond_rows} == {
+        "253096": "-27314.75",
+        "254352": "-364960.42",
+        "032480533": "-37262.95",
+        "280442": "-209276.93",
+    }
+    assert all("缺少" not in row["reason"] for row in bond_rows)
+    assert all(".02." not in row["account_code"] for row in bond_rows)
+    assert detail["difference_total"] == "-638616.05"
+    assert detail["is_full_match"] is False
+    assert result.match_status == "未解释"
+    assert detail["rows"][0]["asset_type"] == "逆回购"
+    assert detail["rows"][0]["index"] == "①"
+    assert detail["specific_reason"].startswith("①逆回购：")
+    assert "该行差异与资产负债差异199.00完全匹配" in detail["specific_reason"].splitlines()[0]
+    assert "暂不明确具体资产差异" in detail["specific_reason"].splitlines()[1]
+
+
+@pytest.mark.parametrize(
+    "main_difference,asset_gap,expected_codes,priority_count",
+    [
+        ("199", "77", ["ZQ001", "", "ZQ002"], 2),
+        ("-199", "77", ["ZQ002", "ZQ001", ""], 1),
+        ("198", "77", ["ZQ001", "ZQ002", ""], 0),
+        ("199", "199", ["ZQ001", "", "ZQ002"], 2),
+    ],
+)
+def test_asset_difference_prioritizes_signed_main_difference_without_changing_totals(
+    main_difference, asset_gap, expected_codes, priority_count
+):
+    repo = FakeRepo()
+    project = ProjectBalance("P1", "项目", Decimal("1000") + Decimal(main_difference), Decimal("1000"))
+    valuation_rows = [
+        ValuationRow("1501.01.55.01.ZQ001", "债券A", Decimal("1000")),
+        ValuationRow("1501.01.55.01.ZQ002", "债券B", Decimal("1000")),
+        ValuationRow("1111.03.01.01", "逆回购", Decimal("300")),
+    ]
+    repo.security_balance_amounts["P1"] = [
+        {"stock_code": "ZQ001", "security_name": "债券A", "amount": Decimal("1199")},
+        {"stock_code": "ZQ002", "security_name": "债券B", "amount": Decimal("801")},
+    ]
+    repo.reverse_repo_business_amounts["P1"] = Decimal("499")
+
+    data = ReconcileEngine(repo)._asset_difference_refinement_detail(
+        project, "2026-10-31", valuation_rows, Decimal(asset_gap)
+    ).data
+
+    assert [row.get("security_code", "") for row in data["rows"]] == expected_codes
+    assert [row["index"] for row in data["rows"]] == ["①", "②", "③"]
+    assert data["difference_total"] == "199"
+    assert data["is_full_match"] is (asset_gap == "199")
+    if priority_count and not data["is_full_match"]:
+        lines = data["specific_reason"].splitlines()
+        assert all("完全匹配" in line for line in lines[:priority_count])
+        assert "暂不明确具体资产差异" in lines[priority_count]
+    elif data["is_full_match"]:
+        assert data["specific_reason"].splitlines()[1].startswith("②逆回购：")
+    else:
+        assert "完全匹配" not in data["specific_reason"]
+
+
+@pytest.mark.parametrize(
+    "projects,market_values,cost_values,dm_amount,expected_difference,query_count",
+    [
+        ((), ["110"], ["100"], "100", "-10", 0),
+        (("OTHER",), ["110"], ["100"], "100", "-10", 0),
+        (("2020HJC0446",), ["110"], ["100"], "100", None, 1),
+        (("all",), ["110"], ["100"], "100", None, 1),
+        (("all",), ["100"], ["90"], "100", None, 0),
+        (("all",), ["110"], ["90"], "100", "-10", 1),
+        (("all",), ["110"], [None], "100", "-10", 1),
+        (("all",), ["10"], ["0"], "0", None, 1),
+        (("all",), ["60", "50"], ["40", "60"], "100", None, 1),
+        (("all",), ["60", "50"], ["100", None], "100", "-10", 1),
+        (("all",), ["60", "50"], ["100"], "100", "-10", 1),
+    ],
+)
+def test_bond_cost_fallback_is_dictionary_scoped_and_requires_complete_costs(
+    projects, market_values, cost_values, dm_amount, expected_difference, query_count
+):
+    repo = FakeRepo()
+    code = "2020HJC0446"
+    valuation_rows = [
+        ValuationRow(f"1501.01.{category}.01.253096", "23姜交03", Decimal(value))
+        for category, value in zip(("1C", "5B"), market_values)
+    ]
+    repo.security_balance_amounts[code] = [{"stock_code": "253096", "security_name": "23姜交03", "amount": Decimal(dm_amount)}]
+    repo.valuation_cost_rows[code] = [
+        {"account_code": row.account_code, "account_name": row.account_name, "cost": None if value is None else Decimal(value)}
+        for row, value in zip(valuation_rows, cost_values)
+    ]
+    rows = ReconcileEngine(repo, bond_cost_projects=projects)._bond_security_balance_difference_rows(
+        ProjectBalance(code, "项目", Decimal("1000"), Decimal("1000")), "2026-10-31", valuation_rows, set()
+    )
+    assert len(repo.valuation_cost_calls) == query_count
+    if expected_difference is None:
+        assert rows == []
+    else:
+        assert len(rows) == 1
+        assert rows[0]["difference"] == expected_difference
+
+
+def test_bond_cost_fallback_does_not_mask_missing_dm_bond():
+    repo = FakeRepo()
+    row = ValuationRow("1501.01.1C.01.253096", "23姜交03", Decimal("110"))
+    repo.valuation_cost_rows["P1"] = [{"account_code": row.account_code, "account_name": row.account_name, "cost": Decimal("0")}]
+    rows = ReconcileEngine(repo, bond_cost_projects=("all",))._bond_security_balance_difference_rows(
+        ProjectBalance("P1", "项目", Decimal("1000"), Decimal("1000")), "2026-10-31", [row], set()
+    )
+    assert len(rows) == 1
+    assert "DM中缺少该债券" in rows[0]["reason"]
+    assert repo.valuation_cost_calls == []
+
+
 def test_asset_difference_bond_dm_refinement_runs_when_combination_is_not_overflow():
     repo = FakeRepo()
     repo.projects = [ProjectBalance("P1", "Project", Decimal("875"), Decimal("1000"))]
@@ -1387,8 +1556,9 @@ def test_combined_asset_bond_and_positive_repo_specific_reason_numbers_are_conti
     assert results[0].difference_reason == "资产差异 + 负债及权益科目差异"
     assert results[0].match_status == "已解释"
     assert results[0].details[2].data["specific_reason"] == (
-        "①多个债券：FA债券本金科目余额与DM证券余额有差异，差异值-100\n"
-        "②正回购：FA科目余额与存续回购业务表正回购金额有差异，差异值50"
+        "①23苏城投MTN001债券：FA债券本金科目余额与DM证券余额有差异，债券代码ZQ001，差异值-50\n"
+        "②23苏城投MTN002债券：FA债券本金科目余额与DM证券余额有差异，债券代码ZQ002，差异值-50\n"
+        "③正回购：FA科目余额与存续回购业务表正回购金额有差异，差异值50"
     )
 
 
@@ -1498,7 +1668,10 @@ def test_asset_difference_refinement_does_not_use_main_difference_as_full_match(
     assert detail.kind == "asset_difference_refinement"
     assert detail.data["asset_total_gap"] == "-500"
     assert detail.data["difference_total"] == "100"
-    assert detail.data["specific_reason"] == "暂不明确具体资产差异，但逆回购，FA科目余额与存续回购业务表逆回购金额有差异，差异值100"
+    assert detail.data["specific_reason"] == (
+        "①逆回购：FA科目余额与存续回购业务表逆回购金额有差异，差异值100；该行差异与资产负债差异100完全匹配（同方向且金额相等）\n"
+        "暂不明确具体资产差异，但逆回购，FA科目余额与存续回购业务表逆回购金额有差异，差异值100"
+    )
 
 
 def test_asset_difference_refinement_reports_unclear_when_reverse_repo_amount_is_partial():

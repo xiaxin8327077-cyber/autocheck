@@ -8135,6 +8135,7 @@ const RECONCILE_SCHEMA_TABLES = [
       ["account_name", "科目名称", "c_accountname"],
       ["market_value", "市值/余额", "f_marketvalue"],
     ],
+    optionalFields: [["cost", "成本金额（字典范围内债券备用核对）", "f_cost"]],
   },
   {
     key: "am_pact_asset",
@@ -11114,6 +11115,7 @@ const BUSINESS_FIELD_GROUPS = [
       ["c_accountcode", "科目代码", "判断 0004、1 开头、3001.XX共同类、非 1 开头、四级科目等"],
       ["c_accountname", "科目名称", "展示差异资产；与 AM 资产名称匹配"],
       ["f_marketvalue", "估值表金额/市值", "与差异金额做单行、汇总、组合匹配"],
+      ["f_cost", "成本金额", "字典启用项目的债券估值金额不一致时备用核对"],
     ],
   },
   {
@@ -14988,6 +14990,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
         <li>人行逐笔校验同步20260930规则，新增内部编码判空及查重，正确实现Rule19。</li>
         <li>对齐逐笔跨期收益率和新增编码校验的源程序结果。</li>
         <li>修复对账股权损益调整差异识别，统一金额显示及结果滚动条。</li>
+        <li>修复债券匹配异常，支持字典控制成本备用核对，优先展示完全匹配的差异。</li>
         <li>优化系统设置切页响应及界面体验，修复已知问题。</li>
         <li>人行大集中报送完成时间固定为首次全步骤完成时记录的时间。</li>
       </ul>
