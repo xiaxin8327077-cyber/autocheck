@@ -412,7 +412,12 @@
               <input id="runDate" type="date" />
             </div>
             <button id="runBtn" type="button" class="btn-primary" data-action-tone="primary" data-action-variant="solid">
-              <span class="btn-icon">&#8635;</span> 开始
+              <span class="btn-icon run-start-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5.2 3.2v9.6L13 8 5.2 3.2z"/></svg></span>
+              开始
+            </button>
+            <button id="refreshResultsBtn" type="button" class="btn-outline" data-action-tone="neutral" data-action-variant="weak" title="刷新到最新校验日期的结果">
+              <span class="btn-icon" aria-hidden="true">&#8635;</span>
+              刷新
             </button>
             <button id="stopRunBtn" type="button" class="btn-stop" data-action-tone="danger" data-action-variant="solid" title="停止执行" hidden>
               <span class="stop-icon"></span>

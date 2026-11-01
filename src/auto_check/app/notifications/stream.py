@@ -90,6 +90,14 @@ class NotificationStreamHub:
     def publish(self, user_id: str, event: NotificationStreamEvent) -> None:
         with self._lock:
             subs = list(self._subscriptions.get(user_id, []))
+        self._deliver(subs, event)
+
+    def broadcast(self, event: NotificationStreamEvent) -> None:
+        with self._lock:
+            subs = [sub for user_subs in self._subscriptions.values() for sub in user_subs]
+        self._deliver(subs, event)
+
+    def _deliver(self, subs: list[NotificationSubscription], event: NotificationStreamEvent) -> None:
         for sub in subs:
             if sub.closed:
                 continue

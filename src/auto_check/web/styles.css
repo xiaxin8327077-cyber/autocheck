@@ -3057,6 +3057,24 @@ h1, h2, h3, p { margin: 0; }
   gap: 12px;
 }
 
+.run-bar #refreshResultsBtn,
+.run-bar #runBtn {
+  flex-shrink: 0;
+}
+
+.run-start-icon {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+}
+
+.run-start-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
 .last-run-time {
   font-size: 12px;
   color: var(--on-surface-variant);

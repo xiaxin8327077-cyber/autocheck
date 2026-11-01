@@ -80,9 +80,10 @@ class NotificationPage:
 
 @dataclass(frozen=True)
 class NotificationStreamEvent:
-    type: Literal["notification", "resync", "close"]
+    type: Literal["notification", "resync", "close", "reconcile_completed"]
     notification: NotificationItem | None = None
     unread_count: int | None = None
+    data: Mapping[str, Any] | None = None
 
 
 class NotificationStreamPublisher(Protocol):

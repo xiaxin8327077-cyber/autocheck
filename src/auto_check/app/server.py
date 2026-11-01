@@ -57,6 +57,7 @@ from auto_check.app.history import (
     HistoryStore,
     JsonHistoryStore,
     build_history_entry,
+    reconcile_watch_from_runs,
     summarize_run,
 )
 from auto_check.app.flow_tool import (
@@ -156,6 +157,7 @@ from auto_check.app.notifications import platform as _notification_platform_modu
 from auto_check.app.platform_services import _UserDirectoryFacade
 from auto_check.app.notifications.service import NotificationService
 from auto_check.app.notifications.storage import NotificationStorage
+from auto_check.app.notifications.contracts import NotificationStreamEvent
 from auto_check.app.notifications.stream import NotificationStreamHub
 from auto_check.app.reconcile_schema import (
     ReconcileSchemaSettings,
@@ -1024,6 +1026,14 @@ class ApiRouter:
             # ---- Check History ----
             if method == "GET" and path == "/api/history":
                 return 200, {"history": [summarize_run(run) for run in self.history_store.list_runs()]}
+
+            if method == "GET" and path == "/api/history/watch":
+                query = dict(parse_qsl(getattr(self, "_query_string", "") or ""))
+                run_date = str(query.get("run_date") or "").strip()[:10]
+                watch = getattr(self.history_store, "watch_reconcile", None)
+                if watch is None:
+                    return 200, reconcile_watch_from_runs(self.history_store.list_runs(), run_date)
+                return 200, watch(run_date)
 
             if method == "GET" and path.startswith("/api/history/"):
                 history_id = path.rsplit("/", 1)[-1]
@@ -2235,7 +2245,21 @@ class ApiRouter:
             executor_name=str((current_user or {}).get("display_name") or (current_user or {}).get("username") or ""),
         )
         self.history_store.save_run(history)
+        self._publish_reconcile_completed(history)
         return results, summarize_run(history)
+
+    def _publish_reconcile_completed(self, history: dict[str, Any]) -> None:
+        publisher = getattr(self, "reconcile_completion_publisher", None)
+        if publisher is None or not history or not history.get("id"):
+            return
+        publisher({
+            "id": str(history.get("id") or ""),
+            "run_date": str(history.get("run_date") or "")[:10],
+            "run_at": str(history.get("run_at") or ""),
+            "executor_id": str(history.get("executor_id") or ""),
+            "executor_name": str(history.get("executor_name") or ""),
+            "executor_username": str(history.get("executor_username") or ""),
+        })
 
     def _start_run_job(
         self,
@@ -3964,6 +3988,9 @@ class AutoCheckRequestHandler(BaseHTTPRequestHandler):
                 elif event is not None and event.type == "resync":
                     data = json.dumps({"resync": True})
                     payload = f"event: resync\ndata: {data}\n\n".encode("utf-8")
+                elif event is not None and event.type == "reconcile_completed":
+                    data = json.dumps(dict(event.data or {}), ensure_ascii=False, default=str)
+                    payload = f"event: reconcile_completed\ndata: {data}\n\n".encode("utf-8")
                 else:
                     # Timeout or non-notification event: send heartbeat ping
                     payload = b": ping\n\n"
@@ -5403,6 +5430,9 @@ def run_server(
             report_navigation_service=report_navigation_service,
             module_runtime=module_runtime,
             start_field_mapping_auto_refresh=False,
+        )
+        router.reconcile_completion_publisher = lambda payload: notification_stream_hub.broadcast(
+            NotificationStreamEvent(type="reconcile_completed", data=payload)
         )
 
         scheduled_task_manager = ScheduledTaskManager(

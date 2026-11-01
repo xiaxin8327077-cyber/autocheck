@@ -322,6 +322,12 @@
     }
     const es = new EventSource("/api/notifications/stream");
     state.eventSource = es;
+    es.addEventListener("reconcile_completed", (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        document.dispatchEvent(new CustomEvent("auto-check-reconcile-completed", { detail: data }));
+      } catch (_) {}
+    });
     es.addEventListener("notification", (e) => {
       try {
         const data = JSON.parse(e.data);

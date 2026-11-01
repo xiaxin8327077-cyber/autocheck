@@ -7,7 +7,7 @@ import pytest
 
 from auto_check.app import storage_history
 from auto_check.app.config import AppConfig, DataSourceConfig
-from auto_check.app.history import DatabaseHistoryStore, JsonHistoryStore, build_history_entry
+from auto_check.app.history import DatabaseHistoryStore, JsonHistoryStore, build_history_entry, reconcile_watch_from_runs
 from mysql_config_test_support import MemoryApplicationDatabase
 
 
@@ -534,3 +534,50 @@ def test_database_history_store_writes_flow_chain_history_to_mysql_tables(app_da
     assert tables["flow_chain_run_details"][0]["error"] == "流程B超时"
     assert store.get_run(run["id"])["steps"][1]["message"] == "超时"
     assert store.list_runs()[0]["id"] == "flow-1"
+
+
+def test_reconcile_watch_uses_check_date_and_latest_date_separately():
+    runs = [
+        {"id": "early-930", "run_date": "2026-09-30", "run_at": "2026-09-30 09:00:00", "executor_name": "张三", "total_count": 2},
+        {"id": "rerun-930", "run_date": "2026-09-30", "run_at": "2026-11-01 11:05:02", "executor_name": "李四", "total_count": 3},
+        {"id": "early-1001", "run_date": "2026-10-01", "run_at": "2026-10-01 08:00:00", "executor_name": "张三", "total_count": 4},
+        {"id": "latest-1001", "run_date": "2026-10-01", "run_at": "2026-10-01 10:20:15", "executor_name": "张三", "total_count": 5},
+        {"id": "old-date-new-time", "run_date": "2026-08-31", "run_at": "2026-11-02 08:00:00", "executor_name": "王五", "total_count": 1},
+    ]
+
+    stayed_on_930 = reconcile_watch_from_runs(runs, "2026-09-30")
+
+    assert stayed_on_930["same_date"]["id"] == "rerun-930"
+    assert stayed_on_930["newer_date"]["id"] == "latest-1001"
+    assert stayed_on_930["newer_date"]["run_date"] == "2026-10-01"
+    assert stayed_on_930["latest_date"]["id"] == "latest-1001"
+    assert stayed_on_930["latest_date"]["id"] != "old-date-new-time"
+    assert stayed_on_930["latest_date"]["id"] != "rerun-930"
+
+    stayed_on_1001 = reconcile_watch_from_runs(runs, "2026-10-01")
+
+    assert stayed_on_1001["newer_date"] is None
+    assert stayed_on_1001["same_date"]["id"] == "latest-1001"
+    assert reconcile_watch_from_runs(runs, "")["latest_date"]["id"] == "latest-1001"
+
+
+def test_database_history_watch_reads_headers_without_result_payload(app_database):
+    store = DatabaseHistoryStore(app_database)
+    older = _reconcile_run("old-930")
+    older["run_date"] = "2026-09-30"
+    older["run_at"] = "2026-09-30 09:00:00"
+    latest = _reconcile_run("latest-1001")
+    latest["run_date"] = "2026-10-01"
+    latest["run_at"] = "2026-10-01 10:20:15"
+    latest["executor_name"] = "张三"
+    store.save_run(older)
+    store.save_run(latest)
+    app_database.connection.executed_sql.clear()
+
+    watched = store.watch_reconcile("2026-09-30")
+
+    assert watched["same_date"]["id"] == "old-930"
+    assert watched["newer_date"]["id"] == "latest-1001"
+    assert watched["latest_date"]["id"] == "latest-1001"
+    assert watched["latest_date"]["executor_name"] == "张三"
+    assert all("payload_json" not in sql for sql in app_database.connection.executed_sql)

@@ -36,6 +36,17 @@ def test_v13_display_version_and_release_notes_are_consistent():
     assert 'id="topNavStatus" title="V1.3">V1.3</span>' in html
     assert 'id="sysVersion">V1.3</span>' in html
     assert "| 界面版本 | **V1.3**" in readme
+    assert app_js.count('class="changelog-version">v1.3.3</span>') == 1
+    assert app_js.index('>v1.3.3</span>') < app_js.index('>v1.3.2</span>')
+    refresh_note = "智能核数支持手动刷新结果，并在校验日期出现新结果或当期结果变化时提示确认。"
+    refresh_notes = app_js.split('>v1.3.3</span>', 1)[1].split('</ul>', 1)[0]
+    progress_note = "他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。"
+    assert refresh_notes.count("<li>") == 2
+    assert refresh_notes.count(refresh_note) == 1
+    assert refresh_notes.count(progress_note) == 1
+    assert refresh_note in readme
+    assert progress_note in readme
+    assert "`v1.3.3` (2026-11-01)" in readme
     assert app_js.count('class="changelog-version">v1.3.2</span>') == 1
     assert app_js.index('>v1.3.2</span>') < app_js.index('>v1.3.1</span>')
     fix = app_js.split('>v1.3.2</span>', 1)[1].split('</ul>', 1)[0]
@@ -4342,7 +4353,8 @@ def test_latest_history_results_load_by_default_and_last_run_time_is_retained():
     set_last_run = re.search(r"function setLastRunTime\(value, executorName = \"\"\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert set_last_run is not None
     assert "hideLastRunTimeForNoSourceData = false;" in set_last_run.group("body")
-    assert "setLastRunTime(latestHistory.run_at, historyExecutorName(latestHistory))" in app_js
+    assert "applyReconcileHistoryRun(latestHistory);" in app_js
+    assert "setLastRunTime(run.run_at, historyExecutorName(run))" in app_js
     assert "normalizeExecutorDisplayName" in app_js
     assert 'executorName: normalizeExecutorDisplayName(extra.executorName || latestRunExecutor, "")' in app_js
     assert "if (!latestRunAt) setLastRunTime(formatLastRunTime())" not in app_js
@@ -8667,7 +8679,7 @@ def test_run_history_displays_executor_and_recent_run_summary():
     assert row_body.index("<td class=\"money-cell\">${formatMoney(run.total_count)}</td>") < row_body.index("<td class=\"money-cell\">${formatMoney(explained)}</td>")
     assert row_body.index("<td class=\"money-cell\">${formatMoney(explained)}</td>") < row_body.index("history-added")
     assert row_body.index("history-added") < row_body.index("history-removed")
-    assert 'setLastRunTime(latestHistory.run_at, historyExecutorName(latestHistory))' in app_js
+    assert 'setLastRunTime(run.run_at, historyExecutorName(run))' in app_js
     assert 'lastRunTime.textContent = `最近执行：${executor}  ${latestRunAt}`;' in app_js
 
     css = _read(STYLES_CSS)
@@ -8702,9 +8714,64 @@ def test_history_restore_marks_result_list_and_keeps_latest_snapshot():
     load_latest = re.search(r"async function loadLatestHistoryResults\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert load_latest is not None
     latest_loader = load_latest.group("body")
-    assert "clearResultHistoryRestoreState();" in latest_loader
-    assert 'homeResultListFilterLabel = "";' in latest_loader
-    assert "setLastRunTime(latestHistory.run_at, historyExecutorName(latestHistory))" in latest_loader
+    assert "applyReconcileHistoryRun(latestHistory);" in latest_loader
+    apply_run = re.search(r"function applyReconcileHistoryRun\(run\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert apply_run is not None
+    apply_body = apply_run.group("body")
+    assert "clearResultHistoryRestoreState();" in apply_body
+    assert 'homeResultListFilterLabel = "";' in apply_body
+    assert "setLastRunTime(run.run_at, historyExecutorName(run))" in apply_body
+
+
+def test_auto_check_refresh_prompts_before_loading_and_manual_refresh_uses_latest_date():
+    html = _read(INDEX_HTML)
+    app_js = _read(APP_JS)
+    server = _read(SERVER_PY)
+
+    run_bar = html.split('id="page-auto-check"', 1)[1].split('id="page-history"', 1)[0]
+    assert run_bar.index('id="runBtn"') < run_bar.index('id="refreshResultsBtn"') < run_bar.index('id="stopRunBtn"')
+    start_button = run_bar.split('id="runBtn"', 1)[1].split("</button>", 1)[0]
+    refresh_button = run_bar.split('id="refreshResultsBtn"', 1)[1].split("</button>", 1)[0]
+    assert "run-start-icon" in start_button
+    assert "<path" in start_button
+    assert "&#8635;" not in start_button
+    assert "开始" in start_button
+    assert "&#8635;" in refresh_button
+    assert "刷新" in refresh_button
+
+    refresh = re.search(r"async function refreshLatestReconcileResults\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert refresh is not None
+    refresh_body = refresh.group("body")
+    assert 'api("/api/history/watch")' in refresh_body
+    assert "watch.latest_date" in refresh_body
+    assert "showConfirm(" not in refresh_body
+    assert refresh_body.index("loadReconcileHistoryRun(brief.id)") < refresh_body.index("applyReconcileHistoryRun(run)")
+
+    check = re.search(r"async function checkReconcileResultUpdates\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
+    assert check is not None
+    check_body = check.group("body")
+    assert "findChangedSameDateRun(watch.same_date)" in check_body
+    assert "watch.newer_date" in check_body
+    assert 'showConfirm("发现新的对数结果"' in check_body
+    assert check_body.index('showConfirm("发现新的对数结果"') < check_body.index("applyReconcileHistoryRun(run)")
+    assert "results =" not in check_body
+    assert "是否加载这批结果？" in app_js
+    assert "已重新执行，结果有变化" in app_js
+    assert "是否加载最新结果？" in app_js
+    assert "是否加载最新一次执行的结果？" in app_js
+    assert "reconcileResultsChanged(results, run.results || [])" in app_js
+    assert "startReconcileResultWatch" not in app_js
+    assert "RESULT_WATCH_INTERVAL_MS" not in app_js
+    assert 'addEventListener("auto-check-reconcile-completed"' in app_js
+    assert 'addEventListener("reconcile_completed"' in (ROOT / "src" / "auto_check" / "web" / "notification_center.js").read_text(encoding="utf-8")
+    assert "noteReconcileCompletion" in app_js
+    assert 'cancelText: "否", okText: "查看进度"' in app_js
+    assert "对数任务正在执行" in app_js
+    assert "是否查看当前进度？" in app_js
+    assert 'event: reconcile_completed' in server
+    assert "_publish_reconcile_completed" in server
+    assert 'path == "/api/history/watch"' in server
+    assert "run_date is required" not in server.split('path == "/api/history/watch"', 1)[1].split('path.startswith("/api/history/")', 1)[0]
 
 
 def test_history_detail_opens_in_modal_and_respects_permissions():
@@ -9190,7 +9257,7 @@ def test_run_and_pbc_import_conflict_feedback_is_visible():
     app_js = _read(APP_JS)
 
     assert "对数任务正在执行，请等待当前任务完成后再开始。" in app_js
-    assert "showToast(message, \"warning\")" in app_js
+    assert 'showConfirm(\n    "对数任务正在执行"' in app_js
     assert "您的执行失败，原因：有正在执行的任务" in app_js
     assert "用户正在执行中" in app_js
     assert "用户执行完成，您可再次执行。" in app_js

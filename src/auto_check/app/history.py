@@ -24,6 +24,7 @@ from auto_check.app.storage_history import (
     list_db_validation_run_summaries,
     list_flow_chain_runs,
     list_reconcile_runs,
+    list_reconcile_watch_headers,
     save_db_validation_run,
     save_flow_chain_run,
     save_reconcile_run,
@@ -38,6 +39,8 @@ class HistoryStore(Protocol):
     """Storage boundary for check history."""
 
     def list_runs(self) -> list[dict[str, Any]]: ...
+
+    def watch_reconcile(self, run_date: str) -> dict[str, Any]: ...
 
     def count_runs(self) -> int: ...
 
@@ -54,6 +57,9 @@ class JsonHistoryStore:
 
     def list_runs(self) -> list[dict[str, Any]]:
         return sorted(_load_runs(self.path), key=_history_sort_key, reverse=True)
+
+    def watch_reconcile(self, run_date: str) -> dict[str, Any]:
+        return reconcile_watch_from_runs(self.list_runs(), run_date)
 
     def count_runs(self) -> int:
         return len(_load_runs(self.path))
@@ -104,6 +110,13 @@ class DatabaseHistoryStore:
             with self.database.connect() as connection:
                 return list_db_validation_run_summaries(connection)
         return [summarize_run(run) for run in self.list_runs()]
+
+    def watch_reconcile(self, run_date: str) -> dict[str, Any]:
+        if self.kind != "reconcile":
+            return reconcile_watch_from_runs([], run_date)
+        with self.database.connect() as connection:
+            runs = list_reconcile_watch_headers(connection)
+        return reconcile_watch_from_runs(runs, run_date)
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.database.connect() as connection:
@@ -209,6 +222,59 @@ def config_fingerprint(config: AppConfig) -> str:
 
 def summarize_run(run: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in run.items() if key not in {"results", "added_results", "removed_results"}}
+
+
+def reconcile_watch_from_runs(runs: list[dict[str, Any]], run_date: str) -> dict[str, Any]:
+    dated = [run for run in runs if _watch_run_date(run)]
+    latest_date = _watch_brief(_latest_watch_run(dated))
+    watched = str(run_date or "").strip()[:10]
+    if not watched:
+        return {"run_date": "", "same_date": None, "newer_date": None, "latest_date": latest_date}
+    same_date = [run for run in dated if _watch_run_date(run) == watched]
+    newer_date = [run for run in dated if _watch_run_date(run) > watched]
+    return {
+        "run_date": watched,
+        "same_date": _watch_brief(_latest_watch_run(same_date)),
+        "newer_date": _watch_brief(_latest_watch_run(newer_date)),
+        "latest_date": latest_date,
+    }
+
+
+def _watch_run_date(run: dict[str, Any]) -> str:
+    value = run.get("run_date")
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()[:10]
+    return str(value or "")[:10]
+
+
+def _watch_run_at(run: dict[str, Any]) -> str:
+    value = run.get("run_at")
+    if isinstance(value, datetime):
+        timespec = "microseconds" if value.microsecond else "seconds"
+        return value.isoformat(sep=" ", timespec=timespec)
+    return str(value or "")
+
+
+def _latest_watch_run(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not runs:
+        return None
+    return max(runs, key=lambda run: (_watch_run_date(run), _watch_run_at(run), str(run.get("id") or "")))
+
+
+def _watch_brief(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not run:
+        return None
+    total = run.get("total_count")
+    return {
+        "id": str(run.get("id") or ""),
+        "run_date": _watch_run_date(run),
+        "run_at": _watch_run_at(run),
+        "executor_name": str(run.get("executor_name") or ""),
+        "executor_username": str(run.get("executor_username") or ""),
+        "total_count": int(total) if total not in (None, "") else 0,
+    }
 
 
 def _load_runs(path: Path) -> list[dict[str, Any]]:

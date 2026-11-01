@@ -234,6 +234,33 @@ def list_reconcile_runs(connection: Connection) -> list[dict[str, Any]]:
     return _list_kind_runs(connection, "reconcile", RUN_HEADERS.c.run_date.desc(), RUN_HEADERS.c.run_at.desc())
 
 
+def list_reconcile_watch_headers(connection: Connection) -> list[dict[str, Any]]:
+    header_rows = connection.execute(
+        select(
+            RUN_HEADERS.c.id,
+            RUN_HEADERS.c.run_date,
+            RUN_HEADERS.c.run_at,
+            RUN_HEADERS.c.executor_name,
+            RUN_HEADERS.c.executor_username,
+        ).where(RUN_HEADERS.c.kind == "reconcile")
+    ).mappings().all()
+    count_rows = connection.execute(
+        select(RECONCILE_RUNS.c.id, RECONCILE_RUNS.c.total_count)
+    ).mappings().all()
+    counts = {str(row["id"]): int(row["total_count"] or 0) for row in count_rows}
+    return [
+        {
+            "id": str(row["id"]),
+            "run_date": _history_text(row["run_date"])[:10],
+            "run_at": _history_text(row["run_at"]),
+            "executor_name": _text(row["executor_name"]),
+            "executor_username": _text(row["executor_username"]),
+            "total_count": counts.get(str(row["id"]), 0),
+        }
+        for row in header_rows
+    ]
+
+
 def get_reconcile_run(connection: Connection, run_id: str) -> dict[str, Any] | None:
     return _get_kind_run(connection, "reconcile", run_id)
 

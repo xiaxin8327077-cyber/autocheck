@@ -7,6 +7,7 @@ const mainContent = document.querySelector(".main-content");
 const pages = document.querySelectorAll(".page");
 const runBtn = document.getElementById("runBtn");
 const stopRunBtn = document.getElementById("stopRunBtn");
+const refreshResultsBtn = document.getElementById("refreshResultsBtn");
 const runDate = document.getElementById("runDate");
 const statusText = document.getElementById("statusText");
 const topNavStatus = document.getElementById("topNavStatus");
@@ -343,6 +344,14 @@ let trendDateStart = "";
 let trendDateEnd = "";
 let homeResultListFilterLabel = "";
 let resultRestoreHistoryMeta = null;
+let displayedReconcileRun = { id: "", runDate: "", runAt: "", signature: "" };
+let reconcileWatchDismissedKey = "";
+let reconcileWatchUnchangedRunId = "";
+let reconcileWatchPromptOpen = false;
+let reconcileWatchReady = false;
+let reconcileCompletionPending = false;
+let reconcileWatchChecking = false;
+let reconcileRefreshInFlight = false;
 const LATEST_RESULTS_SNAPSHOT_KEY = "autoCheckLatestResults";
 const RESULT_EMPTY_SOURCE = "source-empty";
 let pbcUploadId = "";
@@ -1619,6 +1628,7 @@ async function switchPage(name, options = {}) {
     }
   }
   if (name === "auto-check" && previousPage !== "auto-check") showResultListReturnLoading();
+  if (name === "auto-check") flushPendingReconcileCompletion();
 }
 
 function captureScrollPosition() {
@@ -5400,6 +5410,11 @@ function restoreLatestResultsSnapshot() {
     currentPage = 1;
     renderResults();
     if (payload.runAt) setLastRunTime(payload.runAt, payload.executorName || "");
+    rememberDisplayedReconcileRun({
+      id: "",
+      run_date: payload.runDate || "",
+      run_at: payload.runAt || "",
+    });
     return true;
   } catch (_) {
     return false;
@@ -5451,6 +5466,7 @@ function appendRunLog(message) {
 function setRunningUi(isRunning) {
   runBtn.disabled = isRunning;
   runBtn.classList.toggle("loading", isRunning);
+  if (refreshResultsBtn) refreshResultsBtn.disabled = isRunning;
   if (stopRunBtn) {
     stopRunBtn.hidden = !isRunning;
     stopRunBtn.disabled = false;
@@ -6775,22 +6791,36 @@ exportBtn.addEventListener("click", exportToExcel);
 /* ===== Auto-check Run ===== */
 const RUN_CONFLICT_MESSAGE = "对数任务正在执行，请等待当前任务完成后再开始。";
 
-function handleRunStartError(error) {
+function isRunConflictMessage(message) {
+  const text = String(message || "");
+  return text.includes("正在执行") || text.includes("当前任务完成");
+}
+
+async function handleRunStartError(error) {
   const message = error?.message || "执行失败";
-  if (message.includes("正在执行") || message.includes("当前任务完成")) {
-    const activeJob = error?.payload?.active_job || {};
-    const executor = userDisplayName(activeJob.executor || {});
-    appendRunLog("您的执行失败，原因：有正在执行的任务");
-    appendRunLog(`${executor}用户正在执行中`);
+  if (!isRunConflictMessage(message)) return { message, conflict: false, watching: false };
+  const activeJob = error?.payload?.active_job || {};
+  const executor = userDisplayName(activeJob.executor || {});
+  appendRunLog("您的执行失败，原因：有正在执行的任务");
+  appendRunLog(`${executor}用户正在执行中`);
+  const watch = await showConfirm(
+    "对数任务正在执行",
+    `${executor}正在执行。是否查看当前进度？`,
+    { cancelText: "否", okText: "查看进度" },
+  );
+  if (watch && activeJob.id) {
     pollActiveRunConflict(activeJob.id, executor);
-    showToast(message, "warning");
+    return { message, conflict: true, watching: true };
   }
-  return message;
+  flushPendingReconcileCompletion();
+  return { message, conflict: true, watching: false };
 }
 
 function pollActiveRunConflict(jobId, executorName) {
   if (!jobId) return;
   if (activeRunConflictPollTimer) clearInterval(activeRunConflictPollTimer);
+  showWaveProgress();
+  setWaveProgress(0, `${executorName || "当前"} 正在执行`);
   const poll = async () => {
     try {
       const payload = await api(`/api/run/status/${encodeURIComponent(jobId)}`);
@@ -6798,14 +6828,20 @@ function pollActiveRunConflict(jobId, executorName) {
       if (["completed", "failed", "cancelled"].includes(job.status)) {
         clearInterval(activeRunConflictPollTimer);
         activeRunConflictPollTimer = null;
+        hideWaveProgress();
         appendRunLog(`${executorName || "当前"}用户执行完成，您可再次执行。`);
+        setStatus(`${executorName || "当前"}已执行完成`);
+        void checkReconcileResultUpdates();
+        return;
       }
+      setWaveProgress(job.progress || 0, job.step || `${executorName || "当前"} 正在执行`);
     } catch (_) {
       clearInterval(activeRunConflictPollTimer);
       activeRunConflictPollTimer = null;
+      hideWaveProgress();
     }
   };
-  activeRunConflictPollTimer = setInterval(poll, 1200);
+  activeRunConflictPollTimer = setInterval(poll, 1000);
   poll();
 }
 
@@ -6830,12 +6866,17 @@ runBtn.addEventListener("click", async () => {
     runJobId = payload.job_id;
     await pollRunJob(runJobId);
   } catch (e) { 
-    const message = handleRunStartError(e);
+    const outcome = await handleRunStartError(e);
     if (progressAnimationId) {
       clearInterval(progressAnimationId);
       progressAnimationId = null;
     }
-    setStatus(message);
+    setStatus(outcome.message);
+    if (outcome.watching) return;
+    if (outcome.conflict) {
+      hideWaveProgress();
+      return;
+    }
     setWaveProgress(100, "执行失败");
     waveProgressText.textContent = "失败";
     retainProgress();
@@ -6844,6 +6885,7 @@ runBtn.addEventListener("click", async () => {
     setRunningUi(false);
     runJobId = null;
   }
+  flushPendingReconcileCompletion();
 });
 
 async function pollRunJob(jobId) {
@@ -6879,6 +6921,12 @@ async function pollRunJob(jobId) {
             if (lastRunTime) lastRunTime.hidden = true;
             const noDataMessage = h.message || "报表对应日期无数据";
             setStatus(noDataMessage);
+            rememberDisplayedReconcileRun({
+              id: "",
+              run_date: runDate.value,
+              run_at: formatLastRunTime(),
+            }, results);
+            reconcileWatchDismissedKey = "";
           if (currentPageName !== "auto-check") await switchPage("auto-check");
           retainProgress();
           resolve();
@@ -6893,6 +6941,12 @@ async function pollRunJob(jobId) {
           const executor = historyExecutorName(h, executorFallback);
           setLastRunTime(h.run_at || job.finished_at || formatLastRunTime(), executor);
           saveLatestResultsSnapshot({ runAt: h.run_at || job.finished_at || latestRunAt, executorName: executor });
+          rememberDisplayedReconcileRun({
+            ...h,
+            run_at: h.run_at || job.finished_at || latestRunAt,
+            executor_name: executor,
+          }, results);
+          reconcileWatchDismissedKey = "";
           retainProgress();
           resolve();
           return;
@@ -8017,7 +8071,11 @@ async function restoreHistoryRun(run) {
   syncCustomSelect(reasonFilter);
   syncCustomSelect(statusFilter);
   setResultHistoryRestoreState(run, results.length);
-  currentPage = 1; renderResults(); await switchPage("auto-check");
+  currentPage = 1;
+  renderResults();
+  rememberDisplayedReconcileRun(run);
+  reconcileWatchDismissedKey = "";
+  await switchPage("auto-check");
   setStatus(historyRestoreHintText(resultRestoreHistoryMeta, results.length));
   showToast("结果列表已恢复到历史数据", "info");
 }
@@ -8047,34 +8105,272 @@ historyBody?.addEventListener("click", async (e) => {
   } catch (err) { setStatus(err.message); }
 });
 
+function reconcileAmountKey(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const text = String(value).replaceAll(",", "").trim();
+  if (!text || text === "-") return "";
+  const negative = text.startsWith("-");
+  const unsigned = negative ? text.slice(1) : text;
+  if (!/^\d+(\.\d+)?$/.test(unsigned)) return text;
+  const [whole, fraction = ""] = unsigned.split(".");
+  const trimmedFraction = fraction.replace(/0+$/, "");
+  const normalizedWhole = whole.replace(/^0+(?=\d)/, "") || "0";
+  const normalized = trimmedFraction ? `${normalizedWhole}.${trimmedFraction}` : normalizedWhole;
+  return negative && normalized !== "0" ? `-${normalized}` : normalized;
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+const RECONCILE_RESULT_AMOUNT_FIELDS = [
+  "valuation_asset_total",
+  "asset_total",
+  "liability_equity_total",
+  "received_trust_balance",
+  "difference",
+];
+
+function reconcileResultSignature(items) {
+  const rows = (Array.isArray(items) ? items : []).map((item) => {
+    const row = {
+      project_code: String(item?.project_code || ""),
+      project_name: String(item?.project_name || ""),
+      difference_reason: String(item?.difference_reason || ""),
+      match_status: String(item?.match_status || ""),
+      direction: String(item?.direction || ""),
+    };
+    for (const field of RECONCILE_RESULT_AMOUNT_FIELDS) row[field] = reconcileAmountKey(item?.[field]);
+    row.details = stableJson(item?.details || []);
+    row.display_details = stableJson(item?.display_details || []);
+    return row;
+  });
+  return stableJson(rows);
+}
+
+function reconcileResultsChanged(current, incoming) {
+  return reconcileResultSignature(current) !== reconcileResultSignature(incoming);
+}
+
+function rememberDisplayedReconcileRun(run, items = results) {
+  displayedReconcileRun = {
+    id: String(run?.id || ""),
+    runDate: String(run?.run_date || run?.runDate || "").slice(0, 10),
+    runAt: formatDisplayTime(run?.run_at || run?.runAt || ""),
+    signature: reconcileResultSignature(items),
+  };
+  reconcileWatchUnchangedRunId = "";
+}
+
+function isNewerReconcileRunAt(candidate, current) {
+  const next = formatDisplayTime(candidate || "");
+  const previous = formatDisplayTime(current || "");
+  if (!next || next === previous) return false;
+  if (!previous) return true;
+  return next > previous;
+}
+
+function reconcileWatchActor(run) {
+  const name = historyExecutorName(run);
+  const time = formatDisplayTime(run?.run_at || "");
+  return time ? `${name}，${time}` : name;
+}
+
+function buildReconcileWatchMessage(watchDate, newer, sameRun) {
+  const newerText = newer
+    ? `校验日期 ${newer.run_date} 已有对数结果（${reconcileWatchActor(newer)}）。`
+    : "";
+  const sameText = sameRun
+    ? `校验日期 ${sameRun.run_date || watchDate} 已重新执行，结果有变化（${reconcileWatchActor(sameRun)}）。`
+    : "";
+  if (newer && sameRun) return `${newerText}${sameText}是否加载最新一次执行的结果？`;
+  if (newer) return `${newerText}是否加载这批结果？`;
+  return `${sameText}是否加载最新结果？`;
+}
+
+function pickReconcileWatchRun(newer, sameRun) {
+  if (newer && sameRun) return isNewerReconcileRunAt(sameRun.run_at, newer.run_at) ? sameRun : newer;
+  return sameRun || newer || null;
+}
+
+function currentReconcileWatchDate() {
+  return displayedReconcileRun.runDate || String(runDate?.value || "").slice(0, 10);
+}
+
+function isConfirmDialogOpen() {
+  const modal = document.getElementById("confirmModal");
+  return Boolean(modal && !modal.hidden);
+}
+
+async function loadReconcileHistoryRun(runId) {
+  if (!runId) return null;
+  const payload = await api(`/api/history/${encodeURIComponent(runId)}`);
+  return payload.history || null;
+}
+
+function applyReconcileHistoryRun(run) {
+  if (!run) return false;
+  clearResultHistoryRestoreState();
+  homeResultListFilterLabel = "";
+  keywordFilter.value = "";
+  reasonFilter.value = "";
+  statusFilter.value = "";
+  syncCustomSelect(reasonFilter);
+  syncCustomSelect(statusFilter);
+  results = run.results || [];
+  resultEmptyState = "";
+  hideLastRunTimeForNoSourceData = false;
+  if (run.run_date) runDate.value = String(run.run_date).slice(0, 10);
+  currentPage = 1;
+  renderResults();
+  if (run.run_at) setLastRunTime(run.run_at, historyExecutorName(run));
+  rememberDisplayedReconcileRun(run);
+  saveLatestResultsSnapshot({ runAt: run.run_at || latestRunAt, executorName: historyExecutorName(run) });
+  reconcileWatchDismissedKey = "";
+  return true;
+}
+
 async function loadLatestHistoryResults() {
   try {
     const payload = await api("/api/history");
     const runs = payload.history || [];
-    if (!runs.length) return;
+    if (!runs.length) return false;
     const latest = [...runs].sort(compareHistoryRunsByRunAtDesc)[0];
-    if (!latest?.id) return;
+    if (!latest?.id) return false;
     const detailPayload = await api(`/api/history/${encodeURIComponent(latest.id)}`);
     const latestHistory = detailPayload.history;
-    clearResultHistoryRestoreState();
-    homeResultListFilterLabel = "";
-    keywordFilter.value = "";
-    reasonFilter.value = "";
-    statusFilter.value = "";
-    syncCustomSelect(reasonFilter);
-    syncCustomSelect(statusFilter);
-    results = latestHistory.results || [];
-    resultEmptyState = "";
-    runDate.value = latestHistory.run_date || runDate.value;
-    currentPage = 1;
-    renderResults();
-    if (latestHistory.run_at) setLastRunTime(latestHistory.run_at, historyExecutorName(latestHistory));
-    saveLatestResultsSnapshot({ runAt: latestHistory.run_at || latestRunAt, executorName: historyExecutorName(latestHistory) });
+    if (!latestHistory) return false;
+    applyReconcileHistoryRun(latestHistory);
     return true;
   } catch (_) {
     return false;
   }
 }
+
+async function findChangedSameDateRun(same) {
+  if (!same?.id || same.id === displayedReconcileRun.id || same.id === reconcileWatchUnchangedRunId) return null;
+  if (!isNewerReconcileRunAt(same.run_at, displayedReconcileRun.runAt)) return null;
+  const run = await loadReconcileHistoryRun(same.id);
+  if (!run) return null;
+  if (!reconcileResultsChanged(results, run.results || [])) {
+    reconcileWatchUnchangedRunId = same.id;
+    return null;
+  }
+  return run;
+}
+
+async function refreshLatestReconcileResults() {
+  if (reconcileRefreshInFlight) return;
+  reconcileRefreshInFlight = true;
+  if (refreshResultsBtn) refreshResultsBtn.disabled = true;
+  try {
+    const watch = await api("/api/history/watch");
+    const brief = watch.latest_date;
+    if (!brief?.id) {
+      setStatus("暂无对数结果");
+      showToast("暂无对数结果", "info");
+      return;
+    }
+    if (brief.id === displayedReconcileRun.id && !isNewerReconcileRunAt(brief.run_at, displayedReconcileRun.runAt)) {
+      setStatus("已是最新结果");
+      showToast("已是最新结果", "success");
+      return;
+    }
+    const run = await loadReconcileHistoryRun(brief.id);
+    if (!run) {
+      setStatus("暂无对数结果");
+      showToast("暂无对数结果", "info");
+      return;
+    }
+    applyReconcileHistoryRun(run);
+    setStatus("已加载最新结果");
+    showToast("已加载最新结果", "success");
+  } catch (error) {
+    setStatus(error.message);
+    showToast(error.message, "error");
+  } finally {
+    reconcileRefreshInFlight = false;
+    if (refreshResultsBtn) refreshResultsBtn.disabled = Boolean(runJobId);
+  }
+}
+
+function noteReconcileCompletion(detail) {
+  const executorId = String(detail?.executor_id || "");
+  if (executorId && executorId === String(authState.user?.id || "")) return;
+  const onResultPage = document.documentElement.getAttribute("data-page") === "auto-check";
+  const blocked = !reconcileWatchReady || document.hidden || !onResultPage || runJobId || reconcileWatchPromptOpen || isConfirmDialogOpen();
+  if (blocked) {
+    reconcileCompletionPending = true;
+    return;
+  }
+  void checkReconcileResultUpdates();
+}
+
+function flushPendingReconcileCompletion() {
+  if (!reconcileCompletionPending || !reconcileWatchReady || document.hidden || runJobId) return;
+  if (document.documentElement.getAttribute("data-page") !== "auto-check") return;
+  if (reconcileWatchPromptOpen || isConfirmDialogOpen()) return;
+  reconcileCompletionPending = false;
+  void checkReconcileResultUpdates();
+}
+
+async function checkReconcileResultUpdates() {
+  if (reconcileWatchChecking || reconcileWatchPromptOpen || reconcileRefreshInFlight || runJobId) return;
+  if (document.documentElement.getAttribute("data-page") !== "auto-check") return;
+  if (isConfirmDialogOpen()) return;
+  const watchDate = currentReconcileWatchDate();
+  if (!watchDate) return;
+  reconcileWatchChecking = true;
+  let shouldRecheck = false;
+  try {
+    const watch = await api(`/api/history/watch?run_date=${encodeURIComponent(watchDate)}`);
+    if (runJobId || reconcileRefreshInFlight || document.documentElement.getAttribute("data-page") !== "auto-check") return;
+    const newer = watch.newer_date?.id && watch.newer_date.id !== displayedReconcileRun.id ? watch.newer_date : null;
+    const sameChangedRun = await findChangedSameDateRun(watch.same_date);
+    if (!newer && !sameChangedRun) return;
+    const promptKey = `${newer?.id || ""}|${sameChangedRun?.id || ""}`;
+    if (promptKey === reconcileWatchDismissedKey) return;
+    if (isConfirmDialogOpen()) return;
+    reconcileWatchPromptOpen = true;
+    const accepted = await showConfirm("发现新的对数结果", buildReconcileWatchMessage(watchDate, newer, sameChangedRun));
+    reconcileWatchPromptOpen = false;
+    if (!accepted) {
+      reconcileWatchDismissedKey = promptKey;
+      return;
+    }
+    const chosen = pickReconcileWatchRun(newer, sameChangedRun);
+    const run = chosen?.results ? chosen : await loadReconcileHistoryRun(chosen?.id);
+    if (!run) return;
+    applyReconcileHistoryRun(run);
+    setStatus("已加载最新对数结果");
+    showToast("已加载最新对数结果", "success");
+    shouldRecheck = true;
+  } catch (_) {
+    reconcileWatchPromptOpen = false;
+  } finally {
+    reconcileWatchChecking = false;
+  }
+  if (shouldRecheck) void checkReconcileResultUpdates();
+}
+
+refreshResultsBtn?.addEventListener("click", () => {
+  refreshLatestReconcileResults().catch((error) => {
+    setStatus(error.message);
+    showToast(error.message, "error");
+  });
+});
+
+document.addEventListener("auto-check-reconcile-completed", (event) => {
+  noteReconcileCompletion(event.detail || {});
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) flushPendingReconcileCompletion();
+});
 
 /* ===== Config Management ===== */
 const configToggle = document.getElementById("configToggle");
@@ -11474,6 +11770,8 @@ function showConfirm(title, message, options = {}) {
 
     titleEl.textContent = resolvedTitle;
     messageEl.textContent = resolvedMessage;
+    okBtn.textContent = resolvedOptions.okText || "确定";
+    cancelBtn.textContent = resolvedOptions.cancelText || "取消";
     okBtn.dataset.actionTone = tone;
     okBtn.dataset.actionVariant = "solid";
     modal.hidden = false;
@@ -11483,6 +11781,8 @@ function showConfirm(title, message, options = {}) {
       setTimeout(() => {
         modal.hidden = true;
         modal.classList.remove("closing");
+        okBtn.textContent = "确定";
+        cancelBtn.textContent = "取消";
         delete okBtn.dataset.actionTone;
         delete okBtn.dataset.actionVariant;
       }, 200);
@@ -14983,6 +15283,17 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
   const changelogHtml = `
     <div class="changelog-item">
       <div>
+        <span class="changelog-version">v1.3.3</span>
+        <span class="changelog-date">2026-11-01</span>
+      </div>
+      <ul>
+        <li>智能核数支持手动刷新结果，并在校验日期出现新结果或当期结果变化时提示确认。</li>
+        <li>他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。</li>
+      </ul>
+    </div>
+
+    <div class="changelog-item">
+      <div>
         <span class="changelog-version">v1.3.2</span>
         <span class="changelog-date">2026-10-01</span>
       </div>
@@ -15479,6 +15790,8 @@ window.addEventListener("resize", refreshReportNavigationScheduleLayout);
   try { const d = await api("/api/config"); if (!runDate.value) runDate.value = d.default_run_date || settingsPayload?.api_default_run_date || ""; } catch (_) { if (!runDate.value) runDate.value = settingsPayload?.api_default_run_date || ""; }
   restoreLatestResultsSnapshot();
   await loadLatestHistoryResults();
+  reconcileWatchReady = true;
+  flushPendingReconcileCompletion();
   loadSystemInfo();
   await loadFlowToastStatus();
 })();

@@ -30,6 +30,17 @@ class TestHubDelivery:
         # u2 should not have the event
         assert u2.next(0.01) is None
 
+    def test_broadcast_reaches_every_subscriber(self):
+        hub = NotificationStreamHub(max_per_user=5, max_total=200, queue_size=100)
+        first = hub.subscribe("u1")
+        second = hub.subscribe("u2")
+        hub.broadcast(NotificationStreamEvent(type="reconcile_completed", data={"id": "run-1"}))
+        first_event = first.next(1.0)
+        second_event = second.next(1.0)
+        assert first_event is not None and first_event.type == "reconcile_completed"
+        assert second_event is not None and second_event.data["id"] == "run-1"
+        assert first.next(0.01) is None
+
     def test_queue_overflow_emits_resync(self):
         hub = NotificationStreamHub(max_per_user=5, max_total=200, queue_size=1)
         sub = hub.subscribe("u1")
