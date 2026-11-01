@@ -8740,10 +8740,14 @@ def test_auto_check_refresh_prompts_before_loading_and_manual_refresh_uses_lates
     assert "&#8635;" in refresh_button
     assert "刷新" in refresh_button
     css = _read(STYLES_CSS)
-    refresh_rule = re.search(r"\.run-bar #refreshResultsBtn\s*\{(?P<body>.*?)\}", css, re.S)
-    assert refresh_rule is not None
-    assert "padding-top: 5px;" in refresh_rule.group("body")
-    assert "padding-bottom: 5px;" in refresh_rule.group("body")
+    shared_rule = re.search(
+        r"\.run-bar #refreshResultsBtn,\s*\.run-bar #runBtn\s*\{(?P<body>.*?)\}",
+        css,
+        re.S,
+    )
+    assert shared_rule is not None
+    assert "height: 34px;" in shared_rule.group("body")
+    assert "min-height: 34px;" in shared_rule.group("body")
 
     refresh = re.search(r"async function refreshLatestReconcileResults\(\) \{(?P<body>.*?)\n\}", app_js, re.S)
     assert refresh is not None

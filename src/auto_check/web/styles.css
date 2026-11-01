@@ -3059,14 +3059,14 @@ h1, h2, h3, p { margin: 0; }
 
 .run-bar #refreshResultsBtn,
 .run-bar #runBtn {
-  flex-shrink: 0;
-}
-
-.run-bar #refreshResultsBtn {
   box-sizing: border-box;
-  padding-top: 5px;
-  padding-bottom: 5px;
+  flex-shrink: 0;
+  height: 34px;
+  min-height: 34px;
+  padding-top: 0;
+  padding-bottom: 0;
   line-height: 1;
+  align-items: center;
 }
 
 .run-bar #refreshResultsBtn .btn-icon {
