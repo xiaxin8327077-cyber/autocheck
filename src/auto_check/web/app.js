@@ -15337,6 +15337,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       <ul>
         <li>智能核数支持手动刷新结果，并在校验日期出现新结果或当期结果变化时提示确认。</li>
         <li>他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。</li>
+        <li>修复实收本金整笔缺失时未展示客户类型为空明细的问题。</li>
       </ul>
     </div>
 

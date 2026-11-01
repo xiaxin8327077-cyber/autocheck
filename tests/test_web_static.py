@@ -41,11 +41,14 @@ def test_v13_display_version_and_release_notes_are_consistent():
     refresh_note = "智能核数支持手动刷新结果，并在校验日期出现新结果或当期结果变化时提示确认。"
     refresh_notes = app_js.split('>v1.3.3</span>', 1)[1].split('</ul>', 1)[0]
     progress_note = "他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。"
-    assert refresh_notes.count("<li>") == 2
+    principal_note = "修复实收本金整笔缺失时未展示客户类型为空明细的问题。"
+    assert refresh_notes.count("<li>") == 3
     assert refresh_notes.count(refresh_note) == 1
     assert refresh_notes.count(progress_note) == 1
+    assert refresh_notes.count(principal_note) == 1
     assert refresh_note in readme
     assert progress_note in readme
+    assert principal_note in readme
     assert "`v1.3.3` (2026-11-01)" in readme
     assert app_js.count('class="changelog-version">v1.3.2</span>') == 1
     assert app_js.index('>v1.3.2</span>') < app_js.index('>v1.3.1</span>')

@@ -1841,6 +1841,68 @@ def test_received_trust_missing_omits_report_reason_when_principal_report_exists
     assert results[0].details[0].data["specific_reason"] == "①实收本金缺失：FA 4001科目余额500"
 
 
+@pytest.mark.parametrize("blank_total,explains_gap", [("500", True), ("100", False)])
+def test_received_trust_missing_lists_blank_client_types_when_principal_report_exists(blank_total, explains_gap):
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("1000"), Decimal("500"), Decimal("0"))]
+    repo.fa4001["P1"] = Decimal("500")
+    repo.asset_total["P1"] = Decimal("1000")
+    repo.report_rows.add((("currency_report_24", "currency_detail_project_2_1_8"), "2026-04-30"))
+    repo.ta_dm_total["P1"] = Decimal("500")
+    repo.ta_dws_total["P1"] = Decimal("500")
+    repo.ta_blank_client_type_rows["P1"] = [{
+        "pact_id": "PACT1", "client_name": "客户A", "client_kind": None,
+        "client_kind_index": None, "spv_type": None,
+        "ht_income": Decimal("0"), "share_amount": Decimal(blank_total), "amount": Decimal(blank_total),
+    }]
+
+    result = ReconcileEngine(repo).run("2026-04-30")[0]
+
+    assert result.difference_reason == "实收本金缺失"
+    assert result.match_status == "已解释"
+    assert [detail.kind for detail in result.details] == ["received_trust", "ta_blank_client_type"]
+    detail = result.details[-1].data
+    assert detail["blank_client_type_total"] == blank_total
+    assert detail["rows"] == [{
+        "pact_id": "PACT1", "client_name": "客户A", "client_kind": "",
+        "client_kind_index": "", "spv_type": "",
+        "ht_income": "0", "share_amount": blank_total, "amount": blank_total,
+    }]
+    if explains_gap:
+        assert detail["specific_reason"] == (
+            "①实收本金缺失：FA 4001科目余额500；原因："
+            "dm.ta_pact_survamt_day_zgxg_dm表中客户类型为空导致实收信托有误"
+        )
+    else:
+        assert "specific_reason" not in detail
+        assert result.details[0].data["specific_reason"] == "①实收本金缺失：FA 4001科目余额500"
+
+
+@pytest.mark.parametrize("dm_total,explains_gap", [("0", True), ("480", False)])
+def test_received_trust_missing_checks_ta_totals_before_blank_client_types(dm_total, explains_gap):
+    repo = FakeRepo()
+    repo.projects = [ProjectBalance("P1", "Project", Decimal("1000"), Decimal("500"), Decimal("0"))]
+    repo.fa4001["P1"] = Decimal("500")
+    repo.asset_total["P1"] = Decimal("1000")
+    repo.report_rows.add((("currency_report_24", "currency_detail_project_2_1_8"), "2026-04-30"))
+    repo.ta_dm_total["P1"] = Decimal(dm_total)
+    repo.ta_dws_total["P1"] = Decimal("500")
+    repo.ta_blank_client_type_rows["P1"] = [{"pact_id": "PACT1", "amount": Decimal("500")}]
+
+    result = ReconcileEngine(repo).run("2026-04-30")[0]
+
+    assert result.difference_reason == "实收本金缺失"
+    assert result.match_status == "已解释"
+    assert [detail.kind for detail in result.details] == ["received_trust", "ta_total_mismatch"]
+    detail = result.details[-1].data
+    assert detail["dm_total"] == dm_total
+    assert detail["dws_total"] == "500"
+    if explains_gap:
+        assert detail["specific_reason"] == "①实收本金缺失：FA 4001科目余额500；原因：DM表TA份额余额错误"
+    else:
+        assert "specific_reason" not in detail
+
+
 def test_received_trust_duplicate_when_main_difference_equals_negative_fa4001():
     repo = FakeRepo()
     repo.projects = [ProjectBalance("P1", "Project", Decimal("1000"), Decimal("1500"), Decimal("1000"))]

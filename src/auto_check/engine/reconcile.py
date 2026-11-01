@@ -958,6 +958,7 @@ class ReconcileEngine:
         check_result = "a0001-d0000等于FA 4001科目余额"
         reason_text = ""
         repeat_amount: Decimal | None = None
+        refine_ta = False
         if reason == "实收本金缺失":
             has_report_rows = self.repository.has_report_rows(
                 ("currency_report_24", "currency_detail_project_2_1_8"),
@@ -966,6 +967,8 @@ class ReconcileEngine:
             if not has_report_rows:
                 reason_text = "资负数据子系统-实收本金明细表无数据"
                 detail_reason = f"{detail_reason}；原因：{reason_text}"
+            else:
+                refine_ta = True
         elif reason == "实收本金重复":
             repeat_count = repeat_count or 1
             repeat_amount = fa4001 * Decimal(repeat_count)
@@ -996,16 +999,14 @@ class ReconcileEngine:
             data["repeat_count"] = str(repeat_count)
         if repeat_amount is not None:
             data["repeat_amount"] = str(repeat_amount)
+        details = [DifferenceDetail(kind="received_trust", data=data)]
+        if refine_ta:
+            details.extend(self._received_trust_ta_details(project, date, received_trust_difference, detail_reason))
         return self._result(
             project,
             difference_reason=reason,
             match_status="已解释",
-            details=[
-                DifferenceDetail(
-                    kind="received_trust",
-                    data=data,
-                )
-            ],
+            details=details,
             valuation_asset_total=valuation_asset_total,
         )
 
@@ -1040,7 +1041,23 @@ class ReconcileEngine:
                 },
             )
         ]
+        details.extend(self._received_trust_ta_details(project, date, received_trust_difference, base_reason))
+        return self._result(
+            project,
+            difference_reason="实收本金差异",
+            match_status="已解释",
+            details=details,
+            valuation_asset_total=valuation_asset_total,
+        )
 
+    def _received_trust_ta_details(
+        self,
+        project: ProjectBalance,
+        date: str,
+        received_trust_difference: Decimal,
+        base_reason: str,
+    ) -> list[DifferenceDetail]:
+        details: list[DifferenceDetail] = []
         self._project_log(project, "核对DM与DWS中TA份额余额+待结转收益", "TA实收信托细分")
         dm_total, dws_total = self.repository.get_ta_balance_totals(project.project_code, date)
         self._check_cancelled()
@@ -1059,13 +1076,7 @@ class ReconcileEngine:
                     data=data,
                 )
             )
-            return self._result(
-                project,
-                difference_reason="实收本金差异",
-                match_status="已解释",
-                details=details,
-                valuation_asset_total=valuation_asset_total,
-            )
+            return details
 
         self._project_log(project, "DM与DWS中TA汇总一致，检查DM客户类型为空明细", "TA实收信托细分")
         blank_rows = self.repository.list_blank_ta_client_type_rows(project.project_code, date)
@@ -1084,22 +1095,8 @@ class ReconcileEngine:
                     data=data,
                 )
             )
-            if amounts_equal(blank_total, received_trust_difference):
-                return self._result(
-                    project,
-                    difference_reason="实收本金差异",
-                    match_status="已解释",
-                    details=details,
-                    valuation_asset_total=valuation_asset_total,
-                )
 
-        return self._result(
-            project,
-            difference_reason="实收本金差异",
-            match_status="已解释",
-            details=details,
-            valuation_asset_total=valuation_asset_total,
-        )
+        return details
 
     def _find_valuation_match(
         self,

@@ -11,8 +11,9 @@ import subprocess
 import pytest
 
 from auto_check.app.server import build_display_details
+from auto_check.engine.models import ProjectBalance
 from auto_check.engine.reconcile import ReconcileEngine
-from test_reconcile import _equity_profit_loss_repo
+from test_reconcile import FakeRepo, _equity_profit_loss_repo
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,6 +164,42 @@ def test_reconcile_amount_display_existing_integer_and_fractional_amounts_keep_t
     assert "金额：100.00" in output["text"]
     assert "科目尾段：100；" in output["text"]
     assert "第2026期债券1.234567" in output["text"]
+
+
+def test_received_trust_missing_null_client_types_reach_page_and_export():
+    repo = FakeRepo()
+    project_code = "2021KJC0309"
+    repo.projects = [ProjectBalance(
+        project_code, "测试项目", Decimal("111991837.21"), Decimal("365060.39"), Decimal("0"),
+    )]
+    repo.asset_total[project_code] = Decimal("111991837.21")
+    repo.fa4001[project_code] = Decimal("111626776.82")
+    repo.report_rows.add((("currency_report_24", "currency_detail_project_2_1_8"), "2026-10-31"))
+    repo.ta_dm_total[project_code] = Decimal("111626776.82")
+    repo.ta_dws_total[project_code] = Decimal("111626776.82")
+    repo.ta_blank_client_type_rows[project_code] = [
+        {"pact_id": "PACT1", "client_name": "客户甲", "client_kind": None,
+         "client_kind_index": None, "spv_type": None,
+         "ht_income": Decimal("30.12"), "share_amount": Decimal("49999969.88"), "amount": Decimal("50000000.00")},
+        {"pact_id": "PACT2", "client_name": "客户乙", "client_kind": None,
+         "client_kind_index": None, "spv_type": None,
+         "ht_income": Decimal("0"), "share_amount": Decimal("61626776.82"), "amount": Decimal("61626776.82")},
+    ]
+
+    result = ReconcileEngine(repo).run("2026-10-31")[0]
+    item = {"difference_reason": result.difference_reason, "match_status": result.match_status,
+            "details": [asdict(detail) for detail in result.details], "display_details": build_display_details(result)}
+    output = _render_actual_frontend(item)
+
+    assert result.difference_reason == "实收本金缺失"
+    assert "客户类型为空导致实收信托有误" in output["html"]
+    assert "DM TA客户类型为空" in output["html"]
+    assert "111,626,776.82" in output["html"]
+    assert "差异类型：实收本金缺失" in output["text"]
+    assert "客户类型为空：合计=111,626,776.82" in output["text"]
+    assert "合同编号：PACT1；客户名称：客户甲；客户类型：-" in output["text"]
+    assert "合同编号：PACT2；客户名称：客户乙；客户类型：-" in output["text"]
+    assert "PACT1" in output["html"] and "PACT2" in output["html"]
 
 
 def test_reconcile_amount_display_engine_to_frontend_keeps_decimal_and_raw_payload_precision():
