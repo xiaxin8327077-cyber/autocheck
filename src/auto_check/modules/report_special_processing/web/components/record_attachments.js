@@ -385,7 +385,16 @@ export function createRecordAttachmentSection(documentRef, options = {}) {
       const kind = attachmentKind(item.extension, item.contentType);
       const children = [];
       if (kind === "image" && item.previewUrl) {
-        children.push(element(documentRef, "span", { className: "rsp-attachment-thumb" }, [
+        children.push(element(documentRef, "button", {
+          type: "button",
+          className: "rsp-attachment-thumb",
+          "aria-label": `预览图片 ${item.fileName}`,
+          onClick: () => {
+            if (typeof options.previewImage !== "function") return;
+            // 大图单独持有 URL，关闭预览时不会撤销待保存缩略图。
+            options.previewImage(viewOf(documentRef).URL.createObjectURL(item.file));
+          },
+        }, [
           element(documentRef, "img", { src: item.previewUrl, alt: item.fileName }),
         ]));
       } else {

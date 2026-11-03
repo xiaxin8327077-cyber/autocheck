@@ -1,5 +1,7 @@
 # Report Special Processing Record Attachments Implementation Plan
 
+2026-11-03 图片交互补充：已在模块内补齐待保存图片预览入口，并统一图片层空白点击关闭、鼠标位置滚轮缩放及 URL 清理。对应 Node 场景覆盖各入口、缩放边界、再次打开复位、底层弹窗保留与缩略图 URL 生命周期。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 为报表特殊处理记录增加可粘贴或上传的图片、Excel、Word、ZIP 附件，并在每次修改审计中查看修改前后的附件快照。

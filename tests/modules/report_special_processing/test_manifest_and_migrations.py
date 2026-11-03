@@ -35,15 +35,13 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     ]
     assert manifest.navigation[0].group_id == "data-entry"
     assert manifest.navigation[0].group_label == "数据录入"
-    assert manifest.version == "1.3.2"
-    assert manifest.release_notes.version == "1.3.2"
+    assert manifest.version == "1.3.3"
+    assert manifest.release_notes.version == "1.3.3"
     release_notes = manifest.release_notes.items
     assert release_notes == (
-        "自动脚本按数据源限定表名，仅必要时引用名称。",
-        "打开编辑弹窗保持自动生成脚本，仅点击手动编辑后暂停。",
-        "修改后确认空值后才生成 NULL；修改前按条件自动读取当前值。",
+        "图片支持预览、滚轮缩放及空白关闭，操作记录展开保持阅读位置。",
     )
-    assert len(release_notes) == 3
+    assert len(release_notes) == 1
     assert len(set(release_notes)) == len(release_notes)
     assert all(not item.startswith("报表特殊处理录入模块：") for item in release_notes)
     assert all("原型" not in item and "文档" not in item for item in release_notes)

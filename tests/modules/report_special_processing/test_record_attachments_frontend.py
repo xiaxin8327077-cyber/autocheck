@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[3]
 WEB = ROOT / "src" / "auto_check" / "modules" / "report_special_processing" / "web"
@@ -696,6 +698,12 @@ function makeDrawerDocument() {
         return node;
       },
       appendChild(child) { return node.append(child); },
+      after(...items) {
+        const parent = node.parentNode;
+        if (!parent) return;
+        items.forEach((item) => { item.parentNode = parent; });
+        parent.children.splice(parent.children.indexOf(node) + 1, 0, ...items);
+      },
       replaceChildren(...items) {
         node.children = [];
         if (items.length) node.append(...items);
@@ -1996,6 +2004,196 @@ def test_drawer_revokes_thumbnail_urls_on_close(tmp_path: Path) -> None:
   });
 """
     _assert_ok(_run_drawer_scenario(tmp_path, scenario, "thumb_revoke_on_close"))
+
+
+LIGHTBOX_SETUP = """
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks), mode: "detail",
+    record: { id: 5, record_attachments: [
+      { id: 31, file_name: "image.png", file_extension: ".png", content_type: "image/png", byte_size: 8 },
+    ] },
+  });
+  const previewButton = findByAriaLabel(overlay, "预览图片 image.png");
+  previewButton.click();
+  await sleep(20);
+  let lightbox = findByAriaLabel(overlay, "图片预览");
+  assert.ok(lightbox, "点击图片打开预览");
+  let image = findDrawerNodes(lightbox, "img")[0];
+"""
+
+
+def test_audit_detail_toggle_preserves_other_rows_and_open_details(tmp_path: Path) -> None:
+    scenario = """
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  actions.audit = async () => ({ data: { items: [1, 2, 3].map((id) => ({
+    id, action_code: "reopen", changed_fields: { reason: { new: `说明 ${id}` } },
+  })), total: 3, page: 1, total_pages: 1 } });
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks), mode: "detail", record: { id: 5 },
+  });
+  await sleep(20);
+  const body = findDrawerNodes(overlay, ".rsp-modal-body")[0];
+  body.scrollTop = 740;
+  const toggles = findDrawerNodes(overlay, ".rsp-audit-detail-toggle");
+  toggles[0].click();
+  assert.ok(overlay.contains(toggles[0]), "展开保留当前按钮，避免清空整表导致滚动和焦点丢失");
+  assert.equal(toggles[0].getAttribute("aria-expanded"), "true");
+  assert.equal(toggles[0].textContent, "收起详情");
+  const firstDetail = findDrawerNodes(overlay, ".rsp-audit-detail-row")[0];
+  toggles[1].click();
+  assert.equal(findDrawerNodes(overlay, ".rsp-audit-detail-row").length, 2);
+  assert.ok(overlay.contains(firstDetail), "展开另一条不重建已展开详情");
+  assert.equal(body.scrollTop, 740, "展开保留当前阅读位置");
+  toggles[1].click();
+  assert.equal(toggles[1].getAttribute("aria-expanded"), "false");
+  assert.equal(toggles[1].textContent, "查看变更详情");
+  assert.equal(findDrawerNodes(overlay, ".rsp-audit-detail-row").length, 1);
+  assert.ok(overlay.contains(firstDetail), "收起只移除当前条详情");
+  assert.equal(body.scrollTop, 740, "收起保留当前阅读位置");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "audit_toggle_preserves_rows"))
+
+
+def test_image_lightbox_blank_closes_only_preview_and_releases_url(tmp_path: Path) -> None:
+    scenario = LIGHTBOX_SETUP + """
+  const previewUrl = image.getAttribute("src");
+  lightbox.dispatchEvent({ type: "click", target: image });
+  assert.ok(findByAriaLabel(overlay, "图片预览"), "点击图片本身不关闭");
+  lightbox.click();
+  assert.equal(findByAriaLabel(overlay, "图片预览"), null, "点击图片外空白关闭预览");
+  assert.equal(hooks.closed, 0, "保留底层记录弹窗");
+  assert.ok(drawerRevokedUrls.includes(previewUrl), "关闭释放大图 URL");
+  overlay.click();
+  assert.equal(hooks.closed, 0, "记录弹窗仍禁止点击遮罩关闭");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "lightbox_blank_close"))
+
+
+def test_image_lightbox_wheel_zooms_at_pointer_with_bounds_and_resets(tmp_path: Path) -> None:
+    scenario = LIGHTBOX_SETUP + r"""
+  lightbox._rect = { left: 0, top: 0, width: 1000, height: 800 };
+  let prevented = 0;
+  let stopped = 0;
+  const wheel = (deltaY, clientX = 600, clientY = 450) => lightbox.dispatchEvent({
+    type: "wheel", deltaY, clientX, clientY,
+    preventDefault: () => { prevented += 1; },
+    stopPropagation: () => { stopped += 1; },
+  });
+  const zoom = () => Number(image.style.transform.match(/scale\(([^)]+)\)/)[1]);
+  wheel(-100);
+  assert.ok(zoom() > 1, "滚轮向上放大");
+  const translate = image.style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/);
+  assert.ok(Number(translate[1]) < 0 && Number(translate[2]) < 0, "缩放以鼠标位置为中心");
+  wheel(100);
+  assert.ok(Math.abs(zoom() - 1) < 0.000001, "反向滚动缩小");
+  for (let i = 0; i < 100; i += 1) wheel(-100);
+  assert.ok(zoom() <= 5, "限制最大倍率");
+  for (let i = 0; i < 200; i += 1) wheel(100);
+  assert.ok(zoom() >= 0.25 && zoom() < 1, "限制最小倍率且可缩小");
+  assert.equal(prevented, 302, "滚轮不滚动底层页面");
+  assert.equal(stopped, 302, "滚轮事件不传播到底层");
+  overlay.dispatchEvent({ type: "keydown", key: "Escape" });
+  assert.equal(findByAriaLabel(overlay, "图片预览"), null, "Esc 关闭图片层");
+  assert.equal(hooks.closed, 0);
+  previewButton.click();
+  await sleep(20);
+  lightbox = findByAriaLabel(overlay, "图片预览");
+  image = findDrawerNodes(lightbox, "img")[0];
+  assert.equal(image.style.transform || "", "", "重新打开恢复适合窗口的初始大小");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "lightbox_wheel"))
+
+
+def test_confirmation_and_audit_images_share_zoomable_preview(tmp_path: Path) -> None:
+    scenario = r"""
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  const meta = { id: 31, file_name: "history.png", file_extension: ".png", content_type: "image/png", byte_size: 8 };
+  actions.audit = async () => ({ data: { items: [{
+    id: 1, action_code: "status_change", to_status: "completed",
+    changed_fields: { confirm_attachments: { ids: [21] }, record_attachments: { old: [meta], new: [meta] } },
+  }], total: 1, page: 1, total_pages: 1 } });
+  globalThis.FileReader = class {
+    readAsDataURL() { this.result = "data:image/png;base64,iVBORw=="; this.onload(); }
+  };
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks), mode: "confirm", record: { id: 5, row_version: 1 },
+  });
+  findDrawerNodes(overlay, ".rsp-confirm-note")[0].dispatchEvent({
+    type: "paste", clipboardData: { files: [new File(["png"], "confirm.png", { type: "image/png" })] },
+  });
+  findByAriaLabel(overlay, "预览图片").click();
+  let lightbox = findByAriaLabel(overlay, "图片预览");
+  assert.ok(lightbox, "确认时粘贴图片可预览");
+  lightbox.dispatchEvent({ type: "wheel", deltaY: -100, clientX: 0, clientY: 0 });
+  assert.ok(findDrawerNodes(lightbox, "img")[0].style.transform.includes("scale(1.15)"));
+  lightbox.click();
+  await sleep(20);
+  findButtonByText(overlay, "查看变更详情").click();
+  const buttons = [
+    findByAriaLabel(overlay, "查看确认图片"),
+    ...findDrawerNodes(overlay, ".rsp-attachment-thumb"),
+  ];
+  assert.equal(buttons.length, 3, "覆盖操作记录确认图片及附件修改前后两栏");
+  for (const button of buttons) {
+    button.click();
+    await sleep(20);
+    lightbox = findByAriaLabel(overlay, "图片预览");
+    assert.ok(lightbox, "操作记录图片可预览");
+    lightbox.dispatchEvent({ type: "wheel", deltaY: -100, clientX: 0, clientY: 0 });
+    assert.ok(findDrawerNodes(lightbox, "img")[0].style.transform.includes("scale(1.15)"));
+    lightbox.click();
+    assert.ok(!findByAriaLabel(overlay, "图片预览"));
+  }
+  assert.equal(hooks.closed, 0, "各入口关闭图片后保留确认弹窗");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "confirm_audit_preview"))
+
+
+@pytest.mark.parametrize("mode", ["create", "edit"])
+@pytest.mark.parametrize("source", ["upload", "paste"])
+def test_unsaved_image_attachment_opens_preview_without_invalidating_thumbnail(
+    tmp_path: Path, mode: str, source: str,
+) -> None:
+    scenario = """
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const actions = makeDrawerActions(async () => ({ data: { id: 1 } }));
+  const overlay = createRecordDrawer(documentRef, {
+    ...baseDrawerOptions(actions, hooks), MODE_OPTIONS,
+  });
+  const file = new File([new Uint8Array([137, 80, 78, 71])], "new.png", { type: "image/png" });
+  if (SOURCE_IS_UPLOAD) {
+    findByAriaLabel(overlay, "选择附件文件").dispatchEvent({ type: "change", target: { files: [file], value: "" } });
+  } else {
+    overlay.dispatchEvent({ type: "paste", clipboardData: { files: [file] } });
+  }
+  await sleep(30);
+  const thumb = findDrawerNodes(overlay, ".rsp-attachment-thumb")[0];
+  const thumbUrl = findDrawerNodes(thumb, "img")[0].getAttribute("src");
+  assert.equal(thumb.tagName, "BUTTON", "待保存图片可用键盘或鼠标打开预览");
+  thumb.click();
+  let lightbox = findByAriaLabel(overlay, "图片预览");
+  assert.ok(lightbox, "待保存图片可以直接预览");
+  const previewUrl = findDrawerNodes(lightbox, "img")[0].getAttribute("src");
+  lightbox.click();
+  assert.ok(drawerRevokedUrls.includes(previewUrl));
+  assert.ok(!drawerRevokedUrls.includes(thumbUrl), "关闭大图不撤销待保存缩略图");
+  thumb.click();
+  assert.ok(findByAriaLabel(overlay, "图片预览"), "可以再次预览同一待保存图片");
+  findByAriaLabel(overlay, "关闭").click();
+  drawerCreatedUrls.forEach((url) => assert.ok(drawerRevokedUrls.includes(url), "关闭抽屉释放所有图片 URL"));
+"""
+    scenario = scenario.replace(
+        "MODE_OPTIONS", f'mode: "{mode}", record: ' + ("undefined" if mode == "create" else "DRAWER_LEGACY_RECORD"),
+    ).replace("SOURCE_IS_UPLOAD", "true" if source == "upload" else "false")
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, f"local_preview_{mode}_{source}"))
 
 
 def test_auto_generate_validation_does_not_open_date_field_combo(tmp_path: Path) -> None:

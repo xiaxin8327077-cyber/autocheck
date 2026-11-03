@@ -2409,15 +2409,19 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
+  overflow: hidden;
+  overscroll-behavior: contain;
   background: rgba(15, 23, 42, 0.55);
   outline: none;
 }
 
 .auto-check-module[data-module="report_special_processing"] .rsp-image-lightbox-img {
+  flex-shrink: 0;
   max-width: min(92%, 960px);
   max-height: min(88%, 88vh);
   border-radius: var(--ui-radius);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
+  transform-origin: center;
 }
 
 @media (max-width: 1366px) {

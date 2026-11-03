@@ -970,6 +970,27 @@ export function createRecordDrawer(documentRef, options) {
       "aria-modal": "true",
       "aria-label": "图片预览",
     }, [img]);
+    lightboxNode.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (event.target === lightboxNode) closeImageLightbox();
+    });
+    let scale = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    lightboxNode.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.deltaY) return;
+      const nextScale = Math.max(0.25, Math.min(5, scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      const rect = lightboxNode.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2;
+      const y = event.clientY - rect.top - rect.height / 2;
+      const ratio = nextScale / scale;
+      offsetX = x - (x - offsetX) * ratio;
+      offsetY = y - (y - offsetY) * ratio;
+      scale = nextScale;
+      img.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+    }, { passive: false });
     overlayNode.append(lightboxNode);
     lightboxNode.focus();
   }
@@ -1120,6 +1141,12 @@ export function createRecordDrawer(documentRef, options) {
       const hasDetails = entry.paired.length > 0 || entry.notes.length > 0
         || entry.attachments.length > 0 || Boolean(entry.attachmentDiff) || Boolean(entry.semanticModel);
       const expanded = hasDetails && expandedAuditIds.has(auditId);
+      let detailRow = null;
+      const createDetailRow = () => element(documentRef, "tr", { className: "rsp-audit-detail-row" }, [
+        element(documentRef, "td", { colspan: "3" }, [
+          renderAuditDetail(documentRef, entry, copyAuditScript, openImageLightbox, auditAttachmentOptions),
+        ]),
+      ]);
       const summaryParts = [
         element(documentRef, "span", {
           className: `rsp-audit-action ${entry.className}`,
@@ -1174,17 +1201,31 @@ export function createRecordDrawer(documentRef, options) {
         }));
       }
       if (hasDetails) {
-        summaryParts.push(element(documentRef, "button", {
+        const toggle = element(documentRef, "button", {
           type: "button",
           className: "rsp-audit-detail-toggle",
           text: expanded ? "收起详情" : "查看变更详情",
           "aria-expanded": expanded ? "true" : "false",
           onClick: () => {
-            if (expandedAuditIds.has(auditId)) expandedAuditIds.delete(auditId);
-            else expandedAuditIds.add(auditId);
-            renderAuditBody(items, total);
+            const scrollTop = body.scrollTop;
+            const nextExpanded = !expandedAuditIds.has(auditId);
+            if (nextExpanded) {
+              expandedAuditIds.add(auditId);
+              detailRow = createDetailRow();
+              row.after(detailRow);
+            } else {
+              expandedAuditIds.delete(auditId);
+              detailRow?.remove();
+              detailRow = null;
+            }
+            row.classList.toggle("is-expanded", nextExpanded);
+            toggle.textContent = nextExpanded ? "收起详情" : "查看变更详情";
+            toggle.setAttribute("aria-expanded", String(nextExpanded));
+            // 只更新当前详情，保留其余行、键盘焦点及弹窗阅读位置。
+            body.scrollTop = scrollTop;
           },
-        }));
+        });
+        summaryParts.push(toggle);
       } else if (!hasDetails && !entry.hasStructuredAuditData) {
         summaryParts.push(element(documentRef, "div", {
           className: "rsp-audit-summary-line rsp-audit-summary-legacy",
@@ -1200,11 +1241,8 @@ export function createRecordDrawer(documentRef, options) {
       ]);
       auditBody.append(row);
       if (expanded) {
-        auditBody.append(element(documentRef, "tr", { className: "rsp-audit-detail-row" }, [
-          element(documentRef, "td", { colspan: "3" }, [
-            renderAuditDetail(documentRef, entry, copyAuditScript, openImageLightbox, auditAttachmentOptions),
-          ]),
-        ]));
+        detailRow = createDetailRow();
+        auditBody.append(detailRow);
       }
     });
   }
@@ -1394,6 +1432,7 @@ export function createRecordDrawer(documentRef, options) {
     thumbCache,
   };
   function closeWithCleanup() {
+    closeImageLightbox();
     attachmentSection?.destroy();
     process.destroy();
     const view = documentRef?.defaultView || globalThis;
