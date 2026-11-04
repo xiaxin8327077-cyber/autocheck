@@ -3364,6 +3364,7 @@
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-list {
   overflow-y: auto;
+  overscroll-behavior: contain;
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -3403,6 +3404,7 @@
   color: var(--rsp-muted);
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-more {
+  flex: none;
   width: 100%;
   min-height: 28px;
   margin-top: 2px;
@@ -3417,6 +3419,9 @@
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-more:hover {
   border-color: var(--rsp-brand);
   background: #f0f5ff;
+}
+.auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-more[hidden] {
+  display: none;
 }
 .auto-check-module[data-module="report_special_processing"] .rsp-sc-combo-status {
   padding: 8px;

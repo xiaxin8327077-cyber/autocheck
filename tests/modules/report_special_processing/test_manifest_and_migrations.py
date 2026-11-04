@@ -16,7 +16,7 @@ def test_manifest_declares_an_optional_grouped_module_and_platform_services():
     assert manifest.id == "report_special_processing"
     assert manifest.required is False
     assert manifest.api_prefix == "/api/modules/report-special-processing"
-    assert manifest.schema_version == 9
+    assert manifest.schema_version == 10
     assert manifest.permissions == (
         "report_special_processing.view",
         "report_special_processing.detail",
@@ -54,8 +54,8 @@ def test_module_is_discovered_without_central_registration():
 
 def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 9
-    assert [item.version for item in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    assert len(migrations) == 10
+    assert [item.version for item in migrations] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     sql = "\n".join(migrations[0].statements)
     assert sql.count("CREATE TABLE report_special_processing_") == 3
     for table in ("records", "reports", "audit_logs"):
@@ -72,7 +72,7 @@ def test_initial_migration_owns_exactly_three_tables_and_never_drops_data():
 
 def test_migration_003_adds_dimension_governance_columns():
     migrations = load_module_migrations("auto_check.modules.report_special_processing")
-    assert len(migrations) == 9
+    assert len(migrations) == 10
     assert migrations[2].version == 3
     sql = "\n".join(migrations[2].statements).upper()
     for col in (

@@ -48,7 +48,7 @@ RECORDS = Table(
     Column("datasource_name_snapshot", String(200)),
     Column("datasource_type", String(32)),
     Column("structured_content_json", Text),
-    Column("summary", String(200)),
+    Column("summary", String(300)),
     Column("table_name", Text),
     Column("field_name", Text),
     Column("value_before", Text),

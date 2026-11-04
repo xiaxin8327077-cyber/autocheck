@@ -105,14 +105,14 @@ def test_validate_record_input_requires_dimension_fields_for_formal_save():
     assert "dimension" in exc.value.fields
 
 
-def test_summary_allows_128_chars_rejects_129():
+def test_summary_allows_300_chars_rejects_301():
     from auto_check.modules.report_special_processing.contracts import ValidationError
     from auto_check.modules.report_special_processing.validator import validate_record_input
 
-    payload = _payload(summary="字" * 128)
-    assert validate_record_input(payload).summary == "字" * 128
+    payload = _payload(summary="字" * 300)
+    assert validate_record_input(payload).summary == "字" * 300
     with pytest.raises(ValidationError):
-        validate_record_input({**payload, "summary": "字" * 129})
+        validate_record_input({**payload, "summary": "字" * 301})
 
 
 @pytest.mark.parametrize(
@@ -121,7 +121,7 @@ def test_summary_allows_128_chars_rejects_129():
         _payload(processing_script="汉" * 174763),
         _payload(report_period="2026-02-30"),
         _payload(special_handling_at="2026-08-01T15:32:18"),
-        _payload(summary="x" * 129),
+        _payload(summary="x" * 301),
         _payload(dimension="unknown"),
         _payload(table_name="t" * 4097),
         _payload(field_name="f" * 4097),

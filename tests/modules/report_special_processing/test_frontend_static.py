@@ -215,7 +215,7 @@ def test_dimension_governance_drawer_list_and_confirm_modal():
     table = read("components/record_table.js")
     ledger = read("pages/ledger.js")
 
-    assert "SUMMARY_MAX_LENGTH = 128" in drawer
+    assert "SUMMARY_MAX_LENGTH = 300" in drawer
     assert "FIELD_TEXT_MAX_LENGTH = 128" in drawer
     assert 'maxlength: String(SUMMARY_MAX_LENGTH)' in drawer
     assert 'maxlength: String(FIELD_TEXT_MAX_LENGTH)' in drawer
@@ -372,7 +372,7 @@ def test_editor_supports_draft_record_and_audit_pagination():
     assert "暂无操作记录" in source
     assert 'creating || current.status === "draft"' in source
     assert 'footerButtons.push(actionButton(documentRef, "保存草稿"' in source
-    assert "SUMMARY_MAX_LENGTH = 128" in source
+    assert "SUMMARY_MAX_LENGTH = 300" in source
     assert "FIELD_TEXT_MAX_LENGTH = 128" in source
     assert "validateForm" in source
     assert "showFormHint" in source

@@ -305,7 +305,31 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     });
     const listBox = element(documentRef, "div", { className: "rsp-sc-combo-list", role: "listbox" });
     const status = element(documentRef, "div", { className: "rsp-sc-combo-status", hidden: true });
-    const panel = element(documentRef, "div", { className: "rsp-sc-combo-panel", hidden: true }, [listBox, status]);
+    let pointerInside = false;
+
+    // 候选项和“加载更多”在 fixed 面板里。按下时若抢走输入框焦点，浏览器会滚动弹窗
+    // 把按钮送进可视区，锚点随之离开内容区，滚动关闭逻辑会把面板收起。
+    function retainComboFocus(event) {
+      event?.preventDefault?.();
+      pointerInside = true;
+      documentRef.addEventListener?.("mouseup", releaseComboFocus);
+    }
+
+    function releaseComboFocus() {
+      pointerInside = false;
+      documentRef.removeEventListener?.("mouseup", releaseComboFocus);
+    }
+
+    const moreButton = element(documentRef, "button", {
+      type: "button",
+      className: "rsp-sc-combo-more",
+      text: "加载更多",
+      hidden: true,
+      onMouseDown: retainComboFocus,
+      onMouseUp: releaseComboFocus,
+      onClick: () => load(page + 1),
+    });
+    const panel = element(documentRef, "div", { className: "rsp-sc-combo-panel", hidden: true }, [listBox, moreButton, status]);
     const shell = element(documentRef, "div", { className: "rsp-sc-combo" }, [input, panel]);
 
     let page = 1;
@@ -387,6 +411,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         if (activeRequestId !== requestId) return;
         items = [];
         listBox.replaceChildren();
+        moreButton.hidden = true;
         status.hidden = false;
         status.className = "rsp-sc-combo-status is-error";
         status.textContent = error?.message || "读取失败，请稍后重试";
@@ -402,6 +427,7 @@ export function createStructuredContentEditor(documentRef, options = {}) {
     function renderItems() {
       listBox.replaceChildren();
       if (!items.length) {
+        moreButton.hidden = true;
         status.hidden = false;
         status.className = "rsp-sc-combo-status";
         status.textContent = "未找到匹配的数据";
@@ -415,6 +441,8 @@ export function createStructuredContentEditor(documentRef, options = {}) {
           type: "button",
           className: "rsp-sc-combo-option",
           role: "option",
+          onMouseDown: retainComboFocus,
+          onMouseUp: releaseComboFocus,
           onClick: () => {
             input.value = primaryText;
             onPick(item);
@@ -426,12 +454,9 @@ export function createStructuredContentEditor(documentRef, options = {}) {
         ]));
       });
       if (page < totalPages) {
-        listBox.append(element(documentRef, "button", {
-          type: "button",
-          className: "rsp-sc-combo-more",
-          text: "加载更多",
-          onClick: () => load(page + 1),
-        }));
+        moreButton.hidden = false;
+      } else {
+        moreButton.hidden = true;
       }
     }
 
@@ -483,7 +508,13 @@ export function createStructuredContentEditor(documentRef, options = {}) {
       // 弹窗滚动时：锚点仍在可视区则跟随输入框重定位（方向锚定不翻转）；
       // 锚点滚出可视区（如滚到表头之后）则直接收起，避免面板溢出弹窗；
       // 平台定制下拉（数据源/条件类型等）直接关闭，避免漂移覆盖。
+      // 点候选项或“加载更多”期间的滚动来自按钮获焦，不是用户滚动弹窗。
       if (event?.target && shell.contains(event.target)) return;
+      if (pointerInside) {
+        if (!panel.hidden && anchorVisibleInScroller()) positionPanel();
+        schedulePlatformSelectClose(documentRef);
+        return;
+      }
       if (scrollRaf) return;
       const raf = documentRef.defaultView?.requestAnimationFrame;
       const step = () => {

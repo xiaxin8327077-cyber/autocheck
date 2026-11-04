@@ -9,7 +9,7 @@ import { confirmAttachmentUrl } from "../api.js";
 import { buildSemanticAuditViewModel, renderSemanticAuditDetail } from "./audit_detail.js";
 import { createLegacyContentPreview, createStructuredContentPreview, readonlyField, readonlyTextBlock } from "./record_preview.js";
 
-const SUMMARY_MAX_LENGTH = 128;
+const SUMMARY_MAX_LENGTH = 300;
 const FIELD_TEXT_MAX_LENGTH = 128;
 const DIMENSION_LABELS = {
   project: "项目端",

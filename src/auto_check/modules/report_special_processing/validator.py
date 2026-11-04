@@ -250,7 +250,7 @@ def validate_record_input(payload: Mapping[str, Any]) -> RecordInput:
         save_mode=save_mode,
         report_process_codes=process_codes,
         reports=(),
-        summary=_text(payload.get("summary"), "summary", 128, required=formal),
+        summary=_text(payload.get("summary"), "summary", 300, required=formal),
         processing_content="",
         processing_script=script,
         processing_script_mode=script_mode,

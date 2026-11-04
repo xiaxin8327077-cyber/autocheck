@@ -42,7 +42,8 @@ def test_v13_display_version_and_release_notes_are_consistent():
     refresh_notes = app_js.split('>v1.3.3</span>', 1)[1].split('</ul>', 1)[0]
     progress_note = "他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。"
     principal_note = "修复实收本金整笔缺失时未展示客户类型为空明细的问题。"
-    assert refresh_notes.count("<li>") == 3
+    assert refresh_notes.count("<li>") == 4
+    assert refresh_notes.count("系统优化及BUG修复。") == 1
     assert refresh_notes.count(refresh_note) == 1
     assert refresh_notes.count(progress_note) == 1
     assert refresh_notes.count(principal_note) == 1

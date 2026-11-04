@@ -107,6 +107,7 @@ Excel 按台账样式保留处理表名，共十一个数据列，报送期放�
 - `StructuredTable` 新增 `datasource_name: str` 字段；`parse_structured_content` 兼容旧 `projects/contracts`（历史记录回显）。
 - `_pin_datasource` 支持每表 `datasource_name` 钉牢（防伪造）。
 - 新增迁移 `009_field_mappings_and_scope.sql`（field_mappings 表与结构化内容处理范围字段），`schema_version` 升级为 `9`。
+- 迁移 `010_summary_length_300.sql` 将 `summary` 从 `VARCHAR(200)` 放宽到 `VARCHAR(300)`，`schema_version` 升级为 `10`。只改列宽，不改写已有摘要；升级前备份，MySQL 的 `MODIFY COLUMN` 不能自动回滚。
 
 ### 前端变更
 

@@ -2301,6 +2301,106 @@ def test_combo_panel_closes_when_anchor_scrolls_out_of_modal_body(tmp_path: Path
     _assert_ok(_run_drawer_scenario(tmp_path, scenario, "combo_scroll_out_of_view"))
 
 
+def test_condition_and_modify_field_load_more_keeps_panel_open(tmp_path: Path) -> None:
+    """条件字段、修改字段点“加载更多”不得收起候选面板，并追加下一页字段。
+
+    回归：加载更多按钮在 fixed 面板内获焦时，浏览器会滚动弹窗内容区，
+    锚点离开可视范围后滚动关闭逻辑把面板收起，后续分页画在已隐藏的面板上。
+    """
+    scenario = """
+  const columns = Array.from({ length: 25 }, (_, index) => ({
+    column_name: "c_col_" + String(index + 1).padStart(2, "0"),
+    column_comment: "列" + (index + 1),
+    data_type: "varchar",
+  }));
+  const documentRef = makeDrawerDocument();
+  const hooks = { saved: 0, closed: 0 };
+  const base = baseDrawerOptions(makeDrawerActions(async () => ({ data: { id: 1 } })), hooks);
+  const actions = {
+    ...base.actions,
+    ...DRAWER_SCRIPT_ACTIONS,
+    listColumns: async (_datasourceId, _tableName, params) => {
+      const page = Number(params?.page) || 1;
+      const pageSize = Number(params?.page_size) || 10;
+      const start = (page - 1) * pageSize;
+      const items = columns.slice(start, start + pageSize);
+      return {
+        data: {
+          items,
+          total: columns.length,
+          page,
+          page_size: pageSize,
+          total_pages: Math.ceil(columns.length / pageSize),
+        },
+      };
+    },
+  };
+  const overlay = createRecordDrawer(documentRef, { ...base, actions, mode: "edit", record: DRAWER_STRUCTURED_RECORD });
+  await sleep(120);
+  const body = overlay.querySelector(".rsp-modal-body");
+  body._rect = { top: 100, left: 0, width: 800, height: 400, right: 800, bottom: 500 };
+  function findAllByAria(root, label) {
+    const found = [];
+    walkAll(root, (node) => {
+      if (node.getAttribute && node.getAttribute("aria-label") === label) found.push(node);
+    });
+    return found;
+  }
+  function findIn(root, predicate) {
+    let found = null;
+    walkAll(root, (node) => {
+      if (!found && predicate(node)) found = node;
+    });
+    return found;
+  }
+  function optionCount(panel) {
+    let count = 0;
+    walkAll(panel, (node) => {
+      if (String(node.className || "").split(/\\s+/).includes("rsp-sc-combo-option")) count += 1;
+    });
+    return count;
+  }
+  async function exercise(input, label) {
+    input.value = "";
+    input._rect = { top: 420, left: 50, width: 200, height: 32, right: 250, bottom: 452 };
+    input.click();
+    await sleep(60);
+    const panel = (input.parentNode.children || []).find(
+      (child) => String(child.className || "").split(/\\s+/).includes("rsp-sc-combo-panel"),
+    );
+    assert.ok(panel, label + "存在候选面板");
+    assert.equal(Boolean(panel.hidden), false, label + "候选面板展开");
+    const more = findIn(panel, (node) => node.tagName === "BUTTON" && node.textContent === "加载更多");
+    assert.ok(more, label + "出现加载更多");
+    const option = findIn(panel, (node) => String(node.className || "").split(/\\s+/).includes("rsp-sc-combo-option"));
+    assert.ok(option, label + "出现字段候选项");
+    let optionPrevented = false;
+    option.dispatchEvent({ type: "mousedown", preventDefault() { optionPrevented = true; } });
+    assert.equal(optionPrevented, true, label + "候选项按下不抢输入焦点");
+    let prevented = false;
+    more.dispatchEvent({ type: "mousedown", preventDefault() { prevented = true; } });
+    assert.equal(prevented, true, label + "加载更多按下不抢输入焦点");
+    input._rect = { top: 20, left: 50, width: 200, height: 32, right: 250, bottom: 52 };
+    overlay.dispatchEvent({ type: "scroll" });
+    await sleep(40);
+    assert.equal(Boolean(panel.hidden), false, label + "点击加载更多引起的滚动不收起字段框");
+    more.click();
+    await sleep(40);
+    assert.equal(Boolean(panel.hidden), false, label + "加载更多后面板仍展开");
+    assert.ok(optionCount(panel) > 10, label + "追加下一页字段");
+    documentRef.dispatchEvent({ type: "mouseup" });
+    overlay.dispatchEvent({ type: "scroll" });
+    await sleep(40);
+    assert.equal(Boolean(panel.hidden), true, label + "松手后用户滚动仍收起候选面板");
+  }
+  const fieldInputs = findAllByAria(overlay, "请选择字段");
+  assert.ok(fieldInputs.length >= 2, "同时渲染条件字段和修改字段");
+  await exercise(fieldInputs[0], "条件字段");
+  await exercise(fieldInputs[fieldInputs.length - 1], "修改字段");
+"""
+    _assert_ok(_run_drawer_scenario(tmp_path, scenario, "combo_load_more_keeps_panel"))
+
+
 def test_thumbnail_autoload_source_markers() -> None:
     source = (WEB / "components" / "record_attachments.js").read_text(encoding="utf-8")
     assert "THUMB_AUTOLOAD_MAX_BYTES" in source
