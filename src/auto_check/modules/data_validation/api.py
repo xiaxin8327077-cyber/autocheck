@@ -1,0 +1,119 @@
+"""数据校验模块的相对路由。"""
+
+from __future__ import annotations
+
+import base64
+from typing import Any, Callable
+
+from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
+
+from .contracts import AppError
+from .service import DataValidationService
+
+
+def register_routes(router: Any, service_getter: Callable[[], DataValidationService]) -> None:
+    def wrap(permission: str, method: str, path: str, handler: Callable[[ModuleRequest], Any], body: int = 1_000_000) -> None:
+        def endpoint(request: ModuleRequest) -> ModuleHttpResponse:
+            try:
+                return ModuleHttpResponse.json(200, {"data": handler(request)})
+            except AppError as exc:
+                status = 403 if exc.code == "FORBIDDEN" else 409 if exc.code == "CONFLICT_VERSION" else 400
+                error = {"code": exc.code, "message": exc.code}
+                if exc.stage:
+                    error["stage"] = exc.stage
+                if exc.reference:
+                    error["reference"] = exc.reference
+                return ModuleHttpResponse.json(status, {"error": error})
+        router.add(method, path, endpoint, permission=permission, max_body_bytes=body)
+
+    wrap("data_validation.view", "GET", "/rules", lambda request: service_getter().list_rules(_user(request), dict(request.query)), 0)
+    wrap("data_validation.ai_use", "GET", "/models", lambda request: service_getter().list_models(), 0)
+    wrap("data_validation.view_results", "GET", "/tasks/{task_id}/issues", lambda request: service_getter().list_task_issues(_user(request), int(request.path_params["task_id"]), dict(request.query)), 0)
+    wrap("data_validation.view", "GET", "/rules/stats", lambda request: service_getter().rule_stats(_user(request)), 0)
+    wrap("data_validation.view", "GET", "/report-categories", lambda request: service_getter().list_report_categories(), 0)
+    wrap("data_validation.view", "GET", "/rules/{rule_id}/history", lambda request: service_getter().list_rule_history(_user(request), int(request.path_params["rule_id"]), dict(request.query)), 0)
+    wrap("data_validation.view", "GET", "/rules/{rule_id}", lambda request: service_getter().get_rule(_user(request), int(request.path_params["rule_id"])), 0)
+    wrap("data_validation.view", "GET", "/sources", lambda request: service_getter().list_selectable_sources(), 0)
+    wrap("data_validation.view", "GET", "/sources/{source_id}/tables/{table_name}", lambda request: service_getter().describe_source_table(request.path_params["source_id"], request.path_params["table_name"]), 0)
+    wrap("data_validation.view_results", "GET", "/tasks", lambda request: service_getter().list_recent_tasks(_user(request), dict(request.query)), 0)
+    wrap("data_validation.manage", "POST", "/rules", lambda request: service_getter().save_draft(_user(request), dict(request.body or {})))
+    wrap("data_validation.manage", "PUT", "/rules/{rule_id}", lambda request: service_getter().save_draft(_user(request), dict(request.body or {}), int(request.path_params["rule_id"])))
+    wrap("data_validation.manage", "POST", "/rules/{rule_id}/copy", lambda request: service_getter().copy_rule(_user(request), int(request.path_params["rule_id"])))
+    wrap("data_validation.manage", "POST", "/rules/{rule_id}/disable", lambda request: service_getter().disable_rule(_user(request), int(request.path_params["rule_id"])))
+    wrap("data_validation.ai_use", "POST", "/ai/parse-rule", lambda request: service_getter().parse_rule_request(_user(request), dict(request.body or {})))
+    wrap("data_validation.ai_use", "POST", "/ai/analyses", lambda request: service_getter().start_analysis(_user(request), dict(request.body or {})))
+    wrap("data_validation.ai_use", "GET", "/ai/analyses/{analysis_id}", lambda request: service_getter().get_analysis(_user(request), str(request.path_params["analysis_id"])))
+    wrap("data_validation.ai_use", "DELETE", "/ai/analyses/{analysis_id}", lambda request: service_getter().cancel_analysis(_user(request), str(request.path_params["analysis_id"])))
+    wrap("data_validation.manage", "POST", "/ai/candidates/batch-save", lambda request: service_getter().batch_save_candidates(_user(request), dict(request.body or {})))
+    wrap("data_validation.ai_use", "POST", "/ai/preview", lambda request: service_getter().preview_candidate(_user(request), dict(request.body or {})))
+    wrap("data_validation.test", "POST", "/ai/tests", lambda request: service_getter().test_candidate(_user(request), dict(request.body or {})))
+    wrap("data_validation.ai_use", "POST", "/models/test", lambda request: service_getter().test_model(_user(request), str((request.body or {}).get("model_id") or "")))
+    wrap("data_validation.test", "POST", "/rules/{rule_id}/tests", lambda request: service_getter().run_tests(_user(request), int(request.path_params["rule_id"]), int((request.body or {})["version_no"]), (request.body or {}).get("cases")))
+    wrap("data_validation.confirm", "POST", "/rules/{rule_id}/confirm", lambda request: service_getter().confirm_rule(_user(request), int(request.path_params["rule_id"]), int((request.body or {})["version_no"]), str((request.body or {})["expected_hash"])))
+    wrap("data_validation.run", "POST", "/tasks", lambda request: service_getter().start_task(_user(request), dict(request.body or {})))
+    wrap("data_validation.run", "POST", "/tasks/{task_id}/cancel", lambda request: service_getter().cancel_task(_user(request), int(request.path_params["task_id"])))
+    wrap("data_validation.run", "POST", "/tasks/{task_id}/retry", lambda request: service_getter().retry_failed(_user(request), int(request.path_params["task_id"])))
+    wrap("data_validation.export", "POST", "/exports", lambda request: _export(service_getter(), request))
+    wrap("data_validation.export", "POST", "/rule-packs/export", lambda request: {"content": service_getter().export_rule_pack(_user(request), list((request.body or {}).get("rule_ids") or [])).decode("utf-8")})
+    wrap("data_validation.manage", "POST", "/rule-packs/import", lambda request: service_getter().import_rule_pack(_user(request), str((request.body or {}).get("content") or "").encode("utf-8")))
+    wrap("data_validation.admin", "GET", "/settings/documents", lambda request: service_getter().list_documents(), 0)
+    wrap(
+        "data_validation.admin", "POST", "/settings/documents",
+        lambda request: service_getter().import_document(
+            _user(request),
+            str((request.body or {}).get("file_name") or "document.xlsx"),
+            _document_bytes(request.body or {}),
+            str((request.body or {}).get("name") or ""),
+        ),
+        20_000_000,
+    )
+    wrap(
+        "data_validation.admin", "POST", "/settings/documents/{document_id}/activate",
+        lambda request: service_getter().activate_document(_user(request), int(request.path_params["document_id"])),
+    )
+    wrap("data_validation.admin", "GET", "/settings/knowledge", lambda request: service_getter().knowledge.settings(), 0)
+    wrap("data_validation.admin", "POST", "/settings/knowledge/preview",
+         lambda request: service_getter().knowledge.preview(dict(request.body or {})), 100_000)
+    wrap("data_validation.admin", "PUT", "/settings/knowledge",
+         lambda request: service_getter().knowledge.save(_user(request), dict(request.body or {})), 100_000)
+    wrap("data_validation.admin", "POST", "/settings/knowledge/activation",
+         lambda request: service_getter().knowledge.save(_user(request), dict(request.body or {}), activation=True), 1024)
+    wrap("data_validation.admin", "GET", "/settings/prompts", lambda request: service_getter().list_prompts(), 0)
+    wrap(
+        "data_validation.admin", "POST", "/settings/prompts",
+        lambda request: service_getter().save_prompt(
+            _user(request), str((request.body or {}).get("stage") or ""), str((request.body or {}).get("content") or ""),
+        ),
+    )
+    wrap(
+        "data_validation.admin", "POST", "/settings/prompts/{stage}/reset",
+        lambda request: service_getter().reset_prompt(_user(request), str(request.path_params["stage"])),
+    )
+    wrap("data_validation.admin", "GET", "/settings/source-rules", lambda request: service_getter().list_source_rules(), 0)
+    wrap(
+        "data_validation.admin", "POST", "/settings/source-rules",
+        lambda request: service_getter().save_source_rules(
+            _user(request), list((request.body or {}).get("rules") or []),
+        ),
+    )
+
+
+def _user(request: ModuleRequest) -> dict[str, Any]:
+    return dict(request.current_user)
+
+
+def _export(service: DataValidationService, request: ModuleRequest) -> dict[str, Any]:
+    body = request.body or {}
+    result = service.export_issues(_user(request), int(body["task_id"]), str(body.get("file_type") or "csv"))
+    return {"truncated": result["truncated"], "content": result["content"].decode("utf-8", errors="replace")}
+
+
+def _document_bytes(body: dict[str, Any]) -> bytes:
+    encoded = str(body.get("content_base64") or "")
+    if not encoded:
+        return b""
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except Exception as exc:
+        from .contracts import AppError
+        raise AppError("VALIDATION_ERROR") from exc

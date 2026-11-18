@@ -1,0 +1,81 @@
+{
+  "id": "data_validation",
+  "name": "数据校验",
+  "version": "1.3.3",
+  "platform_api": 1,
+  "required": false,
+  "backend_entry": "auto_check.modules.data_validation.module:create_module",
+  "api_prefix": "/api/modules/data-validation",
+  "frontend_entry": "/module-assets/data_validation/index.js",
+  "frontend_style": "/module-assets/data_validation/styles.css",
+  "navigation": [
+    {
+      "id": "data-validation",
+      "label": "数据校验",
+      "route": "data-validation",
+      "order": 10,
+      "permission": "data_validation.view",
+      "group_id": "data-quality",
+      "group_label": "数据质量",
+      "group_order": 40
+    },
+    {
+      "id": "data-validation-results",
+      "label": "校验结果",
+      "route": "data-validation-results",
+      "order": 11,
+      "permission": "data_validation.view_results",
+      "group_id": "data-quality",
+      "group_label": "数据质量",
+      "group_order": 40
+    },
+    {
+      "id": "data-validation-settings",
+      "label": "校验设置",
+      "route": "data-validation-settings",
+      "order": 12,
+      "permission": "data_validation.admin",
+      "group_id": "data-quality",
+      "group_label": "数据质量",
+      "group_order": 40
+    }
+  ],
+  "permissions": [
+    "data_validation.view",
+    "data_validation.manage",
+    "data_validation.ai_use",
+    "data_validation.test",
+    "data_validation.confirm",
+    "data_validation.run",
+    "data_validation.view_results",
+    "data_validation.export",
+    "data_validation.admin"
+  ],
+  "dependencies": [],
+  "service_dependencies": [
+    {
+      "name": "platform.data_sources",
+      "minimum_version": 1
+    },
+    {
+      "name": "platform.language_models",
+      "minimum_version": 1
+    },
+    {
+      "name": "platform.report_navigation",
+      "minimum_version": 1
+    }
+  ],
+  "schema_version": 11,
+  "table_prefix": "data_validation_",
+  "release_notes": {
+    "version": "1.3.3",
+    "items": [
+      "提供校验规则、测试确认、批量执行和异常结果导出。",
+      "支持非空检查、复合筛选与两表关联，提供保存前预览测试、多方案卡内查看及批量草稿保存。",
+      "项目异常贯通编号与名称，数值缺值自动分流核查，提供有据的独立 AI 补充建议。",
+      "统一集市项目主表与项目全称，稳定识别存续口径并提示上次选择；完善只读等待、口径说明和补充建议。",
+      "支持配置并复用信托业务知识；集市项目并列校验支持主表优先与共享存续口径。AI 新建暂默认监管报表，支持按导入文档的工作表前缀识别报表分类。"
+    ]
+  }
+}
