@@ -76,6 +76,15 @@ CAPABILITY_DEFINITIONS: dict[str, dict[str, str]] = {
     "sys.dashboard_management.external_api_monitor": {"label": "查看外部接口监控", "type": TYPE_FUNCTION},
     "sys.dashboard_management.external_api_token_manage": {"label": "生成和轮换外部接口专属 Token", "type": TYPE_FUNCTION},
     "sys.dashboard_management.external_api_ip_whitelist_manage": {"label": "配置外部接口 IP 白名单", "type": TYPE_FUNCTION},
+    "dv.view": {"label": "进入数据校验", "type": TYPE_MENU},
+    "dv.manage": {"label": "维护数据校验规则草稿", "type": TYPE_FUNCTION},
+    "dv.ai_use": {"label": "使用数据校验 AI 生成", "type": TYPE_FUNCTION},
+    "dv.test": {"label": "运行数据校验规则测试", "type": TYPE_FUNCTION},
+    "dv.confirm": {"label": "确认并启用自己的数据校验规则", "type": TYPE_FUNCTION},
+    "dv.run": {"label": "执行数据校验", "type": TYPE_FUNCTION},
+    "dv.view_results": {"label": "查看数据校验结果", "type": TYPE_FUNCTION},
+    "dv.export": {"label": "导出数据校验结果", "type": TYPE_FUNCTION},
+    "dv.admin": {"label": "维护数据校验来源白名单和运行配额", "type": TYPE_FUNCTION},
 }
 
 #: 旧能力码 → 新能力码（读取矩阵时自动继承旧值，落盘后为全新结构）。
@@ -99,6 +108,7 @@ ADMIN_ONLY_CAPABILITIES: frozenset[str] = frozenset(
         "sys.scheduled_tasks",
         "sys.dashboard_management.external_api_token_manage",
         "sys.dashboard_management.external_api_ip_whitelist_manage",
+        "dv.admin",
     }
 )
 
@@ -117,6 +127,14 @@ _STANDARD_TIER_TRUE: frozenset[str] = frozenset(
         "rsp.edit",
         "rsp.void",
         "rsp.reopen",
+        "dv.view",
+        "dv.manage",
+        "dv.ai_use",
+        "dv.test",
+        "dv.confirm",
+        "dv.run",
+        "dv.view_results",
+        "dv.export",
     }
 )
 

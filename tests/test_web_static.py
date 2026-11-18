@@ -5774,6 +5774,7 @@ def test_all_system_modals_use_balanced_shared_shell():
         "roleDefinitionModal",
         "dictionaryItemsModal",
         "scheduledTaskModal",
+        "languageModelModal",
     )
     for overlay_id in overlay_ids:
         opening = re.search(

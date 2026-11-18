@@ -1494,6 +1494,7 @@ async function loadSettingsPageData(context = createSettingsPageLoadScope()) {
     loadPageSection("系统信息", () => loadSystemInfo(context), context),
     loadPageSection("界面设置", () => loadInterfaceRadiusPreference({ silent: false, context }), context),
     loadPageSection("数据源配置", () => loadConfigList(context), context),
+    loadPageSection("模型配置", () => loadLanguageModels(context), context),
     loadPageSection("逐笔校验配置", () => loadDbValidationSettings(context), context),
     loadPageSection("流程执行配置", () => loadFlowSettings(context), context),
     loadPageSection("业务字段配置", () => loadReconcileSchemaSettings(context), context),
@@ -8418,6 +8419,117 @@ document.addEventListener("auto-check-reconcile-completed", (event) => {
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) flushPendingReconcileCompletion();
+});
+
+/* ===== Language model settings ===== */
+const languageModelList = document.getElementById("languageModelList");
+const languageModelModal = document.getElementById("languageModelModal");
+const languageModelModalTitle = document.getElementById("languageModelModalTitle");
+const languageModelStatus = document.getElementById("languageModelStatus");
+let editingLanguageModelId = "";
+
+function closeLanguageModelModal() {
+  if (!languageModelModal) return;
+  languageModelModal.hidden = true;
+  editingLanguageModelId = "";
+}
+
+async function loadLanguageModels(context = null) {
+  if (!languageModelList || !hasCapability("sys.settings.admin")) return null;
+  const payload = await api("/api/settings/language-models");
+  if (context && !isSettingsLoadCurrent(context)) return null;
+  renderLanguageModels(payload.models || []);
+  return payload;
+}
+
+function renderLanguageModels(models) {
+  if (!languageModelList) return;
+  if (!models.length) {
+    languageModelList.innerHTML = '<p class="placeholder-text">暂无模型配置</p>';
+    return;
+  }
+  languageModelList.innerHTML = models.map((model) => `
+    <div class="config-item">
+      <div>
+        <strong>${escapeHtml(model.name)}</strong>
+        <span>${escapeHtml(model.model_name)}</span>
+        <span>${model.enabled ? "启用" : "停用"}</span>
+        <span>${model.is_default ? "默认" : ""}</span>
+      </div>
+      <div>
+        <button type="button" data-language-model-action="edit" data-language-model-id="${escapeHtml(model.id)}">编辑</button>
+        <button type="button" data-language-model-action="default" data-language-model-id="${escapeHtml(model.id)}">作为默认</button>
+        <button type="button" data-language-model-action="toggle" data-language-model-id="${escapeHtml(model.id)}">${model.enabled ? "停用" : "启用"}</button>
+        <button type="button" data-language-model-action="delete" data-language-model-id="${escapeHtml(model.id)}">删除</button>
+      </div>
+    </div>
+  `).join("");
+  languageModelList.querySelectorAll("[data-language-model-action]").forEach((button) => {
+    button.addEventListener("click", () => handleLanguageModelAction(button, models));
+  });
+}
+
+function openLanguageModelModal(model) {
+  editingLanguageModelId = model ? model.id : "";
+  languageModelModalTitle.textContent = model ? "编辑模型" : "新建模型";
+  document.getElementById("languageModelName").value = model ? model.name : "";
+  document.getElementById("languageModelBaseUrl").value = model ? model.base_url : "";
+  document.getElementById("languageModelModelName").value = model ? model.model_name : "";
+  document.getElementById("languageModelApiKey").value = "";
+  document.getElementById("languageModelEnabled").checked = model ? model.enabled : true;
+  document.getElementById("languageModelDefault").checked = model ? model.is_default : false;
+  languageModelStatus.textContent = "";
+  languageModelModal.hidden = false;
+}
+
+async function saveLanguageModel() {
+  const payload = {
+    name: document.getElementById("languageModelName").value.trim(),
+    base_url: document.getElementById("languageModelBaseUrl").value.trim(),
+    model_name: document.getElementById("languageModelModelName").value.trim(),
+    api_key: document.getElementById("languageModelApiKey").value,
+    enabled: document.getElementById("languageModelEnabled").checked,
+    is_default: document.getElementById("languageModelDefault").checked,
+  };
+  const path = editingLanguageModelId
+    ? `/api/settings/language-models/${editingLanguageModelId}`
+    : "/api/settings/language-models";
+  await api(path, { method: "POST", body: JSON.stringify(payload) });
+  closeLanguageModelModal();
+  await loadLanguageModels();
+}
+
+async function handleLanguageModelAction(button, models) {
+  const id = button.dataset.languageModelId;
+  const model = models.find((item) => item.id === id);
+  const action = button.dataset.languageModelAction;
+  if (action === "edit") {
+    openLanguageModelModal(model);
+    return;
+  }
+  if (action === "delete") {
+    await api(`/api/settings/language-models/${id}`, { method: "DELETE" });
+  } else if (action === "default") {
+    await api(`/api/settings/language-models/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ is_default: true, enabled: true }),
+    });
+  } else if (action === "toggle") {
+    await api(`/api/settings/language-models/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ enabled: !model.enabled }),
+    });
+  }
+  await loadLanguageModels();
+}
+
+document.getElementById("newLanguageModelBtn")?.addEventListener("click", () => openLanguageModelModal(null));
+document.getElementById("languageModelModalClose")?.addEventListener("click", closeLanguageModelModal);
+document.getElementById("languageModelCancelBtn")?.addEventListener("click", closeLanguageModelModal);
+document.getElementById("languageModelSaveBtn")?.addEventListener("click", () => {
+  saveLanguageModel().catch((error) => {
+    languageModelStatus.textContent = error.message || "保存失败";
+  });
 });
 
 /* ===== Config Management ===== */

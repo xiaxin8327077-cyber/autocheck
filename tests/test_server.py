@@ -985,6 +985,18 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         events.append("external_api_status_platform")
         return external_api_status_spec
 
+    data_source_spec = object()
+
+    def create_data_source_service(database):
+        events.append(("data_source_platform", database))
+        return data_source_spec
+
+    language_model_spec = object()
+
+    def create_language_model_service(database):
+        events.append(("language_model_platform", database))
+        return language_model_spec
+
     def build_module_runtime(context, *, platform_services, bootstrap_timeout_seconds):
         events.append(
             (
@@ -1019,6 +1031,16 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         server_module,
         "create_external_api_status_service",
         create_external_api_status_service,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_data_source_service",
+        create_data_source_service,
+    )
+    monkeypatch.setattr(
+        server_module,
+        "create_language_model_service",
+        create_language_model_service,
     )
     monkeypatch.setattr(server_module.ModuleRuntime, "build", staticmethod(build_module_runtime))
     monkeypatch.setattr(
@@ -1093,11 +1115,21 @@ def test_run_server_builds_validates_and_closes_application_database_before_serv
         ("report_navigation_platform", report_navigation_service),
         "notification_platform",
         "external_api_status_platform",
+        ("data_source_platform", application_database),
+        ("language_model_platform", application_database),
         (
             "module_build",
             application_database,
             config_path,
-            (user_directory_spec, dictionary_spec, report_navigation_spec, notification_platform_spec, external_api_status_spec),
+            (
+                user_directory_spec,
+                dictionary_spec,
+                report_navigation_spec,
+                notification_platform_spec,
+                external_api_status_spec,
+                data_source_spec,
+                language_model_spec,
+            ),
             30.0,
         ),
         "module_start",

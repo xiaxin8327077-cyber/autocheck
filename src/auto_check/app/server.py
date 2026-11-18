@@ -68,6 +68,8 @@ from auto_check.app.flow_tool import (
     run_flow_chain,
 )
 from auto_check.app.security import AuthManager, AuthSession, sanitize_error_message
+from auto_check.app.data_source_platform import create_data_source_service
+from auto_check.app.language_model_platform import create_language_model_service
 from auto_check.app.platform_services import create_dictionary_service, create_user_directory_service
 from auto_check.app.external_api import create_external_api_status_service
 from auto_check.app.report_navigation_platform import (
@@ -548,6 +550,41 @@ class ApiRouter:
     ) -> bool:
         role = str((current_user or {}).get("role", "") or "user")
         return has_capability(role, code, self._current_capability_matrix())
+
+    def _handle_language_models(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        current_user: dict[str, Any] | None,
+    ) -> tuple[int, dict[str, Any]]:
+        if not self._user_has_capability(current_user, "sys.settings.admin"):
+            return 403, {"error": "admin role required"}
+        from auto_check.app.language_model_settings import (
+            delete_language_model,
+            list_language_models,
+            save_language_model,
+            update_language_model,
+        )
+
+        model_id = path.removeprefix("/api/settings/language-models/").strip("/")
+        try:
+            if method == "GET" and path == "/api/settings/language-models":
+                return 200, {"models": list_language_models(self.application_database)}
+            if method == "POST" and path == "/api/settings/language-models":
+                return 200, {"model": save_language_model(self.application_database, body or {})}
+            if method == "POST" and model_id:
+                return 200, {
+                    "model": update_language_model(self.application_database, model_id, body or {})
+                }
+            if method == "DELETE" and model_id:
+                delete_language_model(self.application_database, model_id)
+                return 200, {"ok": True}
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        except KeyError:
+            return 404, {"error": "model not found"}
+        return 405, {"error": "method not allowed"}
 
     def _handle_dictionaries(
         self,
@@ -1080,6 +1117,9 @@ class ApiRouter:
                     "config_count": len(store.data_sources),
                     "settings": default_settings_to_dict(store.default_settings),
                 }
+
+            if path == "/api/settings/language-models" or path.startswith("/api/settings/language-models/"):
+                return self._handle_language_models(method, path, body, current_user)
 
             # ---- Default Settings ----
             if method == "GET" and path == "/api/settings/defaults":
@@ -5419,6 +5459,8 @@ def run_server(
                 create_report_navigation_service(report_navigation_service),
                 _notification_platform_module.create_notification_platform_service(notification_service),
                 create_external_api_status_service(),
+                create_data_source_service(application_database),
+                create_language_model_service(application_database),
             ),
             bootstrap_timeout_seconds=30.0,
         )

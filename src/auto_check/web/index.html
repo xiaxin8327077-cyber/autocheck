@@ -1737,6 +1737,24 @@
               </div>
             </section>
 
+            <section class="card settings-dashboard-card admin-only" id="languageModelCard">
+              <div class="card-header">
+                <div class="card-icon card-icon-pink">&#9672;</div>
+                <div class="card-title">
+                  <h3>模型配置</h3>
+                  <p>管理系统可共用的对话模型</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="config-toolbar">
+                  <button id="newLanguageModelBtn" type="button" class="btn-outline btn-sm" data-action-tone="primary" data-action-variant="weak">+ 新建模型</button>
+                </div>
+                <div class="config-list" id="languageModelList">
+                  <p class="placeholder-text">暂无模型配置</p>
+                </div>
+              </div>
+            </section>
+
             <!-- 业务设置 -->
             <!-- class="card settings-dashboard-card card-business" -->
             <section class="card settings-dashboard-card card-business admin-only">
@@ -2076,6 +2094,27 @@
         </div>
       </div>
 
+      <div class="app-modal-overlay modal-overlay" id="languageModelModal" hidden>
+        <div class="app-modal-shell modal">
+          <div class="app-modal-header modal-header">
+            <h3 id="languageModelModalTitle">新建模型</h3>
+            <button class="app-modal-close btn-close" id="languageModelModalClose" type="button">&times;</button>
+          </div>
+          <div class="app-modal-body modal-body">
+            <label class="modal-field"><span>显示名</span><input id="languageModelName" /></label>
+            <label class="modal-field"><span>接口地址</span><input id="languageModelBaseUrl" placeholder="https://example.com/v1" /></label>
+            <label class="modal-field"><span>模型名</span><input id="languageModelModelName" /></label>
+            <label class="modal-field"><span>访问密钥</span><input id="languageModelApiKey" type="password" autocomplete="new-password" /></label>
+            <label class="modal-field"><span>启用</span><input id="languageModelEnabled" type="checkbox" checked /></label>
+            <label class="modal-field"><span>默认模型</span><input id="languageModelDefault" type="checkbox" /></label>
+          </div>
+          <div class="app-modal-footer modal-footer">
+            <span class="modal-status" id="languageModelStatus"></span>
+            <button id="languageModelCancelBtn" type="button" class="btn-outline btn-sm" data-action-tone="neutral" data-action-variant="weak">取消</button>
+            <button id="languageModelSaveBtn" type="button" class="btn-primary btn-sm" data-action-tone="primary" data-action-variant="solid">保存</button>
+          </div>
+        </div>
+      </div>
       <!-- 配置弹窗 -->
       <div class="app-modal-overlay modal-overlay" id="configModal" hidden>
         <div class="app-modal-shell modal">

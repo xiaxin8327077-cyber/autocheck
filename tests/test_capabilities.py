@@ -76,6 +76,15 @@ def test_capability_definitions_cover_all_registered_codes_with_type():
         "sys.dashboard_management.external_api_monitor",
         "sys.dashboard_management.external_api_token_manage",
         "sys.dashboard_management.external_api_ip_whitelist_manage",
+        "dv.view",
+        "dv.manage",
+        "dv.ai_use",
+        "dv.test",
+        "dv.confirm",
+        "dv.run",
+        "dv.view_results",
+        "dv.export",
+        "dv.admin",
     }
     assert set(CAPABILITY_DEFINITIONS) == expected_codes
     for code in expected_codes:
@@ -108,6 +117,17 @@ def test_is_required_and_is_admin_only():
     assert is_admin_only("report_navigation.edit_stats") is False
     assert is_admin_only("rsp.delete") is False
     assert is_admin_only("rsp.view") is False
+    assert is_admin_only("dv.admin") is True
+    assert is_admin_only("dv.view") is False
+    assert has_capability("user", "dv.view") is True
+    assert has_capability("user", "dv.manage") is True
+    assert has_capability("user", "dv.ai_use") is True
+    assert has_capability("user", "dv.test") is True
+    assert has_capability("user", "dv.confirm") is True
+    assert has_capability("user", "dv.run") is True
+    assert has_capability("user", "dv.view_results") is True
+    assert has_capability("user", "dv.export") is True
+    assert has_capability("user", "dv.admin") is False
 
 
 def test_default_user_tier_capabilities():

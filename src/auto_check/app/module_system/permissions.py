@@ -21,6 +21,15 @@ _MODULE_PERMISSION_TO_CAPABILITY: dict[str, str] = {
     "dashboard_management.external_api_monitor": "sys.dashboard_management.external_api_monitor",
     "dashboard_management.external_api_token_manage": "sys.dashboard_management.external_api_token_manage",
     "dashboard_management.external_api_ip_whitelist_manage": "sys.dashboard_management.external_api_ip_whitelist_manage",
+    "data_validation.view": "dv.view",
+    "data_validation.manage": "dv.manage",
+    "data_validation.ai_use": "dv.ai_use",
+    "data_validation.test": "dv.test",
+    "data_validation.confirm": "dv.confirm",
+    "data_validation.run": "dv.run",
+    "data_validation.view_results": "dv.view_results",
+    "data_validation.export": "dv.export",
+    "data_validation.admin": "dv.admin",
 }
 
 
