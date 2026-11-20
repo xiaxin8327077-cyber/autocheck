@@ -66,7 +66,7 @@ def test_actual_trust_measures_offer_independent_schemes_instead_of_rewriting_re
         assert table in candidate["preview"]["sql_preview"] and field in candidate["preview"]["sql_preview"]
     assert len(model.calls) == 2
     assert rules.storage.visible_rules("1") == []
-    assert result["comparison_suggestions"] and all(not item["supported"] for item in result["comparison_suggestions"])
+    assert result["comparison_suggestions"] == [], "没有模型提案时不补程序模板建议"
 
 
 def test_target_choice_never_erases_unit_or_relation_uncertainty():

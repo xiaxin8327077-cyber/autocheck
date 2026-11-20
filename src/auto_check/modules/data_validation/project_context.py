@@ -20,7 +20,7 @@ _FULL_PROJECT_NAME_TABLE = "reg_pub_project_info"
 _FULL_PROJECT_NAME_FIELD = "c_projname"
 
 PROJECT_CODE_COMMENTS = re.compile(r"项目编号|项目编码|项目代码|项目唯一标识|项目号|项目ID|项目 Id|项目 id")
-PROJECT_NAME_COMMENTS = re.compile(r"项目名称|项目中文名|项目简称|项目名|项目 ID 名称|项目 Id 名称")
+PROJECT_NAME_COMMENTS = re.compile(r"项目名称|项目全称|项目中文名|项目简称|项目名|项目 ID 名称|项目 Id 名称")
 PERIOD_DATE_COMMENTS = re.compile(
     r"(?:数据|业务|报送|报告|统计|余额|会计|核算|账务|帐务)日期"
     r"|(?:期末|期初|日终|月结)日期?",
@@ -46,6 +46,10 @@ _BASE_KEYS = {"mode", "code_field", "name_field", "confirmed"}
 _LOOKUP_KEYS = {"mode", "code_field", "name_field", "table_name", "key", "date_field",
                 "unique_evidence", "confirmed"}
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DIRECT_SOURCE_FIELD = re.compile(
+    r"直接取[\u4e00-\u9fffA-Za-z_0-9]+?(?:的|[.．])"
+    r"(?P<label>[\u4e00-\u9fffA-Za-z_0-9 /（）()]+)\[(?P<field>[A-Za-z_][A-Za-z0-9_]*)\][。.]?"
+)
 
 
 def _fail() -> None:
@@ -79,22 +83,31 @@ def is_period_date_field(field: dict[str, Any]) -> bool:
     return bool(comment) and bool(PERIOD_DATE_COMMENTS.search(comment)) and not EVENT_DATE_COMMENTS.search(comment)
 
 
+def _project_field_labels(field: dict[str, Any]) -> tuple[str, ...]:
+    """识别本列的中文含义。只有结构化来源与完整直取说明一致时才使用来源字段的含义。"""
+    local_label = _field_cn(field).strip()
+    source_table = str(field.get("source_table") or "").strip()
+    if not all(_identifier(part) for part in source_table.split(".")):
+        return (local_label,)
+    source_logic = _DIRECT_SOURCE_FIELD.fullmatch(str(field.get("logic") or "").strip())
+    if source_logic and source_logic["field"] == field.get("source_field"):
+        return local_label, source_logic["label"].strip()
+    return (local_label,)
+
+
 def project_code_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """只按字段自身中文角色识别，不把取数逻辑的他列引用当成本列身份。"""
-    # A reference to another column in lineage/logic does not make this column
-    # an identifier. The role must describe the field itself.
-    return [field for field in fields
-            if (PROJECT_CODE_COMMENTS.search(_field_cn(field))
-                or (str(field.get("is_pk") or "") == "Y" and _field_cn(field).strip() == "项目标识"))
-            and not re.search(r"名称|简称", _field_cn(field))]
+    return [field for field in fields if not re.search(r"名称|简称", _field_cn(field))
+            and any(PROJECT_CODE_COMMENTS.search(label)
+                    or (field.get("is_pk") == "Y" and label == "项目标识")
+                    for label in _project_field_labels(field))]
 
 
 def project_name_fields(fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [field for field in fields if PROJECT_NAME_COMMENTS.search(_field_cn(field))]
+    return [field for field in fields if any(PROJECT_NAME_COMMENTS.search(label) for label in _project_field_labels(field))]
 
 
 def _project_names_for_table(table: dict[str, Any] | None, fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # 用户明确指定这一张表的项目名全称；其他表仍按文档中文角色识别。
+    # 集市项目表使用明确指定的项目全称。
     if (table or {}).get("table_name") == _FULL_PROJECT_NAME_TABLE:
         return [field for field in fields if _field_name(field) == _FULL_PROJECT_NAME_FIELD]
     return project_name_fields(fields)
@@ -178,7 +191,7 @@ def validate_project_context(raw: Any) -> dict[str, Any]:
     return normalize_project_context(raw)
 
 
-def _key_family(data_type: Any) -> str:
+def project_key_family(data_type: Any) -> str:
     kind = base_type(data_type).split(" ", 1)[0]
     if kind in {"int", "integer", "bigint", "smallint", "tinyint", "mediumint", "decimal", "numeric", "number"}:
         return "number"
@@ -207,7 +220,7 @@ def validate_project_context_against_columns(
     for name in (normalized["name_field"], normalized["key"]["right"]):
         if name not in lookup_types:
             _fail()
-    if _key_family(base_types[normalized["key"]["left"]]) != _key_family(lookup_types[normalized["key"]["right"]]):
+    if project_key_family(base_types[normalized["key"]["left"]]) != project_key_family(lookup_types[normalized["key"]["right"]]):
         _fail()
     if normalized["date_field"] is not None:
         if normalized["date_field"] not in lookup_types:
@@ -253,14 +266,14 @@ def project_semantics_required(definition: dict[str, Any], base_table: dict[str,
         str((base_table or {}).get("dimension") or ""),
         str((base_table or {}).get("table_name_cn") or ""),
         str((base_table or {}).get("scope") or ""),
-        str(definition.get("scope_description") or ""),
-        str(definition.get("name") or ""),
-        str(definition.get("description") or ""),
     ]
+    if definition.get("analysis_protocol") == 2:
+        return bool(definition.get("project_context")) or any("项目" in text for text in texts)
+    texts.extend(str(definition.get(key) or "") for key in ("scope_description", "name", "description"))
     return any("项目" in text for text in texts)
 
 
-def _unique_evidence(
+def project_unique_evidence(
     fields: list[dict[str, Any]], key_field: dict[str, Any], date_field: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     pk_names = {_field_name(field) for field in fields if str(field.get("is_pk") or "") == "Y"}
@@ -302,6 +315,10 @@ def infer_project_context(
     base_codes = project_code_fields(fields)
     base_names = _project_names_for_table(base_table, fields)
     fixed_name = (base_table or {}).get("table_name") == _FULL_PROJECT_NAME_TABLE
+    table_info = base_table or {}
+    table_label = table_info.get("table_name_cn") or table_info.get("table_name")
+    subject = f"文档中的「{table_label}」" if table_label else "当前表的文档"
+    update_document = "请在「校验设置 → 文档快照」导入并启用更新后的文档，再重新分析。"
     supplied = definition.get("project_context") or {}
     if not isinstance(supplied, dict) or set(supplied) - _LOOKUP_KEYS:
         _fail()
@@ -313,7 +330,7 @@ def infer_project_context(
                 "project_columns": [], "uncertainties": []}
     if fixed_name and not base_names:
         return {"required": True, "context": None, "questions": [], "project_columns": [],
-                "uncertainties": [f"活动文档缺少 {_FULL_PROJECT_NAME_TABLE} 的项目名全称字段 {_FULL_PROJECT_NAME_FIELD}。"]}
+                "uncertainties": [f"{subject}缺少项目全称字段（{_FULL_PROJECT_NAME_FIELD}）。{update_document}"]}
     # If the document identifies exactly one project-key column in the actual
     # row PK, it is the row entity identity. Secondary government/external
     # project references must not replace it or pair with the row's own name.
@@ -366,10 +383,8 @@ def infer_project_context(
                 "project_columns": [], "uncertainties": []}
     code_field = base_codes[0] if base_codes else None
     if code_field is None:
-        message = "文档未在本表识别到带“项目编号/编码/代码”中文证据的字段；不能凭物理名猜项目编号。"
-        if base_table is not None:
-            message = f"基表 {base_table.get('table_name') or ''}：{message}"
-        uncertainties.append(message)
+        missing = "项目编号" if base_names else "项目编号和项目名称"
+        uncertainties.append(f"{subject}缺少{missing}的字段说明。{update_document}")
         return {"required": required, "context": None, "questions": questions,
                 "project_columns": [], "uncertainties": uncertainties}
 
@@ -413,7 +428,7 @@ def infer_project_context(
                     if marker in seen:
                         continue
                     seen.add(marker)
-                    evidence = _unique_evidence(table_fields, key_field, date_field)
+                    evidence = project_unique_evidence(table_fields, key_field, date_field)
                     if evidence is None:
                         continue
                     candidates.append({
@@ -446,12 +461,10 @@ def infer_project_context(
         if unfiltered and not candidates:
             _fail()
     if not candidates:
-        message = (
-            f"基表 {base_table.get('table_name') if base_table else ''} 有项目编号字段 "
-            f"{_field_name(code_field)}，但文档没有同时具备“项目粒度、项目编号、项目名称、同期间日期”且能证明唯一对应的项目表；"
-            "不能 INNER JOIN、不能任取 first/MIN，也不能编造项目名称。"
+        uncertainties.append(
+            f"{subject}缺少项目名称字段。可补充本表的项目名称，或在同一数据源的文档中补充"
+            f"能按项目编号唯一对应的项目表，按期对应时还需注明报送日期。{update_document}"
         )
-        uncertainties.append(message)
         return {"required": required, "context": None, "questions": questions,
                 "project_columns": [], "uncertainties": uncertainties}
 

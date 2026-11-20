@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { confirmationReadiness, createState } from "./state.mjs";
 import { createRuntime } from "./runtime.mjs";
 import { createWorkbench } from "./pages/workbench.mjs";
+import { createCandidateOptionsPanel } from "./components/candidate_options.mjs";
 
 class FakeText {
   constructor(text) { this.textContent = String(text); this.parentNode = null; }
@@ -107,7 +108,7 @@ function collectText(node) {
   return node.textContent || "";
 }
 function findButton(root, label) {
-  if (root.tagName === "BUTTON" && root.textContent === label) return root;
+  if (root.tagName === "BUTTON" && (root.getAttribute?.("aria-label") === label || root.textContent === label)) return root;
   for (const child of root.children || []) {
     const found = findButton(child, label);
     if (found) return found;
@@ -219,6 +220,14 @@ const saveCalls = [];
 const confirmCalls = [];
 const testCalls = [];
 const previewTestCalls = [];
+const persistedRules = new Map();
+function persistRule(id, definition, ruleCode = `DV${id}`) {
+  const preview = options.find((option) => option.candidate.rule_name === definition.name)?.candidate.preview;
+  const rule = { id, rule_code: ruleCode, name: definition.name, creator_user_id: "1", status: "draft", version_no: 1,
+    content_sha256: preview?.content_sha256, sql_text: "SELECT 1", definition };
+  persistedRules.set(id, rule);
+  return rule;
+}
 let requestKeys = [];
 let batchFailOnce = false;
 const api = {
@@ -233,10 +242,11 @@ const api = {
       batchFailOnce = false;
       throw new Error("首次失败用于验证重试幂等");
     }
-    return { count: transported.definitions.length, rules: transported.definitions.map((item, index) => ({ id: 100 + batchCalls.length * 10 + index, rule_code: `DV${batchCalls.length}-${index + 1}`, name: item.name })) };
+    return { count: transported.definitions.length, rules: transported.definitions.map((item, index) =>
+      persistRule(100 + batchCalls.length * 10 + index, item, `DV${batchCalls.length}-${index + 1}`)) };
   },
-  save: async (definition) => { saveCalls.push(definition); return { id: 90 + saveCalls.length }; },
-  rule: async (id) => ({ id, rule_code: `DV${id}`, name: "已保存方案", creator_user_id: "1", status: "draft", version_no: 1, content_sha256: `hash-${id}`, sql_text: "SELECT 1", definition: {} }),
+  save: async (definition) => { saveCalls.push(definition); return persistRule(90 + saveCalls.length, definition); },
+  rule: async (id) => persistedRules.get(id),
   test: async (id, payload) => {
     testCalls.push({ id, payload });
     return { passed_count: 1, failed_count: 0, not_run_count: 0, cases: [{ name: "样本", row: {}, expected_count: 0, actual_count: 0, status: "passed" }] };
@@ -273,16 +283,52 @@ await sleep(30);
 
 const panel = findByClass(workbench.element, "dv-ai-options");
 assert.ok(panel && !panel.hidden, "多候选必须展示方案卡");
-assert.match(collectText(panel), /发现多个有依据的校验方案/);
+assert.match(collectText(panel), /可选校验方案/);
 const cards = collectByClass(workbench.element, "dv-ai-option-card");
 assert.equal(cards.length, 3);
 const panelText = collectText(panel);
-assert.match(panelText, /检查粒度：项目/);
+const documentScope = "每次清空本表再写入快照。取数配置与 SQL 布尔条件只供查阅。";
+const splitPanel = createCandidateOptionsPanel({ listen: runtime.listen });
+const splitOptions = ["单位净值", "累计净值"].map((label, i) => {
+  const name = ["f_netvalue", "f_totalnetvalue"][i];
+  return { id: String(i), fromSelection: true, recommended: true, candidate: {
+    table_name: "proj_info_dtl_pboc", table_name_cn: "项目信息（proj_info_dtl_pboc.ktr）", grain: "项目级",
+    document_scope: documentScope, columns: [{ column_name: name, comment: label },
+      { column_name: "mode", comment: "原始运行方式" }], expression: { left: name, op: "is_null" },
+    filters: [{ field: "mode", table: "base", op: "in", value: ["1", "3"] }],
+    semantic_intent: { dictionary_snapshots: { base: { mode: [{ value: "1", label: "开放式净值型" }, { value: "3", label: "封闭式净值型" }] } } },
+  } };
+});
+splitPanel.update({ candidate_options: splitOptions });
+assert.match(collectText(splitPanel.element), /按已选口径生成的方案/);
+for (const [index, card] of collectByClass(splitPanel.element, "dv-ai-option-card").entries()) {
+  assert.match(collectText(findByClass(card, "dv-ai-option-title")), index ? /累计净值为空/ : /单位净值为空/);
+  assert.equal(collectText(findByClass(card, "dv-ai-option-table")), "检查对象：项目信息 · 项目级");
+  assert.equal(collectText(findByClass(card, "dv-ai-option-field")), "适用范围：原始运行方式属于开放式净值型、封闭式净值型");
+  assert.equal(findByClass(card, "dv-ai-option-recommended"), null);
+  const evidence = findByClass(card, "dv-ai-option-evidence");
+  assert.ok(!evidence.open && collectText(evidence).includes(documentScope));
+  assert.match(collectText(evidence), /1＝开放式净值型、3＝封闭式净值型/);
+}
+// Old split candidates sometimes put the entire scope in table_label; only the physical identifier is reliable then.
+const oldSplit = { ...splitOptions[0], table_label: documentScope, candidate: {
+  ...splitOptions[0].candidate, table_name_cn: "", grain: "", scope_description: documentScope,
+} };
+splitPanel.update({ candidate_options: [oldSplit] });
+assert.equal(collectText(findByClass(splitPanel.element, "dv-ai-option-table")), "检查对象：proj_info_dtl_pboc");
+splitPanel.update({ candidate_options: splitOptions.map((option, i) => ({ ...option, candidate: { ...option.candidate,
+  table_name: i ? "other_project_table" : option.candidate.table_name, report_category: i ? "other" : "group:pbc",
+  report_category_name: i ? "其他报送" : "人行报送",
+} })) });
+const sources = collectByClass(splitPanel.element, "dv-ai-option-table").map(collectText);
+assert.match(sources[0], /项目信息（proj_info_dtl_pboc） · 项目级 · 人行报送/);
+assert.match(sources[1], /项目信息（other_project_table） · 项目级 · 其他报送/);
+assert.match(panelText, /检查对象：reg_pub_project_info · 项目/);
 assert.doesNotMatch(panelText, /reg_pub_project_info（reg_pub_project_info）/);
 assert.doesNotMatch(panelText, /f_endp_amt（f_endp_amt）/);
-assert.match(panelText, /真实表：reg_pub_project_info/);
-assert.match(panelText, /真实字段：f_endp_amt/);
-assert.match(panelText, /推荐理由：项目表有实收信托字段/);
+assert.match(collectText(findByClass(cards[0], "dv-ai-option-title")), /项目粒度方案/);
+assert.match(collectText(findByClass(cards[0], "dv-ai-option-evidence")), /检查字段：实收信托（f_endp_amt）/);
+assert.match(collectText(findByClass(cards[0], "dv-ai-reasoning")), /项目表有实收信托字段/);
 assert.match(panelText, /按项目粒度汇总/);
 assert.doesNotMatch(collectText(cards[0]).slice(0, 40), /^reg_pub_project_info$/);
 const checks = collectByClass(workbench.element, "dv-ai-option-check");
@@ -298,7 +344,10 @@ assert.ok(supplements && !supplements.hidden, "AI补充建议区必须独立于�
 const supplementText = collectText(supplements);
 assert.match(supplementText, /AI补充建议/);
 assert.match(supplementText, /项目实收对应字段一致性/);
-assert.doesNotMatch(supplementText, /日期口径一致性|需人工确认|项目编号唯一性|金额单位一致性/);
+assert.match(supplementText, /日期口径一致性/);
+assert.match(supplementText, /项目编号唯一性/);
+assert.match(supplementText, /金额单位一致性/);
+assert.match(supplementText, /需先确认口径/);
 assert.match(supplementText, /可进一步检查/);
 assert.equal(findButton(supplements, "保存"), null, "建议区不得出现保存/启用按钮");
 assert.equal(findButton(supplements, "创建"), null);
@@ -319,11 +368,11 @@ await actionButtons[1].dispatch("click");
 const activeCards = collectByClass(workbench.element, "dv-ai-option-card").filter((card) => card.classList.contains("is-active"));
 assert.equal(activeCards.length, 1);
 assert.match(collectText(activeCards[0]), /合同粒度方案/);
-assert.match(conclusion(), /合同金额/);
+assert.equal(conclusion(), "合同粒度方案");
 await actionButtons[0].dispatch("click");
-assert.match(conclusion(), /实收信托/);
+assert.equal(conclusion(), "项目粒度方案");
 
-// 手风琴：展开卡内挂载既有 SQL/问题/测试 DOM，折叠后移回原位；勾选不展开、不触发启用。
+// 手风琴展示 SQL 与问题，测试用例统一显示在独立区域。
 const cardsNow = () => collectByClass(workbench.element, "dv-ai-option-card");
 const optionIdOf = (card) => card.getAttribute("data-option-id");
 const activeCard = () => cardsNow().find((card) => card.classList.contains("is-active"));
@@ -331,17 +380,27 @@ const detailSlot = (card) => card.children.find((child) => child.classList.conta
 assert.equal(cardsNow().filter((card) => card.classList.contains("is-selected")).length, 2, "勾选蓝框为已选两项");
 assert.ok(activeCard() && detailSlot(activeCard()) && !detailSlot(activeCard()).hidden, "默认展开当前方案");
 assert.ok(collectByClass(detailSlot(activeCard()), "dv-ai-sql-code").length >= 1, "展开卡内必须显示该方案 SQL");
-assert.ok(collectByClass(detailSlot(activeCard()), "dv-test-panel").length >= 1, "展开卡内必须显示该方案测试");
+const testingSection = findByClass(workbench.element, "dv-testing-section");
+assert.equal(collectByClass(detailSlot(activeCard()), "dv-test-panel").length, 0, "方案卡不能包含测试用例");
+assert.ok(findButton(testingSection, "生成并运行测试用例"));
+assert.equal(previewTestCalls.length, 0);
+const originalEvidence = findByClass(activeCard(), "dv-ai-option-evidence").children[0];
+await originalEvidence.dispatch("click");
+assert.equal(optionIdOf(activeCard()), "opt-a", "点击原始证据不能收起方案");
+const modelReason = findByClass(detailSlot(activeCard()), "dv-ai-reasoning").children[0];
+await modelReason.dispatch("keydown", { key: "Enter" });
+assert.equal(optionIdOf(activeCard()), "opt-a", "用 Enter 展开方案内说明不能收起外层");
 checks[1].dispatch("click");
 assert.equal(cardsNow().filter((card) => card.classList.contains("is-active")).length, 1, "checkbox 不得触发展开/启用");
 assert.equal(confirmCalls.length, 0, "整卡展开不得触发启用");
 const cardB = cardsNow().find((card) => optionIdOf(card) === "opt-b");
 await cardB.dispatch("keydown", { key: "Enter" });
 assert.equal(optionIdOf(activeCard()), "opt-b", "键盘 Enter 必须展开方案");
-assert.match(conclusion(), /合同金额/);
+assert.equal(conclusion(), "合同粒度方案");
 await activeCard().children[1].dispatch("click");
 assert.equal(cardsNow().filter((card) => card.classList.contains("is-active")).length, 0, "再点同一卡必须收起");
-assert.ok(collectByClass(findByClass(workbench.element, "dv-ai-result"), "dv-ai-sql-code").length >= 1, "收起后详情移回卡后原位");
+const collapsedDetails = findByClass(workbench.element, "dv-ai-single-detail");
+assert.ok(collapsedDetails?.hidden, "收起后卡外的详情也必须隐藏");
 assert.equal(confirmCalls.length, 0, "收起不得触发启用");
 
 // 首次失败后，同选择未改口径重试复用 request_key；成功仅 draft。
@@ -380,9 +439,20 @@ assert.equal(optionIdOf(activeCard()), "opt-a", "启用前必须展开当前方�
 const enableButtons = () => collectByClass(workbench.element, "dv-ai-option-actions")
   .map((group) => findButton(group, "保存当前方案并启用") || findButton(group, "完善并启用此方案"));
 assert.equal(enableButtons()[0].disabled, true, "未测试通过不得启用");
-await findButton(workbench.element, "运行测试").dispatch("click");
-await sleep(30);
-assert.equal(previewTestCalls.length, 1, "启用前必须先运行该方案测试");
+const generating = findButton(testingSection, "生成并运行测试用例").dispatch("click");
+await sleep(10);
+assert.equal(findByClass(testingSection, "dv-ai-test-preparing").hidden, false);
+assert.equal(previewTestCalls.length, 0);
+await generating;
+assert.equal(previewTestCalls.length, 3, "一次执行全部已勾选方案的样本测试");
+assert.equal(collectByClass(testingSection, "dv-test-table").length, 1, "所选方案的测试用例使用一张表");
+const selectedCaseCount = () => findByClass(testingSection, "dv-test-table").children[1].children.length;
+assert.equal(selectedCaseCount(), options.reduce((total, option) => total + option.candidate.preview.cases.length, 0));
+const optionChecks = () => collectByClass(workbench.element, "dv-ai-option-check");
+optionChecks()[2].checked = false;
+await optionChecks()[2].dispatch("change");
+assert.equal(selectedCaseCount(), options[0].candidate.preview.cases.length + options[1].candidate.preview.cases.length);
+assert.equal(collectByClass(detailSlot(activeCard()), "dv-test-panel").length, 0);
 assert.equal(enableButtons()[0].disabled, false, "测试通过后启用解锁");
 const savesBefore = saveCalls.length;
 await enableButtons()[0].dispatch("click");
@@ -417,18 +487,126 @@ async function openSingleAi(result) {
   await sleep(30);
   return { wb, runtime: singleRuntime };
 }
+
+// 主按钮只保存并启动勾选方案，展开另一个方案不改变保存范围。
+const footerOptions = structuredClone(options);
+for (const option of footerOptions.slice(0, 2)) {
+  option.recommended = true;
+  const cases = option.candidate.preview.cases;
+  cases.push(...cases.map((item) => ({ ...item, name: `${item.name}（补充）` })));
+}
+const footerScenario = await openSingleAi({ ...result, candidate_options: footerOptions });
+const footerRoot = footerScenario.wb.element;
+const currentCard = collectByClass(footerRoot, "dv-ai-option-card")[2];
+await findButton(currentCard, "查看/完善此方案").dispatch("click");
+const footerEnable = findButton(footerRoot, "保存并启动以上2个方案");
+assert.ok(footerEnable, "主按钮明确显示已勾选方案数量");
+assert.equal(footerEnable.disabled, true, "勾选方案未测试时禁止启动");
+assert.equal(findButton(footerRoot, "保存所选 2 条草稿").hidden, true, "AI新建不显示保存草稿入口");
+await footerRoot.dispatch("click", { target: footerRoot });
+assert.ok(footerScenario.wb.isOpen(), "点击遮罩保持分析结果弹窗打开");
+const footerTesting = findByClass(footerRoot, "dv-testing-section");
+await findButton(footerTesting, "运行当前及所选方案测试").click();
+assert.equal(footerEnable.disabled, false, "完成所选方案的测试后可统一启动");
+assert.deepEqual(previewTestCalls.slice(-3).map(({ definition }) => definition.name),
+  [candidateA.rule_name, candidateB.rule_name, candidateC.rule_name]);
+assert.equal(findButton(footerRoot, "保存所选 2 条草稿").disabled, false, "测试当前方案不改变草稿勾选");
+const toggleCurrentCard = () => findButton(collectByClass(footerRoot, "dv-ai-option-card")[2], "查看/完善此方案").click();
+await toggleCurrentCard();
+assert.equal(footerEnable.disabled, false, "没有展开方案也能启动已勾选方案");
+await toggleCurrentCard();
+assert.equal(footerEnable.disabled, false, "重新展开时恢复本方案的通过证据");
+
+const currentCase = collectByClass(footerTesting, "dv-case-expected").at(-1);
+currentCase.value = "1";
+await currentCase.dispatch("change");
+assert.equal(footerEnable.disabled, false, "修改未勾选方案的预期不影响已勾选方案");
+await findButton(footerTesting, "运行当前及所选方案测试").click();
+assert.equal(footerEnable.disabled, false);
+const confirmationsBefore = confirmCalls.length;
+const batchBeforeFooter = batchCalls.length;
+await footerEnable.click();
+assert.equal(batchCalls.length, batchBeforeFooter + 1);
+assert.deepEqual(batchCalls.at(-1).definitions.map((d) => d.name), [candidateA.rule_name, candidateB.rule_name], "保存全部勾选方案，不保存未勾选的当前方案");
+assert.equal(confirmCalls.length, confirmationsBefore + 2);
+assert.equal(testCalls.slice(-2).every((entry) => entry.payload.cases[0].expected_count === 0), true, "每个保存版本沿用对应方案自己的用例");
+footerScenario.runtime.destroy();
+
 const singleWithSuggestions = await openSingleAi({
   ...candidateA,
   ai_suggestions: [{ id: "s1", title: "单方案补充", reason: "需核实日期", references: [{ table_name: "reg_pub_project_info", field_name: "d_cldate" }], preconditions: ["确认日期"], support_level: "unsupported", limitations: ["未读取业务行"] }],
 });
 const singleSupp = findByClass(singleWithSuggestions.wb.element, "dv-ai-supplements");
-assert.ok(singleSupp.hidden, "只有不支持建议时整个区域隐藏");
-assert.doesNotMatch(collectText(singleSupp), /单方案补充/);
+assert.ok(!singleSupp.hidden, "模型不支持的建议也完整展示，并说明限制");
+assert.match(collectText(singleSupp), /单方案补充/);
+assert.match(collectText(singleSupp), /暂不支持直接生成/);
+assert.equal(findButton(singleSupp, "采纳"), null);
 singleWithSuggestions.runtime.destroy();
 const singleEmpty = await openSingleAi({ ...candidateA, ai_suggestions: [] });
 const emptySupp = findByClass(singleEmpty.wb.element, "dv-ai-supplements");
 assert.ok(emptySupp.hidden, "为空时不显示建议区或空占位");
 singleEmpty.runtime.destroy();
+
+// 真实多维度发现后的只读建议，在口径尚未确认时也应可见；不能由建议直接采纳或启用。
+const pendingOptions = structuredClone(options.slice(0, 2));
+for (const option of pendingOptions) {
+  option.candidate.preview = null;
+  option.candidate.can_enable = false;
+  option.candidate.questions = [{ id: "business_key", text: "请确认记录定位编号", options: [
+    { value: "project_code", label: "项目编号" },
+  ] }];
+}
+const comparisonNotice = {
+  id: "model-sum", category: "consistency", kind: "aggregate_consistency", provenance: "model",
+  title: "核对项目实收与资金端份额合计是否一致",
+  reason: "按同一项目、同一报送期汇总后核对；口径还需确认。",
+  references: [{ table_name: "reg_pub_project_info", field_name: "f_endp_amt" },
+    { table_name: "reg_pub_contract", field_name: "f_contract_amt" }],
+  limitations: ["需确认单位与允许差额，不自动执行"], support_level: "needs_confirmation",
+};
+const pendingComparison = await openSingleAi({ ...pendingOptions[0].candidate,
+  candidate_options: pendingOptions, ai_suggestions: [comparisonNotice], comparison_suggestions: [],
+});
+const pendingNotice = findByClass(pendingComparison.wb.element, "dv-ai-supplements");
+assert.ok(pendingNotice && !pendingNotice.hidden, "多维度一致性建议不能因为口径待确认或缺少 SQL 而消失");
+assert.match(collectText(pendingNotice), /核对项目实收与资金端份额合计是否一致/);
+assert.match(collectText(pendingNotice), /需确认单位与允许差额/);
+assert.equal(findButton(pendingNotice, "采纳"), null, "只读建议不能绕过确认生成规则");
+assert.equal(findButton(pendingNotice, "保存并启用"), null);
+const pendingRequest = controlByLabel(pendingComparison.wb.element, "需求描述 *");
+pendingRequest.value += "（修改范围）";
+await pendingRequest.dispatch("input");
+assert.ok(findByClass(pendingComparison.wb.element, "dv-ai-supplements").hidden, "需求过期后不能显示旧建议");
+pendingComparison.runtime.destroy();
+
+const readyComparison = await openSingleAi({ ...candidateA, candidate_options: options.slice(0, 2),
+  ai_suggestions: [comparisonNotice], comparison_suggestions: [],
+});
+assert.ok(!findByClass(readyComparison.wb.element, "dv-ai-supplements").hidden,
+  "只有待人工确认的一致性建议时也应保留，不要求另有可采纳建议");
+readyComparison.runtime.destroy();
+
+const supplement = { ...candidateA.preview.definition, name: "实收合计一致性", null_policy: "review",
+  expression: { left: "f_endp_amt", op: "neq", right_type: "field", right: "f_contract_amt", right_table: "related" },
+  join: { table_name: "reg_pub_contract", relationship_confirmed: true, unmatched_policy: "review", right_aggregate: "sum",
+    report_date_field: "report_date", on: [{ left: "project_code", right: "project_code" }] },
+};
+const defaultPreview = api.preview;
+api.preview = async ({ definition }) => ({ ...candidateA.preview, definition, content_sha256: "sum-hash", sql_preview: "SELECT SUM(amount)" });
+const adopted = await openSingleAi({ ...candidateA, ai_suggestions: [{ id: "aggregate", title: supplement.name,
+  definition: supplement, support_level: "supported", references: [{ table_name: "reg_pub_project_info", field_name: "f_endp_amt" }],
+}] });
+await findButton(adopted.wb.element, "采纳").dispatch("click");
+assert.match(collectText(findByClass(adopted.wb.element, "dv-ai-options")), /补充规则/);
+assert.ok(collectByClass(adopted.wb.element, "dv-ai-sql-code").some((node) => /SELECT SUM/.test(collectText(node))));
+const oldTests = previewTestCalls.length;
+await findButton(adopted.wb.element, "生成并运行测试用例").dispatch("click");
+assert.equal(previewTestCalls.length, oldTests + 2);
+assert.equal(previewTestCalls.at(-1).definition.join.right_aggregate, "sum");
+await findButton(adopted.wb.element, "保存所选 2 条草稿").dispatch("click");
+assert.equal(batchCalls.at(-1).definitions.at(-1).join.right_aggregate, "sum");
+adopted.runtime.destroy();
+api.preview = defaultPreview;
 
 // zero 门禁反例：字段-字段、字段-有限常量放行；字符串常量/一元/缺右类型拒绝；review 放行。
 const readinessFor = (definition) => confirmationReadiness(
@@ -448,5 +626,5 @@ assert.equal(readinessFor({ ...zeroBase, null_policy: "review", expression: { le
 console.log(JSON.stringify({
   ok: true,
   assertions: "multi/options/selection/switch/batch-save/request-key/enable/suggestions/gates/idempotent",
-  batch_payload: batchCalls.filter((call) => call.definitions.length === 2).at(-1),
+  batch_payload: batchCalls.filter((call) => call.definitions.length === 2 && !call.definitions.some((definition) => definition.join?.right_aggregate)).at(-1),
 }));

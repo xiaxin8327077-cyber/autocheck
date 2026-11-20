@@ -97,8 +97,11 @@ class FakeElement {
   }
   async dispatch(type, event = {}) {
     const payload = { target: this, currentTarget: this, preventDefault() {}, ...event };
+    payload.stopPropagation = () => { payload.__stopped = true; };
     let result;
     for (const handler of [...(this.listeners.get(type) || [])]) result = await handler(payload);
+    // 与浏览器一致，分页等容器委托也须收到子按钮事件。
+    if (!payload.__stopped && this.parentNode) result = await this.parentNode.dispatch(type, payload);
     return result;
   }
   closest(selector) {
@@ -348,7 +351,7 @@ const editorState = createState();
 editorState.sourcesStatus = "success";
 editorState.sources = [{ id: "src", name: "测试数据源", dialect: "mysql" }];
 editorState.categoriesStatus = "success";
-editorState.categories = [{ code: "pbc_central", name: "人行大集中报送" }];
+editorState.categories = [{ code: "group:pbc", name: "人行报送" }];
 const editor = createRuleForm({
   state: editorState, listen: runtime.listen, user: ordinary,
   onChange: () => {}, onDescribe: () => {}, onParse: () => {},
@@ -365,7 +368,7 @@ editor.reset({
     generation_mode: "manual", mapping_version: "map-1", rule_type: "field_compare",
   },
 });
-assert.equal(controlByLabel(editor.element, "监管报送分类 *").value, "pbc_central");
+assert.equal(controlByLabel(editor.element, "监管报送分类 *").value, "group:pbc");
 editor.setSources();
 editor.setMetadata({ mapping_version: "map-1", columns: [
   { column_name: "project_code" }, { column_name: "maturity_date" },
@@ -385,7 +388,7 @@ const constantState = createState();
 constantState.sourcesStatus = "success";
 constantState.sources = [{ id: "src", name: "测试数据源", dialect: "mysql" }];
 constantState.categoriesStatus = "success";
-constantState.categories = [{ code: "pbc_central", name: "人行大集中报送" }];
+constantState.categories = [{ code: "group:pbc", name: "人行报送" }];
 const constantForm = createRuleForm({
   state: constantState, listen: constantRuntime.listen, user: ordinary,
   onChange: () => {}, onDescribe: () => {}, onParse: () => {},
@@ -506,7 +509,7 @@ candidatePanel.update({
 }, { source_id: "src", table_name: "loan" });
 const conditionHeadline = findByClass(candidatePanel.element, "dv-ai-conclusion");
 assert.ok(conditionHeadline, "候选条件必须转为业务结论");
-assert.equal(conditionHeadline.textContent, "amount为 0时，提示人工核实", "数值 0 不得显示为—");
+assert.equal(conditionHeadline.textContent, "零值规则", "标题采用与保存一致的模型规则名称");
 assert.equal(collectByClass(candidatePanel.element, "dv-parse-metric").length, 0, "不再呈现技术指标墙");
 constantRuntime.destroy();
 
@@ -603,6 +606,18 @@ assert.deepEqual(JSON.parse(apiCalls[3].options.body), { rule_ids: [1, 2] });
 assert.equal(apiCalls[4].path, "/api/modules/data-validation/rule-packs/import");
 await api.ruleHistory(8, { page: 2, page_size: 20 });
 assert.equal(apiCalls[5].path, "/api/modules/data-validation/rules/8/history?page=2&page_size=20");
+for (const write of [
+  () => api.createAnalysis({ request_text: "示例" }, { signal: "create-signal" }),
+  () => api.cancelAnalysis("example-id"),
+  () => api.preview({}),
+  () => api.testCandidate({}),
+]) {
+  await write();
+  assert.equal(apiCalls.at(-1).options.authPreflight, true);
+}
+assert.equal(apiCalls[6].options.signal, "create-signal");
+await api.getAnalysis("example-id");
+assert.equal(apiCalls.at(-1).options.authPreflight, undefined);
 
 // 实际打开任务弹窗：主规则筛选为 draft/page 4，弹窗仍独立请求 enabled/page 1。
 const dialogRuntime = createRuntime({ notify: () => {} });
@@ -637,7 +652,7 @@ const manualState = createState();
 manualState.sourcesStatus = "success";
 manualState.sources = [{ id: "src", name: "真实数据源", dialect: "mysql" }];
 manualState.categoriesStatus = "success";
-manualState.categories = [{ code: "pbc_central", name: "人行大集中报送" }];
+manualState.categories = [{ code: "group:pbc", name: "人行报送" }];
 const manualDialogHost = new FakeElement("div");
 let manualSaved = null;
 let manualConfirmed = null;
@@ -684,7 +699,7 @@ controlByLabel(manualWorkbench.element, "规则名称 *").value = "手工期限�
 await controlByLabel(manualWorkbench.element, "规则名称 *").dispatch("input");
 controlByLabel(manualWorkbench.element, "数据源 *").value = "src";
 await controlByLabel(manualWorkbench.element, "数据源 *").dispatch("change");
-controlByLabel(manualWorkbench.element, "监管报送分类 *").value = "pbc_central";
+controlByLabel(manualWorkbench.element, "监管报送分类 *").value = "group:pbc";
 await controlByLabel(manualWorkbench.element, "监管报送分类 *").dispatch("change");
 controlByLabel(manualWorkbench.element, "目标表 / 业务对象 *").children[0].value = "loan";
 await controlByLabel(manualWorkbench.element, "目标表 / 业务对象 *").children[0].dispatch("input");
@@ -717,6 +732,27 @@ await flush();
 await findButton(manualWorkbench.element, "确认启用").dispatch("click");
 await flush();
 assert.deepEqual(manualConfirmed, { id: 51, version_no: 1, expected_hash: "manual-hash" });
+manualSaved = { ...manualSaved, generation_mode: "ai", uncertainties: ["需确定业务时间范围"], uncertainty_resolutions: [] };
+await manualWorkbench.open({ mode: "manual", ruleId: 51 });
+assert.ok(findByClass(manualWorkbench.element, "dv-testing-section").hidden, "历史 AI 草稿的未决口径禁止展示旧版 SQL 或样本");
+assert.doesNotMatch(findByClass(manualWorkbench.element, "dv-sql-preview").textContent, /manual_sql/);
+assert.ok(findButton(manualWorkbench.element, "保存草稿").disabled);
+const oldReview = controlByLabel(manualWorkbench.element, "处理说明 1：需确定业务时间范围");
+oldReview.value = "按照当前报送期的业务日期检查";
+await oldReview.dispatch("input");
+assert.ok(findByClass(manualWorkbench.element, "dv-testing-section").hidden, "本地新填写的答复不能放行旧版 SQL");
+assert.equal(findButton(manualWorkbench.element, "保存草稿").disabled, false);
+const changeOp = controlByLabel(manualWorkbench.element, "异常触发关系");
+changeOp.value = changeOp.value === "gte" ? "lt" : "gte";
+await changeOp.dispatch("change");
+assert.equal(oldReview.value, "", "修改比较口径后必须重新回答，旧答案不能提交");
+assert.ok(findButton(manualWorkbench.element, "保存草稿").disabled);
+oldReview.value = "按照当前报送期的业务日期检查";
+await oldReview.dispatch("input");
+await findButton(manualWorkbench.element, "保存草稿").dispatch("click");
+assert.deepEqual(manualSaved.reviewed_uncertainties, ["需确定业务时间范围"]);
+assert.deepEqual(manualSaved.uncertainty_resolutions, ["按照当前报送期的业务日期检查"]);
+manualWorkbench.close();
 manualRuntime.destroy();
 
 // AI 创建：单页分区，初始仅输入区；分析成功后描述折叠、配置区出现；保存后测试区出现。
@@ -726,7 +762,7 @@ const workState = createState();
 workState.sourcesStatus = "success";
 workState.sources = [{ id: "src", name: "真实数据源", dialect: "mysql" }];
 workState.categoriesStatus = "success";
-workState.categories = [{ code: "pbc_central", name: "人行大集中报送" }];
+workState.categories = [{ code: "group:pbc", name: "人行报送" }];
 workState.modelsStatus = "success";
 workState.models = [{ id: "model-1", name: "内网模型", model_name: "validation-model", is_default: true }];
 const realColumns = [
@@ -749,6 +785,10 @@ let resolveCreate = null;
 let firstResult = null;
 const workDialogHost = new FakeElement("div");
 let previewTestCalls = 0;
+let releasePreviewTest;
+let holdPreviewTest = false;
+let announcePreviewTest;
+const previewTestStarted = new Promise((resolve) => { announcePreviewTest = resolve; });
 let previewCalls = 0;
 function makeWorkPreview(definition, hash) {
   const greater = definition.expression.op === "gt";
@@ -759,7 +799,10 @@ function makeWorkPreview(definition, hash) {
     { name: "边界", row: dates("2026-01-01", "2026-01-01"), expected_count: 0 },
     { name: "空值", row: dates(null, "2026-01-01"), expected_count: 0 },
   ].map((item) => ({ ...item, actual_count: null, status: "not_run" }));
-  return { definition, content_sha256: hash, sql_preview: "SELECT compiled_preview_sql", sql_params: { report_date: null }, cases, persisted: false };
+  return { definition, content_sha256: hash, sql_preview: "SELECT compiled_preview_sql",
+    sql_display: "SELECT\n    compiled_preview_sql\nFROM test_table",
+    sql_params: { report_date: null, filter_1_0: "1", filter_1_1: "2" },
+    sql_display_params: { report_date: null }, cases, persisted: false };
 }
 const workApi = {
   describe: async (source, table) => {
@@ -774,13 +817,19 @@ const workApi = {
   },
   createAnalysis: async (payload) => {
     createCalls += 1;
+    if (createCalls === 1) assert.equal(payload.revision_of, undefined);
+    if (createCalls === 2) {
+      assert.equal(payload.revision_of, "analysis-1");
+      assert.equal(payload.revised_definition.table_name, "loan");
+      assert.equal(payload.revised_definition.sql_preview, undefined);
+    }
     assert.equal(payload.model_id, "model-1");
     assert.equal(payload.source_id, "src");
     assert.equal(payload.table, undefined, "分析请求不得携带表结构，表清单与分类由后端读取或选定");
     const result = {
       rule_name: "贷款期限合理性校验", rule_type: "field_compare",
       table_name: "loan", source_id: "src", dialect: "mysql",
-      report_category: "pbc_central", report_category_name: "人行大集中报送",
+      report_category: "group:pbc", report_category_name: "人行报送",
       columns: realColumns, mapping_version: "map-real",
       expression: { left: "maturity_date", op: createCalls === 1 ? "lt" : "gt", right: "issue_date" },
       business_key: "project_code", scope_description: "贷款记录",
@@ -822,6 +871,10 @@ const workApi = {
   preview: async (payload) => makeWorkPreview(payload.definition, `decision-${++previewCalls}`),
   testCandidate: async (payload) => {
     previewTestCalls += 1;
+    if (holdPreviewTest) {
+      announcePreviewTest();
+      await new Promise((resolve) => { releasePreviewTest = resolve; });
+    }
     const cases = payload.cases.map((item) => {
       const { maturity_date: left, issue_date: right } = item.row;
       const actual = left === null ? 0 : Number(payload.definition.expression.op === "gt" ? left > right : left < right);
@@ -914,32 +967,67 @@ assert.equal(aiProgress.hidden, true, "分析完成后进度提示收起");
 assert.equal(aiInput.hidden, true, "分析成功后需求描述折叠");
 assert.equal(aiCollapsed.hidden, false, "折叠摘要出现");
 assert.equal(workConfig.hidden, false, "分析成功后配置区出现");
-assert.equal(workTesting.hidden, false, "分析完成后直接显示测试用例，无需保存");
+assert.equal(workTesting.hidden, false, "SQL 就绪后显示独立测试入口");
+assert.equal(findByClass(workTesting, "dv-test-panel").hidden, true, "测试用例应在用户操作后再显示");
+const workTestTitle = workTesting.children[0].children[0];
+assert.equal(workTestTitle.hidden, true, "尚未生成用例时隐藏标题");
+assert.equal(previewTestCalls, 0, "分析成功不得自动运行样本测试");
 assert.equal(controlByLabel(workbench.element, "业务主键 *"), null);
-assert.match(findByClass(workbench.element, "dv-ai-conclusion").textContent, /到期日小于/);
-assert.match(findByClass(workbench.element, "dv-ai-sql-code").children[0].textContent, /compiled_preview_sql/);
+assert.equal(findByClass(workbench.element, "dv-ai-conclusion").textContent, "贷款期限合理性校验");
+const formattedSql = "SELECT\n    compiled_preview_sql\nFROM test_table";
+assert.equal(findByClass(workbench.element, "dv-ai-sql-code").children[0].textContent, formattedSql);
+const displayedParams = findByClass(workbench.element, "dv-ai-sql-params").children.map((item) => item.textContent);
+assert.equal(displayedParams.length, 1, "已展开到展示SQL的静态值不再作为运行参数列出");
+assert.match(displayedParams[0], /^report_date/);
+let copiedSql;
+Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
+  clipboard: { writeText: async (text) => { copiedSql = text; } },
+} });
+await findButton(workbench.element, "复制 SQL").dispatch("click");
+assert.equal(copiedSql, formattedSql);
 assert.equal(saveCalls, 0);
-await findButton(workbench.element, "运行测试").dispatch("click");
+const generateAction = findButton(workTesting, "生成并运行测试用例");
+assert.equal(collectByClass(generateAction, "dv-ai-icon").length, 1, "生成按钮显示 AI 星芒图标");
+holdPreviewTest = true;
+const originalMatchMedia = globalThis.matchMedia;
+globalThis.matchMedia = () => ({ matches: true });
+const generationStartedAt = Date.now();
+const generating = generateAction.dispatch("click");
+await flush();
+assert.equal(findByClass(workTesting, "dv-ai-test-preparing").hidden, false);
+assert.equal(findByClass(workTesting, "dv-test-panel").hidden, true);
+assert.equal(previewTestCalls, 0);
+await previewTestStarted;
+assert.ok(Date.now() - generationStartedAt >= 2950, "生成动效至少持续约3秒，系统减少动态设置不缩短等待");
+assert.equal(findByClass(workTesting, "dv-ai-test-preparing").hidden, false, "实际测试结果未返回前保留生成状态");
+assert.equal(findByClass(workTesting, "dv-test-panel").hidden, true, "不提前展示用例或未完成的结果");
+assert.equal(workTestTitle.hidden, true);
+holdPreviewTest = false;
+releasePreviewTest();
+await generating;
+globalThis.matchMedia = originalMatchMedia;
+assert.equal(findByClass(workTesting, "dv-test-panel").hidden, false);
+assert.equal(workTestTitle.hidden, false);
 assert.equal(previewTestCalls, 1); assert.equal(saveCalls, 0); assert.equal(testCalls, 0);
 assert.equal(findButton(workbench.element, "保存并启用").disabled, false);
 const expectedSelect = findByClass(workbench.element, "dv-case-expected");
 expectedSelect.value = "1"; await expectedSelect.dispatch("change");
 assert.equal(findButton(workbench.element, "保存并启用").disabled, true, "修改用例预期使旧结果失效");
-await findButton(workbench.element, "运行测试").dispatch("click");
+await findButton(workTesting, "重新运行测试").dispatch("click");
 assert.equal(findButton(workbench.element, "保存并启用").disabled, true, "有失败用例不能启用");
 // 点「修改」展开描述，改完后重新分析。
 await findButton(workbench.element, "修改需求").dispatch("click");
 assert.equal(aiInput.hidden, false, "点修改后描述重新展开");
 controlByLabel(workbench.element, "需求描述 *").value = "到期日不得晚于发放日";
 await controlByLabel(workbench.element, "需求描述 *").dispatch("input");
-await findButton(workbench.element, "重新分析 →").dispatch("click");
+await findButton(workbench.element, "应用修改 →").dispatch("click");
 await flush();
 assert.equal(createCalls, 2, "修改描述后可重新使用 AI 分析");
 assert.equal(aiInput.hidden, true, "重新分析成功后再次折叠");
 // 不保存草稿即可检查、运行新需求的用例；最终保存启用才持久化并重验真实版本。
 assert.equal(findButton(workbench.element, "保存并启用").disabled, true, "新需求不能沿用旧测试结果");
 assert.equal(saveCalls, 0);
-await findButton(workbench.element, "运行测试").dispatch("click");
+await findButton(workTesting, "生成并运行测试用例").dispatch("click");
 assert.equal(findButton(workbench.element, "保存并启用").disabled, false);
 assert.equal(saveCalls, 0); assert.equal(testCalls, 0);
 await findButton(workbench.element, "保存并启用").dispatch("click");
@@ -948,7 +1036,7 @@ assert.equal(saveCalls, 1);
 assert.equal(savedDefinition.generation_mode, "ai");
 assert.equal(savedDefinition.name, "贷款期限合理性校验", "规则名称由 AI 自动生成");
 assert.equal(savedDefinition.table_name, "loan", "目标表由 AI 自动选定");
-assert.equal(savedDefinition.report_category, "pbc_central", "监管报送分类由 AI 自动选定");
+assert.equal(savedDefinition.report_category, "group:pbc", "监管报送分类由 AI 自动选定");
 assert.equal(savedDefinition.source_id, "src");
 assert.equal(savedDefinition.mapping_version, "map-real");
 assert.equal(previewTestCalls, 3, "所有预览测试都在保存前完成");
@@ -967,7 +1055,7 @@ const switchState = createState();
 switchState.sourcesStatus = "success";
 switchState.sources = [{ id: "src", name: "真实数据源", dialect: "mysql" }];
 switchState.categoriesStatus = "success";
-switchState.categories = [{ code: "pbc_central", name: "人行大集中报送" }];
+switchState.categories = [{ code: "group:pbc", name: "人行报送" }];
 switchState.modelsStatus = "success";
 switchState.models = [{ id: "model-1", name: "内网模型", model_name: "validation-model", is_default: true }];
 const switchDialogHost = new FakeElement("div");
@@ -1072,6 +1160,7 @@ const resultState = createState();
 resultState.activeTab = "results";
 let resolveFirstIssue;
 const resultApi = {
+  taskDetails: async (taskId) => ({ id: taskId, rules: [{ rule_id: taskId, name: `规则${taskId}`, version_no: 1, violation_count: 1 }] }),
   tasks: async () => [
     { id: 1, run_no: 1, creator_user_id: "1", report_period: resultState.reportPeriod, status: "completed", created_at: "2026-11-01T01:00:00", truncated: 0 },
     { id: 2, run_no: 2, creator_user_id: "1", report_period: resultState.reportPeriod, status: "completed", created_at: "2026-11-01T02:00:00", truncated: 0 },
@@ -1087,10 +1176,16 @@ const resultPage = createResultsPage({
   onNewTask: () => {}, onPeriodChange: () => {}, onRender: () => {},
 });
 resultState.tasks = await resultApi.tasks();
-const firstSelection = resultPage.selectTask(1);
+await resultPage.selectTask(1);
+const firstSelection = findByClass(resultPage.panel, "dv-result-rule-wrap").dispatch("click", {
+  target: { closest: () => ({ dataset: { ruleIssues: "1" } }) },
+});
 await flush();
 const secondSelection = resultPage.selectTask(2);
 await secondSelection;
+await findByClass(resultPage.panel, "dv-result-rule-wrap").dispatch("click", {
+  target: { closest: () => ({ dataset: { ruleIssues: "2" } }) },
+});
 resolveFirstIssue({ task_id: 1, items: [{ id: 11, business_key: "stale" }], total: 1, page: 1, page_size: 50 });
 await firstSelection;
 assert.equal(resultState.activeTaskId, 2);

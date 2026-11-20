@@ -13,6 +13,7 @@ from typing import Any
 
 from .contracts import AppError
 from .project_context import normalize_project_context
+from .project_driver import validate_project_driver, validate_project_driver_columns
 
 BASE = "base"
 RELATED = "related"
@@ -23,6 +24,7 @@ FILTER_OPS = frozenset({
 COMPARISON_OPS = frozenset({"eq", "neq", "lt", "lte", "gt", "gte"})
 UNARY_OPS = frozenset({"is_null", "is_not_null"})
 MAX_FILTERS = 8
+MAX_CONDITIONS = 8
 MAX_IN_VALUES = 50
 MAX_JOIN_KEYS = 4
 MAX_VALUE_LENGTH = 200
@@ -72,6 +74,48 @@ def _identifier(value: Any) -> bool:
     return isinstance(value, str) and _IDENTIFIER.fullmatch(value) is not None
 
 
+def is_condition_group(definition: dict[str, Any]) -> bool:
+    expression = definition.get("expression")
+    return isinstance(expression, dict) and ("conditions" in expression or "logic" in expression)
+
+
+def comparison_conditions(definition: dict[str, Any]) -> list[dict[str, Any]]:
+    """保留旧单项表达式；组内严格校验每一项，不接受部分有效的组。"""
+    expression = definition.get("expression") or {}
+    if not isinstance(expression, dict):
+        _fail()
+    if not is_condition_group(definition):
+        return [expression]
+    if set(expression) != {"logic", "conditions"} or expression["logic"] not in ("any", "all"):
+        _fail()
+    conditions = expression["conditions"]
+    if not isinstance(conditions, list) or not 2 <= len(conditions) <= MAX_CONDITIONS:
+        _fail()
+    for condition in conditions:
+        if not isinstance(condition, dict) or not _identifier(condition.get("left")):
+            _fail()
+        op = condition.get("op")
+        if not isinstance(op, str):
+            _fail()
+        if op in UNARY_OPS:
+            if set(condition) != {"left", "op"}:
+                _fail()
+            continue
+        if op not in COMPARISON_OPS or set(condition) - {"left", "op", "right", "right_type", "right_table"}:
+            _fail()
+        side = condition.get("right_table", BASE)
+        kind = condition.get("right_type", "field")
+        if side not in (BASE, RELATED) or kind not in ("field", "value"):
+            _fail()
+        right = condition.get("right")
+        if kind == "value":
+            if side != BASE or not is_finite_number(right):
+                _fail()
+        elif not _identifier(right):
+            _fail()
+    return list(conditions)
+
+
 def _valid_date_text(value: Any) -> bool:
     if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?", value) is None:
         return False
@@ -97,6 +141,7 @@ _ZERO_UNSAFE = re.compile(
     r"|原则上|一般|若|如果|假如|当|遇到|发生|情形|情况|条件下|例外|特殊|特定|仅|只有|部分|某种"
     r"|是否|\?|？",
 )
+_MISSING_VALUE_REQUIREMENT = re.compile(r"空值|缺值|缺失|为\s*空|未填写|\bNULL\b", re.IGNORECASE)
 
 
 def _field_entries(columns: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
@@ -130,13 +175,35 @@ def infer_numeric_null_handling(
     definition: dict[str, Any],
     rawfields: list[dict[str, Any]],
     relatedFields: list[dict[str, Any]] | None = None,
+    *,
+    request_text: str = "",
+) -> dict[str, Any]:
+    """保留已有文档推断及版本证据，另支持对真实数值操作数明确选择规则级零化。"""
+    inferred = _infer_document_numeric_null_handling(definition, rawfields, relatedFields, request_text=request_text)
+    if definition.get("null_policy") != "zero" or not inferred["applicable"] or inferred["null_policy"] == "zero":
+        return inferred
+    if is_condition_group(definition):
+        base_types = {name: field.get("data_type") for name, field in _field_entries(rawfields).items()}
+        related_types = {name: field.get("data_type") for name, field in _field_entries(relatedFields).items()}
+        if not is_numeric_comparison(definition, base_types, related_types):
+            return inferred
+    return {"applicable": True, "null_policy": "zero", "null_handling": None, "evidence": [],
+            "reason": "本规则明确约定数值比较中的 NULL 按 0 处理。"}
+
+
+def _infer_document_numeric_null_handling(
+    definition: dict[str, Any],
+    rawfields: list[dict[str, Any]],
+    relatedFields: list[dict[str, Any]] | None = None,
+    *,
+    request_text: str = "",
 ) -> dict[str, Any]:
     """按真实文档证据绑定数值比较空值处理。
 
-    返回 {"applicable": bool, "null_policy": "review"|"zero"|None,
+    返回 {"applicable": bool, "null_policy": "review"|"zero"|"skip"|None,
            "null_handling": {"left","right"}|None, "evidence": [...], "reason": str}。
-    通用规则，不含业务词分支；NULL 默认 review（原值单列缺值待核实），只有文档
-    明确“NULL/空值视为 0”才 zero；不从 nullable/类型/default/字段名推断。
+    原值缺失采用 review，文档明确零化时尊重文档。新 AI 常量检查按需求命中数值，
+    只有以 0 代入不改变命中时才使用等效 COALESCE，否则跳过空值。
     """
     empty = {
         "applicable": False, "null_policy": None, "null_handling": None,
@@ -144,6 +211,24 @@ def infer_numeric_null_handling(
     }
     if definition.get("rule_type") != "field_compare" or is_unary(definition):
         return empty
+    if is_condition_group(definition):
+        bindings = [
+            _infer_document_numeric_null_handling({**definition, "expression": item}, rawfields, relatedFields,
+                                                  request_text=request_text)
+            for item in comparison_conditions(definition) if item["op"] not in UNARY_OPS
+        ]
+        if not any(item["applicable"] for item in bindings):
+            return empty
+        first = bindings[0]
+        if all((item["null_policy"], item["null_handling"]) == (first["null_policy"], first["null_handling"])
+               for item in bindings):
+            return {**first, "evidence": [proof for item in bindings for proof in item["evidence"]]}
+        # 纯数值命中时，若零化仅为等效跳过（没有字段文档指定零化），可统一跳过。
+        if all(item["null_policy"] == "skip" or (item["null_policy"] == "zero"
+                   and item["reason"].startswith("空值按 0 参与本次数值比较")) for item in bindings):
+            return {**empty, "applicable": True, "null_policy": "skip", "reason": "组合条件只检查实际数值。"}
+        return {**empty, "applicable": True, "null_policy": "unresolved",
+                "reason": "各比较条件的缺值口径不同，需确认整组缺值处理。"}
     expression = definition.get("expression") or {}
     if (not isinstance(expression, dict) or not isinstance(expression.get("op"), str)
             or expression["op"] not in COMPARISON_OPS):
@@ -174,11 +259,32 @@ def infer_numeric_null_handling(
         if right_field is None or type_family(right_field.get("data_type")) != "number":
             return {**empty, "reason": "右操作数不是文档中的数值字段"}
 
+    join = definition.get("join")
+    if isinstance(join, dict) and join.get("right_aggregate") == "sum":
+        return {
+            "applicable": True, "null_policy": "review", "null_handling": {"left": "review", "right": "review"},
+            "evidence": [], "reason": "比较实际存储的数值与同日明细合计，缺行或实际字段缺值均须核实。",
+        }
     left_zero = _has_explicit_zero_semantics(left_field)
     right_zero = False
     evidence: list[dict[str, str]] = []
     if left_zero:
         evidence.append({"side": "left", "field": str(left_name), "source": _column_text(left_field)})
+    elif right_field is None:
+        values_only = bool(request_text.strip()) and not _MISSING_VALUE_REQUIREMENT.search(request_text)
+        if values_only or definition.get("null_policy") == "zero":
+            from .query_samples import sql_compare
+
+            if not sql_compare(expression["op"], 0, expression["right"]):
+                reason = "空值按 0 参与本次数值比较，0 不会命中校验条件。"
+                return {
+                    "applicable": True, "null_policy": "zero",
+                    "null_handling": {"left": "zero", "right": "zero"},
+                    "evidence": [{"side": "left", "field": left_name, "source": reason}],
+                    "reason": reason,
+                }
+        if values_only or (definition.get("generation_mode") == "ai" and definition.get("null_policy") == "skip"):
+            return {**empty, "applicable": True, "null_policy": "skip", "reason": "需求只检查数值比较命中。"}
     if right_field is not None:
         right_zero = _has_explicit_zero_semantics(right_field)
         if right_zero:
@@ -207,15 +313,19 @@ def apply_numeric_null_policy(
     definition: dict[str, Any],
     columns: list[dict[str, Any]],
     related_columns: list[dict[str, Any]] | None = None,
+    *,
+    request_text: str = "",
 ) -> dict[str, Any]:
-    """按实际文档列类型与明确语义证据绑定空值策略；返回新字典，不改输入。"""
+    """按真实列类型绑定规则声明或文档推断的空值策略，返回新字典。"""
     result = dict(definition)
-    inferred = infer_numeric_null_handling(result, columns, related_columns)
+    inferred = infer_numeric_null_handling(result, columns, related_columns, request_text=request_text)
     if not inferred["applicable"]:
         return result
     result["null_policy"] = inferred["null_policy"]
     if inferred.get("null_handling"):
         result["null_handling"] = dict(inferred["null_handling"])
+    else:
+        result.pop("null_handling", None)
     result["null_evidence"] = list(inferred.get("evidence") or [])
     return result
 
@@ -228,6 +338,10 @@ def is_numeric_comparison(
     """主表达式是否为二元数值比较；filters/一元/其他规则类型不算。"""
     if definition.get("rule_type") != "field_compare" or is_unary(definition):
         return False
+    if is_condition_group(definition):
+        binary = [item for item in comparison_conditions(definition) if item["op"] not in UNARY_OPS]
+        return bool(binary) and all(is_numeric_comparison({**definition, "expression": item}, base_types, related_types)
+                                    for item in binary)
     expression = definition.get("expression") or {}
     if (not isinstance(expression, dict) or not isinstance(expression.get("op"), str)
             or expression["op"] not in COMPARISON_OPS):
@@ -240,7 +354,7 @@ def is_numeric_comparison(
     right = expression.get("right")
     if not isinstance(right, str):
         return False
-    source = related_types if expression.get("right_table") == RELATED else base_types
+    source = (related_types or {}) if expression.get("right_table") == RELATED else base_types
     return type_family(source.get(right)) == "number"
 
 
@@ -250,6 +364,8 @@ def needs_issue_kind(definition: dict[str, Any]) -> bool:
     review/zero 数值、非数值新规格比较输出类型；旧 shape 为保持 SQL 字节不变不输出，
     由存储/UI 按 legacy 处理。
     """
+    if "project_driver" in definition:
+        return True
     if definition.get("rule_type") != "field_compare":
         return False
     policy = definition.get("null_policy")
@@ -274,7 +390,7 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
     raw_join = definition.get("join")
     join: dict[str, Any] | None = None
     if raw_join is not None:
-        if not isinstance(raw_join, dict) or set(raw_join) - {"table_name", "on", "report_date_field", "unmatched_policy", "relationship_confirmed"}:
+        if not isinstance(raw_join, dict) or set(raw_join) - {"table_name", "on", "report_date_field", "unmatched_policy", "relationship_confirmed", "right_aggregate"}:
             _fail()
         table_name = raw_join.get("table_name")
         if not _identifier(table_name):
@@ -295,7 +411,10 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
         if not _identifier(date_field):
             _fail()
         unmatched = raw_join.get("unmatched_policy") or "unresolved"
-        if unmatched not in ("unresolved", "exclude"):
+        aggregate = raw_join.get("right_aggregate")
+        if "right_aggregate" in raw_join and aggregate != "sum":
+            _fail()
+        if unmatched not in (("review",) if aggregate else ("unresolved", "exclude")):
             _fail()
         confirmed = raw_join.get("relationship_confirmed", False)
         if not isinstance(confirmed, bool):
@@ -307,6 +426,8 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
             "unmatched_policy": unmatched,
             "relationship_confirmed": confirmed,
         }
+        if aggregate:
+            join["right_aggregate"] = aggregate
 
     filters: list[dict[str, Any]] = []
     for item in raw_filters:
@@ -355,6 +476,16 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
     expression = definition.get("expression") or {}
     if not isinstance(expression, dict):
         _fail()
+    conditions = comparison_conditions(definition)
+    if is_condition_group(definition):
+        if definition.get("rule_type") != "field_compare" or (join and join.get("right_aggregate")):
+            _fail()
+        if join is None and any(item.get("right_table") == RELATED for item in conditions):
+            _fail()
+        if definition.get("null_policy") not in (None, "unresolved") and not _valid_null_policy(definition):
+            _fail()
+        if definition.get("equality_policy") not in (None, "unresolved", "allow_equal", "reject_equal"):
+            _fail()
     right_table = expression.get("right_table") or BASE
     if right_table not in (BASE, RELATED):
         _fail()
@@ -364,12 +495,24 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
     if right_table == RELATED:
         if join is None or right_type != "field" or not _identifier(expression.get("right")):
             _fail()
+    policy = definition.get("null_policy")
+    if join and join.get("right_aggregate") and (
+        definition.get("rule_type") != "field_compare" or right_table != RELATED or expression.get("op") != "neq"
+        or policy not in ("review", "zero")
+        or definition.get("null_handling") not in (None, {"left": policy, "right": policy})
+    ):
+        _fail()
 
     raw_handling = definition.get("null_handling")
     if raw_handling is not None:
         if not isinstance(raw_handling, dict) or set(raw_handling) - {"left", "right"}:
             _fail()
         if any(item not in ("zero", "review") for item in raw_handling.values()):
+            _fail()
+        if is_condition_group(definition) and (
+            definition.get("null_policy") not in ("zero", "review")
+            or (definition["null_policy"] == "zero" and "review" in raw_handling.values())
+        ):
             _fail()
     raw_evidence = definition.get("null_evidence")
     if raw_evidence is not None:
@@ -397,8 +540,9 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
                 if context["date_field"] != join["report_date_field"]:
                     _fail()
 
+    driver = validate_project_driver(definition, context=context, join=join)
     return {"filters": filters, "join": join, "right_table": right_table,
-            "project_context": context}
+            "project_context": context, "project_driver": driver}
 
 
 def validate_spec_against_columns(
@@ -421,31 +565,29 @@ def validate_spec_against_columns(
         str(column.get("column_name")): column.get("data_type")
         for column in related_columns or [] if column.get("column_name")
     }
-    expression = definition.get("expression") or {}
     if is_new_spec(definition):
         if any(name not in base_types for name in referenced_columns(definition)["base"]):
             _fail()
         if base_type(base_types.get(definition.get("report_date_field") or "report_date")) != "date":
             _fail()
 
-    left = expression.get("left")
-    if not _identifier(left) or left not in base_types:
-        _fail()
-
-    if not is_unary(definition):
-        right_type = expression.get("right_type") or "field"
-        right = expression.get("right")
+    for condition in comparison_conditions(definition):
+        left = condition.get("left")
+        if not _identifier(left) or left not in base_types:
+            _fail()
+        if isinstance(condition.get("op"), str) and condition["op"] in UNARY_OPS:
+            continue
+        right_type = condition.get("right_type") or "field"
+        right = condition.get("right")
         if right_type == "value":
             if not is_finite_number(right) or (is_new_spec(definition) and type_family(base_types.get(left)) != "number"):
                 _fail()
         else:
-            if spec["right_table"] == RELATED:
-                if right not in related_types:
-                    _fail()
-            elif right not in base_types:
+            right_types = related_types if condition.get("right_table") == RELATED else base_types
+            if not _identifier(right) or right not in right_types:
                 _fail()
             if (is_new_spec(definition) and not type_family(base_types.get(left))) or type_family(base_types.get(left)) != type_family(
-                related_types.get(right) if spec["right_table"] == RELATED else base_types.get(right)
+                right_types.get(right)
             ):
                 _fail()
 
@@ -455,8 +597,19 @@ def validate_spec_against_columns(
             _fail()
         handling = definition.get("null_handling") or {}
         if any(item == "zero" and not definition.get("null_evidence") for item in handling.values()):
-            # 零化必须有真实文档证据，模型 confirmed 不能替代。
+            # 逐侧指定的零化须保留证据，规则统一 zero 可由 null_policy 单独表达。
             _fail()
+        for condition in comparison_conditions(definition):
+            if condition.get("op") in UNARY_OPS:
+                continue
+            operands = [("left", base_types.get(condition.get("left")))]
+            if condition.get("right_type", "field") == "field":
+                types = related_types if condition.get("right_table") == RELATED else base_types
+                operands.append(("right", types.get(condition.get("right"))))
+            if any(handling.get(side, definition["null_policy"]) == "zero" and base_type(kind) in {"money", "bit"}
+                   for side, kind in operands):
+                # These native types do not support the compiler's numeric-zero COALESCE.
+                _fail()
 
     for item in spec["filters"]:
         types = related_types if item["table"] == RELATED else base_types
@@ -484,6 +637,9 @@ def validate_spec_against_columns(
     if context is not None:
         from .project_context import validate_project_context_against_columns
         validate_project_context_against_columns(context, base_types, related_types or None)
+    validate_project_driver_columns(
+        definition, base_columns, related_columns, context=context, join=join,
+    )
 
     return spec
 
@@ -509,7 +665,8 @@ def _validate_filter_value(item: dict[str, Any], data_type: Any) -> None:
 
 def is_unary(definition: dict[str, Any]) -> bool:
     expression = definition.get("expression") or {}
-    return isinstance(expression, dict) and isinstance(expression.get("op"), str) and expression["op"] in UNARY_OPS
+    return (not is_condition_group(definition) and isinstance(expression, dict)
+            and isinstance(expression.get("op"), str) and expression["op"] in UNARY_OPS)
 
 
 def canonicalize_definition(definition: dict[str, Any]) -> dict[str, Any]:
@@ -522,7 +679,9 @@ def canonicalize_definition(definition: dict[str, Any]) -> dict[str, Any]:
     if result.get("expression") is not None and not isinstance(result["expression"], dict):
         _fail()
     expression = dict(result.get("expression") or {})
-    if is_unary(result):
+    if is_condition_group(result):
+        comparison_conditions(result)
+    elif is_unary(result):
         if "null_policy" not in result:
             result["null_policy"] = "violate"
         if "equality_policy" not in result:
@@ -530,6 +689,9 @@ def canonicalize_definition(definition: dict[str, Any]) -> dict[str, Any]:
         result["expression"] = {"left": expression.get("left"), "op": expression.get("op")}
     if result.get("project_context") is not None:
         result["project_context"] = normalize_project_context(result["project_context"])
+    driver = validate_project_driver(result)
+    if driver is not None:
+        result["project_driver"] = driver
     return result
 
 
@@ -537,38 +699,44 @@ def is_new_spec(definition: dict[str, Any]) -> bool:
     expression = definition.get("expression") or {}
     if not isinstance(expression, dict):
         return True
-    return (definition.get("filters") is not None and definition.get("filters") != []) or definition.get("join") is not None \
+    return is_condition_group(definition) or (definition.get("filters") is not None and definition.get("filters") != []) or definition.get("join") is not None \
         or expression.get("right_table") == RELATED or is_unary(definition) \
         or definition.get("project_context") is not None \
+        or definition.get("project_driver") is not None \
         or definition.get("null_policy") in ("zero", "review")
+
+
+def _valid_null_policy(definition: dict[str, Any]) -> bool:
+    policy = definition.get("null_policy")
+    if is_unary(definition):
+        return policy == "violate"
+    if is_condition_group(definition) and all(item["op"] in UNARY_OPS for item in comparison_conditions(definition)):
+        return policy in ("skip", "violate")
+    return policy in ("skip", "zero", "review")
 
 
 def query_ready(definition: dict[str, Any]) -> bool:
     """确认/执行门禁。旧 shape 恒为 True，历史规则行为不变。"""
 
     if definition.get("rule_type") != "field_compare":
-        return True
+        return not is_condition_group(definition)
     if not is_new_spec(definition):
         return True
-    unary = is_unary(definition)
-    if unary:
-        if definition.get("null_policy") != "violate":
-            return False
-    elif definition.get("null_policy") not in ("skip", "zero", "review"):
-        return False
     if definition.get("equality_policy") not in ("allow_equal", "reject_equal"):
         return False
     if definition.get("unsupported_requirements"):
         return False
     try:
         spec = validate_query_spec(definition)
+        if not _valid_null_policy(definition):
+            return False
     except AppError:
         return False
     if any(not item["confirmed"] for item in spec["filters"]):
         return False
     join = spec["join"]
     if join is not None:
-        if not join["relationship_confirmed"] or join["unmatched_policy"] != "exclude":
+        if not join["relationship_confirmed"] or join["unmatched_policy"] == "unresolved":
             return False
     context = spec["project_context"]
     if context is not None:
@@ -583,27 +751,24 @@ def query_unresolved_reasons(definition: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     if definition.get("rule_type") != "field_compare" or not is_new_spec(definition):
         return reasons
-    unary = is_unary(definition)
-    if unary:
-        if definition.get("null_policy") != "violate":
-            reasons.append("空值口径尚未确认为计为违规")
-    elif definition.get("null_policy") not in ("skip", "zero", "review"):
-        reasons.append("空值口径尚未确认（数值比较应绑定 review/有据 zero，日期/文本应为 skip）")
+    try:
+        spec = validate_query_spec(definition)
+        if not _valid_null_policy(definition):
+            reasons.append("空值口径尚未确认为计为违规" if is_unary(definition) else
+                           "空值口径尚未确认（数值比较应绑定 review/有据 zero，日期/文本应为 skip）")
+    except AppError:
+        return ["查询结构或字段不符合契约"]
     if definition.get("equality_policy") not in ("allow_equal", "reject_equal"):
         reasons.append("相等口径尚未确认")
     if definition.get("unsupported_requirements"):
         reasons.append("存在未解决的不支持要求")
-    try:
-        spec = validate_query_spec(definition)
-    except AppError:
-        return ["查询结构或字段不符合契约"]
     if any(not item["confirmed"] for item in spec["filters"]):
         reasons.append("存在未确认的筛选条件")
     join = spec["join"]
     if join is not None:
         if not join["relationship_confirmed"]:
             reasons.append("关联关系尚未确认")
-        if join["unmatched_policy"] != "exclude":
+        if join["unmatched_policy"] == "unresolved":
             reasons.append("未匹配记录处理尚未确认")
     context = spec["project_context"]
     if context is not None:
@@ -628,12 +793,10 @@ def referenced_columns(definition: dict[str, Any]) -> dict[str, list[str]]:
     add(base, definition.get("business_key") or "id")
     if definition.get("rule_type") == "field_compare" and is_new_spec(definition):
         add(base, definition.get("report_date_field") or "report_date")
-    expression = definition.get("expression") or {}
-    if expression.get("left"):
-        add(base, expression["left"])
-    right_type = expression.get("right_type") or "field"
-    if right_type == "field" and expression.get("right"):
-        add(related if expression.get("right_table") == RELATED else base, expression["right"])
+    for expression in comparison_conditions(definition):
+        add(base, expression.get("left"))
+        if (expression.get("right_type") or "field") == "field":
+            add(related if expression.get("right_table") == RELATED else base, expression.get("right"))
 
     spec: dict[str, Any] = {"filters": [], "join": None, "right_table": "base"}
     try:

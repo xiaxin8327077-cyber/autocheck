@@ -92,7 +92,7 @@ def test_consecutive_analysis_has_two_model_calls_each_no_separate_study_turn():
     assert len(model.calls) == 4
     for call in model.calls:
         prompt = call["messages"][0]["content"]
-        assert prompt.startswith("以下 JSON 为有界业务参考资料")
+        assert prompt.startswith("请先阅读本次匹配的业务知识")
         assert "信托业务分类与粒度" in prompt
     assert first["knowledge_context"]["summary_reused"] is False
     assert second["knowledge_context"]["summary_reused"] is True

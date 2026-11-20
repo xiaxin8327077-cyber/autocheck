@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -77,13 +78,18 @@ def test_mixed_sentence_suggestions_are_isolated_and_do_not_block_main():
     candidate = rules.parse_rule_request(user(), _request(request_text="金额不得为 0"))
 
     assert len(model.calls) == 2
-    assert candidate["preview"] is not None
-    assert "ai_suggestions" not in candidate["preview"]["definition"]
+    assert candidate["preview"] is None
+    assert all("建议" not in reason for reason in candidate["uncertainties"])
     assert isinstance(candidate["ai_suggestions"], list)
-    # 未知引用、需要人工核实的模型建议及无关主键不对外展示。
-    assert candidate["ai_suggestions"] == []
-    # 建议不反向阻塞主规则：主预览仍按其自身口径生成。
-    assert candidate["preview"] is not None
+    # 未知/缺引用不能冒充文档事实；有效模型提案展示，但不采用模型SQL或执行定义。
+    assert len(candidate["ai_suggestions"]) == 1
+    suggestion = candidate["ai_suggestions"][0]
+    assert suggestion["provenance"] == "model" and suggestion["support_level"] == "needs_confirmation"
+    assert suggestion["preconditions"] == ["有效"]
+    assert "definition" not in suggestion and "sql" not in suggestion
+    # 处理主规则自身的歧义后才能编译，独立建议不进入规则定义。
+    definition = {**candidate, "uncertainty_resolutions": ["采用金额字段"] * len(candidate["uncertainties"])}
+    assert "ai_suggestions" not in rules.preview_candidate(user(), definition)["definition"]
 
 
 def test_three_independent_tables_with_contract_project_identity():
@@ -147,7 +153,9 @@ def test_single_unknown_grain_still_returns_optional_suggestions():
     candidate = rules.parse_rule_request(user(), _request(request_text="金额不得为 0"))
 
     assert candidate["preview"] is not None
-    assert candidate["ai_suggestions"] == []
+    assert [item["title"] for item in candidate["ai_suggestions"]] == ["核实金额完整性"]
+    assert candidate["ai_suggestions"][0]["provenance"] == "model"
+    assert "definition" not in candidate["ai_suggestions"][0]
 
 
 def test_client_context_and_source_tampering_are_revalidated():
@@ -176,7 +184,8 @@ def test_client_context_and_source_tampering_are_revalidated():
         "confirmed": False,
     }
 
-    preview = rules.preview_candidate(user(), _project_definition(context=context))
+    preview = rules.preview_candidate(user(), _project_definition(context=context), return_questions=True)
+    assert "sql_preview" not in preview and "content_sha256" not in preview
     resolved = preview["definition"]["project_context"]
     assert resolved["unique_evidence"]["kind"] == "pk"
     assert resolved["unique_evidence"]["fields"] == ["project_code", "report_date"]
@@ -218,10 +227,14 @@ def test_client_context_and_source_tampering_are_revalidated():
 class _ProjectMetadata(Metadata):
     def execute_select(self, source_id, sql, params, timeout_seconds, max_rows):
         self.calls.append(sql)
-        return SimpleNamespace(
-            columns=("business_key", "violation_message", "project_code", "project_name", "project_match_count"),
-            rows=tuple(self.rows), truncated=False,
-        )
+        with sqlite3.connect(":memory:") as db:
+            db.execute("CREATE TABLE contract(c_pactid, project_code, amount, report_date)")
+            db.execute("CREATE TABLE dim_project(project_code, project_name, report_date)")
+            for pact, code, name in self.rows:
+                db.execute("INSERT INTO contract VALUES(?,?,1,?)", (pact, code, "2026-09-30"))
+                db.execute("INSERT INTO dim_project VALUES(?,?,?)", (code, name, "2026-09-30"))
+            cursor = db.execute(sql, params)
+            return SimpleNamespace(columns=[c[0] for c in cursor.description], rows=cursor.fetchall(), truncated=False)
 
 
 def test_real_rows_are_persisted_per_issue_with_project_columns():
@@ -236,8 +249,8 @@ def test_real_rows_are_persisted_per_issue_with_project_columns():
         sources=[SimpleNamespace(id="src", name="监管报送集市", dialect="mysql")],
     )
     metadata.rows = (
-        ("C1", "金额异常", "P1", "项目一", 1),
-        ("0", "金额异常", "0", "零号项目", 1),
+        ("C1", "P1", "项目一"),
+        ("0", "0", "零号项目"),
     )
     _database, rules = service(metadata=metadata)
     owner = user()

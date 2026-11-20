@@ -33,11 +33,12 @@ def _queued_task_rule(storage: RuleStorage) -> dict:
         },
         sql_text="SELECT 1", mapping_version="doc-v1-x", content_sha256="h", generation_mode="manual",
     )
+    storage.set_status(int(rule["id"]), "enabled", int(rule["version_id"]))
     task = storage.create_task(
         creator_user_id="1", source_id="src", report_period="2026-09-30",
         params={"report_period": "2026-09-30"},
         rules=[{
-            "rule_id": int(rule["id"]), "version_id": 1, "version_no": 1,
+            "rule_id": int(rule["id"]), "version_id": int(rule["version_id"]), "version_no": 1,
             "content_sha256": "h", "sql_summary": "SELECT 1",
         }],
     )
@@ -109,6 +110,21 @@ def test_record_rule_result_rejects_duplicate_or_cancelled_completion_without_ov
     assert storage.task_rules(int(item["task_id"]))[0]["status"] == "CANCELLED"
     assert _rows(storage, item["task_id"]) == []
 
+
+def test_missing_detail_retains_its_kind_and_project_without_a_fabricated_detail_key():
+    _, storage = _storage()
+    item = _queued_task_rule(storage)
+    assert storage.record_rule_result(
+        int(item["id"]), status="VIOLATION", error_code="", violation_count=1, truncated=False,
+        issues=[_issue(business_key=None, issue_kind="missing_record", message="没有对应明细记录")],
+    )
+    rows = _rows(storage, item["task_id"])
+    assert rows[0]["business_key"] == ""
+    assert rows[0]["project_code"] == "000123"
+    assert rows[0]["issue_kind"] == "missing_record"
+    exported = list(csv.DictReader(io.StringIO(exports.issues_csv({"id": item["task_id"]}, rows).decode("utf-8"))))
+    assert exported[0]["issue_kind"] == "missing_record"
+    assert exported[0]["business_key"] == ""
 
 def test_record_rule_result_validates_count_and_outcome_shape():
     _database, storage = _storage()

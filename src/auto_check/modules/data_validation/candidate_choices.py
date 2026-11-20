@@ -9,6 +9,9 @@ import hashlib
 import re
 from typing import Any
 
+from .contracts import PBC_REPORT_CATEGORIES, PBC_SHARED_CATEGORY
+from .query_spec import type_family
+
 _PROJECT_GRAIN = re.compile(r"项目")
 _CONTRACT_GRAIN = re.compile(r"合同|合约|协议")
 TARGET_SELECT = re.compile(
@@ -57,6 +60,73 @@ def field_label(field: dict[str, Any]) -> str:
     )
 
 
+def document_category(scope, categories: list[dict]) -> dict | None:
+    if not scope:
+        return None
+    codes = {PBC_SHARED_CATEGORY if code in PBC_REPORT_CATEGORIES else code for code in scope}
+    return next((item for item in categories if codes == {item["code"]}), None)
+
+
+def requested_category_codes(request: str, categories: list[dict]) -> set[str]:
+    compact = re.sub(r"\s+", "", request).casefold()
+    codes = set()
+    for item in categories:
+        for name in (item["name"], item["code"]):
+            label = re.sub(r"\s+", "", name).casefold()
+            if not label:
+                continue
+            if name.isascii():
+                if re.search(r"(?<![a-z0-9_])" + re.escape(name.strip()) + r"(?![a-z0-9_])", request, re.I):
+                    codes.add(item["code"])
+            elif label in compact:
+                codes.add(item["code"])
+    return codes
+
+
+def check_without_category_prefix(request: str, categories: list[dict]) -> str:
+    names = sorted({value for category in categories for value in (category["name"], category["code"]) if value}, key=len, reverse=True)
+    if not names:
+        return request
+    return re.sub(r"^\s*(?:按照|按|在)?(?:" + "|".join(map(re.escape, names)) + r")(?:分类)?(?:中)?(?:的|[，,:：])\s*", "", request, count=1, flags=re.I)
+
+
+def other_category_expression(expression: dict, base_fields: list[dict], other_fields: list[dict], request: str) -> dict | None:
+    """Rebind every operand by its actual document label; a shared physical column alone proves nothing."""
+    by_name = {field["field_name"]: field for field in base_fields}
+    bound = []
+    explicit_subject = False
+    for part in expression.get("conditions", [expression]):
+        clone = dict(part)
+        sides = ["left", "right"] if part.get("right") and part.get("right_type", "field") == "field" else ["left"]
+        for side in sides:
+            field = by_name.get(part.get(side))
+            if not field or not field.get("field_cn") or part.get("right_table", "base") != "base":
+                return None
+            name = field["field_cn"].strip()
+            explicit_subject |= name in request or bool(re.search(r"(?<![A-Za-z0-9_])" + re.escape(field["field_name"]) + r"(?![A-Za-z0-9_])", request))
+            matches = [other for other in other_fields if str(other.get("field_cn") or "").strip() == name
+                       and type_family(other.get("data_type")) == type_family(field.get("data_type"))]
+            if len(matches) != 1:
+                return None
+            clone[side] = matches[0]["field_name"]
+        bound.append(clone)
+    if not explicit_subject or not bound:
+        return None
+    return {**expression, "conditions": bound} if "conditions" in expression else bound[0]
+
+
+def confirm_option_category(candidate: dict, meta: dict, category: dict, table: dict) -> None:
+    scope = str(table.get("scope") or table.get("dimension") or "")
+    question = f"是否按「{category['name']}」的 {table['table_name']} 检查？"
+    candidate.setdefault("questions", []).append({"id": "report_category", "text": question, "uncertainty": question,
+        "options": [{"value": category["code"], "label": category["name"] + (f"（{scope}）" if scope else "")}]})
+    candidate.setdefault("uncertainties", []).append(question)
+    candidate["uncertainty_resolutions"] = [""] * len(candidate["uncertainties"])
+    candidate.update(report_category=category["code"], report_category_name=category["name"])
+    meta["table_label"] = f"{category['name']} · {meta['table_label']}"
+    meta["match_reason"] = f"报送分类为{category['name']}" + (f"，文档范围为{scope}" if scope else "")
+
+
 def counterpart_fields(fields: list[dict[str, Any]], base_field: dict[str, Any]) -> list[dict[str, Any]]:
     """有界语义匹配：要求真实非空中文标签存在 >=3 字公共业务短语。
 
@@ -78,6 +148,9 @@ def grain_label(table: dict[str, Any]) -> str:
     """优先结构化 dimension；合同依据明确时不因 source_desc 提到项目而反转。"""
     dimension = str(table.get("dimension") or "").strip()
     if dimension:
+        components = re.split(r"[，,；;]", dimension, maxsplit=1)[0].strip()
+        if re.search(r"[＋+、]", components):
+            return components
         has_project = bool(_PROJECT_GRAIN.search(dimension))
         has_contract = bool(_CONTRACT_GRAIN.search(dimension))
         if has_project and not has_contract:
@@ -100,6 +173,12 @@ def grain_label(table: dict[str, Any]) -> str:
     if has_project:
         return "项目级"
     return ""
+
+
+def document_display(table: dict, related: dict | None = None) -> dict:
+    """Display facts from the resolved document tables, outside the executable definition."""
+    return {"table_name_cn": table.get("table_name_cn") or "", "grain": grain_label(table),
+            "document_scope": table.get("scope") or "", "related_table_name_cn": (related or {}).get("table_name_cn") or ""}
 
 
 def recommended_index(grains: list[str], request_text: str) -> int | None:
@@ -133,23 +212,6 @@ def difference_lines(table_label: str, grain: str, field_label: str, base_field_
             "规模/余额等限定不同，不声明二者等价",
         )
     return lines
-
-
-def comparison_suggestion(grains: list[str]) -> dict[str, Any] | None:
-    """跨粒度候选仅给出人工核实建议；不支持聚合/自动启用。"""
-    distinct = {item for item in grains if item}
-    if len(distinct) < 2:
-        return None
-    return {
-        "title": "同名指标在不同粒度对象中可能不一致",
-        "description": "项目与合同可能是一对多关系；当前规则引擎不支持聚合，不能把合同逐条结果当作项目口径。",
-        "limitations": [
-            "跨表一致性建议仅供人工核实",
-            "当前不支持聚合/一对多汇总",
-            "不会自动生成或启用任务",
-        ],
-        "supported": False,
-    }
 
 
 def target_ambiguity_indices(values: list[str]) -> list[int]:

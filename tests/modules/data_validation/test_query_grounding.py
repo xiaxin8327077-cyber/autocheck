@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 from auto_check.modules.data_validation.query_grounding import (
-    dictionary_options, field_profiles, ground_candidate_query, project_mart_target,
+    dictionary_options, documented_scope_comparison, field_profiles, ground_candidate_query, project_mart_target,
 )
 
 
@@ -51,6 +51,95 @@ def test_document_scope_can_supply_a_choice_without_inventing_state_codes():
     assert "filters" not in already_scoped
 
 
+def test_still_active_projects_use_the_existing_document_scope():
+    result = candidate()
+    ground_candidate_query(result, {}, [FIELDS[1]], [], "仍存续项目的实收不得小于0")
+    assert result["filters"] == [{"table": "base", "field": "status", "op": "eq", "value": "1", "confirmed": True}]
+    assert result["questions"] == []
+
+
+@pytest.mark.parametrize(("label", "dictionary", "request_text", "value"), [
+    ("是否已复核", "7-是\n0-否", "请检查已复核客户的余额不得小于0", "7"),
+    ("客户类型", "02-企业\n03-个人", "企业客户的余额不得小于0", "02"),
+])
+def test_unique_documented_scope_uses_dictionary_without_business_specific_branches(label, dictionary, request_text, value):
+    field = {"field_name": "scope_code", "field_cn": label, "data_type": "varchar", "dictionary": dictionary}
+    result = candidate()
+    ground_candidate_query(result, {}, [field], [], request_text)
+    assert result["filters"] == [{"table": "base", "field": "scope_code", "op": "eq", "value": value, "confirmed": True}]
+    assert result["questions"] == []
+
+
+def test_constant_check_needs_a_documented_measure_not_a_reference_in_another_calculation():
+    fields = [
+        {"field_name": "reviewed", "field_cn": "是否已复核", "dictionary": "A-是\nB-否"},
+        {"field_name": "amount", "field_cn": "科目余额", "data_type": "decimal",
+         "logic": "按科目编号为2123-留存收益，取科目余额。"},
+    ]
+    request = "请检查已复核客户的留存收益原则上不得小于 12.5"
+    assert documented_scope_comparison(request, fields) == {
+        "term": "留存收益", "entity": "客户",
+        "expression": {"left": "amount", "op": "lt", "right_type": "value", "right": 12.5},
+        "filter": {"table": "base", "field": "reviewed", "op": "eq", "value": "A", "confirmed": True},
+    }
+    for logic in ["不包含留存收益", "取总额减去留存收益的差值。", "当留存收益大于0时取1，否则取0。"]:
+        assert documented_scope_comparison(request, [fields[0], {**fields[1], "logic": logic}]) is None
+
+
+def test_constant_check_keeps_qualifiers_and_incompletely_documented_scope_alternatives():
+    fields = [FIELDS[1], FIELDS[4]]
+    assert documented_scope_comparison("上期存续项目的实收金额不得小于0", fields) is None
+    ambiguous = [*fields, {"field_name": "report_status", "field_cn": "项目状态", "dictionary": ""}]
+    assert documented_scope_comparison("存续项目的实收金额不得小于0", ambiguous) is None
+    conflicting = [{**FIELDS[1], "dictionary": "1-存续\n1-终止"}, FIELDS[4]]
+    assert documented_scope_comparison("存续项目的实收金额不得小于0", conflicting) is None
+
+
+def test_conflicting_documented_scope_fields_are_not_resolved_by_model_or_field_order():
+    fields = [{"field_name": name, "field_cn": "是否已复核", "dictionary": f"{value}-是"}
+              for name, value in [("reviewed", "1"), ("report_reviewed", "2")]]
+    result = candidate()
+    ground_candidate_query(result, {"filters": [{"field": "report_reviewed", "op": "eq", "value": "2"}]},
+                           fields, [], "已复核客户的余额不得小于0")
+    assert [item["selection"]["field"] for item in result["questions"][0]["options"]] == ["reviewed", "report_reviewed"]
+    assert result["filters"][0]["confirmed"] is False
+
+
+def test_single_model_suggested_filter_is_not_evidence_of_an_explicit_user_scope():
+    field = {"field_name": "reviewed", "field_cn": "是否已复核", "dictionary": "1-是\n0-否"}
+    result = candidate()
+    ground_candidate_query(result, {"filters": [{"field": "reviewed", "op": "eq", "value": "1"}]},
+                           [field], [], "所有客户的余额不得小于0")
+    assert result["filters"] == []
+    assert result["questions"] == []
+
+
+@pytest.mark.parametrize("model_operator", ["eq", "neq"])
+@pytest.mark.parametrize("request_text", [
+    "当期终止项目的实收不得大于0，排除资产证券化服务信托",
+    "当期终止项目的实收不得大于0，且信托产品类型不等于3",
+])
+def test_explicit_product_type_exclusion_uses_the_unique_documented_value(request_text, model_operator):
+    fields = [
+        {"field_name": "terminated_in_period", "field_cn": "是否当期终止", "dictionary": "7-是\n0-否"},
+        {"field_name": "trust_type", "field_cn": "信托产品类型", "dictionary": "3-资产证券化服务信托\n6-资产管理信托"},
+    ]
+    result = candidate()
+    ground_candidate_query(result, {"filters": [{"field": "trust_type", "op": model_operator, "value": "6"}]},
+                           fields, [], request_text)
+    assert result["questions"] == []
+    assert [(item["field"], item["op"], item["value"], item["confirmed"]) for item in result["filters"]] == [
+        ("terminated_in_period", "eq", "7", True), ("trust_type", "neq", "3", True),
+    ]
+
+
+def test_explicit_exclusion_without_document_evidence_blocks_a_broader_preview():
+    result = candidate()
+    ground_candidate_query(result, {}, FIELDS, [], "检查实收金额，排除特殊项目")
+    assert result["questions"] == []
+    assert result["preview_error"] in result["uncertainties"]
+
+
 PROJECT_STATES = [
     {"field_name": "c_projstatus", "field_cn": "项目状态", "dictionary": "0-已完结\n1-存续"},
     {"field_name": "pro_status", "field_cn": "项目状态", "dictionary": "0-本月销户\n2-存续"},
@@ -89,11 +178,16 @@ def test_mart_target_is_specific_to_project_grain_and_authorized_source():
     assert project_mart_target("监管报表", [table], "项目维度实收不能为0") is None
 
 
-def test_membership_filter_does_not_turn_a_requested_set_into_a_single_state():
+def test_membership_filter_requires_user_values_and_keeps_the_explicit_set():
     result = candidate()
     values = ["0", "1"]
-    ground_candidate_query(result, {"filters": [{"field": "status", "op": "in", "value": values}]}, FIELDS, [], "状态属于两个值")
-    assert result["questions"][0]["options"][0]["selection"]["value"] == values
+    draft = {"filters": [{"field": "status", "op": "in", "value": values}]}
+    ground_candidate_query(result, draft, FIELDS, [], "仅检查项目状态属于两个值的记录")
+    assert result["questions"] == [] and result["preview_error"] in result["uncertainties"]
+    explicit = candidate()
+    ground_candidate_query(explicit, draft, FIELDS, [], "仅检查 status 属于 0、1 的记录")
+    assert explicit["questions"] == []
+    assert explicit["filters"] == [{"table": "base", "field": "status", "op": "in", "value": values, "confirmed": True}]
 
 
 def test_join_model_confirmations_and_date_guesses_are_reset():

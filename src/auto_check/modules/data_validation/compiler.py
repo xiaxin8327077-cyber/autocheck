@@ -1,7 +1,6 @@
 """把配置型规则编译成方言 SQL。值只走绑定参数。
 
-旧 field_compare 表达式的 SQL 文本保持不变；新 filters/join 规格在其后追加，
-join 使用相关 EXISTS 半连接，右表重复不会放大基表行。
+历史规则按版本保留原投影。关联使用相关 EXISTS 半连接，右表重复不会放大基表行。
 """
 
 from __future__ import annotations
@@ -11,8 +10,9 @@ from typing import Any
 
 from .contracts import AppError
 from .project_context import normalize_project_context
-from .query_spec import BASE, RELATED, UNARY_OPS, needs_issue_kind, validate_query_spec
+from .query_spec import BASE, RELATED, UNARY_OPS, comparison_conditions, is_condition_group, needs_issue_kind, validate_query_spec
 from .sql_guard import quote_identifier
+from .result_aliases import quoted_output_aliases
 
 _OPS = {"lt": "<", "lte": "<=", "gt": ">", "gte": ">=", "eq": "=", "neq": "<>"}
 _RIGHT_TYPES = {"field", "value"}
@@ -59,12 +59,7 @@ def _filter_predicate(
     return f"{column} {_FILTER_OPS[op]} :{name}"
 
 
-def _exists_clause(
-    dialect: str,
-    spec: dict[str, Any],
-    params: dict[str, Any],
-    comparison: str | None,
-) -> str:
+def _related_predicates(dialect: str, spec: dict[str, Any], params: dict[str, Any]) -> list[str]:
     join = spec["join"]
     clauses = [
         f"o.{quote_identifier(dialect, pair['right'])} = t.{quote_identifier(dialect, pair['left'])}"
@@ -74,13 +69,20 @@ def _exists_clause(
     for index, item in enumerate(spec["filters"], start=1):
         if item["table"] == RELATED:
             clauses.append(_filter_predicate(dialect, "o", item, params, index))
+    return clauses
+
+
+def _exists_clause(
+    dialect: str, spec: dict[str, Any], params: dict[str, Any], comparison: str | None,
+) -> str:
+    clauses = _related_predicates(dialect, spec, params)
     if comparison is not None:
         clauses.append(comparison)
-    other = quote_identifier(dialect, join["table_name"])
+    other = quote_identifier(dialect, spec["join"]["table_name"])
     return f"EXISTS (SELECT 1 FROM {other} AS o WHERE {' AND '.join(clauses)})"
 
 
-def _project_select_suffix(dialect: str, definition: dict[str, Any]) -> str:
+def _project_select_suffix(dialect: str, definition: dict[str, Any], aliases: dict[str, str]) -> str:
     """项目上下文只增加输出投影，不增加 WHERE/聚合，保持业务行与计数不变。"""
     raw = definition.get("project_context")
     if raw is None:
@@ -89,7 +91,7 @@ def _project_select_suffix(dialect: str, definition: dict[str, Any]) -> str:
     code = quote_identifier(dialect, context["code_field"])
     name = quote_identifier(dialect, context["name_field"])
     if context["mode"] == "base":
-        return f", t.{code} AS project_code, t.{name} AS project_name"
+        return f", t.{code} AS {aliases['project_code']}, t.{name} AS {aliases['project_name']}"
     table = quote_identifier(dialect, context["table_name"])
     key_left = quote_identifier(dialect, context["key"]["left"])
     key_right = quote_identifier(dialect, context["key"]["right"])
@@ -103,29 +105,111 @@ def _project_select_suffix(dialect: str, definition: dict[str, Any]) -> str:
     )
     count_expression = f"(SELECT COUNT(*) FROM {table} AS p WHERE {predicate})"
     return (
-        f", t.{code} AS project_code, {name_expression} AS project_name, "
-        f"{count_expression} AS project_match_count"
+        f", t.{code} AS {aliases['project_code']}, {name_expression} AS {aliases['project_name']}, "
+        f"{count_expression} AS {aliases['project_match_count']}"
     )
 
 
 def _inject_review_projection(
-    select: str, message_sql: str, message_expr: str, issue_expr: str,
+    select: str, message_sql: str, message_expr: str, issue_expr: str, aliases: dict[str, str],
 ) -> str:
-    marker = f"{message_sql} AS violation_message"
+    marker = f"{message_sql} AS {aliases['violation_message']}"
     if marker not in select:
         raise AppError("VALIDATION_ERROR")
     return select.replace(
-        marker, f"{message_expr} AS violation_message, {issue_expr} AS issue_kind", 1,
+        marker, f"{message_expr} AS {aliases['violation_message']}, {issue_expr} AS {aliases['issue_kind']}", 1,
     )
 
 
-def _inject_issue_column(select: str, issue_expr: str) -> str:
-    marker = " AS violation_message"
-    index = select.find(marker)
-    if index < 0:
-        raise AppError("VALIDATION_ERROR")
-    end = index + len(marker)
-    return select[:end] + f", {issue_expr} AS issue_kind" + select[end:]
+def _related_sum_query(dialect: str, definition: dict[str, Any], spec: dict[str, Any],
+                       params: dict[str, Any], message_sql: str, aliases: dict[str, str]) -> str:
+    expression = definition["expression"]
+    left = quote_identifier(dialect, expression["left"])
+    right = quote_identifier(dialect, expression["right"])
+    base = quote_identifier(dialect, definition["table_name"])
+    related = quote_identifier(dialect, spec["join"]["table_name"])
+    key = quote_identifier(dialect, definition["business_key"])
+    date = quote_identifier(dialect, definition["report_date_field"])
+    detail_scope = " AND ".join(_related_predicates(dialect, spec, params))
+    detail_from = f" FROM {related} AS o WHERE {detail_scope}"
+    # Missing rows remain distinct from explicitly zero-valued NULL amounts.
+    zero = definition.get("null_policy") == "zero"
+    total = (f"(SELECT SUM(COALESCE(o.{right}, 0)){detail_from})" if zero else
+             f"(SELECT CASE WHEN COUNT(*) = COUNT(o.{right}) THEN SUM(o.{right}) END{detail_from})")
+    count = f"(SELECT COUNT(*){detail_from})"
+    base_scope = [f"t.{date} = :report_date"]
+    for index, item in enumerate(spec["filters"], 1):
+        if item["table"] == BASE:
+            base_scope.append(_filter_predicate(dialect, "t", item, params, index))
+    evidence = (f"SELECT t.{key} AS {aliases['business_key']}{_project_select_suffix(dialect, definition, aliases)}, "
+                f"t.{date} AS {aliases['data_date']}, t.{left} AS {aliases['checked_value']}, "
+                f"{count} AS {aliases['related_count']}, {total} AS {aliases['comparison_value']} "
+                f"FROM {base} AS t WHERE {' AND '.join(base_scope)}")
+    params.update(dv_missing_rows="缺值待核实：无匹配的同日明细",
+                  dv_missing_left=f"缺值待核实：{expression['left']} 为 NULL",
+                  dv_missing_right=f"缺值待核实：同日明细的 {expression['right']} 含 NULL")
+    checked, compared = f"v.{aliases['checked_value']}", f"v.{aliases['comparison_value']}"
+    if zero:
+        missing = f"v.{aliases['related_count']} = 0"
+        return (f"SELECT v.*, CASE WHEN {missing} THEN :dv_missing_rows ELSE {message_sql} END AS {aliases['violation_message']}, "
+                f"CASE WHEN {missing} THEN 'missing_value' ELSE 'numeric' END AS {aliases['issue_kind']} "
+                f"FROM ({evidence}) AS v WHERE {missing} OR COALESCE({checked}, 0) <> COALESCE({compared}, 0)")
+    missing = f"{checked} IS NULL OR {compared} IS NULL"
+    return (f"SELECT v.*, CASE WHEN v.{aliases['related_count']} = 0 THEN :dv_missing_rows "
+            f"WHEN {checked} IS NULL THEN :dv_missing_left "
+            f"WHEN {compared} IS NULL THEN :dv_missing_right ELSE {message_sql} END AS {aliases['violation_message']}, "
+            f"CASE WHEN {missing} THEN 'missing_value' ELSE 'numeric' END AS {aliases['issue_kind']} "
+            f"FROM ({evidence}) AS v WHERE {missing} OR {checked} <> {compared}")
+
+
+def _condition_group_query(
+    dialect: str, definition: dict[str, Any], spec: dict[str, Any], params: dict[str, Any],
+    select: str, message_sql: str, aliases: dict[str, str],
+) -> str:
+    policy = definition.get("null_policy")
+    handling = definition.get("null_handling") or {}
+    left_mode = handling.get("left", policy)
+    right_mode = handling.get("right", policy)
+    predicates = []
+    for index, item in enumerate(comparison_conditions(definition), 1):
+        left = f"t.{quote_identifier(dialect, item['left'])}"
+        if item["op"] in UNARY_OPS:
+            keyword = "IS NULL" if item["op"] == "is_null" else "IS NOT NULL"
+            predicates.append(f"{left} {keyword}")
+            continue
+        if left_mode == "zero":
+            left = f"COALESCE({left}, 0)"
+        if item.get("right_type") == "value":
+            name = f"right_value_{index}"
+            params[name] = item["right"]
+            right = f":{name}"
+        else:
+            alias = "o" if item.get("right_table") == RELATED else "t"
+            right = f"{alias}.{quote_identifier(dialect, item['right'])}"
+            if right_mode == "zero":
+                right = f"COALESCE({right}, 0)"
+        predicates.append(f"{left} {_OPS[item['op']]} {right}")
+    operator = " OR " if definition["expression"]["logic"] == "any" else " AND "
+    predicate = f"({operator.join(predicates)})"
+    for index, item in enumerate(spec["filters"], 1):
+        if item["table"] == BASE:
+            select += f" AND {_filter_predicate(dialect, 't', item, params, index)}"
+
+    def in_scope(clause: str) -> str:
+        return _exists_clause(dialect, spec, params, clause) if spec["join"] else clause
+
+    hit = in_scope(predicate)
+    if policy == "review":
+        # 只有在完整布尔组的结果尚不确定时才报缺值。多条关联记录有确定命中时优先显示违规。
+        missing = in_scope(f"{predicate} IS NULL")
+        params["dv_missing_group"] = "缺值待核实：比较字段为 NULL，无法确定整组是否命中"
+        select = _inject_review_projection(
+            select, message_sql, f"CASE WHEN {hit} THEN {message_sql} ELSE :dv_missing_group END",
+            f"CASE WHEN {hit} THEN 'numeric' ELSE 'missing_value' END", aliases,
+        )
+        return f"{select} AND ({hit} OR {missing})"
+    kind = "'numeric'" if policy == "zero" else "'comparison'"
+    return f"{_inject_review_projection(select, message_sql, message_sql, kind, aliases)} AND {hit}"
 
 
 def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -136,23 +220,43 @@ def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     key = str(definition.get("business_key") or "id")
     message = str(definition.get("violation_message") or "校验异常")
     # Backslashes can escape quote-doubling on MySQL. Bind such text, never embed it in SQL.
-    bind_message = "\\" in message
+    bind_message = "\\" in message or is_condition_group(definition)
     message_sql = ":violation_message" if bind_message else "'" + message.replace("'", "''") + "'"
-    if definition.get("project_context") is not None and rule_type != "field_compare":
+    if (definition.get("project_context") is not None or is_condition_group(definition)) and rule_type != "field_compare":
         # 其余类型的安全投影语义尚未核验；明确拒绝，禁止默默只出合同键。
         raise AppError("VALIDATION_ERROR")
-    context_suffix = _project_select_suffix(dialect, definition) if rule_type == "field_compare" else ""
+    aliases = quoted_output_aliases(definition, dialect)
+    if "project_driver" in definition:
+        from .project_driver_sql import compile_project_driver
+        return compile_project_driver(definition, dialect, validate_query_spec(definition), aliases)
+    context_suffix = _project_select_suffix(dialect, definition, aliases) if rule_type == "field_compare" else ""
     quoted_table = quote_identifier(dialect, table)
     quoted_key = quote_identifier(dialect, key)
+    date_field = quote_identifier(dialect, str(definition.get("report_date_field") or "report_date"))
+    if rule_type == "field_compare" and definition.get("include_result_fields") is True:
+        conditions = comparison_conditions(definition)
+        expression = conditions[0]
+        context_suffix += f", t.{date_field} AS {aliases['data_date']}"
+        if all(item.get("left") == expression.get("left") for item in conditions):
+            checked_field = quote_identifier(dialect, str(expression.get("left") or ""))
+            context_suffix += f", t.{checked_field} AS {aliases['checked_value']}"
+        if (not is_condition_group(definition) and expression.get("op") not in UNARY_OPS and (expression.get("right_type") or "field") == "field"
+                and expression.get("right_table") != RELATED):
+            comparison_field = quote_identifier(dialect, str(expression.get("right") or ""))
+            context_suffix += f", t.{comparison_field} AS {aliases['comparison_value']}"
     select = (
-        f"SELECT t.{quoted_key} AS business_key, {message_sql} AS violation_message{context_suffix} "
-        f"FROM {quoted_table} AS t WHERE t.{quote_identifier(dialect, str(definition.get('report_date_field') or 'report_date'))} = :report_date"
+        f"SELECT t.{quoted_key} AS {aliases['business_key']}, {message_sql} AS {aliases['violation_message']}{context_suffix} "
+        f"FROM {quoted_table} AS t WHERE t.{date_field} = :report_date"
     )
     params: dict[str, Any] = {"report_date": definition.get("report_date")}
     if bind_message:
         params["violation_message"] = message
     if rule_type == "field_compare":
         spec = validate_query_spec(definition)
+        if is_condition_group(definition):
+            return _condition_group_query(dialect, definition, spec, params, select, message_sql, aliases), params
+        if (spec["join"] or {}).get("right_aggregate") == "sum":
+            return _related_sum_query(dialect, definition, spec, params, message_sql, aliases), params
         expression = definition.get("expression") or {}
         left = str(expression.get("left") or "")
         op_name = str(expression.get("op") or "")
@@ -176,7 +280,7 @@ def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             if join is not None:
                 select += f" AND {_exists_clause(dialect, spec, params, None)}"
             if needs_issue_kind(definition):
-                select = _inject_issue_column(select, "'comparison'")
+                select = _inject_review_projection(select, message_sql, message_sql, "'comparison'", aliases)
             return select, params
 
         right_table = spec["right_table"]
@@ -222,7 +326,8 @@ def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                     )
                 select += f" AND {_exists_clause(dialect, spec, params, comparison)}"
             if needs_issue_kind(definition):
-                select = _inject_issue_column(select, "'numeric'" if policy == "zero" else "'comparison'")
+                kind = "'numeric'" if policy == "zero" else "'comparison'"
+                select = _inject_review_projection(select, message_sql, message_sql, kind, aliases)
             return select, params
 
         # review：固定安全模板，缺值与真正数值违规都进入核查候选；不改 filters/join keys。
@@ -260,7 +365,7 @@ def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             if right_mode == "review":
                 message_case += f" WHEN {right_missing} THEN :dv_missing_right"
             message_case += f" ELSE {message_sql} END"
-            select = _inject_review_projection(select, message_sql, message_case, issue_expr)
+            select = _inject_review_projection(select, message_sql, message_case, issue_expr, aliases)
             return select, params
 
         missing_checks = []
@@ -282,7 +387,7 @@ def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         if right_mode == "review" and raw_right_ref is not None:
             message_case += f" WHEN {raw_right_ref} IS NULL THEN :dv_missing_right"
         message_case += f" ELSE {message_sql} END"
-        select = _inject_review_projection(select, message_sql, message_case, issue_expr)
+        select = _inject_review_projection(select, message_sql, message_case, issue_expr, aliases)
         if join is not None:
             select += f" AND {_exists_clause(dialect, spec, params, None)}"
         return select, params
@@ -303,9 +408,13 @@ def compile_rule(version: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         select += f" AND t.{field} NOT IN :allowed"
         return select, params
     if rule_type == "unique":
-        keys = ", ".join(f"t.{quote_identifier(dialect, str(item))}" for item in definition["keys"])
+        fields = [f"t.{quote_identifier(dialect, str(item))}" for item in definition["keys"]]
+        keys = ", ".join(fields)
+        projected = [f"{field} AS {aliases[f'unique_key_{i}']}" if definition.get("result_aliases") else field
+                     for i, field in enumerate(fields[:-1])]
+        projected.append(f"{fields[-1]} AS {aliases['business_key']}")
         select = (
-            f"SELECT {keys} AS business_key, {message_sql} AS violation_message "
+            f"SELECT {', '.join(projected)}, {message_sql} AS {aliases['violation_message']} "
             f"FROM {quoted_table} AS t GROUP BY {keys} HAVING COUNT(*) > 1"
         )
         return select, {"violation_message": message} if bind_message else {}

@@ -51,6 +51,21 @@ def test_unambiguous_local_projection_needs_no_redundant_confirmation():
     assert result["questions"] == result["uncertainties"] == []
 
 
+def test_documented_direct_lineage_resolves_project_fields_with_other_display_names():
+    fields = [
+        field("internal_number", "内部编号", is_pk="Y", source_table="mart.project_snapshot", source_field="entity_code",
+              logic="直接取项目台账的项目编号[entity_code]。"),
+        field("display_name", "产品名称", source_table="mart.project_snapshot", source_field="full_name",
+              logic="直接取项目台账的项目全称[full_name]。"),
+        field("reporting_code", "报送产品代码", source_table="mart.project_snapshot", source_field="spv_code",
+              logic="直接取项目台账的项目SPV代码[spv_code]。"),
+    ]
+    result = infer(fields, {"name": "项目金额检查"})
+    assert result["context"] == {"mode": "base", "code_field": "internal_number",
+                                 "name_field": "display_name", "confirmed": True}
+    assert result["questions"] == []
+
+
 def test_real_code_and_name_choices_resolve_instead_of_repeating_questions():
     fields = BASE_FIELDS + [field("other_id", "监管项目编号"), field("entity_name", "项目名称"),
                             field("short_name", "项目简称")]

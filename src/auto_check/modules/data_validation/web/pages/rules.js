@@ -17,6 +17,7 @@ export function createRulesPage({
   const canManage = hasCapability(user, "dv.manage");
   const canExport = hasCapability(user, "dv.export");
   const canRun = hasCapability(user, "dv.run");
+  let deleting = false;
   const manualButton = button("新建", {
     listen, hidden: !canManage, capability: "dv.manage", onClick: () => onOpenWorkbench({ mode: "manual" }),
   });
@@ -77,6 +78,10 @@ export function createRulesPage({
   const disableSelectedButton = button("批量停用", {
     listen, hidden: !canManage, capability: "dv.manage", onClick: disableSelected,
   });
+  const deleteSelectedButton = button("批量删除", {
+    listen, className: "dv-button dv-button-danger", hidden: !canManage, capability: "dv.manage",
+    onClick: () => deleteRules([...state.selectedRules.values()]),
+  });
   const executeButton = button("批量新建任务", {
     listen, hidden: !canRun, capability: "dv.run", onClick: () => {
       const rules = [...state.selectedRules.values()].filter((rule) => rule.status === "enabled");
@@ -86,10 +91,10 @@ export function createRulesPage({
   const exportButton = button("导出规则包", {
     listen, hidden: !canExport, capability: "dv.export", onClick: exportSelected,
   });
-  const actions = element("div", { className: "dv-filter-actions" }, disableSelectedButton, executeButton, exportButton);
+  const actions = element("div", { className: "dv-filter-actions" }, disableSelectedButton, deleteSelectedButton, executeButton, exportButton);
   const filters = element("div", { className: "dv-filters" }, search, sourceFilter, typeFilter, reset, actions);
 
-  const table = createRuleTable({ listen, user, onAction: handleAction, onSelect: selectRule });
+  const table = createRuleTable({ listen, user, onAction: handleAction, onSelect: selectRule, onSelectPage: selectPage });
   const pagination = createPagination({
     listen,
     onPage: (page) => {
@@ -106,6 +111,13 @@ export function createRulesPage({
   const panel = element("section", {
     className: "dv-tab-panel dv-rules-panel", dataset: { panel: "rules" }, attrs: { role: "tabpanel" },
   }, contentCard);
+
+  listen(host || panel, "click", (event) => {
+    if (!event.target.closest("[data-more-toggle]") && !event.target.closest("[data-action]")) table.closeMenus();
+  });
+  listen(host || panel, "keydown", (event) => {
+    if (event.key === "Escape") table.closeMenus();
+  });
 
   bindSearch({
     input: search, listen, runtime,
@@ -124,18 +136,29 @@ export function createRulesPage({
   });
 
   function selectRule(rule, checked) {
-    if (!rule) return;
+    if (!rule || deleting) return;
     if (checked) state.selectedRules.set(Number(rule.id), rule);
     else state.selectedRules.delete(Number(rule.id));
     render();
   }
 
+  function selectPage(rules, checked) {
+    if (deleting) return;
+    for (const rule of rules) {
+      if (checked) state.selectedRules.set(Number(rule.id), rule);
+      else state.selectedRules.delete(Number(rule.id));
+    }
+    render();
+  }
+
   async function handleAction(name, rule) {
+    if (deleting) return;
     if (name === "retry") return loadRules();
     if (!rule) return;
     if (name === "edit") return onOpenWorkbench({ mode: "manual", ruleId: rule.id });
     if (name === "history") return onOpenHistory(rule);
     if (name === "execute") return onOpenTask([rule]);
+    if (name === "delete") return deleteRules([rule]);
     if (name === "copy") {
       const token = runtime.next(`rule-copy-${rule.id}`);
       await runtime.request(token, (signal) => api.copy(rule.id, { signal }));
@@ -157,6 +180,7 @@ export function createRulesPage({
   }
 
   async function disableSelected() {
+    if (deleting) return;
     const selected = [...state.selectedRules.values()]
       .filter((rule) => rule.status === "enabled" && ownsResource(user, rule));
     if (!selected.length) {
@@ -175,7 +199,43 @@ export function createRulesPage({
     await refresh();
   }
 
+  async function deleteRules(rules) {
+    if (deleting || !rules.length) return;
+    if (!canManage || !rules.every(rule => ownsResource(user, rule))) {
+      notify("只能删除本人创建的规则，请调整勾选范围", "warning");
+      return;
+    }
+    const selected = [...rules];
+    const token = runtime.next("rules-delete");
+    let attempted = false, deleted = 0;
+    deleting = true;
+    render();
+    try {
+      const subject = selected.length === 1 ? `规则“${selected[0].name}”` : `选中的 ${selected.length} 条规则`;
+      const accepted = await confirmAction(`确定删除${subject}吗？删除后将从校验列表移除，历史版本和校验结果会保留。`);
+      if (!accepted || !runtime.current(token)) return;
+      attempted = true;
+      for (const rule of selected) {
+        await runtime.request(token, signal => api.deleteRule(rule.id, { signal }));
+        if (!runtime.current(token)) return;
+        state.selectedRules.delete(Number(rule.id));
+        deleted += 1;
+      }
+      notify(`已删除 ${deleted} 条校验规则`, "success");
+    } catch (error) {
+      if (runtime.current(token)) notify(deleted
+        ? `已删除 ${deleted} 条，其余未完成：${errorMessage(error)}` : errorMessage(error, "删除失败，请重试"), "error");
+    } finally {
+      deleting = false;
+      if (runtime.current(token)) {
+        render();
+        if (attempted) await refresh();
+      }
+    }
+  }
+
   async function exportSelected() {
+    if (deleting) return;
     const selected = [...state.selectedRules.values()];
     if (!selected.length) throw new Error("请先选择需要导出的规则");
     if (!selected.every((rule) => ownsResource(user, rule))) throw new Error("只能导出本人创建的规则包");
@@ -249,19 +309,22 @@ export function createRulesPage({
     const categoryNames = Object.fromEntries(categories.map((item) => [item.code, item.name]));
     const categoryTones = Object.fromEntries(categories.map((item, index) => [item.code, index % 5]));
     table.update(state.rules, state.selectedRules, {
-      status: state.rulesStatus, error: state.rulesError, categoryNames, categoryTones,
+      status: state.rulesStatus, error: state.rulesError, categoryNames, categoryTones, busy: deleting,
     });
     const selected = [...state.selectedRules.values()];
     pagination.update(state.rules, {
       loading: state.rulesStatus === "loading", selectedCount: selected.length,
     });
-    disableSelectedButton.disabled = !selected.some(
+    disableSelectedButton.disabled = deleting || !selected.some(
       (rule) => rule.status === "enabled" && ownsResource(user, rule),
     );
-    exportButton.disabled = !selected.length || !selected.every((rule) => ownsResource(user, rule));
+    deleteSelectedButton.disabled = deleting || !selected.length || !selected.every(rule => ownsResource(user, rule));
+    deleteSelectedButton.title = selected.length && selected.every(rule => ownsResource(user, rule))
+      ? `删除所选 ${selected.length} 条规则，保留历史校验结果` : "请勾选本人创建的规则";
+    exportButton.disabled = deleting || !selected.length || !selected.every((rule) => ownsResource(user, rule));
     exportButton.title = selected.length && selected.every((rule) => ownsResource(user, rule))
       ? "导出真实 JSON 规则包" : "只能导出本人创建的规则";
-    executeButton.disabled = !selected.some((rule) => rule.status === "enabled");
+    executeButton.disabled = deleting || !selected.some((rule) => rule.status === "enabled");
     stats.update(state.stats, state.ruleQuery.status, state.statsStatus);
     categoryTabs.update(state.stats, state.ruleQuery.report_category, state.statsStatus);
   }

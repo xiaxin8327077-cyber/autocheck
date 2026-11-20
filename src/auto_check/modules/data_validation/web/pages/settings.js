@@ -49,7 +49,7 @@ export function createSettingsPage({ state, runtime, api, listen, user, notify, 
   const saveRules = button("保存映射", { listen, className: "dv-button dv-button-primary", onClick: saveSourceRules });
   const rulesSection = element("section", { className: "dv-page-section" },
     element("div", { className: "dv-page-section-heading" }, element("h2", { text: "数据源映射规则" })),
-    element("p", { className: "dv-muted", text: "数据源按 Sheet 前缀匹配。报表分类使用「校验页分类名称_表名」，例如「1104报送_贷款明细」；「人行_」对应人行大集中报送、资管产品模板、逐笔。" }),
+    element("p", { className: "dv-muted", text: "数据源按工作表前缀匹配。报送分类使用「校验页分类名称_表名」，例如「人行报送_项目明细」「1104报送_贷款明细」。「人行_」也归入人行报送。" }),
     element("div", { className: "dv-table-wrap dv-scroll" }, ruleTable),
     element("div", { className: "dv-filter-actions" }, addRule, saveRules));
 
@@ -177,7 +177,8 @@ export function createSettingsPage({ state, runtime, api, listen, user, notify, 
           element("strong", { text: item.label }),
           element("span", { className: "dv-muted", text: item.is_default ? "使用内置默认" : `自定义 v${item.version_no}` })),
         area,
-        element("p", { className: "dv-muted", text: item.stage === "generate_sql"
+        element("p", { className: "dv-muted", text: item.stage === "business_scope"
+          ? "适用于选表、规则生成和 AI 补充建议。保存后在下一次分析时生效。" : item.stage === "generate_sql"
           ? "独立 SQL 模板：当前 AI 新增字段比较规则不调用此阶段，SQL 由后端编译。"
           : "保留已保存的模板正文；运行时自动追加当前输出约束。恢复默认会保存为新版本。" }),
         ...(item.output_contract ? [element("details", {},

@@ -8,6 +8,7 @@ import pytest
 from auto_check.app.config import DataSourceConfig, DataSourceEntry
 from auto_check.app.data_source_platform import (
     PublicDataSource,
+    _bind_named_params,
     create_data_source_service,
 )
 from auto_check.app.module_system.services import ServiceRegistry
@@ -165,3 +166,83 @@ def test_closed_facade_rejects_calls(monkeypatch):
             timeout_seconds=5,
             max_rows=1,
         )
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "postgresql"])
+def test_binding_only_substitutes_unquoted_names_and_preserves_order(dialect):
+    sql = """SELECT 'status:active 50%', 'O''Brien:code', "col"":literal", :day, :value, :day"""
+    expected = """SELECT 'status:active 50%%', 'O''Brien:code', "col"":literal", %s, %s, %s"""
+    assert _bind_named_params(sql, {"value": None, "day": "2026-11-20"}, dialect) == (
+        expected, ("2026-11-20", None, "2026-11-20"),
+    )
+
+
+@pytest.mark.parametrize("dialect,sql,expected", [
+    ("mysql", "SELECT 10--:n", "SELECT 10--%s"),
+    ("mysql", "SELECT 10--- :unused\n + :n", "SELECT 10--- :unused\n + %s"),
+    ("mysql", "SELECT :n # :unused%\n", "SELECT %s # :unused%%\n"),
+    ("mysql", "SELECT `o``:id`, :n",
+     "SELECT `o``:id`, %s"),
+    ("mysql", "SELECT :n /* note :other */", "SELECT %s /* note :other */"),
+    ("postgresql", "SELECT 10--note :skip\r + :n", "SELECT 10--note :skip\r + %s"),
+    ("postgresql", "SELECT /* outer /* inner */ :skip */ :n", "SELECT /* outer /* inner */ :skip */ %s"),
+    ("postgresql", "SELECT :n::integer, $$:quoted %$$, $甲$:q$甲$",
+     "SELECT %s::integer, $$:quoted %%$$, $甲$:q$甲$"),
+    ("postgresql", "SELECT col$tag$ || :n", "SELECT col$tag$ || %s"),
+    ("postgresql", "SELECT 7 # :n", "SELECT 7 # %s"),
+    ("postgresql", r"SELECT E'O\'Brien:ignored', :n", r"SELECT E'O\'Brien:ignored', %s"),
+    ("postgresql", "SELECT E'first' -- joined\n" + r"'O\'Brien:ignored', :n",
+     "SELECT E'first' -- joined\n" + r"'O\'Brien:ignored', %s"),
+])
+def test_named_parameter_dialect_syntax(dialect, sql, expected):
+    assert _bind_named_params(sql, {"n": 3}, dialect) == (expected, (3,))
+
+
+@pytest.mark.parametrize("dialect,sql", [
+    ("mysql", "SELECT ':missing', :required"),
+    ("postgresql", 'SELECT "a:b", :required::date'),
+    ("mysql", "SELECT 1 /*!80000 + :conditional */"),
+    ("postgresql", "SELECT $tag$unfinished"),
+])
+def test_binding_refuses_missing_or_ambiguous_parameters(dialect, sql):
+    with pytest.raises(ValueError, match="VALIDATION_ERROR"):
+        _bind_named_params(sql, {}, dialect)
+
+
+@pytest.mark.parametrize("dialect,mode,sql,expected", [
+    ("mysql", "", r"SELECT 'O\'Brien:id', :n", r"SELECT 'O\'Brien:id', %s"),
+    ("mysql", "NO_BACKSLASH_ESCAPES", r"SELECT 'tail\', :n", r"SELECT 'tail\', %s"),
+    ("mysql", "ANSI_QUOTES", r'''SELECT "column\", :n''', r'''SELECT "column\", %s'''),
+    ("postgresql", "on", r"SELECT 'tail\', :n::integer", r"SELECT 'tail\', %s::integer"),
+    ("postgresql", "off", r"SELECT 'O\'Brien:id', :n", r"SELECT 'O\'Brien:id', %s"),
+    ("mysql", "", "SELECT 'x:y', :n", "SELECT 'x:y', %s"),
+    ("postgresql", "on", "SELECT 'x:y', :n", "SELECT 'x:y', %s"),
+])
+def test_source_query_uses_session_quoting_and_driver_format(monkeypatch, dialect, mode, sql, expected):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from auto_check.app import data_source_platform as platform
+
+    cursor = MagicMock()
+    cursor.fetchone.return_value = (mode,)
+    cursor.description = (("value",),)
+    cursor.fetchmany.return_value = [(2,)]
+    info = MagicMock()
+    info.parameter_status.return_value = mode
+    connection = SimpleNamespace(cursor=lambda: cursor, info=info)
+    monkeypatch.setattr(platform, "_connect", lambda *_args: nullcontext(connection))
+    monkeypatch.setattr(platform, "_apply_timeout", lambda *_args: None)
+    assert platform.query_business_source(SimpleNamespace(db_type=dialect), sql, {"n": 2}, 5, 1) == (
+        ("value",), ((2,),),
+    )
+    assert cursor.execute.call_args_list[-1].args == (expected, (2,))
+    if dialect == "mysql" and "\\" in sql:
+        assert cursor.execute.call_args_list[0].args == ("SELECT @@SESSION.sql_mode",)
+    else:
+        assert cursor.execute.call_count == 1
+    if dialect == "postgresql" and "\\" in sql:
+        info.parameter_status.assert_called_once_with("standard_conforming_strings")
+    else:
+        info.parameter_status.assert_not_called()

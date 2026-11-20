@@ -1,11 +1,41 @@
+import { comparisons, fieldTarget } from "./comparisons.js";
+
 export const PAGE_SIZES = [20, 50, 100];
-export const MAX_TASK_RULES = 100;
+export const MAX_TASK_RULES = 100000;
+export const ALL_FIELD_CHOICES = "__all_field_choices__";
+
+export function visibleSql(record, rawKey = "sql_text") {
+  if (!record || record.sql_display_error) return "";
+  if (typeof record.sql_display === "string") return record.sql_display;
+  const raw = record[rawKey] || "";
+  // Older snapshots without display SQL are usable only if static bindings are absent.
+  return /(?<!:):(?!report_date\b)[A-Za-z_]\w*/.test(raw) ? "" : raw;
+}
+
+export function canChooseAllFields(question) {
+  return Boolean(fieldTarget(question?.id))
+    && question.options?.length > 1 && question.options.every((option) => typeof option.value === "string" && !option.selection);
+}
+
+export function reportCategoryCode(value) {
+  const code = String(value || "");
+  return code === "pbc_central" || code === "pbc_template" ? "group:pbc" : code;
+}
+
+export function targetTableLabel(rule) {
+  const table = String(rule.table_name || "—").trim();
+  const chinese = String(rule.table_name_cn || "").trim()
+    .replace(/\s*[（(]([^（）()\r\n]*)[）)]\s*$/, (group, reference) =>
+      /\.ktr$/i.test(reference.trim()) || reference.trim() === table ? "" : group).trim();
+  return chinese && chinese !== table ? `${chinese}（${table}）` : table;
+}
 
 // 规则状态字典与后端实际产生的状态一一对应；未命中时回退显示后端原始 code。
 export const RULE_STATUS_LABELS = {
   draft: "草稿",
   enabled: "已启用",
   disabled: "已停用",
+  deleted: "已删除",
 };
 
 // 规则类型字典收敛为当前实际支持创建的类型；其余类型回退显示后端原始 code，不编造文案。
@@ -154,22 +184,26 @@ export function createTestEvidence(detail, result) {
   };
 }
 
-export function ruleScopeIssues(definition = {}) {
+export function ruleScopeIssues(definition = {}, { detailed = false } = {}) {
   const reasons = [];
-  if (definition.unsupported_requirements?.length) reasons.push("存在当前规则无法表达的要求，请调整需求并重新生成");
+  if (definition.unsupported_requirements?.length) {
+    reasons.push(...(detailed ? definition.unsupported_requirements : ["存在当前规则无法表达的要求，请调整需求并重新生成"]));
+  }
   const questions = definition.uncertainties || [];
   const resolutions = definition.uncertainty_resolutions || [];
   if (!Array.isArray(questions) || !Array.isArray(resolutions)
       || questions.length !== resolutions.length || resolutions.some((item) => typeof item !== "string" || !item.trim())) {
-    reasons.push("待确认口径尚未逐项填写处理说明");
+    const pending = Array.isArray(questions) && Array.isArray(resolutions)
+      ? questions.filter((_, index) => !String(resolutions[index] || "").trim()) : [];
+    reasons.push(...(detailed && pending.length ? pending : ["待确认口径尚未逐项填写处理说明"]));
   }
   if (definition.null_policy === "unresolved" || definition.equality_policy === "unresolved") {
     reasons.push("空值或相等口径仍未确认");
   }
   if (definition.null_policy === "zero") {
-    const expression = definition.expression || {};
-    const zeroAllowed = expression.right_type === "field"
-      || (expression.right_type === "value" && Number.isFinite(expression.right));
+    const binary = comparisons(definition.expression).filter((item) => !["is_null", "is_not_null"].includes(item.op));
+    const zeroAllowed = binary.length > 0 && binary.every((item) => (item.right_type || "field") === "field" && Boolean(item.right)
+      || (item.right_type === "value" && Number.isFinite(item.right)));
     if (!zeroAllowed) reasons.push("NULL按0仅支持数值字段比较或有限数值常量");
   }
   const filters = Array.isArray(definition.filters) ? definition.filters : [];
@@ -180,7 +214,8 @@ export function ruleScopeIssues(definition = {}) {
     const relationshipConfirmed = join.relationship_confirmed === true || definition.relationship_confirmed === true;
     const unmatchedPolicy = join.unmatched_policy || definition.unmatched_policy;
     if (!relationshipConfirmed) reasons.push("关联关系尚未确认");
-    if (unmatchedPolicy !== "exclude") reasons.push("关联未匹配记录的处理口径尚未确认");
+    const requiredPolicy = join.right_aggregate === "sum" ? "review" : "exclude";
+    if (unmatchedPolicy !== requiredPolicy) reasons.push("关联未匹配记录的处理口径尚未确认");
     if (!Array.isArray(join.on) || !join.on.length) reasons.push("关联字段尚未确认");
     if (!join.report_date_field) reasons.push("关联表校验日期尚未确认");
   }
@@ -189,6 +224,37 @@ export function ruleScopeIssues(definition = {}) {
     reasons.push("项目上下文口径尚未确认");
   }
   return reasons;
+}
+
+export function candidateIssues(candidate = {}) {
+  const issues = [candidate.parallel_blocked, candidate.preview_error, ...ruleScopeIssues(candidate, { detailed: true })];
+  if (candidate.rule_type !== "field_compare" || candidate.status === "needs_clarification") {
+    if (!issues.some(Boolean) && !candidate.questions?.length) issues.push("请补充要检查的业务对象和判断条件。");
+  }
+  return [...new Set(issues.filter(Boolean))];
+}
+
+// Older responses can contain both SQL and pending questions. Keep the decisions,
+// and accept the preview only when both the candidate and its definition are ready.
+export function reviewCandidate(candidate, preview = candidate.preview) {
+  const questions = new Map();
+  for (const question of [...(candidate.questions || []), ...(preview?.questions || []), ...(preview?.definition?.questions || [])]) {
+    if (question?.id) questions.set(question.id, question);
+  }
+  // Selecting multiple comparison fields branches the candidate. Resolve shared decisions once first.
+  const ordered = [...questions.values()].sort((a, b) => Number(canChooseAllFields(a)) - Number(canChooseAllFields(b)));
+  const result = { ...candidate, questions: ordered, preview: null };
+  if (preview?.uncertainties?.length) {
+    result.uncertainties = [...new Set([...(result.uncertainties || []), ...preview.uncertainties])];
+  }
+  if (preview?.definition) {
+    const canonicalIssues = ruleScopeIssues(preview.definition, { detailed: true });
+    const knownIssues = new Set(candidateIssues(result));
+    const extra = canonicalIssues.filter((text) => !knownIssues.has(text));
+    if (extra.length) result.uncertainties = [...(result.uncertainties || []), ...extra];
+  }
+  if (preview?.sql_preview && !result.questions.length && !candidateIssues(result).length) result.preview = preview;
+  return result;
 }
 
 export function confirmationReadiness(detail, evidence, dirty = false, allowUnsaved = false) {
@@ -219,11 +285,11 @@ export function previewReadiness(preview, evidence, dirty = false) {
 }
 
 export function isTaskActive(task) {
-  return ["queued", "running"].includes(task?.status);
+  return ["queued", "running", "pausing"].includes(task?.status);
 }
 
 export function canCancelTask(task) {
-  return isTaskActive(task);
+  return isTaskActive(task) || task?.status === "paused";
 }
 
 export function canRetryTask(task) {
@@ -233,6 +299,10 @@ export function canRetryTask(task) {
 export function taskIssueNotice(task, total) {
   const count = Math.max(0, Number(total) || 0);
   switch (task?.status) {
+    case "paused":
+      return "任务已暂停，当前异常数量不是最终结论；继续执行后可查看完整结果。";
+    case "pausing":
+      return "正在等待当前查询结束后暂停，当前异常数量不是最终结论。";
     case "queued":
     case "running":
       return "任务尚未完成，当前异常明细不是最终结论，不能据此判定通过。";

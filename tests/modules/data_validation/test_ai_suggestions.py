@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions
+from auto_check.modules.data_validation.ai_suggestions import MAX_REFERENCES, build_ai_suggestions
 
 
 def _table(table_id: int, name: str, cn: str, dimension: str = "", scope: str = "") -> dict:
@@ -82,6 +82,143 @@ def test_actionable_suggestions_exclude_non_main_keys_and_pending_dictionary():
     key_rule = _candidate(expression={"left": "pid", "op": "is_null"})
     result = _build(candidates=[key_rule], actionable_only=True)
     assert [item["kind"] for item in result] == ["unique"]
+
+
+def test_model_only_displays_grounded_proposals_without_generating_document_templates(monkeypatch):
+    from auto_check.modules.data_validation import ai_suggestions
+
+    def unexpected(*args):
+        pytest.fail("不应扫描文档拼补充建议")
+
+    for name in ("_document_suggestions", "_same_measure_suggestions", "_scoped_candidate_suggestion"):
+        monkeypatch.setattr(ai_suggestions, name, unexpected)
+    reference = {"table_name": "ops_detail", "field_name": "pid"}
+    suggestion = {"title": "核实明细编号", "kind": "unique", "references": [reference]}
+    options = {"model_only": True, "actionable_only": True, "limit": 10,
+               "existing_rules": [{"definition": {"rule_type": "unique", "table_name": "ops_detail", "keys": ["pid"]}}]}
+    assert _build(**options) == []
+    unknown = {**suggestion, "references": [{**reference, "field_name": "invented"}]}
+    result = _build(model=[unknown, suggestion, suggestion], **options)
+    assert [(item["title"], item["provenance"], item["support_level"]) for item in result] == [
+        ("核实明细编号", "model", "needs_confirmation")]
+
+
+@pytest.mark.parametrize(("operation", "detail_source", "detail_field", "support"), [
+    ("SUM", "reports", "qty_total", "needs_confirmation"),
+    ("", "reports", "qty_total", "needs_confirmation"),
+    ("COUNT", "reports", "qty_total", "unsupported"),
+    ("AVG", "reports", "qty_total", "unsupported"),
+    ("SUM", "other", "qty_total", "unsupported"),
+    ("SUM", "reports", "pid", "unsupported"),
+])
+def test_model_only_verifies_aggregate_capability_without_accepting_model_definition(
+    operation, detail_source, detail_field, support,
+):
+    tables = [{**TABLES[0], "data_source_name": "reports"}, {**TABLES[1], "data_source_name": detail_source}]
+    suggestion = {"title": "核对明细合计", "kind": "aggregate_consistency", "operations": [operation],
+                  "references": [{"table_name": "ops_daily", "field_name": "qty"},
+                                 {"table_name": "ops_detail", "field_name": detail_field}],
+                  "support_level": "supported", "sql": "SELECT 42", "definition": {"can_enable": True}}
+    [item] = _build(model=[suggestion], candidates=[], tables=tables, model_only=True)
+    assert item["support_level"] == support
+    assert item["provenance"] == "model"
+    assert item["title"] == suggestion["title"]
+    assert "definition" not in item and "sql" not in item
+    if support == "needs_confirmation":
+        assert item["adoption"]["preconditions"] == []
+    else:
+        assert "adoption" not in item
+
+
+def test_model_only_respects_capacity_and_keeps_informational_checks_non_executable():
+    proposal = {"kind": "field_compare_unary", "title": "进一步核实明细",
+                "references": [{"table_name": "ops_detail", "field_name": "qty_total"}]}
+    raw = [dict(proposal, title=f"明细建议 {i}") for i in range(14)]
+    result = _build(model=raw, candidates=[], model_only=True, limit=80)
+    assert [item["title"] for item in result] == [item["title"] for item in raw[:10]]
+    assert all("definition" not in item for item in result)
+    assert all(item["adoption"] == {"operations": [], "preconditions": []} for item in result)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(("scope", "support", "ambiguous"), [
+    ("group:pbc", "needs_confirmation", False), ("east", "unsupported", False),
+    ("", "needs_confirmation", True),
+])
+def test_model_only_binds_duplicate_table_documents_independently_of_order(reverse, scope, support, ambiguous):
+    base = {**TABLES[0], "id": 101, "sheet_name": "人行_主", "data_source_name": "reports"}
+    detail = {**TABLES[1], "id": 102, "sheet_name": "人行_明细", "data_source_name": "reports"}
+    other = {**detail, "id": 103, "sheet_name": "East5报送_明细"}
+    tables = [base, other, detail] if reverse else [base, detail, other]
+    fields = {101: [_field(1, 101, "qty", "数值", "numeric")],
+              102: [_field(2, 102, "same", "数量", "numeric")],
+              103: [_field(3, 103, "same", "状态", "varchar")]}
+    def by_category(matches, codes):
+        return [table for table in matches if {"人行_明细": "group:pbc", "East5报送_明细": "east"}[table["sheet_name"]] in codes]
+
+    suggestion = {"title": "按明细合计核对", "kind": "aggregate_consistency", "operations": ["SUM"],
+                  "references": [{"table_name": "ops_daily", "field_name": "qty"},
+                                 {"table_name": "ops_detail", "field_name": "same"}]}
+    args = dict(candidates=[{"table_name": "ops_daily", "report_category": scope}], model_only=True,
+                tables=tables, fields=fields, select_category_tables=by_category)
+    [item] = _build(model=[suggestion], **args)
+    assert item["support_level"] == support
+    assert bool(item.get("references_ambiguous")) == ambiguous
+    assert ("adoption" in item) == (not ambiguous and support != "unsupported")
+    assert ("同名" in "".join(item["preconditions"])) == ambiguous
+    assert "definition" not in item
+    if scope == "group:pbc":
+        # A field documented only in the other reporting category is not grounded here.
+        fields[102].clear()
+        assert _build(model=[suggestion], **args) == []
+
+
+def test_model_only_deduplicates_by_verified_proposal_content():
+    proposal = {"title": "核实异常数量", "kind": "field_compare_binary",
+                "references": [{"table_name": "ops_daily", "field_name": "qty"}]}
+    negative = dict(proposal, reason="核实小于0的负数。")
+    high = dict(proposal, reason="核实超过1000的极端数量。")
+    [first, second] = _build(model=[negative, high, {**negative, "id": "forged"}], model_only=True)
+    assert [first["reason"], second["reason"]] == [negative["reason"], high["reason"]]
+    assert first["id"] != second["id"]
+    assert [second, first] == _build(model=[high, negative], model_only=True)
+
+
+def test_model_only_category_cannot_declare_engine_incapable():
+    proposal = {"title": "核实经营数量是否为空", "kind": "field_compare_unary",
+                "references": [{"table_name": "ops_daily", "field_name": "qty"}]}
+    for category in ("coverage_gap", "unsupported_requirement"):
+        [verified] = _build(model=[{**proposal, "category": category}], model_only=True)
+        assert verified["support_level"] == "needs_confirmation"
+        assert verified["category"] == "coverage_gap"
+        assert not verified["limitations"]
+    [count] = _build(model=[{**proposal, "operations": ["COUNT"], "category": "coverage_gap"}], model_only=True)
+    assert count["category"] == "unsupported_requirement" and count["support_level"] == "unsupported"
+    assert count["limitations"]
+
+
+def test_scoped_candidates_offer_adoptable_same_period_sum_only_with_documented_keys():
+    tables = [{**TABLES[0], "dimension": "项目", "data_source_name": "reports"},
+              {**TABLES[1], "dimension": "合同", "data_source_name": "reports"}]
+    base = _candidate(source_id="reports", description="当期结束的项目的实收原则上不应该大于 0。",
+                      can_enable=True, preview={"sql_preview": "SELECT 1"},
+                      filters=[{"table": "base", "field": "ended", "op": "eq", "value": "1", "confirmed": True}])
+    detail = {**base, "table_name": "ops_detail", "expression": {**base["expression"], "left": "qty_total"}}
+    assert _build(tables=tables, candidates=[base, detail], actionable_only=True) == []
+    fields = {**FIELDS, 2: [
+        {**FIELDS[2][0], "source_table": "ops_daily", "source_field": "pid", "logic": "直取"}, FIELDS[2][1],
+        _field(24, 2, "contract", "合同编号", "varchar", is_pk="Y"),
+        {**_field(23, 2, "biz_date", "业务日期", "date"), "source_table": "ops_daily", "source_field": "biz_date", "logic": "直取"},
+    ]}
+    result = _build(tables=tables, fields=fields, candidates=[base, detail], actionable_only=True)
+    assert result[0]["kind"] == "aggregate_consistency"
+    assert result[0]["references"] == [{"table_name": "ops_daily", "field_name": "qty"},
+                                        {"table_name": "ops_detail", "field_name": "qty_total"}]
+    assert result[0]["definition"]["join"]["right_aggregate"] == "sum"
+    assert result[0]["definition"]["join"]["on"] == [{"left": "pid", "right": "pid"}]
+    pending = {**detail, "can_enable": False}
+    assert all(item["kind"] != "aggregate_consistency"
+               for item in _build(tables=tables, fields=fields, candidates=[base, pending], actionable_only=True))
 
 
 @pytest.mark.parametrize("mismatch", [None, "grain", "period", "key", "lineage", "logic"])
@@ -463,7 +600,7 @@ def test_model_nested_text_fields_do_not_crash() -> None:
     assert "SELECT" not in json.dumps(item, ensure_ascii=False)
 
 
-def test_model_references_over_limit_are_rejected() -> None:
+def test_unknown_field_among_multiple_references_is_rejected() -> None:
     model = [{
         "title": "检查多个字段",
         "reason": "建议",
@@ -473,6 +610,24 @@ def test_model_references_over_limit_are_rejected() -> None:
         ],
     }]
     assert _build(model=model, candidates=[]) == []
+
+
+def test_model_references_over_limit_are_rejected() -> None:
+    model = [{"title": "核查数量", "references": [
+        {"table_name": "ops_daily", "field_name": "qty"} for _ in range(MAX_REFERENCES + 1)
+    ]}]
+    assert _build(model=model, candidates=[], model_only=True) == []
+
+
+def test_model_suggestion_preserves_five_authorized_field_references() -> None:
+    fields = {1: [*FIELDS[1], _field(15, 1, "price", "单价", "decimal")]}
+    references = [{"table_name": "ops_daily", "field_name": f["field_name"]} for f in fields[1]]
+    model = [{"category": "type_semantics", "kind": "review", "title": "核实数量及价格的业务口径",
+              "reason": "指标、标识和期间共同说明取数口径", "references": references,
+              "preconditions": [], "limitations": []}]
+    result = _build(model=model, candidates=[], fields=fields, model_only=True)
+    assert len(result) == 1
+    assert result[0]["references"] == references
 
 
 def test_composite_primary_key_is_one_full_group_suggestion() -> None:
@@ -503,8 +658,8 @@ def test_composite_primary_key_over_limit_gives_no_partial_suggestion() -> None:
     tables = [_table(1, "ops_wide", "运营宽表")]
     fields = {1: [
         _field(10 + index, 1, f"pk_{index}", f"主键{index}", "varchar", is_pk="Y", nullable="N")
-        for index in range(5)
-    ] + [_field(20, 1, "qty", "数量", "decimal", nullable="Y")]}
+        for index in range(MAX_REFERENCES + 1)
+    ] + [_field(100, 1, "qty", "数量", "decimal", nullable="Y")]}
     candidate = _candidate(
         table_name="ops_wide", expression={"left": "qty", "op": "eq", "right_type": "value", "right": 0},
     )

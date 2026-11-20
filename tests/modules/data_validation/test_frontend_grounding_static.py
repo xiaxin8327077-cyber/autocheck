@@ -35,7 +35,7 @@ def test_grounding_contract_is_wired_without_restoring_technical_form() -> None:
     assert 'equality_policy: unaryExpression' in form
 
     # 业务摘要展示筛选/关联/日期，不恢复技术表单。
-    for token in ("candidateFiltersText", "candidateJoinText", "candidateDateText", "筛选与关联", "校验日期"):
+    for token in ("candidateFiltersText", "candidateJoinText", "candidateDateText", "适用范围", "关联核对", "检查日期"):
         assert token in candidate
     assert "candidateCondition" in candidate and "is_not_null" in candidate
 

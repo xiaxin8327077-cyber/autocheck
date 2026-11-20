@@ -26,6 +26,9 @@ def test_frontend_results_columns_samples_and_xss(tmp_path: Path) -> None:
     copy_web_modules(tmp_path)
     scenario = tmp_path / "frontend_results_behavior.mjs"
     scenario.write_text(SCENARIO.read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "frontend_workbench_dom.mjs").write_text(
+        SCENARIO.with_name("frontend_workbench_dom.mjs").read_text(encoding="utf-8"), encoding="utf-8",
+    )
     completed = subprocess.run(
         ["node", str(scenario)], cwd=tmp_path, text=True, encoding="utf-8", errors="replace",
         capture_output=True, timeout=60, check=False,

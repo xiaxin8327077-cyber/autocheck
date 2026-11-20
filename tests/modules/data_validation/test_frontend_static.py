@@ -119,7 +119,7 @@ def test_confirmation_requires_real_evidence_and_does_not_auto_test_or_start_tas
     assert "detail.content_sha256" in confirm_handler
     assert "passed_count" in workbench
     assert "api.rule(saved.id" in workbench, "保存后必须读取真实 detail"
-    assert "detail.sql_text" in read("components/test_panel.js")
+    assert "visibleSql(detail)" in read("components/test_panel.js")
     assert "confirmFromPage" in workbench
     assert "confirmAction?." in workbench, "确认启用必须经过宿主二次确认"
     assert "createConfirmPanel" not in workbench and "openConfirmDialog" not in workbench
@@ -142,6 +142,16 @@ def test_confirmation_requires_real_evidence_and_does_not_auto_test_or_start_tas
     assert "复制 SQL" in read("components/ai_candidate.js")
     assert "TEST_CASE_STATUS_LABELS" in read("components/test_panel.js")
     assert "OPERATOR_OPTIONS" in read("components/rule_form.js")
+
+
+def test_disabled_primary_button_uses_readable_theme_colors() -> None:
+    css = read("styles.css")
+    scope = '.auto-check-module[data-module="data_validation"] '
+    disabled = css.split(scope + 'button:disabled {', 1)[1].split('}', 1)[0]
+    primary = css.split(scope + '.dv-button-primary:disabled {', 1)[1].split('}', 1)[0]
+    assert "background: var(--dv-disabled)" in disabled
+    assert "color: var(--dv-muted)" in primary
+    assert "opacity: 1" in primary
 
 
 def test_ai_inline_picker_styles_cover_platform_enhanced_controls() -> None:
@@ -189,10 +199,10 @@ def test_manual_and_ai_creation_are_separate_single_page_dialogs() -> None:
     # AI 分析成功后描述折叠；可展开修改并重新分析。
     assert "descriptionCollapsed" in workbench
     assert "dv-description-collapsed" in workbench
-    assert "重新分析 →" in form and "取消修改" in form
+    assert "应用修改 →" in form and "取消修改" in form
     assert "dv-ai-request-meta" in form and "form.groups.aiContext" in workbench
     assert "selectedChoice" in candidate and 'radio.type = "radio"' in candidate
-    assert "按此口径继续分析" in workbench
+    assert "确认当前口径" in workbench
     assert "item.name ||" in form and '${item.model_name}' not in form
     assert "expandDescription" in workbench
     assert "work.descriptionCollapsed = true" in workbench
@@ -204,7 +214,7 @@ def test_manual_and_ai_creation_are_separate_single_page_dialogs() -> None:
     assert "setAnalyzing" in workbench and "setAnalyzing" in form
     assert "AI 分析中…" in form and "dv-ai-progress" in workbench
     assert "AI 正在分析你的校验需求" in workbench
-    assert "dv-ai-wait-timer" in workbench and "模型响应较慢" in workbench
+    assert "dv-ai-wait-timer" in workbench and "本次分析耗时较长" in workbench
     assert "inputSection, aiProgress, configSection" in workbench
     css = read("styles.css")
     assert "padding: 26px 32px 24px" in css
@@ -244,7 +254,7 @@ def test_ai_creation_auto_names_rule_and_selects_table() -> None:
     assert "if (candidate.table_name) table.value = candidate.table_name" in form
     assert "由 AI 分析自动生成，可修改" in form
     assert "由 AI 分析自动选定，可修改" in form
-    assert 'category.value = candidate.report_category || ""' in form
+    assert 'category.value = reportCategoryCode(candidate.report_category)' in form
     assert 'businessKey.value = candidate.business_key || ""' in form
     # 分析请求只携带需求、模型与数据源；表清单与列结构由后端读取。
     parse_handler = workbench.split("async function parse()", 1)[1].split("async function saveDraft()", 1)[0]
@@ -258,9 +268,9 @@ def test_ai_creation_auto_names_rule_and_selects_table() -> None:
             "        project_columns: result.project_columns || null, project_table: result.project_table || null,\n"
             "        mapping_version: result.mapping_version,\n"
             "      })") in result_helper
-    assert "page.form.applyCandidate(result)" in result_helper and "work.descriptionCollapsed = true" in result_helper
+    assert "page.form.applyCandidate(result, { regenerate: false })" in result_helper and "work.descriptionCollapsed = true" in result_helper
     # AI 结果呈现业务结论和后端 SQL，不再把内部字段映射做成技术指标面板。
-    assert "candidateCondition" in candidate and "检查范围" in candidate
+    assert "candidateCondition" in candidate and "检查对象" in candidate
     assert "sql_preview" in candidate and "只读预览" in candidate
     assert 'metric("规则名称"' not in candidate
     assert "aiMark()" in workbench
@@ -314,7 +324,7 @@ def test_rule_history_is_real_paginated_expandable_audit_view() -> None:
     history = read("components/history_dialog.js")
     api = read("api.js")
     table = read("components/rule_table.js")
-    assert 'action("修改记录", rule, "history")' in table
+    assert 'action("修改记录", rule, "history",' in table
     assert "ruleHistory" in api and "/history${queryString" in api
     assert "api.ruleHistory(rule.id, requestQuery" in history
     assert "loadConvergedPage" in history and "page_size: 20" in history
@@ -331,7 +341,7 @@ def test_results_only_use_real_task_and_issue_fields_and_poll_can_stop() -> None
     results = read("pages/results.js")
     for status in ("queued", "running", "completed", "partial_failed", "failed", "cancelled"):
         assert status in read("state.js")
-    for field in ("rule_id", "version_no", "business_key", "message", "created_at"):
+    for field in ("rule_id", "version_no", "created_at", "violation_count", "queryColumns", "queryValue"):
         assert field in results
     for forbidden in ("scanned", "duration", "ai_suggestion", "scan_count", "执行耗时"):
         assert forbidden not in results
@@ -376,7 +386,7 @@ def test_no_external_dependencies_mock_data_or_unsafe_dynamic_html() -> None:
 def test_css_is_scoped_light_token_based_and_has_dual_scrollbars() -> None:
     css = read("styles.css")
     scope = '.auto-check-module[data-module="data_validation"]'
-    assert css.lstrip().startswith(scope)
+    assert css.replace('@import url("./results-replica.css");', "", 1).lstrip().startswith(scope)
     for line in css.splitlines():
         stripped = line.strip()
         if stripped and "{" in stripped and not stripped.startswith("@"):

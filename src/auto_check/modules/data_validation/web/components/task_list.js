@@ -1,48 +1,62 @@
-import { formatDateTime, TASK_STATUS_LABELS } from "../state.js";
-import { button, element, emptyState, statusBadge } from "./dom.js";
+import { formatDateTime, isTaskActive } from "../state.js";
+import { element, emptyState, statusBadge } from "./dom.js";
 
-function tone(status) {
-  if (status === "completed") return "success";
-  if (["failed", "partial_failed", "cancelled"].includes(status)) return "danger";
-  if (["queued", "running"].includes(status)) return "warning";
-  return "neutral";
+export function taskStatus(task) {
+  const status = task?.status;
+  if (status === "completed") return { label: "执行完成", tone: "success" };
+  if (status === "running") return { label: "执行中", tone: "info" };
+  if (status === "queued") return { label: "排队中", tone: "neutral" };
+  if (status === "pausing") return { label: "暂停中", tone: "info" };
+  if (status === "paused") return { label: "已暂停", tone: "warning" };
+  return { label: { failed: "执行失败", partial_failed: "部分失败", cancelled: "已取消" }[status] || "状态未知", tone: "danger" };
+}
+
+export function categoryBadge(category) {
+  return element("span", { className: "dv-category-badge is-accent", text: category.name || category.code || "未分类" });
 }
 
 export function createTaskList({ listen, onSelect }) {
-  const body = element("tbody");
+  const entries = element("div", { className: "dv-batch-entries" });
   const feedback = element("div", { className: "dv-task-feedback" });
-  const table = element("table", { className: "dv-table dv-task-table" },
-    element("thead", {}, element("tr", {}, ...["任务 / 批次", "报送期", "数据源", "任务状态", "创建时间", "结果截断", "操作"].map((label) => element("th", { text: label })))), body);
-  const tableWrap = element("div", { className: "dv-task-table-wrap dv-scroll" }, table);
+  const tableWrap = element("div", { className: "dv-task-table-wrap dv-scroll" }, entries);
   const root = element("div", { className: "dv-task-list" }, feedback, tableWrap);
   let tasks = [];
   listen(root, "click", (event) => {
     const target = event.target.closest("[data-task-select]");
-    if (target) onSelect(Number(target.dataset.taskSelect));
+    if (target) return onSelect(Number(target.dataset.taskSelect));
   });
   return {
     element: root,
     update(items, selectedId, { status = "success", error = "" } = {}) {
       tasks = Array.isArray(items) ? items : [];
-      body.replaceChildren();
+      entries.replaceChildren();
       feedback.replaceChildren();
-      if (status === "loading" && !tasks.length) feedback.append(emptyState("正在加载任务…"));
-      else if (status === "error") feedback.append(emptyState("任务加载失败", error));
-      else if (!tasks.length) feedback.append(emptyState("暂无数据", "当前报送期尚无校验任务"));
+      if (status === "loading" && !tasks.length) feedback.append(emptyState("正在加载批次…"));
+      else if (status === "error") feedback.append(emptyState("批次加载失败", error));
+      else if (!tasks.length) feedback.append(emptyState("暂无执行批次", "当前筛选范围内尚无校验记录"));
       // 提示与表格只显示其一，避免空表头下再留一片空白。
       const hasFeedback = Boolean(feedback.children.length);
       feedback.hidden = !hasFeedback;
       tableWrap.hidden = hasFeedback;
       tasks.forEach((task) => {
-        const row = element("tr", { className: Number(task.id) === Number(selectedId) ? "is-selected" : "" },
-          element("td", {}, element("strong", { text: `任务 #${task.id}` }), element("span", { text: `第 ${task.run_no ?? "—"} 次执行` })),
-          element("td", { text: task.report_period || "—" }),
-          element("td", { text: task.source_id || "按规则快照" }),
-          element("td", {}, statusBadge(TASK_STATUS_LABELS[task.status] || task.status || "未知", tone(task.status))),
-          element("td", { className: "dv-date", text: formatDateTime(task.created_at) }),
-          element("td", { text: task.truncated ? "是（结果不完整）" : "否" }),
-          element("td", {}, button("查看异常", { className: "dv-table-action", dataset: { taskSelect: task.id } })));
-        body.append(row);
+        const selected = Number(task.id) === Number(selectedId);
+        const info = taskStatus(task);
+        const summary = task.summary;
+        const count = summary ? `${summary.rule_count} 条规则` : "规则数量未采集";
+        const conclusion = task.status === "completed" && summary
+          ? summary.truncated || task.truncated ? "执行完成 · 结果截断"
+            : summary.issue_count ? `执行完成 · ${summary.issue_count} 条异常` : "执行完成 · 未发现异常"
+          : info.label;
+        entries.append(element("button", {
+          className: `dv-batch-entry${selected ? " is-selected" : ""}`,
+          dataset: { taskSelect: task.id }, attrs: { type: "button", "aria-pressed": String(selected), "aria-label": `查看批次 #${task.id}` },
+        },
+        element("div", { className: "dv-batch-entry-title" }, element("strong", { text: `批次 #${task.id}` }),
+          task.truncated ? element("span", { className: "dv-truncated", text: "截断" }) : null),
+        element("span", { className: "dv-batch-meta", text: `${formatDateTime(task.created_at)} · ${count}` }),
+        element("div", { className: "dv-batch-categories" }, ...(task.categories || []).map(categoryBadge)),
+        statusBadge(conclusion, task.status === "completed" && summary?.issue_count ? "warning" : info.tone),
+        isTaskActive(task) && summary ? element("span", { className: "dv-batch-meta", text: `已完成 ${summary.completed_count + summary.failed_count} / ${summary.rule_count}` }) : null));
       });
     },
   };

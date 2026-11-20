@@ -8,7 +8,9 @@ from typing import Any
 from .compiler import compile_rule
 from .contracts import AppError
 from .generation_policy import review_ready
+from .issue_query_results import collect_row, output_projection
 from .project_context import (
+    STATUS_MISSING_NULL, STATUS_OK,
     normalize_project_context,
     project_code_fields,
     project_name_fields,
@@ -16,7 +18,7 @@ from .project_context import (
     project_row_status,
     project_semantics_required,
 )
-from .query_spec import base_type, is_new_spec, needs_issue_kind, query_ready, referenced_columns, validate_spec_against_columns
+from .query_spec import base_type, is_condition_group, is_new_spec, needs_issue_kind, query_ready, referenced_columns, validate_spec_against_columns
 from .sql_guard import guard_generated_sql, guard_sql
 
 
@@ -28,6 +30,7 @@ class RuleRun:
     error_code: str
     columns: tuple[str, ...] = ()
     rows: tuple[dict[str, Any], ...] = ()
+    query_results: tuple[dict[str, Any], ...] = ()
 
 
 def _columns_by_name(described: dict[str, Any]) -> dict[str, str]:
@@ -58,6 +61,11 @@ def execute_version(
         return RuleRun("ERROR", 0, False, "VALIDATION_ERROR")
 
     source_id = str(definition.get("source_id") or "")
+    list_sources = getattr(metadata, "list_sources", None)
+    if callable(list_sources):
+        source = next((item for item in list_sources() if str(item.id) == source_id), None)
+        if source and str(source.dialect) != str(definition.get("dialect") or "mysql"):
+            return RuleRun("ERROR", 0, False, "MAPPING_DRIFT")
     table_name = str(definition.get("table_name") or "")
     described = metadata.describe_table(source_id, table_name)
     base_types = _columns_by_name(described)
@@ -83,6 +91,7 @@ def execute_version(
     known_related: set[str] = set()
     other_table = ""
     other_types: dict[str, str] = {}
+    related_columns = []
     if references["related"]:
         join = definition.get("join") or {}
         if join:
@@ -96,6 +105,7 @@ def execute_version(
         except Exception:
             return RuleRun("ERROR", 0, False, "SOURCE_UNAVAILABLE")
         other_types = _columns_by_name(described_other)
+        related_columns = described_other.get("columns") or []
         known_related = set(other_types)
         missing_related = [name for name in references["related"] if name not in known_related]
         # 执行期日期对齐漂移：关联/维度日期字段必须仍存在且严格为 DATE。
@@ -120,6 +130,7 @@ def execute_version(
         except AppError:
             return RuleRun("ERROR", 0, False, "MAPPING_DRIFT")
 
+    compiled_projection = definition.get("rule_type") != "custom_sql"
     if version.get("sql_text"):
         # 执行仍用已持久化的 SQL，但绑定参数必须按当前定义重建，避免缺参。
         sql = str(version["sql_text"])
@@ -127,7 +138,9 @@ def execute_version(
             compiled_params = dict(definition.get("params") or {})
         else:
             compiled_sql, compiled_params = compile_rule(version)
-            if (context is not None or definition.get("null_policy") in ("review", "zero")) and sql != compiled_sql:
+            compiled_projection = sql == compiled_sql
+            if (definition.get("result_aliases") or context is not None or is_condition_group(definition)
+                    or definition.get("null_policy") in ("review", "zero")) and sql != compiled_sql:
                 # 新增/修改 project_context 或数值空值策略后，旧持久化 SQL 必须拒绝执行。
                 return RuleRun("ERROR", 0, False, "MAPPING_DRIFT")
             if "\\" in str(definition.get("violation_message") or "") and sql != compiled_sql:
@@ -152,6 +165,7 @@ def execute_version(
             tables.add(other_table)
         guard_generated_sql(
             str(definition.get("dialect") or "mysql"), sql, set(base_types) | known_related, tables,
+            definition=definition,
         )
     try:
         result = metadata.execute_select(
@@ -170,30 +184,45 @@ def execute_version(
     count = len(result.rows)
     status = "PASS" if count == 0 else "VIOLATION"
     public_columns = ("business_key", "violation_message")
-    if needs_issue_kind(definition):
+    if definition.get("project_driver") or needs_issue_kind(definition):
         public_columns += ("issue_kind",)
     if context is not None:
         public_columns += tuple(project_output_columns(context))
-    raw_columns = tuple(str(column) for column in (getattr(result, "columns", None) or ()))
+    raw_columns = tuple(column if isinstance(column, str) else None for column in (getattr(result, "columns", None) or ()))
     public_rows: list[dict[str, Any]] = []
+    query_results: list[dict[str, Any]] = []
+    columns, collection_status = output_projection(definition, sql, compiled_projection, raw_columns, base_columns, related_columns)
+    result_aliases = definition.get("result_aliases") if compiled_projection else None
+    row_template = (definition.get("project_driver") or {}).get("version") == 2
     for values in result.rows:
         raw = dict(zip(raw_columns, values)) if raw_columns else {}
+        query_result = collect_row(columns, collection_status, raw)
+        query_results.append(query_result)
+        raw = query_result["values"]
+        if result_aliases:
+            raw = {role: raw.get(name) for role, name in result_aliases.items()}
         item = {
             "business_key": raw.get("business_key"),
             "violation_message": raw.get("violation_message"),
         }
         if "issue_kind" in public_columns:
-            item["issue_kind"] = raw.get("issue_kind") or "legacy"
+            fallback = ("numeric" if definition.get("null_policy") == "zero" else "comparison") if row_template else "legacy"
+            item["issue_kind"] = raw.get("issue_kind") or fallback
         if context is not None:
+            if row_template and context["mode"] == "base":
+                for role, field in (("project_code", context["code_field"]), ("project_name", context["name_field"])):
+                    if field == definition["business_key"]:
+                        raw[role] = raw.get("business_key")
             name = raw.get("project_name")
             item["project_code"] = raw.get("project_code")
             item["project_name"] = name
-            item["project_name_status"] = project_row_status(
-                mode=context["mode"],
-                code=raw.get("project_code"),
-                name=name,
-                match_count=raw.get("project_match_count"),
-            )
+            if row_template:
+                item["project_name_status"] = STATUS_OK if name is not None and str(name).strip() else STATUS_MISSING_NULL
+            else:
+                item["project_name_status"] = project_row_status(
+                    mode="lookup" if definition.get("project_driver") else context["mode"],
+                    code=raw.get("project_code"), name=name, match_count=raw.get("project_match_count"),
+                )
         public_rows.append(item)
     return RuleRun(status, count, bool(result.truncated), "",
-                   tuple(public_columns), tuple(public_rows))
+                   tuple(public_columns), tuple(public_rows), tuple(query_results))

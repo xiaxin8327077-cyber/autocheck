@@ -120,7 +120,7 @@ class SequenceModel:
         self.error = error
         self.calls: list[dict] = []
 
-    def complete(self, model_id, messages, timeout_seconds):
+    def complete(self, model_id, messages, timeout_seconds, *, cancel_event=None):
         self.calls.append({"model_id": model_id, "messages": messages})
         if self.error:
             raise self.error
@@ -128,6 +128,11 @@ class SequenceModel:
         payload = self.payloads[index] if index < len(self.payloads) else self.payloads[-1]
         import json
         return json.dumps(payload, ensure_ascii=False)
+
+    def complete_with_options(self, model_id, messages, *, options, **kwargs):
+        content = self.complete(model_id, messages, **kwargs)
+        self.calls[-1]["options"] = dict(options)
+        return {"content": content, "finish_reason": "stop", "usage": {}}
 
 
 def doc_xlsx_bytes(

@@ -1,4 +1,7 @@
 import { button, element } from "./dom.js";
+import { hasComparison } from "../comparisons.js";
+import { candidateRuleName, candidateFiltersText } from "./ai_candidate.js";
+import { documentEvidence, tableLabel } from "./candidate_evidence.js";
 
 function newRequestKey() {
   const cryptoRef = globalThis.crypto;
@@ -31,21 +34,6 @@ export function createRequestKeyRegistry() {
   };
 }
 
-function shortObjectLabel(label) {
-  return String(label || "")
-    .replace(/\.ktr\b/gi, "")
-    .replace(/（[^）]*ktr[^）]*）/gi, "")
-    .replace(/\([^)]*ktr[^)]*\)/gi, "")
-    .trim() || "—";
-}
-
-function labelledIdentifier(label, identifier) {
-  const text = String(label || "").trim();
-  const id = String(identifier || "").trim();
-  const mentioned = (text.match(/[A-Za-z_][A-Za-z0-9_$]*/g) || []).some((item) => item === id);
-  return !id || mentioned ? (text || id || "—") : `${text || "—"}（${id}）`;
-}
-
 export function createCandidateOptionsPanel({
   listen, onToggle, onActive, onSaveOption, onSaveSelected,
 } = {}) {
@@ -69,7 +57,10 @@ export function createCandidateOptionsPanel({
     update(payload, { selected = [], activeId = "", savedRules = [], saving = false, locked = false, gates = {}, savedDuplicate = false, hideSave = false } = {}) {
       const options = Array.isArray(payload?.candidate_options) ? payload.candidate_options : [];
       const parallel = payload?.parallel_checks === true;
-      title.textContent = parallel ? "已拆分为独立检查项" : "发现多个有依据的校验方案";
+      const bySelection = options.length > 0 && options.every((item) => item.fromSelection);
+      const hasRecommendation = !parallel && !bySelection && options.filter((item) => item.recommended).length === 1;
+      const showCategory = new Set(options.map(({ candidate }) => candidate?.report_category || "")).size > 1;
+      title.textContent = bySelection ? "按已选口径生成的方案" : parallel ? "已拆分为独立检查项" : "可选校验方案";
       selectedIds = [...new Set(selected)].filter((id) => options.some((item) => item.id === id));
       root.hidden = !options.length;
       list.replaceChildren();
@@ -88,32 +79,33 @@ export function createCandidateOptionsPanel({
         check.className = "dv-ai-option-check";
         check.checked = selectedSet.has(option.id);
         check.disabled = locked;
-        check.setAttribute("aria-label", `选择方案 ${option.label || option.id}`);
+        const candidate = option.candidate || {};
+        const summary = hasComparison(candidate.expression) ? candidateRuleName(candidate) : option.label || option.field_label || "校验方案";
+        check.setAttribute("aria-label", `选择方案 ${[tableLabel(candidate, option), summary].filter(Boolean).join(" · ")}`);
         check.dataset.optionId = String(option.id);
         listen(check, "click", (event) => { event?.stopPropagation?.(); });
         listen(check, "change", () => { if (!check.disabled) onToggle?.(option.id, check.checked); });
-        const candidate = option.candidate || {};
-        const tableId = candidate.table_name || option.table_id || "";
-        const fieldId = candidate.expression?.left || option.field_id || "";
         const title = element("div", { className: "dv-ai-option-title" },
-          element("strong", { text: option.label || option.id }),
-          !parallel && option.recommended ? element("span", { className: "dv-ai-option-recommended", text: "推荐" }) : null,
+          element("strong", { text: summary }),
+          option.supplemental ? element("span", { className: "dv-ai-option-recommended", text: "补充规则" }) : null,
+          hasRecommendation && option.recommended && !option.fromSelection ? element("span", { className: "dv-ai-option-recommended", text: "推荐" }) : null,
           option.id === activeId ? element("span", { className: "dv-ai-option-current", text: "当前查看" }) : null);
+        const name = tableLabel(candidate, option);
+        const sameNameAcrossTables = name && name !== candidate.table_name && options.some((other) =>
+          other.candidate?.table_name && other.candidate.table_name !== candidate.table_name && tableLabel(other.candidate, other) === name);
+        const source = [sameNameAcrossTables ? `${name}（${candidate.table_name}）` : name, candidate.grain || option.grain,
+          showCategory ? candidate.report_category_name || candidate.report_category || "未分类" : ""].filter(Boolean).join(" · ");
+        const filters = candidateFiltersText(candidate);
         const body = element("div", { className: "dv-ai-option-body" }, title,
-          element("div", { className: "dv-ai-option-grain", text: `检查粒度：${option.grain || "待核实"}` }),
-          element("div", { className: "dv-ai-option-table", text: `真实表：${labelledIdentifier(shortObjectLabel(option.table_label), tableId)}` }),
-          element("div", { className: "dv-ai-option-field", text: `真实字段：${labelledIdentifier(option.field_label, fieldId)}` }),
-          element("div", { className: "dv-ai-option-reason", text: `${parallel ? "依据" : "推荐理由"}：${option.match_reason || "—"}` }));
-        if (Array.isArray(option.differences) && option.differences.length) {
-          body.append(element("div", { className: "dv-ai-option-diff", text: `差异：${option.differences.join("；")}` }));
-        }
-        const evidence = element("details", { className: "dv-ai-option-evidence" },
-          element("summary", { text: "原始文档证据" }));
-        evidence.append(element("div", { className: "dv-ai-option-evidence-row", text: `对象：${option.table_label || "—"}` }));
-        evidence.append(element("div", { className: "dv-ai-option-evidence-row", text: `字段：${option.field_label || "—"}` }));
-        if (candidate.logic) evidence.append(element("div", { className: "dv-ai-option-evidence-row", text: `取数逻辑：${candidate.logic}` }));
-        if (candidate.dictionary) evidence.append(element("div", { className: "dv-ai-option-evidence-row", text: `字典：${candidate.dictionary}` }));
+          source ? element("div", { className: "dv-ai-option-table", text: `检查对象：${source}` }) : null,
+          filters ? element("div", { className: "dv-ai-option-field", text: `适用范围：${filters}` }) : null);
+        const evidence = documentEvidence(candidate, option);
         body.append(evidence);
+        if (!option.fromSelection && (option.match_reason || option.differences?.length)) {
+          body.append(element("details", { className: "dv-ai-reasoning" },
+            element("summary", { text: "方案说明" }), ...[option.match_reason, ...(option.differences || [])]
+              .filter(Boolean).map((text) => element("div", { text }))));
+        }
         const actions = element("div", { className: "dv-ai-option-actions" },
           button("查看/完善此方案", { listen, className: "dv-button dv-button-plain", onClick: () => { if (!locked) onActive?.(option.id); } }),
           button(option.id === activeId ? "保存当前方案并启用" : "完善并启用此方案", { listen, className: "dv-button", onClick: () => { if (!locked && gate.enabled) onSaveOption?.(option.id); } }));
@@ -128,13 +120,14 @@ export function createCandidateOptionsPanel({
         cardElements.set(String(option.id), card);
         slotElements.set(String(option.id), slot);
         listen(card, "click", (event) => {
-          const tag = event?.target?.tagName;
-          if (tag === "INPUT" || tag === "BUTTON" || tag === "A" || tag === "SELECT" || tag === "TEXTAREA") return;
           if (locked) return;
+          for (let target = event?.target; target && target !== card; target = target.parentNode) {
+            if (target === slot || ["DETAILS", "SUMMARY", "INPUT", "BUTTON", "A", "SELECT", "TEXTAREA"].includes(target.tagName)) return;
+          }
           onActive?.(option.id);
         });
         listen(card, "keydown", (event) => {
-          if (locked) return;
+          if (locked || event?.target !== card) return;
           if (event?.key === "Enter" || event?.key === " ") {
             event?.preventDefault?.();
             onActive?.(option.id);

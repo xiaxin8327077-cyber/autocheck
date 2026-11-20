@@ -8,6 +8,8 @@ import { createResultsPage } from "./pages/results.js";
 import { createRulesPage } from "./pages/rules.js";
 import { createSettingsPage } from "./pages/settings.js";
 import { createWorkbench } from "./pages/workbench.js";
+import { createRuleEditor } from "./components/rule_editor.js";
+import { createExecutionController } from "./components/execution_controller.js";
 
 let instance = null;
 
@@ -36,7 +38,9 @@ export function mount(context) {
   let results = null;
   let settings = null;
   let workbench = null;
+  let ruleEditor = null;
   let rules = null;
+  let executionTasks = null;
 
   // 页面由顶部导航路由决定：数据校验（规则管理）与校验结果各自独立菜单入口，页内不再有 Tab。
   const mainCard = element("section", { className: "dv-main-card" }, panelsHost);
@@ -63,6 +67,7 @@ export function mount(context) {
     state.activeTab = target;
     const page = target === "rules" ? rules : target === "results" ? results : settings;
     headerHost.replaceChildren(page.header);
+    headerHost.hidden = page.header.hidden;
     [rules.panel, results.panel, settings.panel].forEach((panel) => { panel.hidden = panel !== page.panel; });
     if (!panelsHost.contains(page.panel)) panelsHost.append(rules.panel, results.panel, settings.panel);
     page.render?.();
@@ -74,6 +79,11 @@ export function mount(context) {
 
   function openWorkbench(options) {
     activeTaskDialog?.close();
+    ruleEditor?.close();
+    if (options?.ruleId) {
+      workbench.cancel();
+      return ruleEditor.open(options.ruleId);
+    }
     return workbench.open(options);
   }
 
@@ -91,17 +101,7 @@ export function mount(context) {
     activeTaskDialog = openTaskDialog({
       state, runtime, api, listen, host: dialogHost, user, notify, initialRules,
       onClose: () => { activeTaskDialog = null; },
-      onStarted: async (task) => {
-        state.reportPeriod = task.report_period || state.reportPeriod;
-        state.activeTaskId = Number(task.id);
-        state.issuesStatus = "idle";
-        const navigated = await context.navigate?.("data-validation-results");
-        if (!navigated) notify("任务已提交，可从顶部「数据质量 → 校验结果」查看", "info");
-        notify(`任务 #${task.id} 已提交，状态 ${task.status}`, "success");
-        if (Array.isArray(task.skipped) && task.skipped.length) {
-          notify(task.skipped.map((item) => `规则 ${item.rule_id}：${item.reason}`).join("；"), "warning");
-        }
-      },
+      onStarted: task => executionTasks.started(task),
     });
   }
 
@@ -121,6 +121,7 @@ export function mount(context) {
     state.sourcesStatus = "loading";
     state.sourcesError = "";
     workbench?.refreshSources();
+    ruleEditor?.refreshSources();
     try {
       const sources = await runtime.request(token, (signal) => api.sources({ signal }));
       if (!runtime.current(token)) return;
@@ -132,7 +133,7 @@ export function mount(context) {
       state.sourcesError = `数据源加载失败：${errorMessage(error)}。请重试；不会将其显示为“未配置”。`;
       notify(state.sourcesError, "error");
     } finally {
-      if (runtime.current(token)) workbench?.refreshSources();
+      if (runtime.current(token)) { workbench?.refreshSources(); ruleEditor?.refreshSources(); activeTaskDialog?.refreshSources?.(); }
     }
   }
 
@@ -154,7 +155,10 @@ export function mount(context) {
     } finally {
       if (runtime.current(token)) {
         workbench?.refreshSources();
+        ruleEditor?.refreshSources();
         rules?.render();
+        results?.render();
+        activeTaskDialog?.refreshCategories?.();
       }
     }
   }
@@ -195,6 +199,9 @@ export function mount(context) {
     onPeriodChange,
   });
   settings = createSettingsPage({ state, runtime, api, listen, user, notify, host: shell });
+  executionTasks = createExecutionController({ state, results, context, runtime, api, user,
+    host: dialogHost, notify, confirmAction, showResults: () => showPage("results") });
+  shell.append(executionTasks.element);
   workbench = createWorkbench({
     state, runtime, api, listen, user, notify, host: dialogHost, confirmAction,
     onClose: () => {},
@@ -202,6 +209,7 @@ export function mount(context) {
     onRetrySources: loadSources,
     onRetryModels: loadModels,
   });
+  ruleEditor = createRuleEditor({ state, runtime, api, user, notify, host: dialogHost, onChanged: () => rules.refresh() });
   panelsHost.append(rules.panel, results.panel, settings.panel);
   showPage("rules", { load: false });
 
@@ -209,30 +217,35 @@ export function mount(context) {
     context,
     runtime,
     async activate(route) {
+      executionTasks.deactivate();
       runtime.activate();
       const pageName = routePage(route);
       showPage(pageName, { load: false });
-      const loads = [loadSources(), loadModels(), loadCategories()];
+      const loads = [loadSources(), loadModels(), loadCategories(), executionTasks.activate()];
       if (pageName === "rules") loads.push(rules.refresh());
       else if (pageName === "results") loads.push(results.loadTasks());
       else loads.push(settings.refresh());
       await Promise.all(loads);
     },
     deactivate() {
+      executionTasks.deactivate();
       activeTaskDialog?.close();
       activeTaskDialog = null;
       activeHistoryDialog?.close();
       activeHistoryDialog = null;
       results.stopPolling();
+      ruleEditor.close();
       workbench.cancel();
       runtime.deactivate();
     },
     unmount() {
+      executionTasks.destroy();
       activeTaskDialog?.close();
       activeTaskDialog = null;
       activeHistoryDialog?.close();
       activeHistoryDialog = null;
       results.stopPolling();
+      ruleEditor.close();
       workbench.cancel();
       runtime.destroy();
       context.root.replaceChildren();

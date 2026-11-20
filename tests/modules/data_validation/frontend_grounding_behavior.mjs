@@ -218,8 +218,10 @@ state.sources = [martSource, reportSource];
 form.setSources();
 form.setCategories();
 form.setMetadata({ columns: baseColumns, related_columns: relatedColumns, mapping_version: "doc-v1-abc" });
-assert.equal(form.applyCandidate(candidate), true);
+const projectDriver = { version: 1, table_role: "base" };
+assert.equal(form.applyCandidate({ ...candidate, project_driver: projectDriver }), true);
 const first = form.read();
+assert.deepEqual(first.project_driver, projectDriver, "项目驱动方向必须随字段确认和保存保留");
 assert.deepEqual(first.filters, [{ ...statusSelection, confirmed: false }]);
 assert.equal(first.expression.right_table, "related");
 assert.equal(first.join.table_name, "reg_pub_accountbalance_sum");
@@ -353,23 +355,28 @@ assert.throws(() => form.applyDecision("expression.right", "d_cldate", {}), /不
 
 // 3) 候选面板：业务摘要展示筛选/关联/日期，选项 selection 原样回传，不显示 [object Object]。
 const choices = [];
+let refreshedContext = 0;
 const panel = createAiCandidatePanel({
   listen: (node, type, handler) => node.addEventListener(type, handler),
   onChoice: (id, value) => choices.push({ id, value }),
+  onReanalyze: () => { refreshedContext++; },
   onEdit: () => {}, onRetry: () => {}, notify: () => {},
 });
+panel.update({ ...candidate, analysis_context_changed: true, preview_error: "分析依据已更新" }, {});
+await findByText(panel.element, "按最新口径重新分析").dispatch("click");
+assert.equal(refreshedContext, 1);
+assert.equal(findByClass(panel.element, "dv-ai-sql-preview"), null);
 panel.update(candidate, { request_text: "存续项目实收信托一般不为0" });
 const facts = collectText(findByClass(panel.element, "dv-ai-business-facts"));
-assert.match(facts, /筛选条件：项目状态为1/);
-assert.match(facts, /关联 reg_pub_accountbalance_sum/);
-assert.match(facts, /关联日期 d_balancedate/);
-assert.match(facts, /校验日期：d_cldate/);
+assert.match(facts, /适用范围项目状态为1/);
+assert.match(facts, /关联核对reg_pub_accountbalance_sum，按项目编号匹配/);
+assert.match(facts, /检查日期数据日期、关联表的报送日期等于本次报送日期/);
 assert.doesNotMatch(collectText(panel.element), /\[object Object\]/);
 panel.update({
   ...candidate,
   filters: [{ table: "base", field: "c_projcode", op: "not_in", value: ["P1", 2], confirmed: true }],
 }, {});
-assert.match(collectText(findByClass(panel.element, "dv-ai-business-facts")), /筛选条件：项目编号不属于P1、2/);
+assert.match(collectText(findByClass(panel.element, "dv-ai-business-facts")), /适用范围项目编号不属于P1、2/);
 
 const filterQuestion = {
   id: "filters.0",
@@ -446,7 +453,13 @@ assert.equal(unaryPayload.null_policy, "violate");
 assert.equal(unaryPayload.equality_policy, "allow_equal");
 const unaryPanel = createAiCandidatePanel({ listen: () => {}, onEdit: () => {}, onRetry: () => {}, notify: () => {} });
 unaryPanel.update(unaryCandidate, {});
-assert.equal(findByClass(unaryPanel.element, "dv-ai-conclusion").textContent, "项目开始日为空时，提示人工核实");
+assert.equal(findByClass(unaryPanel.element, "dv-ai-conclusion").textContent, "项目开始日不能为空");
+unaryPanel.update(unaryCandidate, { request_text: "项目开始日原则上不能为空" });
+const qualifier = collectText(findByClass(unaryPanel.element, "dv-ai-soft-warning"));
+assert.match(qualifier, /保留“原则上”的含义/);
+assert.doesNotMatch(qualifier, /保留“一般”/);
+unaryPanel.update(unaryCandidate, { request_text: "项目开始日不能为空" });
+assert.equal(findByClass(unaryPanel.element, "dv-ai-soft-warning"), null);
 const unaryTestPanel = createTestPanel({ listen: () => {}, onTest: () => {}, onCaseChange: () => {}, onDecision: () => {} });
 unaryTestPanel.update({
   detail: null, evidence: null, dirty: false, canTest: true, readOnly: false,
@@ -479,6 +492,8 @@ for (const pendingIssue of ["", "关联键无法确认", "截止日期尚未确�
   if (pendingIssue) {
     assert.ok(collectText(unresolved).includes(pendingIssue));
     assert.doesNotMatch(collectText(unresolved), /存续/);
+    assert.equal(findByClass(unaryPanel.element, "dv-ai-sql-preview"), null, "独立口径未决时丢弃旧 SQL");
+    assert.equal(findByText(unaryPanel.element, "重试生成预览"), null);
   } else {
     assert.equal(unresolved, null);
   }

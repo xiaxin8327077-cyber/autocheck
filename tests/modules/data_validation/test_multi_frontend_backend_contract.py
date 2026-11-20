@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from openpyxl import load_workbook
 
+from auto_check.modules.data_validation.contracts import AppError
 from tests.modules.data_validation.support import Metadata, doc_xlsx_bytes, service, user
 from tests.modules.data_validation.test_frontend_multi_behavior import copy_web_modules
 
@@ -128,6 +129,12 @@ def test_actual_multi_workbench_payload_is_accepted_and_idempotent(tmp_path: Pat
             "date_field": "report_date", "unique_evidence": "项目编号主键", "confirmed": False,
         },
     }
+    review = rules.preview_candidate(user(), {"definition": lookup_definition}, return_questions=True)
+    assert review["questions"] and not review.get("sql_preview")
+    with pytest.raises(AppError) as pending:
+        rules.preview_candidate(user(), {"definition": lookup_definition})
+    assert pending.value.code == "PROJECT_CONTEXT_REQUIRED"
+    lookup_definition["project_context"]["confirmed"] = True
     lookup_preview = rules.preview_candidate(user(), {"definition": lookup_definition})
     assert lookup_preview["definition"]["project_context"]["mode"] == "lookup"
     assert lookup_preview["definition"]["project_context"]["table_name"] == "reg_pub_contract"

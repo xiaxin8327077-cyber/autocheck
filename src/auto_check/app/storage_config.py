@@ -169,10 +169,11 @@ def save_setting(connection: Connection, key: str, value: Any) -> None:
     )
 
 
-def load_setting(connection: Connection, key: str, default: Any) -> Any:
-    row = connection.execute(
-        select(_APP_SETTINGS.c.value_json).where(_APP_SETTINGS.c.key == str(key))
-    ).mappings().first()
+def load_setting(connection: Connection, key: str, default: Any, *, for_update: bool = False) -> Any:
+    statement = select(_APP_SETTINGS.c.value_json).where(_APP_SETTINGS.c.key == str(key))
+    if for_update:
+        statement = statement.with_for_update()
+    row = connection.execute(statement).mappings().first()
     if row is None:
         return default
     return _decode_json(row["value_json"], default)

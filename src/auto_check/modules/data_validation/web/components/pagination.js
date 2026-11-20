@@ -63,7 +63,6 @@ export function createPagination({ listen, onPage, onPageSize, pageSizes = PAGE_
         option.classList.add("is-selected");
         option.append(element("span", { className: "dv-page-size-check", text: "✓", attrs: { "aria-hidden": "true" } }));
       }
-      listen(option, "click", () => chooseSize(value));
       sizePanel.append(option);
     });
   }
@@ -72,9 +71,17 @@ export function createPagination({ listen, onPage, onPageSize, pageSizes = PAGE_
     sizePanel.hidden = !willOpen;
     sizeToggle.setAttribute("aria-expanded", String(willOpen));
   });
+  listen(sizePanel, "click", event => {
+    const option = event.target.closest("[data-page-size]");
+    if (option && !sizeToggle.disabled) chooseSize(option.dataset.pageSize);
+  });
+  listen(pages, "click", event => {
+    const target = event.target.closest("[data-page-number]");
+    if (target && !target.disabled) return onPage(Number(target.dataset.pageNumber));
+  });
   renderSizeOptions();
 
-  function renderPages() {
+  function renderPages(loading) {
     pages.replaceChildren();
     if (!current.total) return;
     const total = current.pages;
@@ -92,9 +99,10 @@ export function createPagination({ listen, onPage, onPageSize, pageSizes = PAGE_
       const pageButton = element("button", {
         className: `page-num${value === active ? " page-current is-active" : ""}`,
         text: String(value),
+        dataset: { pageNumber: value },
         attrs: { type: "button", "aria-label": `第 ${value} 页`, "aria-current": value === active ? "page" : null },
       });
-      listen(pageButton, "click", () => onPage(value));
+      pageButton.disabled = loading;
       pages.append(pageButton);
     });
   }
@@ -119,7 +127,7 @@ export function createPagination({ listen, onPage, onPageSize, pageSizes = PAGE_
       jump.disabled = loading || !current.total;
       jump.value = current.total ? String(current.page) : "";
       jump.max = String(current.pages);
-      renderPages();
+      renderPages(loading);
       const nextSize = pageSizes.includes(Number(payload?.page_size)) ? Number(payload.page_size) : currentSize;
       if (nextSize !== currentSize) {
         currentSize = nextSize;

@@ -101,7 +101,7 @@ def test_active_category_name_matches_sheet_prefix(name, code):
 
 
 @pytest.mark.parametrize("sheet", ["人行_募集明细", "人行明细表_募集明细", "人行底稿_募集明细", "1104报送_贷款报表"])
-@pytest.mark.parametrize("proposed", ["pbc_template", "jr_1104"])
+@pytest.mark.parametrize("proposed", ["pbc_template", "jr_1104", ""])
 def test_pbc_sheet_recognized_in_import_and_restricts_ai_category(sheet, proposed):
     from types import SimpleNamespace
     from tests.modules.data_validation.support import Metadata, SequenceModel
@@ -121,12 +121,9 @@ def test_pbc_sheet_recognized_in_import_and_restricts_ai_category(sheet, propose
     result = rules.parse_rule_request(user(), _request())
     if sheet.startswith("1104报送_"):
         assert result["report_category"] == "jr_1104"
-    elif proposed == "pbc_template":
-        assert result["report_category"] == proposed
     else:
-        assert result["report_category"] == ""
-        question = next(q for q in result["questions"] if q["id"] == "report_category")
-        assert [option["value"] for option in question["options"]] == ["pbc_central", "pbc_template"]
+        assert result["report_category"] == "group:pbc"
+    assert not any(q["id"] == "report_category" for q in result["questions"])
 
 
 def test_document_versions_can_be_imported_listed_and_activated() -> None:
@@ -145,10 +142,10 @@ def test_document_versions_can_be_imported_listed_and_activated() -> None:
     assert active["version_no"] == 1
 
 
-def test_prompts_have_three_stages_and_support_custom_and_reset() -> None:
+def test_prompts_include_shared_business_scope_and_support_custom_and_reset() -> None:
     _database, rules = service()
     prompts = rules.list_prompts()
-    assert [item["stage"] for item in prompts] == ["select_table", "generate_rule", "generate_sql"]
+    assert [item["stage"] for item in prompts] == ["select_table", "generate_rule", "generate_sql", "business_scope"]
     assert all(item["is_default"] for item in prompts)
 
     custom = "需求：{request_text} 数据源：{source_name} 表：{tables} 分类：{categories} 自定义"
@@ -206,7 +203,7 @@ def test_settings_routes_import_document_and_manage_prompts() -> None:
         method="GET", path=f"{MANIFEST.api_prefix}/settings/prompts", path_params={}, query={},
         body=None, current_user=admin,
     ))
-    assert len(prompts.body["data"]) == 3
+    assert len(prompts.body["data"]) == 4
 
     def knowledge_request(method, suffix="", body=None, actor=admin):
         return router.dispatch(ModuleRequest(

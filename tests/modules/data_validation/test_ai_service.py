@@ -76,8 +76,8 @@ def test_doc_driven_parse_uses_document_without_database() -> None:
     assert "maturity_date" in model.calls[1]["messages"][0]["content"]
     assert result["rule_name"] == "测试规则"
     assert result["table_name"] == "test_table"
-    assert result["report_category"] == "pbc_central"
-    assert result["report_category_name"] == "人行大集中报送"
+    assert result["report_category"] == "group:pbc"
+    assert result["report_category_name"] == "人行报送"
     assert result["expression"] == {"left": "maturity_date", "op": "lt", "right": "issue_date"}
     assert [item["column_name"] for item in result["columns"]] == ["row_id", "maturity_date", "issue_date"]
     assert result["mapping_version"].startswith("doc-v1-")
@@ -139,6 +139,24 @@ def test_ambiguous_alias_stays_unresolved() -> None:
     result = rules.parse_rule_request(user(), _request())
     assert result["uncertainties"]
     assert result["can_enable"] is False
+
+
+def test_model_can_ask_for_documented_field_choice_without_discarding_its_proposal() -> None:
+    fields = [
+        ("row_id", "编号", "varchar", "Y"), ("reading_date", "数据日期", "date", ""),
+        ("initial_qty", "期初数量", "decimal", ""), ("last_qty", "期末数量", "decimal", ""),
+    ]
+    rules, model = _rules_with_doc([_select_payload(), _generate_payload(
+        expression={"left": "last_qty", "op": "is_null"},
+        field_choices=[{"side": "left", "term": "数量", "fields": ["initial_qty", "invented", "last_qty"],
+                        "recommended": "last_qty"}],
+    )], fields=fields)
+    result = rules.parse_rule_request(user(), _request(request_text="数量不能为空"))
+    question = next(item for item in result["questions"] if item["id"] == "expression.left")
+    assert [item["value"] for item in question["options"]] == ["initial_qty", "last_qty"]
+    assert question["options"][1]["tag"] == "模型建议"
+    assert result["expression"]["left"] == "last_qty" and result["preview"] is None
+    assert "field_choices" in model.calls[1]["messages"][0]["content"]
 
 
 def test_exact_duplicate_points_at_existing_code() -> None:
@@ -214,8 +232,11 @@ def test_custom_prompt_is_used_and_validated() -> None:
         "表：{tables} 分类：{categories}"
     )
     rules.save_prompt(user(), "select_table", template)
+    rules.save_prompt(user(), "business_scope", "CUSTOM-SCOPE 校验按同一数据日期对齐")
     rules.parse_rule_request(user(), _request())
     assert "CUSTOM-MARK" in model.calls[0]["messages"][0]["content"]
+    assert all("CUSTOM-SCOPE" in call["messages"][0]["content"] for call in model.calls)
+    assert not any("所有数据校验统一忽略币种" in call["messages"][0]["content"] for call in model.calls)
     with pytest.raises(AppError) as error:
         rules.save_prompt(user(), "select_table", "缺少变量")
     assert error.value.code == "VALIDATION_ERROR"
@@ -242,5 +263,7 @@ def test_large_table_field_context_is_filtered_and_marked() -> None:
     prompt = model.calls[1]["messages"][0]["content"]
     assert "maturity_date" in prompt and "issue_date" in prompt
     assert "spare_field_119" not in prompt, "无关字段不应进入字段上下文"
-    assert any("字段数量" in item for item in result["uncertainties"])
+    assert not any("字段数量" in item for item in result["uncertainties"])
+    assert any("字段数量" in item for item in result["notices"])
+    assert any(item["id"] == "report_date_field" for item in result["questions"])
     assert result["can_enable"] is False

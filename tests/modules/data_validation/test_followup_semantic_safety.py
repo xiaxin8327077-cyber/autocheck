@@ -125,7 +125,7 @@ def test_alternative_does_not_inherit_another_tables_project_questions_or_null_e
     assert not any(question["id"].startswith("project_context.") for question in other["questions"])
     assert other["project_context"]["code_field"] == "project_id"
     assert other["project_context"]["name_field"] == "project_name"
-    assert other["null_policy"] == "review"
-    assert other["null_handling"]["left"] == "review"
-    assert other["preview"]["definition"]["null_policy"] == "review"
-    assert "AS project_name" in other["preview"]["sql_preview"]
+    assert other["null_policy"] == "skip"
+    assert not other["null_evidence"]
+    assert other["preview"]["definition"]["null_policy"] == "skip"
+    assert 't."project_name" AS "项目名称"' in other["preview"]["sql_preview"]

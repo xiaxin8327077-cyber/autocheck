@@ -59,7 +59,7 @@ def _normalize_type(raw: str) -> tuple[str, bool]:
 
 
 def is_pbc_report_sheet(sheet_name: str) -> bool:
-    return sheet_name.startswith(("人行_", "人行明细表_", "人行底稿_", "人行结果表_"))
+    return sheet_name.startswith(("人行_", "人行报送_", "人行明细表_", "人行底稿_", "人行结果表_"))
 
 
 def _match_source(sheet_name: str, rules: list[dict[str, Any]]) -> str:

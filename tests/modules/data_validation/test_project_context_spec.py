@@ -82,7 +82,8 @@ def test_infer_does_not_guess_from_physical_names_alone():
     fields = [_field("project_code", "编号"), _field("project_name", "名称")]
     result = infer_project_context(_definition(name="项目金额检查"), None, fields, [], {})
     assert result["context"] is None
-    assert result["uncertainties"] and "不能凭物理名猜项目编号" in result["uncertainties"][0]
+    assert "缺少项目编号和项目名称的字段说明" in result["uncertainties"][0]
+    assert "文档快照" in result["uncertainties"][0]
 
 
 def test_infer_lookup_only_with_unique_document_evidence_and_real_options():
@@ -110,7 +111,8 @@ def test_infer_lookup_only_with_unique_document_evidence_and_real_options():
         [{"id": 1}], {},
     )
     assert no_dim["context"] is None
-    assert "没有同时具备" in no_dim["uncertainties"][0]
+    assert "缺少项目名称字段" in no_dim["uncertainties"][0]
+    assert "按项目编号唯一对应" in no_dim["uncertainties"][0]
 
 
 def test_query_ready_and_new_spec_gate_context_confirmation():
@@ -174,8 +176,8 @@ def test_preview_whitelists_validates_and_hashes_project_context():
         "mode": "base", "code_field": "project_code", "name_field": "project_name", "confirmed": True,
     })
     preview = preview_definition(definition, columns)
-    assert "t.`project_code` AS project_code" in preview["sql_preview"]
-    assert "t.`project_name` AS project_name" in preview["sql_preview"]
+    assert "t.`project_code` AS `项目编号`" in preview["sql_preview"]
+    assert "t.`project_name` AS `项目名称`" in preview["sql_preview"]
     without = preview_definition(_definition(dialect="mysql"), columns)
     assert preview["content_sha256"] != without["content_sha256"]
 

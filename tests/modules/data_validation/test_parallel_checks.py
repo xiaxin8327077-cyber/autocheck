@@ -49,13 +49,14 @@ def test_project_exact_screenshot_previews_each_check_with_one_scope(asset):
     assert selected["field"] == "c_projstatus" and selected["value"] == "1"
     for item, expected_field in zip(items, ["f_balan_fatotal", "f_endp_amt"]):
         definition = deepcopy(item)
+        definition["questions"] = []
         definition["expression"]["left"] = expected_field  # explicit asset choice if ambiguous
         definition["filters"] = [selected]
         definition["uncertainty_resolutions"] = ["已确认存续筛选"]
         preview = rules.preview_candidate(user(), {"definition": definition})
         sql = preview["sql_preview"]
         assert '"c_projstatus" = :filter_1' in sql and preview["sql_params"]["filter_1"] == "1"
-        assert f'"{expected_field}" < :right_value' in sql and preview["sql_params"]["right_value"] == 0
+        assert f'COALESCE(t."{expected_field}", 0) < :right_value' in sql and preview["sql_params"]["right_value"] == 0
         assert '"reg_pub_project_info"' in sql and '"c_projname" AS' in sql
         assert "reg_pub_fa_fee" not in sql and "reg_pub_accountbalance_sum" not in sql
         tests = rules.test_candidate(user(), {"definition": definition, "expected_hash": preview["content_sha256"]})

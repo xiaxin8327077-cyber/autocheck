@@ -2,6 +2,7 @@ import { errorMessage } from "../runtime.js";
 import { button, element, field, input, select, textarea } from "./dom.js";
 
 const SOURCE_OPTIONS = [["", "所有授权数据源（仅公开知识）"], ["监管报送集市", "监管报送集市"], ["监管报表", "监管报表"]];
+const SOURCE_GROUPS = [["监管报送集市", "监管报送集市"], ["监管报表", "监管报表"], ["", "公开知识"]];
 const KIND_OPTIONS = [["public", "公开监管知识"], ["local", "本地确认口径"]];
 const MAX_ENTRIES = 24;
 const CHANNEL = "settings-knowledge";
@@ -11,13 +12,18 @@ export function createKnowledgeSettings({ runtime, api, listen, canAdmin }) {
   let saved = "";
   let busy = false;
   const rows = [];
-  const editor = element("div", { className: "dv-knowledge-editor" });
+  const draftGroups = sourceGroups();
+  const editor = element("div", { className: "dv-knowledge-editor" }, ...[...draftGroups.values()].map((group) => group.node));
   const status = element("p", { className: "dv-inline-status", attrs: { role: "status" } });
   const feedback = element("p", { className: "dv-inline-status", attrs: { role: "status" } });
   const previewPanel = element("div", { className: "dv-knowledge-preview", hidden: true });
   const activePanel = element("details", { className: "dv-knowledge-preview", hidden: true });
   const controls = { capability: "dv.admin", listen };
-  const add = button("新增条目", { ...controls, onClick: () => { addEntry(); changed(); } });
+  const add = button("新增条目", { ...controls, onClick: () => {
+    const row = addEntry({}, true);
+    row?.fields.topic.focus?.();
+    changed();
+  } });
   const preview = button("预览草稿", { ...controls, onClick: showPreview });
   const save = button("保存知识草稿", { ...controls, className: "dv-button dv-button-primary", onClick: saveDraft });
   const enable = button("启用已保存草稿", { ...controls, onClick: () => activate(true) });
@@ -25,12 +31,35 @@ export function createKnowledgeSettings({ runtime, api, listen, canAdmin }) {
   const reload = button("重新读取并丢弃未保存编辑", { ...controls, onClick: () => refresh(true) });
   const section = element("section", { className: "dv-page-section dv-knowledge-settings", hidden: !canAdmin },
     element("div", { className: "dv-page-section-heading" }, element("h2", { text: "信托业务知识" })),
-    element("p", { className: "dv-muted", text: "启用后，AI 分析前按术语、数据源和适用期间加载相关摘要；短期复用已启用版本，不额外调用模型学习。公开知识不能替代本地字典、字段或取数口径。已启用摘要随分析请求发给所选模型；请勿填入未经授权外发的内部材料、客户数据、业务行或凭据。" }),
+    element("p", { className: "dv-muted", text: "启用后，系统按术语、数据源和适用期间匹配条目，并把摘要自动加入选表和规则生成的提示词。请仅维护获准发送给所选模型的业务口径。" }),
     status, activePanel, editor,
     element("div", { className: "dv-filter-actions" }, add, preview, save, enable, disable, reload),
     feedback, previewPanel);
 
-  function addEntry(entry = {}) {
+  function sourceGroups() {
+    return new Map(SOURCE_GROUPS.map(([source, label]) => {
+      const list = element("div", { className: "dv-knowledge-group-entries" });
+      const node = element("section", { className: "dv-knowledge-group", dataset: { knowledgeSource: source }, hidden: true },
+        element("h3", { className: "dv-knowledge-group-title", text: label }), list);
+      return [source, { node, list }];
+    }));
+  }
+
+  function placeEntry(groups, source, entry) {
+    const group = groups.get(source) || groups.get("");
+    if (entry.parentNode !== group.list) group.list.append(entry);
+    group.node.hidden = false;
+  }
+
+  function entryHeading(topic, sourceName) {
+    const title = element("strong", { text: topic || "新条目" });
+    const source = element("span", { className: "dv-muted", text: sourceName || "所有授权数据源" });
+    const heading = element("summary", { className: "dv-knowledge-heading" },
+      element("span", { className: "dv-knowledge-heading-line" }, title, source));
+    return { heading, title, source };
+  }
+
+  function addEntry(entry, open = false) {
     if (rows.length >= MAX_ENTRIES) return;
     const fields = {
       kind: select(KIND_OPTIONS, { value: entry.kind || "public" }),
@@ -47,13 +76,15 @@ export function createKnowledgeSettings({ runtime, api, listen, canAdmin }) {
     fields.summary.maxLength = 500;
     fields.keywords.maxLength = 200;
     const remove = button("移除此条", { className: "dv-button dv-button-plain is-danger", capability: "dv.admin" });
-    const node = element("div", { className: "dv-knowledge-entry" },
-      element("div", { className: "dv-prompt-heading" }, element("strong", { text: "知识条目" }), remove),
-      element("div", { className: "dv-form-grid" }, field("知识类型", fields.kind), field("主题", fields.topic),
-        field("适用数据源", fields.source_name), field("匹配词（最多 8 个）", fields.keywords),
-        field("适用起日（可空）", fields.valid_from), field("适用止日（可空）", fields.valid_to)),
-      field("来源或依据", fields.reference), field("摘要（最多 500 字）", fields.summary));
-    const row = { node, fields, remove, dispose: listen(remove, "click", () => {
+    const { heading, title, source } = entryHeading(entry.topic, entry.source_name);
+    const node = element("details", { className: "dv-knowledge-entry" }, heading,
+      element("div", { className: "dv-knowledge-body" },
+        element("div", { className: "dv-form-grid" }, field("知识类型", fields.kind), field("主题", fields.topic),
+          field("适用数据源", fields.source_name), field("匹配词（最多 8 个）", fields.keywords),
+          field("适用起日（可空）", fields.valid_from), field("适用止日（可空）", fields.valid_to)),
+        field("来源或依据", fields.reference), field("摘要（最多 500 字）", fields.summary), remove));
+    node.open = open;
+    const row = { node, fields, remove, title, source, dispose: listen(remove, "click", () => {
       if (!canAdmin || busy) return;
       rows.splice(rows.indexOf(row), 1);
       row.dispose?.();
@@ -61,7 +92,8 @@ export function createKnowledgeSettings({ runtime, api, listen, canAdmin }) {
       changed();
     }) };
     rows.push(row);
-    editor.append(node);
+    placeEntry(draftGroups, fields.source_name.value, node);
+    return row;
   }
 
   function entries() {
@@ -94,24 +126,39 @@ export function createKnowledgeSettings({ runtime, api, listen, canAdmin }) {
 
   function changed() {
     previewPanel.hidden = true;
+    rows.forEach(({ fields, node, title, source }) => {
+      title.textContent = fields.topic.value.trim() || "新条目";
+      source.textContent = fields.source_name.value || "所有授权数据源";
+      const focus = document.activeElement === fields.source_name && node.parentNode !== draftGroups.get(fields.source_name.value)?.list;
+      placeEntry(draftGroups, fields.source_name.value, node);
+      if (focus) fields.source_name.focus();
+    });
+    draftGroups.forEach(({ node, list }) => { node.hidden = list.children.length === 0; });
     sync();
   }
   listen(editor, "input", changed);
   listen(editor, "change", changed);
 
   function summaries(items) {
-    return items.map((item) => element("div", { className: "dv-knowledge-entry" },
-      element("strong", { text: `${item.kind === "public" ? "公开" : "本地"} · ${item.topic}` }),
-      element("p", { text: item.summary }),
-      element("p", { className: "dv-muted", text: `适用：${item.source_name || "授权数据源"} · ${item.valid_from || "不限"} 至 ${item.valid_to || "不限"}` }),
-      element("p", { className: "dv-muted", text: `来源：${item.reference}` })));
+    const groups = sourceGroups();
+    for (const item of items) {
+      const entry = element("details", { className: "dv-knowledge-entry" }, entryHeading(item.topic, item.source_name).heading,
+        element("div", { className: "dv-knowledge-body" },
+          element("p", { text: item.summary }),
+          element("p", { className: "dv-muted", text: `适用：${item.valid_from || "不限"} 至 ${item.valid_to || "不限"}` }),
+          element("p", { className: "dv-muted", text: `来源：${item.reference}` })));
+      placeEntry(groups, item.source_name, entry);
+    }
+    return [...groups.values()].filter(({ node }) => !node.hidden).map(({ node }) => node);
   }
 
   function render(result) {
+    const entryKey = (entry) => [entry.kind, entry.source_name, entry.topic, entry.valid_from, entry.valid_to].join("\0");
+    const expanded = new Set(entries().filter((_, index) => rows[index].node.open).map(entryKey));
     snapshot = result;
     rows.splice(0).forEach((row) => row.dispose?.());
-    editor.replaceChildren();
-    result.draft.forEach(addEntry);
+    draftGroups.forEach(({ list }) => list.replaceChildren());
+    result.draft.forEach((entry) => addEntry(entry, expanded.has(entryKey(entry))));
     saved = JSON.stringify(entries());
     activePanel.hidden = !result.active_revision;
     activePanel.replaceChildren(element("summary", { text: "查看当前启用版" }), ...summaries(result.active));

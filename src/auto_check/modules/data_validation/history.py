@@ -6,7 +6,7 @@ from copy import deepcopy
 import json
 from typing import Any, Mapping
 
-_HISTORY_ACTIONS = {"create", "update", "confirm", "disable", "copy"}
+HISTORY_ACTIONS = frozenset({"create", "update", "confirm", "disable", "copy", "delete"})
 _VERSION_ACTIONS = {"create", "update", "copy"}
 _SENSITIVE_NAMES = {
     "api_key", "apikey", "password", "secret", "token", "authorization",
@@ -92,7 +92,7 @@ def history_event(
 ) -> dict[str, Any]:
     """Build the small, persistable event; never retain the request payload."""
 
-    if action_code not in _HISTORY_ACTIONS:
+    if action_code not in HISTORY_ACTIONS:
         raise ValueError("unsupported rule history action")
     event = dict(details or {})
     event.update({
@@ -124,7 +124,7 @@ def merge_rule_history(
     seen_version_actions: set[tuple[int, str]] = set()
     for row in sorted(audits, key=lambda item: int(item["id"])):
         action = str(row["action_code"])
-        if action not in _HISTORY_ACTIONS:
+        if action not in HISTORY_ACTIONS:
             continue
         detail = _json_object(row.get("detail_json"))
         version_no = _optional_int(detail.get("version_no"))
@@ -334,6 +334,7 @@ def _default_summary(action: str, version_no: int | None) -> str:
         "update": "编辑保存规则",
         "confirm": "确认启用规则",
         "disable": "停用规则",
+        "delete": "删除规则",
         "copy": "复制创建规则",
     }
     suffix = f"，版本 {version_no}" if version_no is not None else ""

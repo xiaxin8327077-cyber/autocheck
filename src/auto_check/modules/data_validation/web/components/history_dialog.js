@@ -11,6 +11,7 @@ const ACTION_META = {
   update: ["修改", "primary"],
   confirm: ["确认启用", "success"],
   disable: ["停用", "danger"],
+  delete: ["删除", "danger"],
   copy: ["复制", "primary"],
 };
 

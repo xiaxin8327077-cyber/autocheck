@@ -1,5 +1,6 @@
 """Regression coverage for slow models, fenced JSON and numeric constants."""
 import json
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -40,7 +41,7 @@ def test_slow_model_can_use_120_seconds_without_retry(stage_index, expected_stag
     rules, model = _rules_with_doc([_select_payload(), _generate_payload()])
     original = model.complete
     calls = []
-    def slow(model_id, messages, *, timeout_seconds):
+    def slow(model_id, messages, *, timeout_seconds, cancel_event=None):
         calls.append(timeout_seconds)
         if len(calls) - 1 == stage_index and timeout_seconds <= 60:
             raise TimeoutError("sensitive URL must not escape")
@@ -127,7 +128,7 @@ def test_numeric_zero_candidate_uses_real_field_and_survives_save():
         {"column_name": "row_id", "data_type": "varchar"},
         {"column_name": "amount", "data_type": "numeric"},
         {"column_name": "report_date", "data_type": "date"},
-    ])
+    ], sources=[SimpleNamespace(id="src", name="监管报送集市", dialect=result["dialect"])])
     tested = rules.run_tests(user(), saved["id"], detail["version_no"])
     assert tested["failed_count"] == 0
     assert tested["passed_count"] >= 4

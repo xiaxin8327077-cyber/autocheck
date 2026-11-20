@@ -155,9 +155,7 @@ def test_cross_grain_real_indicators_become_project_first_options() -> None:
     assert all(f"（{item['candidate']['table_name']}）" in item["candidate"]["violation_message"]
                for item in candidate["candidate_options"])
 
-    suggestions = candidate["comparison_suggestions"]
-    assert suggestions and suggestions[0]["supported"] is False
-    assert suggestions[0]["limitations"]
+    assert candidate["comparison_suggestions"] == [], "不同粒度本身不能触发程序拼接的一致性模板"
 
 
 def test_exact_screenshot_sentence_is_resolved_into_three_fact_bound_schemes() -> None:

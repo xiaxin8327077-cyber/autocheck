@@ -10,6 +10,7 @@ from typing import Any
 from auto_check.app.module_system.contracts import ModuleHealth, ModuleManifest
 
 from .api import register_routes
+from .diagnostic_logging import start_diagnostics, stop_diagnostics
 from .service import DataValidationService
 from .storage import RuleStorage
 
@@ -26,11 +27,16 @@ MANIFEST = _manifest()
 class DataValidationModule:
     manifest: ModuleManifest = field(default=MANIFEST)
     _service: DataValidationService | None = field(default=None, init=False, repr=False)
+    _diagnostics: Any = field(default=None, init=False, repr=False)
 
     def register_routes(self, router: Any) -> None:
         register_routes(router, self._require_service)
 
     def register_schema(self, registry: Any) -> None:
+        registry.add("data_validation_analysis_results", {"cache_key", "response_json", "updated_at"})
+        registry.add("data_validation_analysis_memories", {
+            "id", "memory_key", "context_key", "request_key", "pattern_key", "request_text", "baseline_json",
+        })
         registry.add("data_validation_rules", {
             "id", "rule_code", "name", "description", "creator_user_id", "status",
             "current_version_id", "source_id", "table_name", "report_category", "rule_type", "updated_at",
@@ -86,24 +92,33 @@ class DataValidationModule:
         registry.add("data_validation_task_rules", {
             "id", "task_id", "rule_id", "version_id", "version_no", "content_sha256",
             "sql_summary", "status", "violation_count", "truncated", "error_code",
+            "source_name", "source_id", "table_name_cn", "report_category_name", "report_category", "execution_generation",
         })
         registry.add("data_validation_issues", {
             "id", "task_id", "rule_id", "version_no", "business_key", "project_code", "project_name",
-            "project_name_status", "issue_kind", "message", "created_at",
+            "project_name_status", "issue_kind", "message", "created_at", "query_result_json",
         })
 
     def start(self, context: Any) -> None:
+        if self._service is not None:
+            return
         self._service = DataValidationService(
             RuleStorage(context.application_database),
             metadata=context.services.resolve("platform.data_sources", 1),
             model=context.services.resolve("platform.language_models", 1),
             report_navigation=context.services.resolve("platform.report_navigation", 1),
+            background_executor=getattr(context, "background_executor", None),
         )
+        self._diagnostics = start_diagnostics(context)
 
     def stop(self) -> None:
-        if self._service is not None:
-            self._service.join()
-        self._service = None
+        try:
+            if self._service is not None:
+                self._service.join()
+        finally:
+            self._service = None
+            stop_diagnostics(self._diagnostics)
+            self._diagnostics = None
 
     def health(self) -> ModuleHealth:
         return ModuleHealth(healthy=self._service is not None)

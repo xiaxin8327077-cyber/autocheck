@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as _datetime
 import math
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from typing import Any
 
 from .contracts import AppError
@@ -19,9 +19,12 @@ from .query_spec import (
     RELATED,
     UNARY_OPS,
     base_type,
+    comparison_conditions,
+    is_condition_group,
     is_finite_number,
     is_new_spec,
     is_unary,
+    type_family,
     validate_query_spec,
 )
 
@@ -42,7 +45,7 @@ def ordered_values(data_type: Any) -> tuple[Any, Any]:
     if base in _DATE_TYPES:
         anchor = _datetime.date.today() + _datetime.timedelta(days=1)
         return anchor.isoformat(), (anchor + _datetime.timedelta(days=1)).isoformat()
-    if base in _NUMBER_TYPES:
+    if type_family(data_type) == "number":
         return 1, 2
     return "样本A", "样本B"
 
@@ -232,10 +235,42 @@ def evaluate_expression(definition: dict[str, Any], row: dict[str, Any]) -> int:
     return _flat_evaluation(definition, row)[0]
 
 
+def _group_evaluation(
+    definition: dict[str, Any], base: dict[str, Any], matches: list[dict[str, Any]],
+) -> tuple[int, str | None]:
+    conditions = comparison_conditions(definition)
+    left_mode, right_mode = _null_modes(definition)
+    any_condition = definition["expression"]["logic"] == "any"
+    hit_kind = "numeric" if left_mode or right_mode else "comparison"
+    needs_review = False
+    for related in matches:
+        states: list[bool | None] = []
+        for item in conditions:
+            left = base.get(item["left"])
+            op = item["op"]
+            if op in UNARY_OPS:
+                states.append(left is None if op == "is_null" else left is not None)
+                continue
+            if item.get("right_type") == "value":
+                right = item["right"]
+            else:
+                right = (related if item.get("right_table") == RELATED else base).get(item["right"])
+            left, missing_left = _prepare_numeric_operand(left, left_mode)
+            right, missing_right = _prepare_numeric_operand(right, right_mode)
+            if missing_left or missing_right:
+                states.append(None)
+            else:
+                states.append(sql_compare(op, left, right))
+        if (any_condition and True in states) or (not any_condition and all(states)):
+            return 1, hit_kind
+        if None in states and (any_condition or False not in states):
+            needs_review = True
+    return (1, "missing_value") if needs_review else (0, None)
+
+
 def _relational_evaluation(definition: dict[str, Any], row: dict[str, Any]) -> tuple[int, str | None]:
     """新规格求值：先过滤，再按 EXISTS 半连接判断，每基表行最多计 1。"""
     spec = validate_query_spec(definition)
-    expression = definition.get("expression") or {}
     base = row.get("base") or {}
     related = row.get("related") or []
     period = row.get("report_date")
@@ -271,8 +306,37 @@ def _relational_evaluation(definition: dict[str, Any], row: dict[str, Any]) -> t
                 continue
             matched.append(entry)
 
+    return evaluate_matched_rows(definition, spec, base, matched)
+
+
+def evaluate_matched_rows(
+    definition: dict[str, Any], spec: dict[str, Any], base: dict[str, Any], matched: list[dict[str, Any]],
+) -> tuple[int, str | None]:
+    """在已满足期间、关联和范围条件的记录上执行原表达式。"""
+    expression = definition["expression"]
+    join = spec["join"]
+    if is_condition_group(definition):
+        return _group_evaluation(definition, base, matched if join is not None else [{}])
     right_type = str(expression.get("right_type") or "field")
     left_value = base.get(expression["left"])
+    if join and join.get("right_aggregate") == "sum":
+        parts = [entry.get(expression["right"]) for entry in matched]
+        if not parts:
+            return 1, "missing_value"
+        if definition.get("null_policy") == "zero":
+            left_value = 0 if left_value is None else left_value
+            parts = [0 if value is None else value for value in parts]
+        elif left_value is None or any(value is None for value in parts):
+            return 1, "missing_value"
+        if not all(_is_numeric_sample(value) for value in [left_value, *parts]):
+            raise AppError("VALIDATION_ERROR")
+        numbers = [Decimal(str(value)) for value in parts]
+        # 金额用十进制按明细逐项相加，保留大额与小数同组时的有效位数。
+        with localcontext() as context:
+            places = max(number.adjusted() for number in numbers) - min(number.as_tuple().exponent for number in numbers)
+            context.prec = max(context.prec, places + len(str(len(numbers))) + 2)
+            total = sum(numbers, Decimal(0))
+        return (1, "numeric") if Decimal(str(left_value)) != total else (0, None)
     left_mode, right_mode = _null_modes(definition)
     numeric_policy = bool(left_mode or right_mode)
     if is_unary(definition):
@@ -320,6 +384,9 @@ def _relational_evaluation(definition: dict[str, Any], row: dict[str, Any]) -> t
 
 
 def evaluate_case_with_kind(definition: dict[str, Any], row: dict[str, Any]) -> tuple[int, str | None]:
+    if "project_driver" in definition:
+        from .project_driver_samples import evaluate_project_case
+        return evaluate_project_case(definition, row)
     if is_new_spec(definition):
         return _relational_evaluation(definition, row)
     return _flat_evaluation(definition, row)
@@ -354,21 +421,19 @@ def _unique(items: list[str]) -> list[str]:
 def case_fields(definition: dict[str, Any]) -> tuple[list[str], list[str]]:
     """返回嵌套样本 base/related 的精确字段集合。"""
     spec = validate_query_spec(definition)
-    expression = definition.get("expression") or {}
-    base: list[str] = [str(expression.get("left"))]
-    right_type = str(expression.get("right_type") or "field")
-    if not is_unary(definition) and right_type == "field" and spec["right_table"] != RELATED:
-        base.append(str(expression.get("right")))
-    base.append(str(definition.get("report_date_field") or "report_date"))
+    base: list[str] = []
     related: list[str] = []
+    for item in comparison_conditions(definition):
+        base.append(str(item["left"]))
+        if item.get("op") not in UNARY_OPS and item.get("right_type", "field") == "field":
+            (related if item.get("right_table") == RELATED else base).append(str(item["right"]))
+    base.append(str(definition.get("report_date_field") or "report_date"))
     join = spec["join"]
     if join is not None:
         for pair in join["on"]:
             base.append(pair["left"])
             related.append(pair["right"])
         related.append(join["report_date_field"])
-        if spec["right_table"] == RELATED:
-            related.append(str(expression.get("right")))
     for item in spec["filters"]:
         (related if item["table"] == RELATED else base).append(item["field"])
     return _unique(base), _unique(related)
@@ -582,6 +647,102 @@ def _comparison_assignment(
     }
 
 
+def _group_cases(
+    definition: dict[str, Any], spec: dict[str, Any], base: dict[str, Any], related: dict[str, Any],
+    period: str, base_types: dict[str, Any], related_types: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """逐项改变操作数、合成组合与范围样本；用单项比较的已知语义设置预期。"""
+    conditions = comparison_conditions(definition)
+    cases = []
+    join = spec["join"]
+
+    def add(name, base_values, related_values, *, matched=True):
+        row = {"base": dict(base_values), "related": [dict(related_values)] if join and matched else [],
+               "report_date": period}
+        if any(case["row"] == row for case in cases):
+            return
+        # 默认样本至多有一条关联行。以已有单条件实现独立建立预期，重测才执行组求值器。
+        scope = {**definition, "expression": {"left": definition.get("report_date_field") or "report_date",
+                                              "op": "is_not_null"}, "null_policy": "skip"}
+        count, kind = 0, None
+        if _relational_evaluation(scope, row)[0]:
+            results = [_relational_evaluation({**definition, "expression": item}, row) for item in conditions]
+            combine = any if definition["expression"]["logic"] == "any" else all
+            if combine(hit and issue != "missing_value" for hit, issue in results):
+                count = 1
+                kind = "numeric" if definition.get("null_policy") in ("zero", "review") else "comparison"
+            elif combine(hit for hit, _ in results):
+                count, kind = 1, "missing_value"
+        case = {"name": name, "row": row, "expected_count": count}
+        if kind:
+            case["expected_issue_kind"] = kind
+        cases.append(case)
+
+    # 模板数据先使用列类型，再由筛选、日期、关联键确定测试范围。未传列类型时数值常量仍为数值。
+    for item in conditions:
+        if item.get("right_type") == "value" and not base_types.get(item["left"]):
+            base[item["left"]] = item["right"]
+    add("范围内基准值", base, related)
+    combined = {state: (dict(base), dict(related)) for state in ("命中", "未命中")}
+    bounds: dict[str, list[Any]] = {}
+    for index, item in enumerate(conditions, 1):
+        left, op = item["left"], item["op"]
+        data_type = base_types.get(left)
+        low, high = (1, 2) if type_family(data_type) == "number" else ordered_values(data_type)
+        right_name = None
+        if op in UNARY_OPS:
+            non_null = base[left] if base[left] is not None else low
+            values = [("命中", None if op == "is_null" else non_null, None),
+                      ("未命中", non_null if op == "is_null" else None, None)]
+        elif item.get("right_type") == "value":
+            bound = item["right"]
+            normal, hit = value_sample_pair(op, bound)
+            bounds.setdefault(left, []).append(bound)
+            values = [("命中", hit, None), ("未命中", normal, None), ("边界", bound, None), ("空值", None, None)]
+        else:
+            right_name = item["right"]
+            normal, hit = sample_pairs(op, low, high)
+            values = [("命中", *hit), ("未命中", *normal), ("边界", low, low),
+                      ("左侧空值", None, high), ("右侧空值", low, None)]
+        for label, left_value, right_value in values:
+            main, other = dict(base), dict(related)
+            main[left] = left_value
+            if right_name is not None:
+                (other if item.get("right_table") == RELATED else main)[right_name] = right_value
+            add(f"条件 {index} · {label}取值", main, other)
+            if label in combined:
+                both_base, both_other = combined[label]
+                both_base[left] = left_value
+                if right_name is not None:
+                    (both_other if item.get("right_table") == RELATED else both_base)[right_name] = right_value
+    for label, (main, other) in combined.items():
+        add(f"组合{label}取值", main, other)
+    for field, thresholds in bounds.items():
+        ordered = sorted(set(thresholds))
+        for lo, hi in zip(ordered, ordered[1:]):
+            # 先分别取半，避免两端求和溢出；超大整数用整数中点。
+            middle = (lo + hi) // 2 if isinstance(lo, int) and isinstance(hi, int) and hi - lo > 1 else None
+            if middle is None:
+                try:
+                    middle = lo / 2 + hi / 2
+                except OverflowError:
+                    continue
+            if lo < middle < hi:
+                add(f"{field} 区间内", {**base, field: middle}, related)
+    witness = next((case["row"] for case in cases if case["expected_count"] == 1), cases[0]["row"])
+    main = witness["base"]
+    other = (witness["related"] or [{}])[0]
+    for index, item in enumerate(spec["filters"], 1):
+        filtered_base, filtered_other = dict(main), dict(other)
+        side, types = (filtered_other, related_types) if item["table"] == RELATED else (filtered_base, base_types)
+        side[item["field"]] = _fail_value(item, types.get(item["field"]))
+        add(f"筛选 {index} 不命中", filtered_base, filtered_other)
+    if join:
+        add("无关联记录", main, other, matched=False)
+        add("跨期关联记录", main, {**other, join["report_date_field"]: "2000-01-01"})
+    return cases
+
+
 def _nested_cases(
     definition: dict[str, Any],
     base_columns: list[dict[str, Any]] | None,
@@ -656,6 +817,8 @@ def _nested_cases(
                 row[field] = ordered_values(related_types.get(field))[0]
         return row
 
+    if is_condition_group(definition):
+        return _group_cases(definition, spec, base_row(), related_row(), anchor, base_types, related_types)
     assignment = {} if is_unary(definition) else _comparison_assignment(
         definition, spec, base_types, related_types,
     )
@@ -679,6 +842,27 @@ def _nested_cases(
             "row": {"base": base, "related": related, "report_date": anchor},
             "expected_count": expected,
         })
+
+    if join and join.get("right_aggregate") == "sum":
+        left, right = expression["left"], expression["right"]
+        def sum_case(name, amount, parts, expected, issue_kind=None):
+            base = {**base_row(), left: amount}
+            rows = [related_row(comparison_values={right: value}) for value in parts]
+            add(name, expected, base, rows)
+            if issue_kind:
+                cases[-1]["expected_issue_kind"] = issue_kind
+        sum_case("两笔相同明细合计一致", 8, [4, 4], 0)
+        sum_case("明细合计有差额", 8, [3, 4], 1, "numeric")
+        sum_case("正负明细合计为零", 0, [2, -2], 0)
+        sum_case("同日无关联明细", 0, [], 1, "missing_value")
+        zero = definition.get("null_policy") == "zero"
+        sum_case("明细中一项缺值", 4, [4, None], 0 if zero else 1, None if zero else "missing_value")
+        sum_case("主表原值缺失", None, [0], 0 if zero else 1, None if zero else "missing_value")
+        base = {**base_row(), left: 2}
+        other_day = (_datetime.date.fromisoformat(anchor) - _datetime.timedelta(days=1)).isoformat()
+        add("跨期明细不计入", 0, base, [related_row(comparison_values={right: 2}),
+                                      related_row(date=other_day, comparison_values={right: 10})])
+        return cases
 
     if is_unary(definition):
         left_field = expression["left"]
@@ -791,6 +975,9 @@ def default_cases(
     columns: list[dict[str, Any]] | None = None,
     related_columns: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    if "project_driver" in definition:
+        from .project_driver_samples import default_project_cases
+        return default_project_cases(definition, columns, related_columns)
     if is_new_spec(definition):
         return _nested_cases(definition, columns, related_columns)
     return _legacy_flat_cases(definition, columns)

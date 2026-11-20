@@ -139,13 +139,15 @@ def test_batch_run_previews_count_and_reports_conflicts() -> None:
 
 
 def test_same_period_keeps_each_execution() -> None:
-    metadata = Metadata(rows=(("first",),))
+    from tests.modules.data_validation.test_execution_result_details import ResultMetadata
+
+    metadata = ResultMetadata(["贷款业务编号"], [("first",)])
     _database, rules = service(metadata=metadata)
     owner = user()
     rule, _version = _enable(rules, owner)
     payload = {"rule_ids": [rule["id"]], "source_id": "src", "report_period": "2026-09-30"}
     first = rules.start_task(owner, payload)
-    metadata.rows = (("second",),)
+    metadata.values = [("second",)]
     second = rules.start_task(owner, payload)
     listed = rules.list_recent_tasks(owner, {"report_period": "2026-09-30"})
     other = rules.list_recent_tasks(owner, {"report_period": "2026-10-31"})

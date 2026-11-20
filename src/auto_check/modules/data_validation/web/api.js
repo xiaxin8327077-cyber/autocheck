@@ -14,8 +14,19 @@ function body(method, payload, options = {}) {
 }
 
 export function createApi(context) {
-  const request = (path, options = {}) => context.api(`${API_PREFIX}${path}`, options)
-    .then((payload) => payload?.data ?? payload);
+  const request = (path, options = {}) => {
+    const aiWrite = path.startsWith("/ai/") && ["POST", "DELETE"].includes(options.method);
+    return context.api(`${API_PREFIX}${path}`, aiWrite ? { ...options, authPreflight: true } : options)
+      .then((payload) => payload?.data ?? payload);
+  };
+  const executionRequest = (path, options) => request(path, options).catch(error => {
+    const message = error?.payload?.error;
+    if ((error?.status === 400 && message === "invalid request")
+        || (error?.status === 404 && message === "module route not found")) {
+      error.code = "TASK_API_VERSION_MISMATCH";
+    }
+    throw error;
+  });
 
   return {
     rules: (query = {}, options = {}) => request(`/rules${queryString({
@@ -45,7 +56,8 @@ export function createApi(context) {
       body(ruleId ? "PUT" : "POST", payload, options),
     ),
     copy: (ruleId, options = {}) => request(`/rules/${encodeURIComponent(ruleId)}/copy`, body("POST", {}, options)),
-    disable: (ruleId, options = {}) => request(`/rules/${encodeURIComponent(ruleId)}/disable`, body("POST", {}, options)),
+    disable: (ruleId, { expected_rule, ...options } = {}) => request(`/rules/${encodeURIComponent(ruleId)}/disable`, body("POST", expected_rule ? { expected_rule } : {}, options)),
+    deleteRule: (ruleId, options = {}) => request(`/rules/${encodeURIComponent(ruleId)}`, body("DELETE", {}, options)),
     models: (options = {}) => request("/models", options),
     testModel: (modelId, options = {}) => request("/models/test", body("POST", { model_id: modelId }, options)),
     documents: (options = {}) => request("/settings/documents", options),
@@ -75,6 +87,7 @@ export function createApi(context) {
     ),
     preview: (payload, options = {}) => request("/ai/preview", body("POST", payload, options)),
     testCandidate: (payload, options = {}) => request("/ai/tests", body("POST", payload, options)),
+    runCandidateSql: (payload, options = {}) => request("/ai/sql-test", body("POST", payload, options)),
     test: (ruleId, payload, options = {}) => request(
       `/rules/${encodeURIComponent(ruleId)}/tests`, body("POST", payload, options),
     ),
@@ -82,16 +95,32 @@ export function createApi(context) {
       `/rules/${encodeURIComponent(ruleId)}/confirm`, body("POST", payload, options),
     ),
     startTask: (payload, options = {}) => request("/tasks", body("POST", payload, options)),
-    tasks: (query = {}, options = {}) => request(`/tasks${queryString({ report_period: query.report_period || "" })}`, options),
+    executionRuleIds: (query = {}, options = {}) => executionRequest(`/rules/execution-selection${queryString({
+      keyword: query.keyword || "", source_id: query.source_id || "", report_category: query.report_category || "",
+    })}`, options),
+    taskProgress: (ids = [], { report_category = "", ...options } = {}) => executionRequest(`/tasks/progress${queryString({
+      task_ids: ids.join(","), report_category,
+    })}`, options),
+    tasks: (query = {}, options = {}) => request(`/tasks${queryString({ report_period: query.report_period || "", report_category: query.report_category || "" })}`, options),
+    taskDetails: (taskId, query = {}, options = {}) => request(
+      `/tasks/${encodeURIComponent(taskId)}${queryString({ report_category: query.report_category || "", keyword: query.keyword || "",
+        page: query.page || "", page_size: query.page_size || "", only_issues: query.only_issues ? "1" : "" })}`, options,
+    ),
     issues: (taskId, query = {}, options = {}) => request(
       `/tasks/${encodeURIComponent(taskId)}/issues${queryString({
         page: query.page || 1,
         page_size: query.page_size || 50,
+        report_category: query.report_category || "",
+        rule_id: query.rule_id || "",
       })}`, options,
     ),
     cancelTask: (taskId, options = {}) => request(`/tasks/${encodeURIComponent(taskId)}/cancel`, body("POST", {}, options)),
+    pauseTask: (taskId, options = {}) => request(`/tasks/${encodeURIComponent(taskId)}/pause`, body("POST", {}, options)),
+    resumeTask: (taskId, options = {}) => request(`/tasks/${encodeURIComponent(taskId)}/resume`, body("POST", {}, options)),
     retryTask: (taskId, options = {}) => request(`/tasks/${encodeURIComponent(taskId)}/retry`, body("POST", {}, options)),
-    exportIssues: (taskId, options = {}) => request("/exports", body("POST", { task_id: taskId, file_type: "csv" }, options)),
+    exportIssues: (taskId, { report_category = "", rule_id = null, ...options } = {}) => request(
+      "/exports", body("POST", { task_id: taskId, file_type: "csv", report_category, ...(rule_id ? { rule_id } : {}) }, options),
+    ),
     exportRulePack: (ruleIds, options = {}) => request("/rule-packs/export", body("POST", { rule_ids: ruleIds }, options)),
     importRulePack: (content, options = {}) => request("/rule-packs/import", body("POST", { content }, options)),
   };

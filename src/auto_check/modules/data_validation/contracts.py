@@ -6,6 +6,10 @@ import json
 from hashlib import sha256
 from typing import Any
 
+PBC_REPORT_CATEGORIES = frozenset({"pbc_central", "pbc_template"})
+PBC_SHARED_CATEGORY = "group:pbc"
+PBC_SHARED_CATEGORY_NAME = "人行报送"
+
 
 class AppError(Exception):
     def __init__(self, code: str, *, stage: str = "", reference: str = "") -> None:

@@ -2,8 +2,10 @@ import {
   BLANK_COLUMN_FIELD, EQUALITY_POLICY_OPTIONS, NULL_POLICY_OPTIONS, OPERATOR_OPTIONS,
 } from "../constants.js";
 import { errorMessage } from "../runtime.js";
+import { bindComparisonField, comparisons, fieldTarget, hasComparison, isGrouped } from "../comparisons.js";
+import { createConditionGroup } from "./condition_group.js";
 import { aiIcon } from "./ai_visuals.js";
-import { hasCapability } from "../state.js";
+import { hasCapability, reportCategoryCode } from "../state.js";
 import { button, element, field, input, select, textarea } from "./dom.js";
 
 function selectedSource(sources, id) {
@@ -27,11 +29,14 @@ export function createRuleForm({
   let persistedMappingVersion = "";
   let reportDateField = "report_date";
   let savedSignature = "";
+  let aiRuleDescription = "";
   let generationMode = isAiMode ? "ai" : "manual";
   let savedFieldEqualityPolicy = "unresolved";
   let reviewData = {};
   let reviewInputs = [];
   let reviewRemovers = [];
+  let savedReviewContext = null;
+  const reviewedQuestions = new Set();
   let candidateIncomplete = false;
   // 复合筛选 / 两表关联：由 AI 候选或已保存定义带入，表单必须完整保留，不能读丢。
   let filters = [];
@@ -41,6 +46,9 @@ export function createRuleForm({
   let relatedColumns = [];
   let rightTable = "base";
   let projectContext = null;
+  let projectDriver = null;
+  let comparisonEvidence = {};
+  let semanticReview = {};
   const reviewSection = element("section", { className: "dv-notice is-warning", hidden: true });
 
   const FILTER_TABLES = ["base", "related"];
@@ -54,6 +62,8 @@ export function createRuleForm({
   }
 
   function clearRelationEvidence() {
+    comparisonEvidence = {};
+    semanticReview = {};
     filters = [];
     join = null;
     unmatchedPolicy = "unresolved";
@@ -61,6 +71,7 @@ export function createRuleForm({
     relatedColumns = [];
     rightTable = "base";
     projectContext = null;
+    projectDriver = null;
   }
 
   function baseColumns() {
@@ -121,19 +132,21 @@ export function createRuleForm({
       report_date_field: String(join.report_date_field || ""),
       relationship_confirmed: relationshipConfirmed,
       unmatched_policy: unmatchedPolicy,
+      ...(join.right_aggregate === "sum" ? { right_aggregate: "sum" } : {}),
     };
   }
 
   function restoreRelationEvidence(source) {
     const value = source && typeof source === "object" ? source : {};
+    semanticReview = value.analysis_protocol === 2
+      ? { analysis_protocol: 2, semantic_intent: value.semantic_intent } : {};
     filters = Array.isArray(value.filters) ? value.filters.map(normalizeFilter) : [];
     const joinValue = value.join && value.join.table_name ? value.join : null;
     const nestedConfirmed = joinValue
       ? (joinValue.relationship_confirmed === true || value.relationship_confirmed === true)
       : value.relationship_confirmed === true;
-    const nestedUnmatched = joinValue
-      ? (joinValue.unmatched_policy === "exclude" || value.unmatched_policy === "exclude" ? "exclude" : "unresolved")
-      : (value.unmatched_policy === "exclude" ? "exclude" : "unresolved");
+    const nestedUnmatched = joinValue?.right_aggregate === "sum" && joinValue.unmatched_policy === "review" ? "review"
+      : (joinValue?.unmatched_policy === "exclude" || value.unmatched_policy === "exclude" ? "exclude" : "unresolved");
     join = joinValue ? {
       table_name: String(joinValue.table_name || ""),
       on: (Array.isArray(joinValue.on) ? joinValue.on : []).map((item) => ({
@@ -142,15 +155,22 @@ export function createRuleForm({
       report_date_field: String(joinValue.report_date_field || ""),
       relationship_confirmed: nestedConfirmed,
       unmatched_policy: nestedUnmatched,
+      ...(joinValue.right_aggregate === "sum" ? { right_aggregate: "sum" } : {}),
     } : null;
     relationshipConfirmed = nestedConfirmed;
     unmatchedPolicy = nestedUnmatched;
     relatedColumns = Array.isArray(value.related_columns) ? [...value.related_columns] : [];
     const expression = value.expression || {};
+    comparisonEvidence = Object.fromEntries(["null_handling", "null_evidence", "include_result_fields"]
+      .filter((key) => isGrouped(expression) && value[key] !== undefined)
+      .map((key) => [key, value[key]]));
+    setGroup(expression);
     rightTable = expression.right_table === "related" ? "related" : "base";
     projectContext = value.project_context && typeof value.project_context === "object"
       ? JSON.parse(JSON.stringify(value.project_context))
       : null;
+    projectDriver = value.project_driver && typeof value.project_driver === "object"
+      ? JSON.parse(JSON.stringify(value.project_driver)) : null;
   }
 
   function optionSelection(question, value) {
@@ -200,6 +220,23 @@ export function createRuleForm({
   requestField.classList.add("dv-field-wide");
 
   const model = select(BLANK_COLUMN_FIELD);
+  let reasoningEnabled = false;
+  const reasoningSwitch = button("", { className: "user-enable-switch dv-ai-reasoning-switch", ariaLabel: "推理" });
+  reasoningSwitch.setAttribute("role", "switch");
+  reasoningSwitch.setAttribute("aria-checked", "false");
+  reasoningSwitch.title = "开启低强度推理；关闭可缩短等待时间";
+  function setReasoning(enabled) {
+    reasoningEnabled = enabled === true;
+    reasoningSwitch.setAttribute("aria-checked", String(reasoningEnabled));
+    reasoningSwitch.classList.toggle("on", reasoningEnabled);
+  }
+  listen(reasoningSwitch, "click", () => {
+    if (reasoningSwitch.disabled) return;
+    setReasoning(!reasoningEnabled);
+    changed();
+  });
+  const reasoningControl = element("span", { className: "dv-ai-reasoning-control" },
+    element("span", { text: "推理" }), reasoningSwitch);
   const modelTestButton = button("测试可用性", {
     listen, className: "dv-button dv-button-plain", onClick: () => runModelTest(),
   });
@@ -263,10 +300,32 @@ export function createRuleForm({
     hidden: true,
   });
 
-  const mappingGrid = element("div", { className: "dv-form-grid" },
-    field("业务主键 *", businessKey), field("异常触发关系", op),
+  const simpleFields = [
+    field("异常触发关系", op),
     field("左字段 *", left), field("比较目标类型 *", rightType),
-    rightField, rightConstantField);
+    rightField, rightConstantField];
+  const mappingGrid = element("div", { className: "dv-form-grid" }, field("业务主键 *", businessKey), simpleFields);
+  const addGroup = isAiMode ? null : button("添加比较条件", {
+    listen, onClick: () => {
+      setGroup({ logic: "any", conditions: [readComparison(), { left: "", op: "eq", right_type: "value", right: null }] });
+      changed();
+    },
+  });
+  const group = createConditionGroup({ listen, columnsForTable, onEdit() {
+    syncNullPolicyForExpression();
+    invalidateReviewAnswers();
+    onChange?.({ groupEdited: true });
+  } });
+  function setGroup(expression) {
+    group.set(expression);
+    const grouped = isGrouped(expression);
+    if (addGroup) addGroup.hidden = grouped;
+    for (const node of simpleFields) node.hidden = grouped;
+    if (grouped) {
+      equalityPolicyField.hidden = true;
+      constantEqualityHint.hidden = true;
+    }
+  }
   const messageField = field("异常说明 *", message);
   const policyGrid = element("div", { className: "dv-form-grid" },
     field("空值处理口径", nullPolicy), equalityPolicyField, constantEqualityHint, nullZeroHint);
@@ -276,7 +335,7 @@ export function createRuleForm({
     ? {
       aiContext: element("div", { className: "dv-ai-request-meta" }, element("span", { text: "你的需求" }),
         element("div", { className: "dv-ai-inline-source" }, aiIcon("database"), sourceField),
-        element("div", { className: "dv-ai-inline-model" }, modelField)),
+        element("div", { className: "dv-ai-inline-model" }, modelField), reasoningControl),
       aiInput: element("div", { className: "dv-form-section dv-form-ai-input" },
         requestField,
         sourceFeedback,
@@ -301,7 +360,7 @@ export function createRuleForm({
         metadataStatus,
         requestField),
       config: element("div", { className: "dv-form-section dv-form-config" },
-        mappingGrid,
+        mappingGrid, addGroup, group.element,
         messageField,
         policyGrid),
     };
@@ -324,12 +383,17 @@ export function createRuleForm({
     const unsupported = reviewData.unsupported_requirements || [];
     reviewSection.hidden = !questions.length && !unsupported.length;
     if (questions.length) {
-      reviewSection.append(element("strong", { text: "待确认口径（保存草稿后仍会保留，逐项处理并重新测试后才能确认）" }));
+      reviewSection.append(element("strong", { text: generationMode === "ai"
+        ? "生成 SQL 前请逐项填写业务口径" : "待确认口径（保存草稿后仍会保留，逐项处理并重新测试后才能确认）" }));
       questions.forEach((question, index) => {
         const resolution = textarea({ placeholder: "填写明确口径、适用范围或处理依据，不能只写已阅", rows: 2 });
         resolution.value = reviewData.uncertainty_resolutions?.[index] || "";
         reviewInputs.push(resolution);
-        reviewRemovers.push(listen(resolution, "input", changed));
+        reviewRemovers.push(listen(resolution, "input", () => {
+          if (savedReviewContext !== null && resolution.value.trim()) reviewedQuestions.add(question);
+          else reviewedQuestions.delete(question);
+          changed();
+        }));
         reviewSection.append(field(`处理说明 ${index + 1}：${question}`, resolution));
       });
     }
@@ -386,6 +450,11 @@ export function createRuleForm({
       equalityPolicy.value = savedFieldEqualityPolicy || "unresolved";
     }
     equalityPolicy.disabled = valueMode;
+    if (!group.element.hidden) {
+      simpleFields.forEach((node) => { node.hidden = true; });
+      equalityPolicyField.hidden = true;
+      constantEqualityHint.hidden = true;
+    }
   }
 
   let modelTesting = false;
@@ -417,7 +486,24 @@ export function createRuleForm({
 
   function changed() {
     syncNullPolicyForExpression();
+    invalidateReviewAnswers();
     onChange?.();
+  }
+
+  function reviewContext() {
+    const value = read();
+    return JSON.stringify([value.rule_type, value.source_id, value.table_name, value.business_key, value.report_date_field,
+      value.expression, value.filters, value.join, value.project_context, value.project_driver, value.null_policy, value.equality_policy,
+      value.description, value.report_category, value.mapping_version]);
+  }
+
+  function invalidateReviewAnswers() {
+    if (savedReviewContext === null) return;
+    const current = reviewContext();
+    if (savedReviewContext === current) return;
+    savedReviewContext = current;
+    reviewInputs.forEach((input) => { input.value = ""; });
+    reviewedQuestions.clear();
   }
 
   function syncTableReadonly() {
@@ -471,12 +557,13 @@ export function createRuleForm({
   }
 
   function binaryNumericComparison() {
-    const expression = readComparison();
-    if (expression.op === "is_null" || expression.op === "is_not_null") return false;
-    if (!columnIsNumeric(expression.left)) return false;
-    if (expression.right_type === "field") return columnIsNumeric(expression.right);
-    if (expression.right_type === "value") return typeof expression.right === "number" && Number.isFinite(expression.right);
-    return false;
+    const binary = comparisons(readComparison()).filter((item) => !isUnaryExpressionOp(item.op));
+    return binary.length > 0 && binary.every((item) => {
+      if (!columnIsNumeric(item.left)) return false;
+      if (item.right_type === "value") return Number.isFinite(item.right);
+      const column = columnsForTable(item.right_table).find((entry) => entry.column_name === item.right);
+      return NUMERIC_TYPES.has(String(column?.data_type || "").toLowerCase().split("(")[0].trim());
+    });
   }
 
   function syncNullPolicyForExpression() {
@@ -490,6 +577,8 @@ export function createRuleForm({
   }
 
   function readComparison() {
+    const grouped = group.read();
+    if (grouped) return grouped;
     const comparison = { left: left.value, op: op.value };
     if (isUnaryExpressionOp(comparison.op)) return comparison;
     if (rightType.value === "value") {
@@ -508,7 +597,7 @@ export function createRuleForm({
     const unaryExpression = isUnaryExpressionOp(comparison.op);
     return {
       name: name.value.trim(),
-      description: request.value.trim(),
+      description: (isAiMode && aiRuleDescription) || request.value.trim(),
       rule_type: "field_compare",
       dialect: sourceItem?.dialect || "",
       source_id: source.value,
@@ -521,15 +610,17 @@ export function createRuleForm({
       ...(join ? { join: readJoin() } : {}),
       ...(relatedColumns.length ? { related_columns: relatedColumns.map((column) => ({ ...column })) } : {}),
       ...(projectContext ? { project_context: JSON.parse(JSON.stringify(projectContext)) } : {}),
-      ...readReview(),
+      ...(projectDriver ? { project_driver: JSON.parse(JSON.stringify(projectDriver)) } : {}),
+      ...readReview(), ...comparisonEvidence, ...semanticReview,
       violation_message: message.value.trim(),
       null_policy: unaryExpression ? "violate" : nullPolicy.value,
-      equality_policy: unaryExpression
+      equality_policy: unaryExpression || isGrouped(comparison)
         ? "allow_equal"
         : (rightType.value === "value" ? "allow_equal" : equalityPolicy.value),
       generation_mode: generationMode,
       mapping_version: metadata?.mapping_version || persistedMappingVersion,
       model_id: model.value,
+      ...(isAiMode ? { reasoning_enabled: reasoningEnabled } : {}),
       request_text: request.value.trim(),
     };
   }
@@ -537,6 +628,7 @@ export function createRuleForm({
   function signature() {
     const payload = read();
     delete payload.model_id;
+    delete payload.reasoning_enabled;
     delete payload.request_text;
     return JSON.stringify(payload);
   }
@@ -548,13 +640,15 @@ export function createRuleForm({
     if (seed.source_id) source.value = seed.source_id;
     if (seed.table_name) table.value = seed.table_name;
     if (seed.request_text) request.value = seed.request_text;
+    if (typeof seed.reasoning_enabled === "boolean") setReasoning(seed.reasoning_enabled);
     if (seed.report_category !== undefined) {
-      if (seed.report_category && ![...category.options].some((option) => option.value === String(seed.report_category))) {
-        const option = element("option", { text: `${seed.report_category}（历史分类）` });
-        option.value = seed.report_category;
+      const code = reportCategoryCode(seed.report_category);
+      if (code && ![...category.options].some((option) => option.value === code)) {
+        const option = element("option", { text: code === "group:pbc" ? "人行报送" : `${code}（历史分类）` });
+        option.value = code;
         category.append(option);
       }
-      category.value = seed.report_category || "";
+      category.value = code;
     }
     if (seed.business_key) businessKey.value = seed.business_key;
     if (seed.violation_message !== undefined) message.value = seed.violation_message || "";
@@ -586,7 +680,14 @@ export function createRuleForm({
   return {
     element: form,
     groups,
+    groupEditor: group.element,
+    lockGroup(locked) {
+      group.element.disabled = locked;
+      if (addGroup) addGroup.disabled = locked;
+    },
+    disposeGroup: group.dispose,
     read,
+    reviewedUncertainties() { return [...reviewedQuestions]; },
     signature,
     markSaved() { savedSignature = signature(); },
     isDirty() { return Boolean(savedSignature) && savedSignature !== signature(); },
@@ -603,7 +704,7 @@ export function createRuleForm({
         option.value = value;
         category.append(option);
       });
-      if (current && !options.some(([, value]) => String(value) === String(current))) {
+      if (current && !options.some(([value]) => String(value) === String(current))) {
         const option = element("option", { text: `${current}（历史分类）` });
         option.value = current;
         category.append(option);
@@ -663,12 +764,16 @@ export function createRuleForm({
       if (tone) metadataStatus.classList.add(`is-${tone}`);
     },
     reset(detail, seed = null) {
+      setReasoning(false);
+      aiRuleDescription = "";
+      savedReviewContext = null;
+      reviewedQuestions.clear();
       const definition = detail?.definition || {};
       const expression = definition.expression || {};
       restoreRelationEvidence(definition);
       if (Array.isArray(detail?.related_columns)) relatedColumns = [...detail.related_columns];
+      generationMode = definition.generation_mode || detail?.generation_mode || (isAiMode ? "ai" : "manual");
       setReview(definition);
-        generationMode = definition.generation_mode || (isAiMode ? "ai" : "manual");
       name.value = detail?.name || definition.name || "";
       if (definition.source_id && ![...source.options].some((option) => option.value === String(definition.source_id))) {
         const option = element("option", { text: `${definition.source_id}（服务端规则数据源）` });
@@ -676,7 +781,7 @@ export function createRuleForm({
         source.append(option);
       }
       source.value = definition.source_id || "";
-      const savedCategory = detail?.report_category || definition.report_category || "";
+      const savedCategory = reportCategoryCode(detail?.report_category || definition.report_category);
       if (savedCategory && ![...category.options].some((option) => option.value === String(savedCategory))) {
         const option = element("option", { text: `${savedCategory}（历史分类）` });
         option.value = savedCategory;
@@ -722,23 +827,26 @@ export function createRuleForm({
       savedSignature = "";
       this.markSaved();
       applySeed(seed);
+      if (detail && !isAiMode && generationMode === "ai" && reviewInputs.length) savedReviewContext = reviewContext();
     },
     restoreInput(signature) {
-      const [sourceId, text, modelId] = JSON.parse(signature);
+      const [sourceId, text, modelId, reasoning] = JSON.parse(signature);
       source.value = sourceId; request.value = text; model.value = modelId;
+      setReasoning(reasoning);
     },
     setRequestEditing(hasCandidate) {
       reanalysis = Boolean(hasCandidate);
       cancelEdit.hidden = !reanalysis;
     },
     applyCandidate(candidate, { regenerate = true } = {}) {
+      aiRuleDescription = candidate?.description || "";
       restoreRelationEvidence(candidate);
       setReview(candidate || {}, regenerate);
         if (candidate?.rule_type !== "field_compare") return false;
       generationMode = "ai";
       if (candidate.rule_name) name.value = candidate.rule_name;
       if (candidate.table_name) table.value = candidate.table_name;
-      category.value = candidate.report_category || "";
+      category.value = reportCategoryCode(candidate.report_category);
       businessKey.value = candidate.business_key || "";
       reportDateField = candidate.report_date_field ?? "report_date";
       message.value = candidate.violation_message || "";
@@ -765,7 +873,14 @@ export function createRuleForm({
       return true;
     },
     applyDecision(key, value, question = null) {
-      if (String(key).startsWith("project_context.")) {
+      if (key === "check_requirement" && value === "not_empty" && question?.options?.some((option) => option.value === value)) {
+        aiRuleDescription = `${request.value.trim()}不得为空`;
+        ensureOperatorOption("is_null");
+        op.value = "is_null";
+        nullPolicy.value = "violate";
+        equalityPolicy.value = "allow_equal";
+        recordSelectionResolution(question, "明确选择不得为空");
+      } else if (String(key).startsWith("project_context.")) {
         const field = String(key).split(".")[1];
         const baseColumns = metadata?.columns || [];
         const projectColumns = Array.isArray(metadata?.project_columns) ? metadata.project_columns : [];
@@ -867,6 +982,10 @@ export function createRuleForm({
         join.report_date_field = fieldName;
         recordSelectionResolution(question, `明确选择 ${selectionLabel(question, selection, fieldName)}`);
       }
+      else if (fieldTarget(key)?.index != null) {
+        group.set(bindComparisonField(readComparison(), question, value, columnsForTable));
+        recordSelectionResolution(question, `明确选择 ${question.options.find((option) => option.value === value)?.label || value}`);
+      }
       else if (key === "expression.left" && (metadata?.columns || []).some((column) => column.column_name === value)) {
         left.value = value;
         recordSelectionResolution(question, `明确选择 ${question.options.find((option) => option.value === value)?.label || value}`);
@@ -883,21 +1002,27 @@ export function createRuleForm({
           && Array.from(category.options).some((option) => option.value === value)) category.value = value;
       else if (key === "null_policy" && value === "skip") nullPolicy.value = value;
       else throw new Error("该选择不在当前可用范围内，请重新分析");
+      if (["report_date_field", "business_key", "report_category", "null_policy"].includes(key)) {
+        recordSelectionResolution(question, `明确选择 ${selectionLabel(question, value, value)}`);
+      }
+      const selectedName = question?.options?.find((option) => option.value === value)?.rule_name;
+      if (fieldTarget(key) && typeof selectedName === "string" && selectedName.trim()) name.value = selectedName.trim();
       changed();
     },
     focusRequest() { request.focus?.(); },
     setAnalyzing(loading) {
-      parse.textContent = loading ? "AI 分析中…" : reanalysis ? "重新分析 →" : "✦ AI 分析";
+      parse.textContent = loading ? "AI 分析中…" : reanalysis ? "应用修改 →" : "✦ AI 分析";
       parse.classList.toggle("is-loading", Boolean(loading));
       parse.disabled = Boolean(loading) || state.modelsStatus !== "success" || !state.models.length;
       cancelEdit.disabled = Boolean(loading);
       request.disabled = Boolean(loading);
       source.disabled = Boolean(loading);
       model.disabled = Boolean(loading);
+      reasoningSwitch.disabled = Boolean(loading);
       modelTestButton.disabled = Boolean(loading) || modelTesting;
     },
     lockInputs(locked) {
-      if (locked) [request, source, model, parse, modelTestButton, cancelEdit].forEach((control) => { control.disabled = true; });
+      if (locked) [request, source, model, reasoningSwitch, parse, modelTestButton, cancelEdit].forEach((control) => { control.disabled = true; });
     },
     setBusy(busy) {
       describe.disabled = busy || !source.value || !table.value.trim();
@@ -937,32 +1062,30 @@ export function createRuleForm({
       if (!payload.table_name) missing.push("目标表");
       if (!payload.business_key) missing.push("业务主键");
       if (isAiMode && !reportDateField) missing.push("校验日期字段");
-      const valueComparison = payload.expression.right_type === "value";
-      const unaryExpression = isUnaryExpressionOp(payload.expression.op);
-      if (!payload.expression.left) missing.push("左比较字段");
-      if (!unaryExpression) {
-        if (valueComparison) {
-          if (typeof payload.expression.right !== "number" || !Number.isFinite(payload.expression.right)) {
-            missing.push("非空有限数值常量");
-          }
-        } else if (!payload.expression.right) {
-          missing.push("右比较字段");
-        }
+      const conditions = comparisons(payload.expression);
+      if (isGrouped(payload.expression) && !hasComparison(payload.expression)) missing.push("完整的组合条件（2–8 项）");
+      for (const condition of conditions) {
+        if (!condition.left) missing.push("左比较字段");
+        if (isUnaryExpressionOp(condition.op)) continue;
+        if (condition.right_type === "value") {
+          if (!Number.isFinite(condition.right)) missing.push("非空有限数值常量");
+        } else if (!condition.right) missing.push("右比较字段");
       }
       if (!payload.violation_message) missing.push("异常说明");
       if (!metadata) missing.push("真实表结构（请点击读取表结构）");
       if (missing.length) throw new Error(`请先完善：${missing.join("、")}`);
       const fields = new Set((metadata.columns || []).map((column) => column.column_name));
       const relatedFields = new Set(relatedColumns.map((column) => column.column_name));
-      const requiredFields = [payload.business_key, payload.expression.left];
+      const requiredFields = [payload.business_key, ...conditions.map((item) => item.left)];
       requiredFields.forEach((fieldName) => {
         if (!fields.has(fieldName)) throw new Error(`字段 ${fieldName} 不在当前真实表结构中，请重新选择`);
       });
-      if (!unaryExpression && !valueComparison) {
-        const targetTable = payload.expression.right_table === "related" ? "related" : "base";
+      for (const condition of conditions) {
+        if (isUnaryExpressionOp(condition.op) || condition.right_type === "value") continue;
+        const targetTable = condition.right_table === "related" ? "related" : "base";
         const pool = targetTable === "related" ? relatedFields : fields;
-        if (!pool.has(payload.expression.right)) {
-          throw new Error(`右字段 ${payload.expression.right} 不在${targetTable === "related" ? "关联表" : "当前真实表"}结构中，请重新选择`);
+        if (!pool.has(condition.right)) {
+          throw new Error(`右字段 ${condition.right} 不在${targetTable === "related" ? "关联表" : "当前真实表"}结构中，请重新选择`);
         }
       }
       (payload.filters || []).forEach((filter, index) => {
@@ -989,6 +1112,7 @@ export function createRuleForm({
     metadata = value;
     if (!metadata) {
       clearRelationEvidence();
+      group.render();
       persistedMappingVersion = "";
       setColumnOptions([], {});
       metadataStatus.textContent = isAiMode
@@ -999,6 +1123,7 @@ export function createRuleForm({
     }
     persistedMappingVersion = metadata.mapping_version || "";
     if (Array.isArray(metadata.related_columns)) relatedColumns = [...metadata.related_columns];
+    group.render();
     const current = read();
     setColumnOptions(metadata.columns || [], {
       businessKey: current.business_key,
@@ -1011,5 +1136,6 @@ export function createRuleForm({
     metadataStatus.classList.toggle("is-warning", !hasReportDate);
     metadataStatus.classList.add("is-success");
     metadataStatus.classList.remove("is-error");
+    invalidateReviewAnswers();
   }
 }

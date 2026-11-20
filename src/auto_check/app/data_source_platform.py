@@ -260,12 +260,23 @@ def query_business_source(
     timeout_seconds: float,
     max_rows: int,
 ) -> tuple[tuple[str, ...], tuple[tuple[Any, ...], ...]]:
-    bound_sql, bound_params = _bind_named_params(sql, params)
+    # Most SQL can be validated before connecting. Only backslash-bearing queries
+    # need the active session's rules for the ends of quoted strings.
+    bound = None if "\\" in sql else _bind_named_params(sql, params, config.db_type)
     with _connect(config, timeout_seconds) as connection:
         cursor = connection.cursor()
         try:
             _apply_timeout(cursor, config, timeout_seconds)
-            cursor.execute(bound_sql, bound_params)
+            if bound is None:
+                if config.db_type == "mysql":
+                    cursor.execute("SELECT @@SESSION.sql_mode")
+                    modes = set(cursor.fetchone()[0].split(","))
+                    bound = _bind_named_params(sql, params, config.db_type,
+                        backslash_strings="NO_BACKSLASH_ESCAPES" not in modes, ansi_quotes="ANSI_QUOTES" in modes)
+                else:
+                    standard = connection.info.parameter_status("standard_conforming_strings")
+                    bound = _bind_named_params(sql, params, config.db_type, backslash_strings=standard == "off")
+            cursor.execute(*bound)
             description = cursor.description or []
             columns = tuple(str(column[0]) for column in description)
             fetched = tuple(cursor.fetchmany(max_rows))
@@ -274,19 +285,95 @@ def query_business_source(
             cursor.close()
 
 
-def _bind_named_params(sql: str, params: Mapping[str, Any]) -> tuple[str, tuple[Any, ...]]:
+def _quoted_end(sql: str, start: int, *, backslash: bool) -> int:
+    quote = sql[start]
+    i = start + 1
+    while i < len(sql):
+        if backslash and sql[i] == "\\":
+            i += 2
+        elif sql[i] != quote:
+            i += 1
+        elif sql.startswith(quote * 2, i):
+            i += 2
+        else:
+            return i + 1
+    raise ValueError("VALIDATION_ERROR")
+
+
+_BIND_NAME = re.compile(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)")
+# PostgreSQL dollar tags follow identifier rules and may contain non-ASCII characters.
+_DOLLAR_TAG = r"(?<![\w$\x80-\U0010ffff])\$(?:[A-Za-z_\x80-\U0010ffff][A-Za-z0-9_\x80-\U0010ffff]*)?\$"
+_BIND_TOKEN = re.compile(_BIND_NAME.pattern + r"""|['"\x60#]|--|/\*|""" + _DOLLAR_TAG)
+_COMMENT_TOKEN = re.compile(r"/\*|\*/")
+_PG_LINE_END = re.compile(r"[\r\n]")
+_PG_ESCAPE_STRING = re.compile(r"(?<![\w$\x80-\U0010ffff])[Ee]'")
+_PG_QUOTE_CONTINUATION = re.compile(r"(?:[ \t\f\v]|--[^\r\n]*)*[\r\n](?:[ \t\f\v\r\n]|--[^\r\n]*)*'")
+
+
+def _block_comment_end(sql: str, start: int, postgres: bool) -> int:
+    if postgres:
+        depth = 1
+        for mark in _COMMENT_TOKEN.finditer(sql, start + 2):
+            depth += 1 if mark[0] == "/*" else -1
+            if not depth:
+                return mark.end()
+    else:
+        end = sql.find("*/", start + 2)
+        if end >= 0:
+            if sql.startswith("/*!", start) and _BIND_NAME.search(sql, start + 3, end):
+                # MySQL may execute versioned comments. Never silently drop a parameter.
+                raise ValueError("VALIDATION_ERROR")
+            return end + 2
+    raise ValueError("VALIDATION_ERROR")
+
+
+def _bind_named_params(
+    sql: str, params: Mapping[str, Any], dialect: str = "mysql", *,
+    backslash_strings: bool | None = None, ansi_quotes: bool = False,
+) -> tuple[str, tuple[Any, ...]]:
+    postgres = dialect == "postgresql"
+    if backslash_strings is None:
+        backslash_strings = not postgres
+    chunks: list[str] = []
     values: list[Any] = []
-
-    def replace(match: re.Match[str]) -> str:
-        name = match.group(1)
-        if name not in params:
-            raise ValueError("VALIDATION_ERROR")
-        values.append(params[name])
-        return "\x00"
-
-    tokenized = re.sub(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)", replace, sql)
-    escaped = tokenized.replace("%", "%%").replace("\x00", "%s")
-    return escaped, tuple(values)
+    start = i = 0
+    while match := _BIND_TOKEN.search(sql, i):
+        at = match.start()
+        token = match[0]
+        i = match.end()
+        if name := match[1]:
+            if name not in params:
+                raise ValueError("VALIDATION_ERROR")
+            chunks.extend((sql[start:at].replace("%", "%%"), "%s"))
+            values.append(params[name])
+            start = i
+        elif token in ("'", '"') or (not postgres and token == "`"):
+            escape_prefix = postgres and at > 0 and bool(_PG_ESCAPE_STRING.match(sql, at - 1))
+            string_quote = token == "'" or (token == '"' and not postgres and not ansi_quotes)
+            i = _quoted_end(sql, at, backslash=string_quote and (backslash_strings or escape_prefix))
+            if escape_prefix:
+                # Newline-separated continuations inherit E-string backslash rules.
+                while continuation := _PG_QUOTE_CONTINUATION.match(sql, i):
+                    i = _quoted_end(sql, continuation.end() - 1, backslash=True)
+        elif token == "/*":
+            i = _block_comment_end(sql, at, postgres)
+        elif token == "--" or (token == "#" and not postgres):
+            if not postgres and token == "--" and i < len(sql) and ord(sql[i]) > 32 and sql[i] != "\x7f":
+                i = at + 1  # A second minus can start the next operator or a comment.
+                continue
+            if postgres:
+                newline = _PG_LINE_END.search(sql, i)
+                i = newline.end() if newline else len(sql)
+            else:
+                newline_at = sql.find("\n", i)
+                i = len(sql) if newline_at < 0 else newline_at + 1
+        elif postgres and token.startswith("$"):
+            end = sql.find(token, i)
+            if end < 0:
+                raise ValueError("VALIDATION_ERROR")
+            i = end + len(token)
+    chunks.append(sql[start:].replace("%", "%%"))
+    return "".join(chunks), tuple(values)
 
 
 def _strip_comments_and_strings(sql: str) -> str:

@@ -158,7 +158,8 @@ def test_rule_category_is_stored_filtered_and_grouped_by_report_processes() -> N
     assert "disabled_process" not in categories
     stats = rules.rule_stats(owner)
     by_code = {item["code"]: item for item in stats["categories"]}
-    assert by_code["pbc_central"]["total"] == 2 and by_code["pbc_central"]["enabled"] == 1
+    assert by_code["group:pbc"]["total"] == 2 and by_code["group:pbc"]["enabled"] == 1
+    assert "pbc_central" not in by_code and "pbc_template" not in by_code
     assert by_code["east5"]["total"] == 1
     assert stats["total"] == 5
     assert stats["unclassified"] == {"total": 2, "enabled": 0, "draft": 2, "disabled": 0}

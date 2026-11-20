@@ -12,6 +12,8 @@ from auto_check.modules.data_validation.query_samples import (
     default_field_compare_cases, evaluate_case, evaluate_expression, evaluate_relational,
 )
 from auto_check.modules.data_validation.query_spec import is_new_spec
+from tests.modules.data_validation.support import user
+from tests.modules.data_validation.test_ai_service import _generate_payload, _request, _rules_with_doc, _select_payload
 
 
 def _legacy(**overrides):
@@ -270,3 +272,39 @@ def test_core_is_new_spec_treats_explicit_zero_as_new_semantics():
         filters=[{"table": "base", "field": "status", "op": "eq", "value": "A", "confirmed": True}],
     )
     assert is_new_spec(definition) is True
+
+
+@pytest.mark.parametrize(("request_text", "op", "policy", "null_count"), [
+    ("应收金额不得大于0", "gt", "zero", 0),
+    ("应收金额不得小于0", "lt", "zero", 0),
+    ("应收金额不得为0", "eq", "skip", 0),
+    ("应收金额不得大于0，同时核查缺值", "gt", "review", 1),
+])
+def test_ai_numeric_constant_sql_respects_the_requested_checks(request_text, op, policy, null_count):
+    rules, _model = _rules_with_doc([
+        _select_payload(),
+        _generate_payload(
+            expression={"left": "amount", "op": op, "right_type": "value", "right": 0},
+            null_policy="review",
+        ),
+    ], fields=[
+        ("entry_id", "业务编号", "varchar", "Y"), ("amount", "应收金额", "decimal", ""),
+        ("business_day", "数据日期", "date", ""),
+    ])
+
+    candidate = rules.parse_rule_request(user(), _request(request_text=request_text))
+    preview = candidate["preview"]
+    definition = preview["definition"]
+    assert candidate["null_policy"] == definition["null_policy"] == policy
+    sql = preview["sql_preview"]
+    assert ("COALESCE(" in sql) == (policy == "zero")
+    assert (" OR " in sql and "IS NULL" in sql) == (policy == "review")
+    assert preview["sql_params"]["right_value"] == 0
+    empty_case = next(case for case in preview["cases"] if case["name"] == "空值")
+    assert empty_case["expected_count"] == null_count
+    tests = rules.test_candidate(user(), {"definition": definition, "expected_hash": preview["content_sha256"]})
+    assert tests["failed_count"] == tests["not_run_count"] == 0
+    saved = rules.save_draft(user(), definition)
+    stored = rules.storage.latest_version(saved["id"])
+    assert stored["sql_text"] == sql
+    assert stored["content_sha256"] == preview["content_sha256"]

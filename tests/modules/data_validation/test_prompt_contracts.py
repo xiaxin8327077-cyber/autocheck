@@ -34,6 +34,7 @@ def test_default_prompts_keep_required_placeholders() -> None:
         "select_table": ("request_text", "source_name", "tables", "categories"),
         "generate_rule": ("request_text", "table", "fields"),
         "generate_sql": ("request_text", "table", "fields"),
+        "business_scope": (),
     }
     for stage, template in DEFAULT_PROMPTS.items():
         for name in REQUIRED_PLACEHOLDERS[stage]:
@@ -124,6 +125,15 @@ def test_contracts_are_appendable_without_placeholder_collision() -> None:
             assert "{" + name + "}" not in contract
 
 
+def test_both_stages_keep_choices_and_independent_questions_separate():
+    for contract in (SELECT_OUTPUT_CONTRACT, RULE_OUTPUT_CONTRACT):
+        assert "选择后即可确定" in contract
+        assert "需求或文档依据" in contract
+        assert "独立问题单列" in contract
+        assert "完整字典映射明确时，直接采用所有匹配子类" in contract
+    assert "无需用户补充分类" in SELECT_OUTPUT_CONTRACT
+
+
 def test_contracts_are_not_baked_into_default_templates() -> None:
     assert SELECT_OUTPUT_CONTRACT not in DEFAULT_PROMPTS["select_table"]
     assert RULE_OUTPUT_CONTRACT not in DEFAULT_PROMPTS["generate_rule"]
@@ -136,7 +146,7 @@ def test_old_custom_template_intent_preserved() -> None:
 
     _database, rules = service()
     prompts = rules.list_prompts()
-    assert [item["stage"] for item in prompts] == ["select_table", "generate_rule", "generate_sql"]
+    assert [item["stage"] for item in prompts] == ["select_table", "generate_rule", "generate_sql", "business_scope"]
     assert all(item["is_default"] for item in prompts)
 
     custom = "需求：{request_text} 数据源：{source_name} 表：{tables} 分类：{categories} 自定义"
