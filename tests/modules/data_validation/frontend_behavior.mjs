@@ -6,7 +6,8 @@ import {
 } from "./state.mjs";
 import { createRuntime, errorMessage } from "./runtime.mjs";
 import { createApi } from "./api.mjs";
-import { createAiCandidatePanel } from "./components/ai_candidate.mjs";
+import { candidateCondition, createAiCandidatePanel } from "./components/ai_candidate.mjs";
+import { bindComparisonField } from "./comparisons.mjs";
 import { createPagination } from "./components/pagination.mjs";
 import { createRuleTable } from "./components/rule_table.mjs";
 import { createDialog } from "./components/dialog.mjs";
@@ -511,6 +512,70 @@ const conditionHeadline = findByClass(candidatePanel.element, "dv-ai-conclusion"
 assert.ok(conditionHeadline, "候选条件必须转为业务结论");
 assert.equal(conditionHeadline.textContent, "零值规则", "标题采用与保存一致的模型规则名称");
 assert.equal(collectByClass(candidatePanel.element, "dv-parse-metric").length, 0, "不再呈现技术指标墙");
+const textFilters = [
+  { table: "base", field: "project_code", op: "contains_any", value: ["星%", "季_"], confirmed: true },
+  { table: "base", field: "project_code", op: "not_contains_any", value: ["草稿"], confirmed: true },
+];
+const textExpression = { left: "project_code", op: "neq", right_type: "value", right: "02" };
+const textDetail = constantDefinition(textExpression);
+textDetail.definition.filters = textFilters;
+constantForm.reset(textDetail);
+constantForm.setMetadata({ mapping_version: "map-constant", columns: constantColumns });
+assert.deepEqual(constantForm.validateForSave().expression, textExpression);
+assert.deepEqual(constantForm.validateForSave().filters, textFilters);
+constantForm.applyCandidate({ rule_type: "field_compare", rule_name: "文本类别", expression: textExpression,
+  business_key: "project_code", report_category: "group:pbc", filters: textFilters,
+  violation_message: "类别不符", null_policy: "skip", equality_policy: "allow_equal" });
+assert.equal(constantForm.read().expression.right, "02");
+const textInput = controlByLabel(constantForm.element, "文本常量 *");
+textInput.value = "002"; await textInput.dispatch("input");
+assert.equal(constantForm.validateForSave().expression.right, "002");
+const groupedText = { logic: "all", conditions: [textExpression, { left: "amount", op: "lt", right_type: "value", right: 19 }] };
+constantForm.reset(constantDefinition(groupedText));
+constantForm.setMetadata({ mapping_version: "map-constant", columns: constantColumns });
+assert.deepEqual(constantForm.validateForSave().expression, groupedText);
+const groupedInput = controlByLabel(collectByClass(constantForm.element, "dv-condition-row")[0], "文本常量");
+groupedInput.value = "003"; await groupedInput.dispatch("input");
+assert.equal(constantForm.validateForSave().expression.conditions[0].right, "003");
+const keywordCondition = { left: "project_code", op: "contains_any", right_type: "value", right: ["%", "‰", "_", "a,b", "A!'", "line\nbreak"] };
+for (const expression of [keywordCondition, { logic: "all", conditions: [keywordCondition, textExpression] }]) {
+  constantForm.reset(constantDefinition(expression));
+  constantForm.setMetadata({ mapping_version: "map-constant", columns: constantColumns });
+  assert.deepEqual(constantForm.validateForSave().expression, expression);
+  const visibleRoot = expression.logic ? collectByClass(constantForm.element, "dv-condition-row")[0] : constantForm.element;
+  const words = collectByClass(visibleRoot, "dv-textarea").filter((node) => node.getAttribute?.("aria-label") === "关键词 2");
+  assert.equal(words.length, 1);
+  words[0].value = "新词!";
+  await words[0].dispatch("input");
+  const edited = constantForm.validateForSave().expression;
+  assert.deepEqual((edited.conditions?.[0] || edited).right, ["%", "新词!", "_", "a,b", "A!'", "line\nbreak"]);
+  assert.ok(candidateCondition({ expression: keywordCondition }).includes("包含任一关键词"));
+}
+const arithmetic = {
+  left_type: "formula", left: { op: "+", left: { field: "amount" }, right: { value: -2 } }, op: "neq",
+  right_type: "formula", right: { op: "*", left: { field: "amount" },
+    right: { op: "/", left: { field: "other_amount" }, right: { value: 3 } } },
+};
+const formulaColumns = constantColumns.map((column) => ({ ...column, comment: { amount: "金额", other_amount: "折算金额" }[column.column_name] }));
+assert.equal(candidateCondition({ expression: arithmetic, columns: formulaColumns }), "(金额 + -2)不为 (金额 * (折算金额 / 3))");
+assert.throws(() => bindComparisonField(arithmetic, { id: "expression.right.left.field",
+  targets: ["expression.right.right.left.field"] }, "amount", () => formulaColumns), /运算位置/);
+for (const expression of [arithmetic, { logic: "any", conditions: [arithmetic, textExpression] }]) {
+  const detail = constantDefinition(expression);
+  constantForm.reset(detail);
+  constantForm.setMetadata({ mapping_version: "map-constant", columns: formulaColumns });
+  assert.deepEqual(constantForm.validateForSave().expression, expression);
+  constantForm.applyCandidate({ ...detail.definition, rule_name: detail.name, report_category: "group:pbc" });
+  assert.deepEqual(constantForm.read().expression, expression);
+  const question = { id: (expression.conditions ? "expression.conditions.0" : "expression") + ".right.right.left.field",
+    options: [{ value: "amount", label: "金额" }] };
+  const updated = bindComparisonField(expression, question, "amount", () => formulaColumns);
+  const condition = updated.conditions?.[0] || updated;
+  assert.equal(condition.right.right.left.field, "amount");
+  assert.equal(arithmetic.right.right.left.field, "other_amount");
+  constantForm.applyDecision(question.id, "amount", question);
+  assert.deepEqual(constantForm.validateForSave().expression, updated);
+}
 constantRuntime.destroy();
 
 // 未决口径必须随规则保存/重载，处理说明不能放行不支持的要求。
@@ -556,6 +621,43 @@ assert.deepEqual(reviewForm.read().unsupported_requirements, ["额外状态筛�
 const aiReviewForm = createRuleForm({ state: constantState, mode: "ai", listen: reviewRuntime.listen, user: { ...ordinary, capabilities: [...(ordinary.capabilities || []), "dv.ai_use"] }, onChange: () => {} });
 aiReviewForm.applyCandidate({ rule_type: "field_compare", uncertainties: ["AI口径"], expression: { left: "amount", op: "eq", right_type: "value", right: 0 } });
 assert.ok(controlByLabel(aiReviewForm.groups.aiConfig, "处理说明 1：AI口径"), "AI 工作台配置分组也必须实际挂载复核控件");
+
+// AI 新建需求栏不再提供推理入口；旧草稿与外部兼容调用都只能保持关闭。
+const reasoningState = createState();
+reasoningState.sourcesStatus = "success";
+reasoningState.sources = [{ id: "src", name: "监管报表", dialect: "postgresql" }];
+reasoningState.modelsStatus = "success";
+reasoningState.models = [{ id: "model-1", name: "deepseek-v4-flash", is_default: true }];
+const reasoningForm = createRuleForm({
+  state: reasoningState, mode: "ai", listen: reviewRuntime.listen,
+  user: { ...ordinary, capabilities: [...(ordinary.capabilities || []), "dv.ai_use"] }, onChange: () => {},
+});
+reasoningForm.setSources();
+reasoningForm.setModels();
+assert.equal(findByClass(reasoningForm.element, "dv-ai-reasoning-switch"), null, "需求栏不得保留推理开关节点");
+assert.equal(findByClass(reasoningForm.element, "dv-ai-reasoning-control"), null, "需求栏不得保留推理开关容器");
+assert.equal(reasoningForm.read().reasoning_enabled, false, "新分析默认关闭推理");
+assert.equal(reasoningForm.read().source_id, "src", "数据源选择不得被推理改动重写");
+assert.equal(reasoningForm.read().model_id, "model-1", "模型选择不得被推理改动重写");
+assert.equal(controlByLabel(reasoningForm.element, "数据源 *").className.includes("rsp-compact-select"), true,
+  "数据源下拉使用平台紧凑浮层标记");
+assert.equal(controlByLabel(reasoningForm.element, "启用模型").className.includes("rsp-compact-select"), true,
+  "模型下拉使用平台紧凑浮层标记");
+reasoningForm.restoreInput(JSON.stringify(["src", "旧需求", "model-1", true]));
+assert.equal(reasoningForm.read().reasoning_enabled, false, "载入关心理由开启的旧签名也不得开启推理");
+assert.equal(reasoningForm.read().source_id, "src");
+assert.equal(reasoningForm.read().model_id, "model-1");
+assert.equal(reasoningForm.read().request_text, "旧需求");
+assert.equal(reasoningForm.setReasoningEnabled(true), false, "兼容方法只能返回关闭状态");
+assert.equal(reasoningForm.read().reasoning_enabled, false);
+reasoningForm.reset({ definition: {
+  name: "旧草稿", description: "旧草稿需求", source_id: "src", table_name: "loan", dialect: "postgresql",
+  business_key: "project_code", expression: { left: "amount", op: "eq", right_type: "value", right: 0 },
+  violation_message: "金额异常", null_policy: "skip", equality_policy: "allow_equal",
+  generation_mode: "ai", rule_type: "field_compare", reasoning_enabled: true,
+} }, { source_id: "src", request_text: "旧草稿需求", reasoning_enabled: true });
+assert.equal(reasoningForm.read().reasoning_enabled, false, "旧 AI 草稿的推理开启状态必须丢弃");
+assert.equal(reasoningForm.read().source_id, "src");
 reviewRuntime.destroy();
 assert.equal(constantRuntime.snapshot().listeners, 0);
 

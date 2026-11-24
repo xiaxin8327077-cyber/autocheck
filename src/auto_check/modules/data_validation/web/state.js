@@ -202,7 +202,7 @@ export function ruleScopeIssues(definition = {}, { detailed = false } = {}) {
   }
   if (definition.null_policy === "zero") {
     const binary = comparisons(definition.expression).filter((item) => !["is_null", "is_not_null"].includes(item.op));
-    const zeroAllowed = binary.length > 0 && binary.every((item) => (item.right_type || "field") === "field" && Boolean(item.right)
+    const zeroAllowed = binary.length > 0 && binary.every((item) => ["field", "formula"].includes(item.right_type || "field") && Boolean(item.right)
       || (item.right_type === "value" && Number.isFinite(item.right)));
     if (!zeroAllowed) reasons.push("NULL按0仅支持数值字段比较或有限数值常量");
   }
@@ -214,8 +214,8 @@ export function ruleScopeIssues(definition = {}, { detailed = false } = {}) {
     const relationshipConfirmed = join.relationship_confirmed === true || definition.relationship_confirmed === true;
     const unmatchedPolicy = join.unmatched_policy || definition.unmatched_policy;
     if (!relationshipConfirmed) reasons.push("关联关系尚未确认");
-    const requiredPolicy = join.right_aggregate === "sum" ? "review" : "exclude";
-    if (unmatchedPolicy !== requiredPolicy) reasons.push("关联未匹配记录的处理口径尚未确认");
+    const handlesMissingRows = unmatchedPolicy === "exclude" || (join.right_aggregate === "sum" && unmatchedPolicy === "review");
+    if (!handlesMissingRows) reasons.push("关联未匹配记录的处理口径尚未确认");
     if (!Array.isArray(join.on) || !join.on.length) reasons.push("关联字段尚未确认");
     if (!join.report_date_field) reasons.push("关联表校验日期尚未确认");
   }

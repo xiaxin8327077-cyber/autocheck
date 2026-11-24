@@ -7,6 +7,7 @@ import re
 from auto_check.app.data_source_platform import ensure_readonly_sql
 
 from .contracts import AppError
+from .query_spec import excludes_unmatched_sum
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _JOIN = re.compile(r"\bjoin\b", re.IGNORECASE)
@@ -32,14 +33,14 @@ def guard_generated_sql(
     dialect: str, sql: str, identifiers: set[str], tables: set[str] | None = None,
     *, definition: dict | None = None,
 ) -> None:
-    """Only the project's own compiled, versioned template may introduce an explicit JOIN."""
+    """An explicit JOIN must match the compiled project or grouped-detail template."""
     names = set(identifiers)
     for table in tables or ():
         if not isinstance(table, str):
             raise AppError("SQL_POLICY_DENIED")
         names.add(table)
-    project_template = definition is not None and "project_driver" in definition
-    if project_template:
+    join_template = definition is not None and ("project_driver" in definition or excludes_unmatched_sum(definition.get("join")))
+    if join_template:
         from .compiler import compile_rule
         from .query_spec import referenced_columns
         if (definition.get("dialect") != dialect or definition.get("rule_type") != "field_compare"
@@ -53,7 +54,7 @@ def guard_generated_sql(
         required_fields = set(fields["base"] + fields["related"])
         if not required_tables <= allowed_tables or not required_fields <= identifiers:
             raise AppError("SQL_POLICY_DENIED")
-    guard_sql(dialect, sql, names, allow_join=project_template)
+    guard_sql(dialect, sql, names, allow_join=join_template)
 
 
 def _contains_join(sql: str) -> bool:

@@ -10,7 +10,7 @@ from auto_check.modules.data_validation.analysis_result_cache import model_snaps
 from auto_check.modules.data_validation.compiler import compile_rule
 from auto_check.modules.data_validation.contracts import AppError
 from auto_check.modules.data_validation.executor import execute_version
-from auto_check.modules.data_validation.project_driver import bind_project_driver, normalize_project_driver
+from auto_check.modules.data_validation.project_driver import DRIVER_VERSION, bind_project_driver, normalize_project_driver, resolve_project_driver
 from auto_check.modules.data_validation.query_spec import needs_issue_kind, validate_query_spec, validate_spec_against_columns
 from tests.modules.data_validation.support import SequenceModel, service, user
 from tests.modules.data_validation.test_ai_service import SourceOnlyMetadata, _Processes, _request
@@ -204,7 +204,7 @@ def test_project_itself_and_two_received_dimensions_get_independent_roles():
         filters=[],
     )
     bound_project = bind(project, tables)
-    assert bound_project["definition"]["project_driver"] == {"version": 2, "table_role": "base"}
+    assert bound_project["definition"]["project_driver"] == {"version": DRIVER_VERSION, "table_role": "base"}
     assert bound_project["definition"]["project_context"]["mode"] == "base"
     assert "join" not in bound_project["definition"]
 
@@ -215,7 +215,7 @@ def test_project_itself_and_two_received_dimensions_get_independent_roles():
         filters=[],
     )
     bound_funding = bind(funding, tables)
-    assert bound_funding["definition"]["project_driver"] == {"version": 2, "table_role": "related"}
+    assert bound_funding["definition"]["project_driver"] == {"version": DRIVER_VERSION, "table_role": "related"}
     assert bound_funding["definition"]["project_context"]["key"] == {
         "left": "funding_owner", "right": "project_key",
     }
@@ -231,7 +231,7 @@ def test_detail_with_local_name_uses_project_authority_and_keeps_detail_scope():
     result = bind(original)
 
     bound = result["definition"]
-    assert bound["project_driver"] == {"version": 2, "table_role": "related"}
+    assert bound["project_driver"] == {"version": DRIVER_VERSION, "table_role": "related"}
     assert bound["project_context"]["mode"] == "lookup"
     assert bound["project_context"]["name_field"] == "project_name"
     assert bound["project_context"]["date_field"] == "day"
@@ -244,6 +244,48 @@ def test_detail_with_local_name_uses_project_authority_and_keeps_detail_scope():
     assert bound["business_key"] == "row_id"
     assert result["field_mapping"]["local_name"] == "project_name"
     assert original["filters"][0]["table"] == "base"
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "postgresql"])
+@pytest.mark.parametrize("project_role", ["base", "related"])
+@pytest.mark.parametrize("explicit_date_pairs", [1, 2])
+def test_new_project_binding_emits_one_period_join(dialect, project_role, explicit_date_pairs):
+    tables = document_tables()
+    tables[1]["fields"][1]["field_name"] = "stamp"
+    if project_role == "base":
+        original = definition("project_snapshot", dialect=dialect, business_key="project_key", filters=[],
+                              expression={"left": "project_received", "op": "lt", "right_type": "value", "right": 0})
+        key = {"left": "project_key", "right": "owner_ref"}
+        original["join"] = {"table_name": "asset_rows", "on": [key], "report_date_field": "stamp"}
+    else:
+        original = definition(dialect=dialect, report_date_field="stamp")
+        key = {"left": "owner_ref", "right": "project_key"}
+        original["join"] = {"table_name": "project_snapshot", "on": [key], "report_date_field": "day"}
+    expected = bind(original, tables)["definition"]
+    expected_sql = compile_rule({"definition": expected})
+    date_pair = {"left": original["report_date_field"], "right": original["join"]["report_date_field"]}
+    original["join"]["on"].extend(dict(date_pair) for _ in range(explicit_date_pairs))
+    bound = bind(original, tables)
+    assert not bound["uncertainties"] and not bound["unsupported_requirements"]
+    assert bound["definition"]["join"]["on"] == [key]
+    assert compile_rule({"definition": bound["definition"]}) == expected_sql
+    date_match = 'd.`stamp` = p.`day`' if dialect == "mysql" else 'd."stamp" = p."day"'
+    assert expected_sql[0].count(date_match) == 1
+    assert len(original["join"]["on"]) == 1 + explicit_date_pairs
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_revalidating_stored_project_rules_preserves_explicit_date_keys_and_sql(version):
+    stored = bind(definition())["definition"]
+    stored["project_driver"]["version"] = version
+    stored["join"]["on"].append({"left": "day", "right": "day"})
+    expected_sql = compile_rule({"definition": stored})
+    bare, fields = document_parts()
+    bound = bind_project_driver(stored, bare[1], fields[2], bare, fields, required=True, preserve_version=True)
+    assert not bound["uncertainties"] and not bound["unsupported_requirements"]
+    assert bound["definition"] == stored
+    assert compile_rule({"definition": bound["definition"]}) == expected_sql
+    resolve_project_driver(stored, bare[1], fields[2], bare, fields)
 
 
 def test_indirect_lineage_is_accepted_only_when_all_sources_converge():
@@ -368,7 +410,8 @@ def test_semantic_generation_binds_scopes_cache_save_and_preview_hash(missing_po
     selection = {"target": {"table": "asset_rows"}, "report_category": "pbc_central"}
     if missing_policy:
         selection["related_target"] = {"table": "project_snapshot"}
-        draft["join"] = {"table_name": "project_snapshot", "on": [{"left": "owner_ref", "right": "project_key"}],
+        draft["join"] = {"table_name": "project_snapshot", "on": [{"left": "owner_ref", "right": "project_key"},
+                                                               {"left": "day", "right": "day"}],
                          "report_date_field": "day", "relationship_confirmed": True, "unmatched_policy": missing_policy}
     rules, model = make_rules([
         selection,
@@ -382,9 +425,10 @@ def test_semantic_generation_binds_scopes_cache_save_and_preview_hash(missing_po
     result = rules.parse_rule_request(user(), request)
 
     assert len(model.calls) == 2
-    assert result["project_driver"] == {"version": 2, "table_role": "related"}
+    assert result["project_driver"] == {"version": DRIVER_VERSION, "table_role": "related"}
     assert result["preview"] and result["preview"]["sql_preview"]
     preview_definition = result["preview"]["definition"]
+    assert preview_definition["join"]["on"] == [{"left": "owner_ref", "right": "project_key"}]
     assert [(item["table"], item["field"]) for item in preview_definition["filters"]] == [
         ("related", "transfer_flag"), ("base", "detail_scope"),
     ]
@@ -394,7 +438,7 @@ def test_semantic_generation_binds_scopes_cache_save_and_preview_hash(missing_po
     assert set(intent["dictionary_snapshots"]) == {"related"}
     assert intent["expected_join"]["table_name"] == "project_snapshot"
     assert intent["expected_project_driver"] == preview_definition["project_driver"]
-    assert "LEFT JOIN" in result["preview"]["sql_preview"]
+    assert "INNER JOIN" in result["preview"]["sql_preview"]
     saved = rules.save_draft(user(), preview_definition)
     version = rules.storage.latest_version(saved["id"])
     detail = rules.get_rule(user(), saved["id"])
@@ -463,7 +507,7 @@ def test_repair_can_complete_a_missing_driver_without_changing_the_metric():
         request_text="收益转让标识为是的项目，资产收益权余额应大于0", analysis_protocol=2,
     ))
     assert len(model.calls) == 3
-    assert result["preview"] and result["project_driver"] == {"version": 2, "table_role": "related"}
+    assert result["preview"] and result["project_driver"] == {"version": DRIVER_VERSION, "table_role": "related"}
     assert result["expression"] == incomplete["expression"]
 
 
@@ -500,7 +544,7 @@ def test_project_only_model_rule_has_no_detail_join():
 
     result = rules.parse_rule_request(user(), _request(request_text="项目总额应大于0", analysis_protocol=2))
 
-    assert result["project_driver"] == {"version": 2, "table_role": "base"}
+    assert result["project_driver"] == {"version": DRIVER_VERSION, "table_role": "base"}
     assert result["project_context"]["mode"] == "base"
     assert "LEFT JOIN" not in result["preview"]["sql_preview"]
     assert result["filters"] == [{
@@ -526,7 +570,7 @@ def test_legacy_project_definition_preview_and_save_do_not_gain_driver():
     assert replayed["content_sha256"] == version["content_sha256"]
 
 
-def test_compiled_driver_preserves_multirow_missing_cross_period_and_chinese_identity():
+def test_compiled_driver_preserves_multirow_and_chinese_identity_without_missing_period_rows():
     rules, _model = make_rules([
         {"target": {"table": "asset_rows"}, "report_category": "pbc_central"},
         semantic_draft(),
@@ -580,10 +624,10 @@ def test_compiled_driver_preserves_multirow_missing_cross_period_and_chinese_ide
     assert run.status == "VIOLATION", run.error_code
     assert sorted((row["project_code"], row["business_key"], row["issue_kind"]) for row in run.rows) == [
         ("P1", "a1", "numeric"), ("P1", "a2", "numeric"),
-        ("P2", None, "missing_record"), ("P3", "c1", "numeric"),
+        ("P3", "c1", "numeric"),
     ]
     assert {row["project_code"]: row["project_name"] for row in run.rows} == {
-        "P1": "项目甲", "P2": "项目乙", "P3": "项目丙",
+        "P1": "项目甲", "P3": "项目丙",
     }
     date_alias = definition_value["result_aliases"]["data_date"]
     assert all(row["values"][date_alias] == DAY for row in run.query_results)

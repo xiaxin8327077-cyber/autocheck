@@ -32,6 +32,7 @@ export function errorMessage(error, fallback = "操作失败，请稍后重试")
     PREVIEW_DATE_FIELD_REQUIRED: "还需选择记录所属的校验日期字段；已选口径已保留，无需重新分析",
     PROJECT_CONTEXT_REQUIRED: "请在「校验设置 → 文档快照」核对项目编号、项目名称及关联说明，再重新分析",
     PREVIEW_DATE_FIELD_INVALID: "所选校验日期不在文档日期字段中，请重新选择，不能用采集时间或业务事件日期冒充",
+    PREVIEW_FAILED: "SQL 预览失败，请重试；如仍失败请提供错误编号。",
     SQL_POLICY_DENIED: "SQL 未通过只读安全检查",
     SOURCE_UNAVAILABLE: "数据源不可用，请检查配置后重试",
     MAPPING_DRIFT: "字段映射已变化，请重新读取表结构",

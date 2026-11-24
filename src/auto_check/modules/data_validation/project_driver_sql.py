@@ -1,19 +1,26 @@
 """Fixed project-first SELECT templates for new, versioned rules."""
 
-from .compiler import _filter_predicate, _OPS
+from .compiler import _comparison_predicate, _filter_predicate, _keyword_predicate, _summed_details
 from .contracts import AppError
+from .formula import CALCULATION_MESSAGE, compile_formula, group_formula_parts, group_formula_projection, is_arithmetic
 from .issue_query_results import compiled_projection
-from .query_spec import comparison_conditions, is_condition_group, UNARY_OPS
+from .query_spec import comparison_conditions, excludes_unmatched_sum, is_condition_group, TEXT_FILTER_OPS, UNARY_OPS
 from .sql_guard import quote_identifier
 
 
-def _comparisons(definition, column, params):
+def _comparisons(definition, dialect, column, params, parts):
     policy = definition["null_policy"]
     handling = definition.get("null_handling") or {}
     predicates = []
     grouped = is_condition_group(definition)
     for index, item in enumerate(comparison_conditions(definition)):
+        if index + 1 in parts:
+            predicates.append(parts[index + 1].comparison)
+            continue
         left = column("base", item["left"])
+        if item["op"] in TEXT_FILTER_OPS:
+            predicates.append(_keyword_predicate(dialect, left, item["op"], item["right"], params, f"keyword_{index}", skip_empty=True))
+            continue
         if item["op"] in UNARY_OPS:
             predicates.append(f"{left} IS {'NOT ' if item['op'] == 'is_not_null' else ''}NULL")
             continue
@@ -27,7 +34,7 @@ def _comparisons(definition, column, params):
             right = column(item.get("right_table", "base"), item["right"])
             if handling.get("right", policy) == "zero":
                 right = f"COALESCE({right}, 0)"
-        predicates.append(f"{left} {_OPS[item['op']]} {right}")
+        predicates.append(_comparison_predicate(dialect, left, item, right, policy))
     logic = " OR " if definition["expression"].get("logic") == "any" else " AND "
     return "(" + logic.join(predicates) + ")"
 
@@ -46,37 +53,18 @@ def _sum_evidence(definition, detail_date, detail_scope, amount):
     return raw_count, count, total
 
 
-def _summed_details(definition, join, detail_table, detail_day, filters, column):
-    # Aggregate actual details before matching projects, so repeated project rows
-    # cannot multiply an otherwise identical detail sum.
-    keys = [column("related", pair["right"]) for pair in join["on"]]
-    selected = [f"{key} AS dv_key_{i}" for i, key in enumerate(keys)]
-    amount = column("related", definition["expression"]["right"])
-    eligible = " AND ".join(filters)
-    count = f"COUNT(CASE WHEN {eligible} THEN 1 END)" if filters else "COUNT(*)"
-    value = f"COALESCE({amount}, 0)" if definition["null_policy"] == "zero" else amount
-    if filters:
-        value = f"CASE WHEN {eligible} THEN {value} END"
-    total = f"SUM({value})"
-    if definition["null_policy"] != "zero":
-        total = f"CASE WHEN {count} = COUNT({value}) THEN {total} END"
-    selected.extend([count + " AS dv_count", total + " AS dv_sum"])
-    match = [f"{column('base', pair['left'])} = s.dv_key_{i}" for i, pair in enumerate(join["on"])]
-    return (" LEFT JOIN (SELECT " + ", ".join(selected) + f" FROM {detail_table} AS d WHERE {detail_day} = :report_date"
-            + " GROUP BY " + ", ".join(dict.fromkeys(keys)) + ") AS s ON " + " AND ".join(match))
-
-
 def compile_project_driver(definition, dialect, spec, aliases):
     driver = definition["project_driver"]
     context = spec["project_context"]
     join = spec["join"]
     if (not isinstance(driver, dict) or set(driver) != {"version", "table_role"}
-            or type(driver["version"]) is not int or driver["version"] not in (1, 2)
+            or type(driver["version"]) is not int or driver["version"] not in (1, 2, 3)
             or driver["table_role"] not in ("base", "related") or not context
             or definition.get("rule_type") != "field_compare"):
         raise AppError("VALIDATION_ERROR")
     project_role = driver["table_role"]
     legacy = driver["version"] == 1
+    matched_only = driver["version"] >= 3 or excludes_unmatched_sum(join)
     related_project = project_role == "related"
     if (related_project and (not join or context["mode"] != "lookup" or context["table_name"] != join["table_name"]
                              or context["key"] not in join["on"] or context.get("date_field") != join["report_date_field"])
@@ -118,16 +106,29 @@ def compile_project_driver(definition, dialect, spec, aliases):
     columns = compiled_projection(definition)
     values = {role: column("related" if other else "base", field) for role, field, other in columns if field}
     values.update(project_match_count="1")
+    formula = (compile_formula(definition, lambda name: column("base", name), params, ":violation_message")
+               if is_arithmetic(definition["expression"]) else None)
+    if formula:
+        values.update(checked_value=formula.checked, comparison_value=formula.value)
+    parts = group_formula_parts(definition, lambda name: column("base", name), params, ":violation_message")
+    if parts:
+        for role, field, computed in group_formula_projection(parts, definition["expression"]["conditions"]):
+            values[role] = computed or column("base", field)
     if join:
         detail_table = quote(definition["table_name"] if related_project else join["table_name"])
         detail_day = column("base", base_day) if related_project else column("related", join["report_date_field"])
-        match = [f"{column('base', pair['left'])} = {column('related', pair['right'])}" for pair in join["on"]]
+        date_pair = {"left": base_day, "right": join["report_date_field"]}
+        match = [f"{column('base', pair['left'])} = {column('related', pair['right'])}" for pair in join["on"]
+                 if not matched_only or pair != date_pair]
         match.append(f"{detail_day} = {project_day}")
         if aggregate and not legacy:
-            source += _summed_details(definition, join, detail_table, detail_day, filters["d"], column)
+            source += _summed_details(definition, join, detail_table, detail_day, filters["d"], column,
+                                      matched_only=matched_only)
         else:
-            source += f" LEFT JOIN {detail_table} AS d ON " + " AND ".join(match)
-        params["dv_missing_record"] = "没有对应明细记录，请核查"
+            join_type = "INNER JOIN" if matched_only else "LEFT JOIN"
+            source += f" {join_type} {detail_table} AS d ON " + " AND ".join(match)
+        if not matched_only:
+            params["dv_missing_record"] = "没有对应明细记录，请核查"
         if aggregate:
             if related_project:
                 raise AppError("VALIDATION_ERROR")
@@ -138,7 +139,7 @@ def compile_project_driver(definition, dialect, spec, aliases):
             else:
                 eligible_count, total = "s.dv_count", "s.dv_sum"
                 missing_record = "s.dv_count IS NULL"
-            values.update(related_count=eligible_count if legacy else "COALESCE(s.dv_count, 0)", comparison_value=total)
+            values.update(related_count=eligible_count if legacy or matched_only else "COALESCE(s.dv_count, 0)", comparison_value=total)
             checked = column("base", definition["expression"]["left"])
             left = f"COALESCE({checked}, 0)" if definition["null_policy"] == "zero" else checked
             predicate = f"({left} <> ({total}))"
@@ -147,25 +148,40 @@ def compile_project_driver(definition, dialect, spec, aliases):
                 group_clause = " GROUP BY " + ", ".join(dict.fromkeys([project_code, project_name, project_day, *grouping]))
         else:
             missing_record = f"{detail_day} IS NULL"
-            predicate = _comparisons(definition, column, params)
+            predicate = formula.hit if formula else _comparisons(definition, dialect, column, params, parts)
     else:
-        predicate = _comparisons(definition, column, params)
+        predicate = formula.hit if formula else _comparisons(definition, dialect, column, params, parts)
 
     kind = "'numeric'" if definition["null_policy"] in ("zero", "review") else "'comparison'"
     message = ":violation_message"
     hit = predicate
-    if definition["null_policy"] == "review":
+    if formula:
+        kind, message = formula.kind, formula.message
+    elif definition["null_policy"] == "review":
         unknown = f"({predicate}) IS NULL"
         hit = f"({predicate} OR {unknown})"
         params["dv_missing_value"] = "缺值待核实：比较字段为 NULL"
         kind = f"CASE WHEN {unknown} THEN 'missing_value' ELSE {kind} END"
         message = f"CASE WHEN {unknown} THEN :dv_missing_value ELSE {message} END"
+    if parts:
+        if definition["null_policy"] == "skip":
+            kind = "'numeric'"
+        errors = [part.zero_denominator for part in parts.values() if part.zero_denominator]
+        if errors:
+            error = "(" + " OR ".join(errors) + ")"
+            hit = f"({hit} OR {error})"
+            kind = f"CASE WHEN {error} THEN 'calculation_error' ELSE {kind} END"
+            message = f"CASE WHEN {error} THEN '{CALCULATION_MESSAGE}' ELSE {message} END"
     if missing_record:
         eligible = f"{eligible_count} > 0" if aggregate else detail_scope
-        hit = (f"({missing_record} OR (({eligible}) AND {hit}))" if legacy or aggregate or filters["d"]
-               else f"({missing_record} OR {hit})")
-        kind = f"CASE WHEN {missing_record} THEN 'missing_record' ELSE {kind} END"
-        message = f"CASE WHEN {missing_record} THEN :dv_missing_record ELSE {message} END"
+        if matched_only:
+            if aggregate or filters["d"]:
+                hit = f"(({eligible}) AND {hit})"
+        else:
+            hit = (f"({missing_record} OR (({eligible}) AND {hit}))" if legacy or aggregate or filters["d"]
+                   else f"({missing_record} OR {hit})")
+            kind = f"CASE WHEN {missing_record} THEN 'missing_record' ELSE {kind} END"
+            message = f"CASE WHEN {missing_record} THEN :dv_missing_record ELSE {message} END"
     values.update(issue_kind=kind, violation_message=message)
 
     def projection(items):

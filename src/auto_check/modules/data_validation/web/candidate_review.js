@@ -17,6 +17,13 @@ function filterSelection(value) {
   return value && JSON.stringify(normalized({ table: value.table, field: value.field, op: value.op, value: value.value }));
 }
 
+function choiceFieldLabel(candidate, choice) {
+  const selection = choice.selection;
+  const columns = selection?.table === "related" ? candidate.related_columns : candidate.columns;
+  const column = columns?.find(({ column_name }) => column_name === selection?.field);
+  return column?.comment?.trim() || choice.label || selection?.field;
+}
+
 function filterScope(candidate, question) {
   const match = /^filters\.(\d+)$/.exec(question.id);
   return match && candidate.semantic_intent?.scopes?.[Number(match[1])];
@@ -110,7 +117,7 @@ export function applyBusinessAnswers(options, items, answers, state, user, reque
         const split = choices.length > 1;
         const filterField = choice.selection?.field;
         if (split) {
-          if (!choice.rule_name) definition.name = `${definition.name || variant.label} · ${filterField || choice.label}`;
+          if (!choice.rule_name) definition.name = `${definition.name || variant.label} · ${choiceFieldLabel(candidate, choice)}`;
           if (!filterField) definition.violation_message = `${choice.label}命中校验条件，请核实。`;
         }
         return { ...variant, ...(split ? { id: JSON.stringify([variant.id, question.id, choice.value ?? filterField]),

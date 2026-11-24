@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import base64
+import logging
+from traceback import extract_tb
 from typing import Any, Callable
+from uuid import uuid4
 
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
 
 from .contracts import AppError
 from .service import DataValidationService
 from .sql_test_run import run_candidate_sql
+
+LOGGER = logging.getLogger("auto_check.modules.data_validation")
 
 
 _ERROR_STATUSES = {
@@ -36,6 +41,17 @@ def register_routes(router: Any, service_getter: Callable[[], DataValidationServ
                 if exc.reference:
                     error["reference"] = exc.reference
                 return ModuleHttpResponse.json(status, {"error": error})
+            except Exception as exc:
+                if path != "/ai/preview":
+                    raise
+                reference = uuid4().hex[:12]
+                frames = " -> ".join(f"{frame.filename.replace(chr(92), '/').rsplit('/', 1)[-1]}:{frame.lineno}"
+                                     for frame in extract_tb(exc.__traceback__)[-8:])
+                LOGGER.error("Preview failed reference=%s type=%s frames=%s", reference, type(exc).__name__, frames)
+                return ModuleHttpResponse.json(500, {"error": {
+                    "code": "PREVIEW_FAILED", "message": "SQL 预览失败，请重试；如仍失败请提供错误编号。",
+                    "reference": reference,
+                }})
         router.add(method, path, endpoint, permission=permission, max_body_bytes=body)
 
     wrap("data_validation.view", "GET", "/rules", lambda request: service_getter().list_rules(_user(request), dict(request.query)), 0)

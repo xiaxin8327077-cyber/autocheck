@@ -2,7 +2,9 @@ import {
   BLANK_COLUMN_FIELD, EQUALITY_POLICY_OPTIONS, NULL_POLICY_OPTIONS, OPERATOR_OPTIONS,
 } from "../constants.js";
 import { errorMessage } from "../runtime.js";
-import { bindComparisonField, comparisons, fieldTarget, hasComparison, isGrouped } from "../comparisons.js";
+import { bindComparisonField, comparisons, fieldTarget, hasComparison, isFormulaComparison, isGrouped, isKeywordOperator, operandFields } from "../comparisons.js";
+import { createKeywordEditor } from "./keyword_editor.js";
+import { candidateCondition } from "./ai_candidate.js";
 import { createConditionGroup } from "./condition_group.js";
 import { aiIcon } from "./ai_visuals.js";
 import { hasCapability, reportCategoryCode } from "../state.js";
@@ -48,12 +50,13 @@ export function createRuleForm({
   let projectContext = null;
   let projectDriver = null;
   let comparisonEvidence = {};
+  let simpleFormula = null;
   let semanticReview = {};
   const reviewSection = element("section", { className: "dv-notice is-warning", hidden: true });
 
   const FILTER_TABLES = ["base", "related"];
   // 与后端 query_grounding 的 operator 名精确一致，不得改写语义。
-  const FILTER_OPS = ["lt", "lte", "gt", "gte", "eq", "neq", "in", "not_in", "is_null", "is_not_null"];
+  const FILTER_OPS = ["lt", "lte", "gt", "gte", "eq", "neq", "in", "not_in", "contains_any", "not_contains_any", "is_null", "is_not_null"];
   const UNMATCHED_POLICIES = ["unresolved", "exclude"];
   const UNARY_EXPRESSION_OPS = ["is_null", "is_not_null"];
 
@@ -62,6 +65,7 @@ export function createRuleForm({
   }
 
   function clearRelationEvidence() {
+    if (simpleFormula) setGroup(null);
     comparisonEvidence = {};
     semanticReview = {};
     filters = [];
@@ -96,6 +100,9 @@ export function createRuleForm({
     let invalid = "";
     if (!FILTER_OPS.includes(op)) {
       invalid = `筛选运算符 ${op || "空"} 不受支持`;
+    } else if (op === "contains_any" || op === "not_contains_any") {
+      if (!Array.isArray(value) || !value.length || value.length > 50
+          || value.some((word) => typeof word !== "string" || !word || word.length > 200)) invalid = "每组可填写 1 至 50 个关键词，每词最多 200 字";
     } else if (op === "in" || op === "not_in") {
       if (!Array.isArray(value)) invalid = "IN/NOT IN 筛选值必须是数组";
       else if (value.length > 50) invalid = "IN/NOT IN 筛选值不能超过 50 项";
@@ -162,7 +169,7 @@ export function createRuleForm({
     relatedColumns = Array.isArray(value.related_columns) ? [...value.related_columns] : [];
     const expression = value.expression || {};
     comparisonEvidence = Object.fromEntries(["null_handling", "null_evidence", "include_result_fields"]
-      .filter((key) => isGrouped(expression) && value[key] !== undefined)
+      .filter((key) => (isGrouped(expression) || isFormulaComparison(expression)) && value[key] !== undefined)
       .map((key) => [key, value[key]]));
     setGroup(expression);
     rightTable = expression.right_table === "related" ? "related" : "base";
@@ -204,7 +211,9 @@ export function createRuleForm({
   }
 
   const name = input({ placeholder: "输入规则名称" });
-  const source = select(BLANK_COLUMN_FIELD);
+  const source = select(BLANK_COLUMN_FIELD, {
+    className: isAiMode ? "dv-select dv-ai-meta-select dv-ai-source-select rsp-compact-select" : "dv-select",
+  });
   const category = select(BLANK_COLUMN_FIELD);
   const table = input({ placeholder: "输入已通过授权的物理表名" });
   const describe = button("读取表结构", { listen, onClick: () => onDescribe() });
@@ -219,24 +228,9 @@ export function createRuleForm({
   const requestField = field(requestLabel, request);
   requestField.classList.add("dv-field-wide");
 
-  const model = select(BLANK_COLUMN_FIELD);
-  let reasoningEnabled = false;
-  const reasoningSwitch = button("", { className: "user-enable-switch dv-ai-reasoning-switch", ariaLabel: "推理" });
-  reasoningSwitch.setAttribute("role", "switch");
-  reasoningSwitch.setAttribute("aria-checked", "false");
-  reasoningSwitch.title = "开启低强度推理；关闭可缩短等待时间";
-  function setReasoning(enabled) {
-    reasoningEnabled = enabled === true;
-    reasoningSwitch.setAttribute("aria-checked", String(reasoningEnabled));
-    reasoningSwitch.classList.toggle("on", reasoningEnabled);
-  }
-  listen(reasoningSwitch, "click", () => {
-    if (reasoningSwitch.disabled) return;
-    setReasoning(!reasoningEnabled);
-    changed();
+  const model = select(BLANK_COLUMN_FIELD, {
+    className: "dv-select dv-ai-meta-select dv-ai-model-select rsp-compact-select",
   });
-  const reasoningControl = element("span", { className: "dv-ai-reasoning-control" },
-    element("span", { text: "推理" }), reasoningSwitch);
   const modelTestButton = button("测试可用性", {
     listen, className: "dv-button dv-button-plain", onClick: () => runModelTest(),
   });
@@ -251,7 +245,7 @@ export function createRuleForm({
   const businessKey = select(BLANK_COLUMN_FIELD);
   const left = select(BLANK_COLUMN_FIELD);
   const right = select(BLANK_COLUMN_FIELD);
-  const rightType = select([["field", "字段"], ["value", "数值常量"]]);
+  const rightType = select([["field", "字段"], ["value", "数值常量"], ["text", "文本常量"]]);
   const rightNumber = input({ type: "number", placeholder: "输入有限数值常量，如 0" });
   rightNumber.step = "any";
   const op = select(OPERATOR_OPTIONS);
@@ -287,6 +281,10 @@ export function createRuleForm({
   const rightConstantField = field("数值常量 *", rightNumber);
   rightConstantField.hidden = true;
   const rightField = field("右字段 *", right);
+  const rightTypeField = field("比较目标类型 *", rightType);
+  const keywords = createKeywordEditor(listen, changed);
+  keywords.set([]);
+  keywords.element.hidden = true;
 
   const equalityPolicyField = field("相等处理口径", equalityPolicy);
   const constantEqualityHint = element("p", {
@@ -302,9 +300,12 @@ export function createRuleForm({
 
   const simpleFields = [
     field("异常触发关系", op),
-    field("左字段 *", left), field("比较目标类型 *", rightType),
-    rightField, rightConstantField];
-  const mappingGrid = element("div", { className: "dv-form-grid" }, field("业务主键 *", businessKey), simpleFields);
+    field("左字段 *", left), rightTypeField,
+    rightField, rightConstantField, keywords.element];
+  const formulaSummary = element("span", { className: "dv-readonly-value" });
+  const formulaField = field("公式条件（只读）", formulaSummary);
+  formulaField.hidden = true;
+  const mappingGrid = element("div", { className: "dv-form-grid" }, field("业务主键 *", businessKey), simpleFields, formulaField);
   const addGroup = isAiMode ? null : button("添加比较条件", {
     listen, onClick: () => {
       setGroup({ logic: "any", conditions: [readComparison(), { left: "", op: "eq", right_type: "value", right: null }] });
@@ -319,12 +320,18 @@ export function createRuleForm({
   function setGroup(expression) {
     group.set(expression);
     const grouped = isGrouped(expression);
+    simpleFormula = isFormulaComparison(expression) ? JSON.parse(JSON.stringify(expression)) : null;
+    renderFormula();
     if (addGroup) addGroup.hidden = grouped;
-    for (const node of simpleFields) node.hidden = grouped;
-    if (grouped) {
+    for (const node of simpleFields) node.hidden = grouped || Boolean(simpleFormula);
+    if (grouped || simpleFormula) {
       equalityPolicyField.hidden = true;
       constantEqualityHint.hidden = true;
     }
+  }
+  function renderFormula() {
+    formulaField.hidden = !simpleFormula;
+    if (simpleFormula) formulaSummary.textContent = candidateCondition({ expression: simpleFormula, columns: baseColumns() });
   }
   const messageField = field("异常说明 *", message);
   const policyGrid = element("div", { className: "dv-form-grid" },
@@ -335,7 +342,7 @@ export function createRuleForm({
     ? {
       aiContext: element("div", { className: "dv-ai-request-meta" }, element("span", { text: "你的需求" }),
         element("div", { className: "dv-ai-inline-source" }, aiIcon("database"), sourceField),
-        element("div", { className: "dv-ai-inline-model" }, modelField), reasoningControl),
+        element("div", { className: "dv-ai-inline-model" }, modelField)),
       aiInput: element("div", { className: "dv-form-section dv-form-ai-input" },
         requestField,
         sourceFeedback,
@@ -411,11 +418,15 @@ export function createRuleForm({
     return result;
   }
 
-  [name, request, op, message, nullPolicy, businessKey, left, right].forEach((control) => {
+  [name, request, message, nullPolicy, businessKey, left, right].forEach((control) => {
     listen(control, control.tagName === "SELECT" ? "change" : "input", changed);
   });
+  listen(op, "change", () => {
+    applyRightTarget(rightType.value);
+    changed();
+  });
   listen(equalityPolicy, "change", () => {
-    if (rightType.value !== "value") savedFieldEqualityPolicy = equalityPolicy.value;
+    if (rightType.value === "field") savedFieldEqualityPolicy = equalityPolicy.value;
     changed();
   });
   listen(table, "input", () => {
@@ -438,8 +449,32 @@ export function createRuleForm({
   listen(rightNumber, "input", changed);
 
   function applyRightTarget(type) {
-    const valueMode = type === "value";
-    rightType.value = valueMode ? "value" : "field";
+    const grouped = group.read();
+    nullPolicy.disabled = grouped ? grouped.conditions.some((item) => isKeywordOperator(item.op))
+      : !simpleFormula && isKeywordOperator(op.value);
+    if (nullPolicy.disabled) nullPolicy.value = "skip";
+    if (simpleFormula) {
+      simpleFields.forEach((node) => { node.hidden = true; });
+      equalityPolicyField.hidden = true;
+      constantEqualityHint.hidden = true;
+      return;
+    }
+    const valueMode = type === "value" || type === "text";
+    const wordMode = isKeywordOperator(op.value);
+    keywords.element.hidden = !wordMode;
+    rightTypeField.hidden = wordMode;
+    if (wordMode) {
+      rightField.hidden = rightConstantField.hidden = true;
+      equalityPolicyField.hidden = constantEqualityHint.hidden = true;
+      equalityPolicy.value = "allow_equal";
+      nullPolicy.value = "skip";
+      return;
+    }
+    rightType.value = valueMode ? type : "field";
+    rightNumber.type = type === "text" ? "text" : "number";
+    rightConstantField.children[0].textContent = type === "text" ? "文本常量 *" : "数值常量 *";
+    rightNumber.placeholder = type === "text" ? "输入文本或字典码值" : "输入有限数值常量，如 0";
+    constantEqualityHint.textContent = type === "text" ? "文本常量按相等或不相等比较" : "数值常量按异常触发关系判断相等";
     rightConstantField.hidden = !valueMode;
     rightField.hidden = valueMode;
     equalityPolicyField.hidden = valueMode;
@@ -450,7 +485,7 @@ export function createRuleForm({
       equalityPolicy.value = savedFieldEqualityPolicy || "unresolved";
     }
     equalityPolicy.disabled = valueMode;
-    if (!group.element.hidden) {
+    if (!group.element.hidden || simpleFormula) {
       simpleFields.forEach((node) => { node.hidden = true; });
       equalityPolicyField.hidden = true;
       constantEqualityHint.hidden = true;
@@ -559,7 +594,8 @@ export function createRuleForm({
   function binaryNumericComparison() {
     const binary = comparisons(readComparison()).filter((item) => !isUnaryExpressionOp(item.op));
     return binary.length > 0 && binary.every((item) => {
-      if (!columnIsNumeric(item.left)) return false;
+      if (!item.left || !operandFields(item, "left").every(columnIsNumeric)) return false;
+      if (item.right_type === "formula") return operandFields(item, "right").every(columnIsNumeric);
       if (item.right_type === "value") return Number.isFinite(item.right);
       const column = columnsForTable(item.right_table).find((entry) => entry.column_name === item.right);
       return NUMERIC_TYPES.has(String(column?.data_type || "").toLowerCase().split("(")[0].trim());
@@ -567,6 +603,8 @@ export function createRuleForm({
   }
 
   function syncNullPolicyForExpression() {
+    nullPolicy.disabled = comparisons(readComparison()).some((item) => isKeywordOperator(item.op));
+    if (nullPolicy.disabled) nullPolicy.value = "skip";
     const numeric = binaryNumericComparison();
     const explicitZero = nullPolicy.value === "zero";
     nullZeroHint.hidden = !explicitZero;
@@ -579,11 +617,13 @@ export function createRuleForm({
   function readComparison() {
     const grouped = group.read();
     if (grouped) return grouped;
+    if (simpleFormula) return JSON.parse(JSON.stringify(simpleFormula));
     const comparison = { left: left.value, op: op.value };
     if (isUnaryExpressionOp(comparison.op)) return comparison;
-    if (rightType.value === "value") {
+    if (isKeywordOperator(comparison.op)) return { ...comparison, right_type: "value", right: keywords.read() };
+    if (rightType.value !== "field") {
       comparison.right_type = "value";
-      comparison.right = finiteNumber(rightNumber.value);
+      comparison.right = rightType.value === "text" ? rightNumber.value : finiteNumber(rightNumber.value);
     } else {
       comparison.right = right.value;
       if (rightTable === "related") comparison.right_table = "related";
@@ -613,14 +653,14 @@ export function createRuleForm({
       ...(projectDriver ? { project_driver: JSON.parse(JSON.stringify(projectDriver)) } : {}),
       ...readReview(), ...comparisonEvidence, ...semanticReview,
       violation_message: message.value.trim(),
-      null_policy: unaryExpression ? "violate" : nullPolicy.value,
+      null_policy: unaryExpression ? "violate" : comparisons(comparison).some((item) => isKeywordOperator(item.op)) ? "skip" : nullPolicy.value,
       equality_policy: unaryExpression || isGrouped(comparison)
         ? "allow_equal"
-        : (rightType.value === "value" ? "allow_equal" : equalityPolicy.value),
+        : (!simpleFormula && rightType.value !== "field" ? "allow_equal" : equalityPolicy.value),
       generation_mode: generationMode,
       mapping_version: metadata?.mapping_version || persistedMappingVersion,
       model_id: model.value,
-      ...(isAiMode ? { reasoning_enabled: reasoningEnabled } : {}),
+      ...(isAiMode ? { reasoning_enabled: false } : {}),
       request_text: request.value.trim(),
     };
   }
@@ -640,7 +680,7 @@ export function createRuleForm({
     if (seed.source_id) source.value = seed.source_id;
     if (seed.table_name) table.value = seed.table_name;
     if (seed.request_text) request.value = seed.request_text;
-    if (typeof seed.reasoning_enabled === "boolean") setReasoning(seed.reasoning_enabled);
+    // 兼容旧草稿字段：推理不再提供入口，seed.reasoning_enabled 一律忽略。
     if (seed.report_category !== undefined) {
       const code = reportCategoryCode(seed.report_category);
       if (code && ![...category.options].some((option) => option.value === code)) {
@@ -657,14 +697,14 @@ export function createRuleForm({
     const seedValueComparison = expression.right_type === "value";
     ensureOperatorOption(expression.op || "lt");
     op.value = expression.op || "lt";
-    left.value = expression.left || "";
-    applyRightTarget(seedValueComparison ? "value" : "field");
+    left.value = typeof expression.left === "string" ? expression.left : "";
+    applyRightTarget(seedValueComparison ? (typeof expression.right === "string" ? "text" : "value") : "field");
+    if (isKeywordOperator(expression.op)) keywords.set(expression.right);
     if (seedValueComparison) {
-      const constant = finiteNumber(expression.right);
-      rightNumber.value = constant === null ? "" : String(constant);
+      rightNumber.value = String(expression.right ?? "");
     } else {
       refreshRightColumns(false);
-      right.value = expression.right === null || expression.right === undefined ? "" : String(expression.right);
+      right.value = typeof expression.right === "string" ? expression.right : "";
     }
     const unaryExpression = isUnaryExpressionOp(expression.op);
     if (seed.report_date_field !== undefined) reportDateField = seed.report_date_field || "";
@@ -764,7 +804,6 @@ export function createRuleForm({
       if (tone) metadataStatus.classList.add(`is-${tone}`);
     },
     reset(detail, seed = null) {
-      setReasoning(false);
       aiRuleDescription = "";
       savedReviewContext = null;
       reviewedQuestions.clear();
@@ -802,20 +841,21 @@ export function createRuleForm({
       persistedMappingVersion = definition.mapping_version || detail?.mapping_version || "";
       reportDateField = definition.report_date_field ?? "report_date";
       const valueComparison = expression.right_type === "value";
-      const rightFieldName = valueComparison ? "" : expression.right;
-      applyRightTarget(valueComparison ? "value" : "field");
-      const existing = [definition.business_key, expression.left, rightFieldName].filter(Boolean);
+      const rightFieldName = !valueComparison && typeof expression.right === "string" ? expression.right : "";
+      applyRightTarget(valueComparison ? (typeof expression.right === "string" ? "text" : "value") : "field");
+      if (isKeywordOperator(expression.op)) keywords.set(expression.right);
+      const leftFieldName = typeof expression.left === "string" ? expression.left : "";
+      const existing = [definition.business_key, leftFieldName, rightFieldName].filter(Boolean);
       const columns = existing.map((column_name) => ({ column_name, comment: "服务端规则字段，待元数据核验" }));
       const rightPool = rightTable === "related"
         ? [...relatedColumns, ...(rightFieldName && !relatedColumns.some((column) => column.column_name === rightFieldName)
           ? [{ column_name: rightFieldName, comment: "服务端规则字段，待元数据核验" }] : [])]
         : columns;
       setColumnOptions(columns, {
-        businessKey: definition.business_key, left: expression.left, right: rightFieldName,
+        businessKey: definition.business_key, left: leftFieldName, right: rightFieldName,
       }, rightPool);
       if (valueComparison) {
-        const constant = finiteNumber(expression.right);
-        rightNumber.value = constant === null ? "" : String(constant);
+        rightNumber.value = String(expression.right ?? "");
       } else {
         right.value = rightFieldName || "";
       }
@@ -830,10 +870,12 @@ export function createRuleForm({
       if (detail && !isAiMode && generationMode === "ai" && reviewInputs.length) savedReviewContext = reviewContext();
     },
     restoreInput(signature) {
-      const [sourceId, text, modelId, reasoning] = JSON.parse(signature);
+      const [sourceId, text, modelId] = JSON.parse(signature);
       source.value = sourceId; request.value = text; model.value = modelId;
-      setReasoning(reasoning);
     },
+    // 兼容已加载页面的旧调用；推理入口已移除，任何调用都只能保持关闭。
+    setReasoningEnabled() { return false; },
+    setReasoning() { return false; },
     setRequestEditing(hasCandidate) {
       reanalysis = Boolean(hasCandidate);
       cancelEdit.hidden = !reanalysis;
@@ -857,16 +899,16 @@ export function createRuleForm({
       syncNullPolicyForExpression();
       ensureOperatorOption(candidate.expression?.op || "lt");
       op.value = candidate.expression?.op || "lt";
-      left.value = candidate.expression?.left || "";
+      left.value = typeof candidate.expression?.left === "string" ? candidate.expression.left : "";
       const valueComparison = candidate.expression?.right_type === "value";
-      applyRightTarget(valueComparison ? "value" : "field");
+      applyRightTarget(valueComparison ? (typeof candidate.expression.right === "string" ? "text" : "value") : "field");
+      if (isKeywordOperator(candidate.expression?.op)) keywords.set(candidate.expression.right);
       if (valueComparison) {
-        const constant = finiteNumber(candidate.expression?.right);
-        rightNumber.value = constant === null ? "" : String(constant);
+        rightNumber.value = String(candidate.expression.right ?? "");
       } else {
         const field = candidate.expression?.right;
         refreshRightColumns(false);
-        right.value = field === null || field === undefined ? "" : String(field);
+        right.value = typeof field === "string" ? field : "";
       }
       syncTableReadonly();
       changed();
@@ -982,8 +1024,8 @@ export function createRuleForm({
         join.report_date_field = fieldName;
         recordSelectionResolution(question, `明确选择 ${selectionLabel(question, selection, fieldName)}`);
       }
-      else if (fieldTarget(key)?.index != null) {
-        group.set(bindComparisonField(readComparison(), question, value, columnsForTable));
+      else if (fieldTarget(key)?.index != null || (simpleFormula && fieldTarget(key))) {
+        setGroup(bindComparisonField(readComparison(), question, value, columnsForTable));
         recordSelectionResolution(question, `明确选择 ${question.options.find((option) => option.value === value)?.label || value}`);
       }
       else if (key === "expression.left" && (metadata?.columns || []).some((column) => column.column_name === value)) {
@@ -1018,11 +1060,10 @@ export function createRuleForm({
       request.disabled = Boolean(loading);
       source.disabled = Boolean(loading);
       model.disabled = Boolean(loading);
-      reasoningSwitch.disabled = Boolean(loading);
       modelTestButton.disabled = Boolean(loading) || modelTesting;
     },
     lockInputs(locked) {
-      if (locked) [request, source, model, reasoningSwitch, parse, modelTestButton, cancelEdit].forEach((control) => { control.disabled = true; });
+      if (locked) [request, source, model, parse, modelTestButton, cancelEdit].forEach((control) => { control.disabled = true; });
     },
     setBusy(busy) {
       describe.disabled = busy || !source.value || !table.value.trim();
@@ -1068,7 +1109,12 @@ export function createRuleForm({
         if (!condition.left) missing.push("左比较字段");
         if (isUnaryExpressionOp(condition.op)) continue;
         if (condition.right_type === "value") {
-          if (!Number.isFinite(condition.right)) missing.push("非空有限数值常量");
+          if (isKeywordOperator(condition.op)) {
+            if (!Array.isArray(condition.right) || !condition.right.length || condition.right.length > 50
+              || condition.right.some((word) => typeof word !== "string" || !word || [...word].length > 200)) missing.push("1 至 50 个非空关键词，每词最多 200 字");
+          } else if (typeof condition.right === "string") {
+            if (!["eq", "neq"].includes(condition.op) || !condition.right || condition.right.length > 200) missing.push("文本常量仅支持非空的相等或不相等比较");
+          } else if (!Number.isFinite(condition.right)) missing.push("非空有限数值常量");
         } else if (!condition.right) missing.push("右比较字段");
       }
       if (!payload.violation_message) missing.push("异常说明");
@@ -1076,7 +1122,7 @@ export function createRuleForm({
       if (missing.length) throw new Error(`请先完善：${missing.join("、")}`);
       const fields = new Set((metadata.columns || []).map((column) => column.column_name));
       const relatedFields = new Set(relatedColumns.map((column) => column.column_name));
-      const requiredFields = [payload.business_key, ...conditions.map((item) => item.left)];
+      const requiredFields = [payload.business_key, ...conditions.flatMap((item) => operandFields(item, "left"))];
       requiredFields.forEach((fieldName) => {
         if (!fields.has(fieldName)) throw new Error(`字段 ${fieldName} 不在当前真实表结构中，请重新选择`);
       });
@@ -1084,8 +1130,8 @@ export function createRuleForm({
         if (isUnaryExpressionOp(condition.op) || condition.right_type === "value") continue;
         const targetTable = condition.right_table === "related" ? "related" : "base";
         const pool = targetTable === "related" ? relatedFields : fields;
-        if (!pool.has(condition.right)) {
-          throw new Error(`右字段 ${condition.right} 不在${targetTable === "related" ? "关联表" : "当前真实表"}结构中，请重新选择`);
+        for (const fieldName of operandFields(condition, "right")) {
+          if (!pool.has(fieldName)) throw new Error(`右字段 ${fieldName} 不在${targetTable === "related" ? "关联表" : "当前真实表"}结构中，请重新选择`);
         }
       }
       (payload.filters || []).forEach((filter, index) => {
@@ -1124,11 +1170,12 @@ export function createRuleForm({
     persistedMappingVersion = metadata.mapping_version || "";
     if (Array.isArray(metadata.related_columns)) relatedColumns = [...metadata.related_columns];
     group.render();
+    renderFormula();
     const current = read();
     setColumnOptions(metadata.columns || [], {
       businessKey: current.business_key,
-      left: current.expression.left,
-      right: current.expression.right_type === "value" ? "" : current.expression.right,
+      left: typeof current.expression.left === "string" ? current.expression.left : "",
+      right: current.expression.right_type !== "value" && typeof current.expression.right === "string" ? current.expression.right : "",
     }, rightTable === "related" ? relatedColumns : null);
     const hasReportDate = (metadata.columns || []).some((column) => column.column_name === reportDateField);
     if (!hasReportDate && isAiMode) reportDateField = "";

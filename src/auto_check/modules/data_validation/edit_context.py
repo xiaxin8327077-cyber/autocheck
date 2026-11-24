@@ -10,7 +10,7 @@ def restore_saved_semantics(draft: dict, saved: dict) -> None:
     """Use the stored business obligations when compiling a new rule version."""
     intent = saved["semantic_intent"]
     old_driver = saved.get("project_driver")
-    if isinstance(old_driver, dict) and old_driver.get("version") == 1:
+    if isinstance(old_driver, dict) and old_driver.get("version") in (1, 2):
         old_driver = normalize_project_driver(old_driver)
         submitted = normalize_project_driver(draft.get("project_driver"))
         if (not isinstance(intent, dict)

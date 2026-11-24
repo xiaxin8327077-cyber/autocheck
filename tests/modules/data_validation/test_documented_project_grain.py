@@ -3,6 +3,7 @@ from copy import deepcopy
 import pytest
 
 from auto_check.modules.data_validation.query_samples import evaluate_case_with_kind
+from auto_check.modules.data_validation.project_driver import DRIVER_VERSION
 from tests.modules.data_validation.test_ai_service import _request
 from tests.modules.data_validation.test_project_driver_binding import DAY, document_tables, make_rules
 from tests.modules.data_validation.support import user
@@ -54,7 +55,7 @@ def test_documented_second_grain_rebinds_project_driver_and_business_key(detail_
     for name, role, field, key in [("project_snapshot", "base", "project_received", "project_key"),
                                     ("funding_rows", "related", "funding_received", locator)]:
         definition = candidates[name]["preview"]["definition"]
-        assert definition["project_driver"] == {"version": 2, "table_role": role}
+        assert definition["project_driver"] == {"version": DRIVER_VERSION, "table_role": role}
         assert definition["business_key"] == key
         assert definition["expression"] == {"left": field, "op": "lt", "right_type": "value", "right": 0}
         assert definition["semantic_intent"]["expected_expression"] == definition["expression"]
@@ -63,10 +64,10 @@ def test_documented_second_grain_rebinds_project_driver_and_business_key(detail_
             {"table": role, "field": "transfer_flag", "op": "eq", "value": "1", "confirmed": True}]
     detail = candidates["funding_rows"]["preview"]["definition"]
     assert detail["join"]["on"] == [{"left": detail_key, "right": "project_key"}]
-    assert 'FROM "project_snapshot" AS p LEFT JOIN "funding_rows" AS d' in candidates["funding_rows"]["preview"]["sql_preview"]
+    assert 'FROM "project_snapshot" AS p INNER JOIN "funding_rows" AS d' in candidates["funding_rows"]["preview"]["sql_preview"]
     project = {"day": DAY, "project_key": "A", "project_name": "甲", "transfer_flag": "1"}
     row = {"day": DAY, detail_key: "A", "funding_id": "F", "funding_received": None}
-    for rows, expected in [([], (1, "missing_record")), ([{**row, "day": "2026-10-31"}], (1, "missing_record")),
+    for rows, expected in [([], (0, None)), ([{**row, "day": "2026-10-31"}], (0, None)),
                            ([row], (0, None)), ([{**row, "funding_received": -1}], (1, "numeric"))]:
         assert evaluate_case_with_kind(detail, {"report_date": DAY, "project": project, "details": rows}) == expected
 

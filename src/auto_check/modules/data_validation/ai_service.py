@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection
+from copy import deepcopy
 import json
 from typing import Any
 
@@ -15,7 +16,8 @@ from .generation_policy import issues, merge, string_list
 from .dictionary_reviews import dictionary_question_text
 
 from .contracts import AppError
-from .query_spec import COMPARISON_OPS, MAX_CONDITIONS, UNARY_OPS, apply_numeric_null_policy, is_condition_group, is_finite_number
+from .formula import arithmetic_fields, is_arithmetic
+from .query_spec import COMPARISON_OPS, MAX_CONDITIONS, UNARY_OPS, apply_numeric_null_policy, is_condition_group, is_finite_number, type_family, valid_comparison_literal
 from .sql_guard import guard_sql
 
 _PROMPT_VERSION = "data-validation-ai-v5"
@@ -141,6 +143,13 @@ def model_judgment(payload: dict[str, Any], *, stage: str) -> dict[str, Any]:
         return (isinstance(value, str) and len(value) <= 2000) or is_finite_number(value)
 
     def safe_condition(condition):
+        if is_arithmetic(condition):
+            try:
+                arithmetic_fields(condition)
+            except AppError:
+                pass
+            else:
+                return deepcopy(condition)
         return {key: condition[key] for key in ("left", "op", "right_type", "right", "right_table")
                 if key in condition and scalar(condition[key])}
 
@@ -278,15 +287,28 @@ def _bind_condition(expression, columns, related_columns, choices, uncertainties
     if not isinstance(expression, dict) or not isinstance(expression.get("op"), str):
         raise failure("MODEL_RESPONSE_INVALID", "generate_rule")
     op = expression["op"]
+    if is_arithmetic(expression):
+        try:
+            fields = arithmetic_fields(expression)
+        except AppError as exc:
+            raise failure("MODEL_RESPONSE_INVALID", "generate_rule") from exc
+        numeric = {c["column_name"] for c in columns if type_family(c.get("data_type")) == "number"}
+        if not set(fields) <= numeric:
+            raise failure("MODEL_RESPONSE_INVALID", "generate_rule")
+        return deepcopy(expression), [], True
     unary = op in UNARY_OPS
     allowed = {"left", "op"} if unary else {"left", "op", "right", "right_type", "right_table"}
-    if (op not in COMPARISON_OPS | UNARY_OPS or (grouped and set(expression) - allowed)
+    if op not in COMPARISON_OPS | UNARY_OPS:
+        raise failure("MODEL_RESPONSE_INVALID", "generate_rule", category="condition_operator",
+                      repair_hint="修复定位：expression.op。运算符使用 " + ",".join(sorted(COMPARISON_OPS | UNARY_OPS)) + "，保留原异常方向。")
+    if ((grouped and set(expression) - allowed)
             or (not unary and expression.get("right_type", "field") not in ("field", "value"))):
         raise failure("MODEL_RESPONSE_INVALID", "generate_rule")
     expression = {"left": expression.get("left"), "op": expression["op"]} if unary else dict(expression)
     is_value = expression.get("right_type") == "value"
-    if is_value and not is_finite_number(expression.get("right")):
-        raise failure("MODEL_RESPONSE_INVALID", "generate_rule")
+    if is_value and not valid_comparison_literal(op, expression.get("right")):
+        raise failure("MODEL_RESPONSE_INVALID", "generate_rule", category="comparison_literal",
+                      repair_hint="修复定位：expression.right。按文档类型提供有限 JSON 数值、文字相等常量或完整关键词数组，不把字段名当常量。")
     questions = []
     for side in (("left",) if is_value or unary else ("left", "right")):
         label = expression.get(side)
@@ -320,6 +342,10 @@ def _bind_condition(expression, columns, related_columns, choices, uncertainties
                     expression[side] = options[0]["column_name"]
             else:
                 resolved = False
+    if is_value and isinstance(expression.get("right"), str) and not questions:
+        left_column = next((column for column in columns if column["column_name"] == expression.get("left")), None)
+        if left_column is not None and type_family(left_column.get("data_type")) != "string":
+            raise failure("MODEL_RESPONSE_INVALID", "generate_rule")
     return expression, questions, resolved
 
 

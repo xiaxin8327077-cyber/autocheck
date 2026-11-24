@@ -148,7 +148,7 @@ def test_related_category_uses_its_own_table_dictionary_when_column_names_overla
     assert not semantic_coverage_issue(candidate, candidate["semantic_intent"], FIELDS, related)
 
 
-def test_sum_join_offers_the_supported_unmatched_review_policy():
+def test_sum_join_offers_supported_matched_only_and_review_policies():
     related = [{"field_name": "join_id", "field_cn": "编号", "data_type": "numeric"},
                {"field_name": "day", "field_cn": "业务日期", "data_type": "date"}, FIELDS[3]]
     candidate = {"expression": {"left": "units", "op": "neq", "right_table": "related", "right": "total"}}
@@ -156,7 +156,7 @@ def test_sum_join_offers_the_supported_unmatched_review_policy():
              "on": [{"left": "units", "right": "join_id"}]}}
     ground_semantic_candidate(candidate, draft, FIELDS, related)
     policy = next(q for q in candidate["questions"] if q["id"] == "join.unmatched_policy")
-    assert [o["value"] for o in policy["options"]] == ["review"]
+    assert {o["value"] for o in policy["options"]} == {"review", "exclude"}
 
 
 @pytest.mark.parametrize("join", [

@@ -522,19 +522,16 @@ def test_atomic_scope_rename_preserves_all_previously_valid_memberships_and_opti
 
 
 @pytest.mark.parametrize("repaired_value", [19, 20])
-def test_missing_constant_operand_type_can_only_be_completed_with_its_original_value(repaired_value):
+def test_missing_constant_operand_type_is_completed_without_an_extra_model_rewrite(repaired_value):
     raw = draft()
     del raw["expression"]["right_type"]
     fixed = deepcopy(raw)
     fixed["expression"].update(right_type="value", right=repaired_value)
     rules, model = _rules_with_doc([_select_payload(), raw, fixed], fields=FIELDS)
-    if repaired_value == 19:
-        result = run(rules, "份额低于19要复核")
-        assert result["preview"] and result["expression"] == fixed["expression"]
-    else:
-        with pytest.raises(AppError, match="MODEL_RESPONSE_INVALID"):
-            run(rules, "份额低于19要复核")
-    assert len(model.calls) == 3
+    result = run(rules, "份额低于19要复核")
+    assert result["preview"] and result["expression"] == {**raw["expression"], "right_type": "value"}
+    assert result["expression"]["right"] == 19
+    assert len(model.calls) == 2
 
 
 def _scope_join_fixture(*, expanded=True):

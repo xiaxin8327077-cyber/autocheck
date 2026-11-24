@@ -12,16 +12,18 @@ import re
 from typing import Any
 
 from .contracts import AppError
+from .formula import arithmetic_fields, formula_fields, has_arithmetic, is_arithmetic
 from .project_context import normalize_project_context
 from .project_driver import validate_project_driver, validate_project_driver_columns
 
 BASE = "base"
 RELATED = "related"
 
-FILTER_OPS = frozenset({
+TEXT_FILTER_OPS = frozenset({"contains_any", "not_contains_any"})
+FILTER_OPS = TEXT_FILTER_OPS | frozenset({
     "eq", "neq", "lt", "lte", "gt", "gte", "in", "not_in", "is_null", "is_not_null",
 })
-COMPARISON_OPS = frozenset({"eq", "neq", "lt", "lte", "gt", "gte"})
+COMPARISON_OPS = TEXT_FILTER_OPS | frozenset({"eq", "neq", "lt", "lte", "gt", "gte"})
 UNARY_OPS = frozenset({"is_null", "is_not_null"})
 MAX_FILTERS = 8
 MAX_CONDITIONS = 8
@@ -66,12 +68,24 @@ def is_finite_number(value: Any) -> bool:
     return isinstance(value, float) and math.isfinite(value)
 
 
+def valid_comparison_literal(op, value):
+    if isinstance(op, str) and op in TEXT_FILTER_OPS:
+        return (isinstance(value, list) and 1 <= len(value) <= MAX_IN_VALUES
+                and all(isinstance(word, str) and 0 < len(word) <= MAX_VALUE_LENGTH for word in value))
+    return is_finite_number(value) or (op in ("eq", "neq") and isinstance(value, str)
+                                       and 0 < len(value) <= MAX_VALUE_LENGTH)
+
+
 def _fail() -> None:
     raise AppError("VALIDATION_ERROR")
 
 
 def _identifier(value: Any) -> bool:
     return isinstance(value, str) and _IDENTIFIER.fullmatch(value) is not None
+
+
+def excludes_unmatched_sum(join: dict[str, Any] | None) -> bool:
+    return bool(join and join.get("right_aggregate") == "sum" and join.get("unmatched_policy") == "exclude")
 
 
 def is_condition_group(definition: dict[str, Any]) -> bool:
@@ -92,6 +106,10 @@ def comparison_conditions(definition: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(conditions, list) or not 2 <= len(conditions) <= MAX_CONDITIONS:
         _fail()
     for condition in conditions:
+        if is_arithmetic(condition):
+            if not arithmetic_fields(condition):
+                _fail()
+            continue
         if not isinstance(condition, dict) or not _identifier(condition.get("left")):
             _fail()
         op = condition.get("op")
@@ -109,7 +127,7 @@ def comparison_conditions(definition: dict[str, Any]) -> list[dict[str, Any]]:
             _fail()
         right = condition.get("right")
         if kind == "value":
-            if side != BASE or not is_finite_number(right):
+            if side != BASE or not valid_comparison_literal(op, right):
                 _fail()
         elif not _identifier(right):
             _fail()
@@ -235,6 +253,23 @@ def _infer_document_numeric_null_handling(
         return empty
     base_fields = _field_entries(rawfields)
     related_fields = _field_entries(relatedFields)
+    if is_arithmetic(expression):
+        names = arithmetic_fields(expression)
+        if not names or any(type_family(base_fields.get(name, {}).get("data_type")) != "number" for name in names):
+            return {**empty, "reason": "公式操作数必须来自同一行的真实数值字段"}
+        if definition.get("null_policy") == "skip":
+            return {**empty, "applicable": True, "null_policy": "skip", "reason": "规则约定跳过缺值行。"}
+        evidence = []
+        for side in ("left", "right"):
+            kind = expression.get(side + "_type", "field")
+            operands = (formula_fields(expression[side]) if kind == "formula"
+                        else [expression[side]] if kind == "field" else [])
+            evidence.extend({"side": side, "field": name, "source": _column_text(base_fields[name])}
+                            for name in operands if _has_explicit_zero_semantics(base_fields[name]))
+        policy = ("zero" if definition.get("null_policy") == "zero"
+                  or set(names) == {item["field"] for item in evidence} else "review")
+        return {**empty, "applicable": True, "null_policy": policy, "evidence": evidence,
+                "reason": "逐项按照文档处理缺值；除数为零单列公式无法计算。"}
     left_name = expression.get("left")
     if not isinstance(left_name, str):
         return {**empty, "reason": "左操作数不是文档字段名"}
@@ -347,6 +382,9 @@ def is_numeric_comparison(
             or expression["op"] not in COMPARISON_OPS):
         return False
     left = expression.get("left")
+    if is_arithmetic(expression):
+        names = arithmetic_fields(expression)
+        return bool(names) and all(type_family(base_types.get(name)) == "number" for name in names)
     if not isinstance(left, str) or type_family(base_types.get(left)) != "number":
         return False
     if str(expression.get("right_type") or "field") == "value":
@@ -414,7 +452,7 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
         aggregate = raw_join.get("right_aggregate")
         if "right_aggregate" in raw_join and aggregate != "sum":
             _fail()
-        if unmatched not in (("review",) if aggregate else ("unresolved", "exclude")):
+        if unmatched not in (("review", "exclude") if aggregate else ("unresolved", "exclude")):
             _fail()
         confirmed = raw_join.get("relationship_confirmed", False)
         if not isinstance(confirmed, bool):
@@ -449,10 +487,12 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
         if op in ("is_null", "is_not_null"):
             if value is not None:
                 _fail()
-        elif op in ("in", "not_in"):
+        elif op in ("in", "not_in") or op in TEXT_FILTER_OPS:
             if not isinstance(value, list) or not 1 <= len(value) <= MAX_IN_VALUES:
                 _fail()
             for entry in value:
+                if op in TEXT_FILTER_OPS and not isinstance(entry, str):
+                    _fail()
                 if isinstance(entry, bool) or not isinstance(entry, (str, int, float)):
                     _fail()
                 if isinstance(entry, str) and (not entry or len(entry) > MAX_VALUE_LENGTH):
@@ -477,6 +517,13 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(expression, dict):
         _fail()
     conditions = comparison_conditions(definition)
+    for item in conditions:
+        if isinstance(item.get("op"), str) and item["op"] in TEXT_FILTER_OPS:
+            if (definition.get("rule_type") != "field_compare" or not _identifier(item.get("left"))
+                    or item.get("right_type") != "value" or item.get("right_table", BASE) != BASE
+                    or not valid_comparison_literal(item["op"], item.get("right"))
+                    or definition.get("null_policy") not in (None, "unresolved", "skip")):
+                _fail()
     if is_condition_group(definition):
         if definition.get("rule_type") != "field_compare" or (join and join.get("right_aggregate")):
             _fail()
@@ -490,7 +537,15 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
     if right_table not in (BASE, RELATED):
         _fail()
     right_type = expression.get("right_type") or "field"
-    if right_type not in ("field", "value"):
+    if is_arithmetic(expression):
+        if (definition.get("rule_type") != "field_compare" or not arithmetic_fields(expression)
+                or (join and join.get("right_aggregate"))
+                or (definition.get("project_driver") or {}).get("version") in (1, 2)
+                or definition.get("null_handling")):
+            _fail()
+    elif right_type not in ("field", "value"):
+        _fail()
+    if right_type == "value" and not valid_comparison_literal(expression.get("op"), expression.get("right")):
         _fail()
     if right_table == RELATED:
         if join is None or right_type != "field" or not _identifier(expression.get("right")):
@@ -516,7 +571,7 @@ def validate_query_spec(definition: dict[str, Any]) -> dict[str, Any]:
             _fail()
     raw_evidence = definition.get("null_evidence")
     if raw_evidence is not None:
-        if (not isinstance(raw_evidence, list) or len(raw_evidence) > 20
+        if (not isinstance(raw_evidence, list) or (not has_arithmetic(expression) and len(raw_evidence) > 20)
                 or any(not isinstance(item, dict) or set(item) - {"side", "field", "source"}
                        or item.get("side") not in ("left", "right")
                        or not isinstance(item.get("field"), str) or not isinstance(item.get("source"), str)
@@ -572,6 +627,11 @@ def validate_spec_against_columns(
             _fail()
 
     for condition in comparison_conditions(definition):
+        if is_arithmetic(condition):
+            if any(type_family(base_types.get(name)) != "number" or base_type(base_types.get(name)) in ("money", "bit")
+                   for name in arithmetic_fields(condition)):
+                _fail()
+            continue
         left = condition.get("left")
         if not _identifier(left) or left not in base_types:
             _fail()
@@ -580,7 +640,11 @@ def validate_spec_against_columns(
         right_type = condition.get("right_type") or "field"
         right = condition.get("right")
         if right_type == "value":
-            if not is_finite_number(right) or (is_new_spec(definition) and type_family(base_types.get(left)) != "number"):
+            family = type_family(base_types.get(left))
+            if (not valid_comparison_literal(condition.get("op"), right)
+                    or condition.get("op") in TEXT_FILTER_OPS and family not in ("string", "number")
+                    or isinstance(right, str) and family != "string"
+                    or is_finite_number(right) and is_new_spec(definition) and family != "number"):
                 _fail()
         else:
             right_types = related_types if condition.get("right_table") == RELATED else base_types
@@ -600,6 +664,8 @@ def validate_spec_against_columns(
             # 逐侧指定的零化须保留证据，规则统一 zero 可由 null_policy 单独表达。
             _fail()
         for condition in comparison_conditions(definition):
+            if is_arithmetic(condition):
+                continue
             if condition.get("op") in UNARY_OPS:
                 continue
             operands = [("left", base_types.get(condition.get("left")))]
@@ -650,7 +716,9 @@ def _validate_filter_value(item: dict[str, Any], data_type: Any) -> None:
     family = type_family(data_type)
     if not family:
         _fail()
-    values = item["value"] if item["op"] in ("in", "not_in") else [item["value"]]
+    if item["op"] in TEXT_FILTER_OPS and family != "string":
+        _fail()
+    values = item["value"] if item["op"] in ("in", "not_in") or item["op"] in TEXT_FILTER_OPS else [item["value"]]
     for value in values:
         if family == "number":
             if not is_finite_number(value):
@@ -679,6 +747,8 @@ def canonicalize_definition(definition: dict[str, Any]) -> dict[str, Any]:
     if result.get("expression") is not None and not isinstance(result["expression"], dict):
         _fail()
     expression = dict(result.get("expression") or {})
+    if is_arithmetic(expression):
+        arithmetic_fields(expression)
     if is_condition_group(result):
         comparison_conditions(result)
     elif is_unary(result):
@@ -699,7 +769,7 @@ def is_new_spec(definition: dict[str, Any]) -> bool:
     expression = definition.get("expression") or {}
     if not isinstance(expression, dict):
         return True
-    return is_condition_group(definition) or (definition.get("filters") is not None and definition.get("filters") != []) or definition.get("join") is not None \
+    return is_arithmetic(expression) or (expression.get("right_type") == "value" and isinstance(expression.get("right"), (str, list))) or is_condition_group(definition) or (definition.get("filters") is not None and definition.get("filters") != []) or definition.get("join") is not None \
         or expression.get("right_table") == RELATED or is_unary(definition) \
         or definition.get("project_context") is not None \
         or definition.get("project_driver") is not None \
@@ -794,6 +864,10 @@ def referenced_columns(definition: dict[str, Any]) -> dict[str, list[str]]:
     if definition.get("rule_type") == "field_compare" and is_new_spec(definition):
         add(base, definition.get("report_date_field") or "report_date")
     for expression in comparison_conditions(definition):
+        if is_arithmetic(expression):
+            for name in arithmetic_fields(expression):
+                add(base, name)
+            continue
         add(base, expression.get("left"))
         if (expression.get("right_type") or "field") == "field":
             add(related if expression.get("right_table") == RELATED else base, expression.get("right"))

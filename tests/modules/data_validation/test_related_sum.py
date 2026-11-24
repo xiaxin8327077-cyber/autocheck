@@ -86,7 +86,7 @@ def test_aggregate_rejects_unsupported_shapes_and_never_inherits_input_null_to_z
     columns = [{**column, "logic": "空值视为0"} for column in BASE]
     rebound = apply_numeric_null_policy(rule, columns, RELATED)
     assert rebound["null_handling"] == {"left": "review", "right": "review"}
-    for field, value in [("right_aggregate", "avg"), ("unmatched_policy", "exclude")]:
+    for field, value in [("right_aggregate", "avg"), ("unmatched_policy", "unresolved")]:
         altered = deepcopy(rule)
         altered["join"][field] = value
         with pytest.raises(AppError):

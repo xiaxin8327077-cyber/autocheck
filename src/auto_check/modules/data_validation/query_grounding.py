@@ -1177,12 +1177,15 @@ def bind_model_join(candidate: dict[str, Any], raw_join: dict, base_fields: list
     join["report_date_field"] = related_date_field
     if not join["report_date_field"]:
         add_question("join.report_date_field", "关联表按哪个业务日期与主表对齐？", date_options(related_fields))
-    unmatched_option = join_unmatched_option(join.get("right_aggregate"))
-    if accept_model_decisions and raw_join.get("unmatched_policy") == unmatched_option["value"]:
-        join["unmatched_policy"] = raw_join["unmatched_policy"]
-        candidate.setdefault("notices", []).append(f"缺少同日{related_label}的记录：{unmatched_option['label']}。")
+    options = [join_unmatched_option(join.get("right_aggregate"))]
+    if join.get("right_aggregate") == "sum":
+        options.append(join_unmatched_option())
+    selected = next((item for item in options if item["value"] == raw_join.get("unmatched_policy")), None)
+    if accept_model_decisions and selected:
+        join["unmatched_policy"] = selected["value"]
+        candidate.setdefault("notices", []).append(f"缺少同日{related_label}的记录：{selected['label']}。")
     else:
-        add_question("join.unmatched_policy", join_unmatched_question(base_label, related_label), [unmatched_option])
+        add_question("join.unmatched_policy", join_unmatched_question(base_label, related_label), options)
     candidate["join"] = join
     candidate["can_enable"] = False
     return False

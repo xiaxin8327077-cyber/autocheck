@@ -1,4 +1,4 @@
-import { comparisons } from "../comparisons.js";
+import { comparisons, operandFields } from "../comparisons.js";
 import { element } from "./dom.js";
 
 function businessLabel(label, identifier) {
@@ -28,10 +28,9 @@ export function columnLabel(candidate, name, role = "base") {
 function metricRefs(candidate) {
   const refs = new Map();
   for (const part of comparisons(candidate.expression)) {
-    if (part.left) refs.set("base." + part.left, ["base", part.left]);
-    if (part.right && part.right_type !== "value") {
-      const role = part.right_table || "base";
-      refs.set(role + "." + part.right, [role, part.right]);
+    for (const side of ["left", "right"]) {
+      const role = side === "right" && part.right_table === "related" ? "related" : "base";
+      for (const name of operandFields(part, side)) refs.set(role + "." + name, [role, name]);
     }
   }
   return [...refs.values()];

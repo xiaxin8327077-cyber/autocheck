@@ -163,6 +163,15 @@ def test_ai_inline_picker_styles_cover_platform_enhanced_controls() -> None:
         assert declaration in trigger
     assert scope + '.custom-select-trigger::after {' in css
     assert scope + '.custom-select-trigger:focus-visible {' in css
+    shell = css.split(scope + '.custom-select-shell {', 1)[1].split('}', 1)[0]
+    assert 'width: auto' in shell and 'min-width: 0' in shell
+    assert 'width: auto' in trigger and 'white-space: nowrap' in trigger
+    assert scope + '.custom-select-shell.dv-ai-source-select {' not in css
+    popup = css.split('.rsp-compact-select-dropdown {', 1)[1].split('}', 1)[0]
+    assert 'min-width: 180px' in popup
+    dropdown = css.split('.rsp-compact-select-dropdown .custom-select-option {', 1)[1].split('}', 1)[0]
+    for declaration in ('font-size: 12px', 'line-height: 1.35', 'padding: 6px 10px'):
+        assert declaration in dropdown
 
 
 def test_manual_and_ai_creation_are_separate_single_page_dialogs() -> None:

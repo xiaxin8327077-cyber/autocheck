@@ -219,7 +219,7 @@ def test_supplement_deadline_only_degrades_its_own_result(end):
 
 
 @pytest.mark.parametrize("initial", ["valid", "invalid", "empty"])
-def test_all_declared_cross_table_plans_request_only_missing_valid_suggestions(initial):
+def test_cross_table_plans_review_initial_suggestions_once(initial):
     first = {**warehouse_draft(), "target": {"table": "test_table"}}
     suggestion = {"category": "consistency", "kind": "review", "title": "核对运单和包裹的汇总口径",
                   "reason": "比较两类记录的装载率", "references": [
@@ -237,7 +237,7 @@ def test_all_declared_cross_table_plans_request_only_missing_valid_suggestions(i
         return complete(model_id, messages, **kwargs)
     model.complete_with_options = respond
     result = run(rules, "在途且优先级高于3的装载率应大于0")
-    assert sum("本轮只提出独立补充校验建议" in c["messages"][0]["content"] for c in model.calls) == (initial != "valid")
+    assert sum("本轮只提出独立补充校验建议" in c["messages"][0]["content"] for c in model.calls) == 1
     assert [item["title"] for item in result["ai_suggestions"]] == [suggestion["title"]]
     assert {o["candidate"]["table_name"] for o in result["candidate_options"]} == {"test_table", "pieces"}
 
@@ -472,7 +472,8 @@ def test_a_generic_exclusion_cannot_remove_a_user_named_metric_choice(quote):
                                fields=[*FIELDS, ("sim", "模拟余额", "numeric", "")])
     set_field(rules, "sim", logic="此列用于业务。仅建议使用原余额。")
     result = run(rules, "余额和模拟余额两种口径低于19都要核实")
-    assert not result.get("preview") and "sim" in str(result["uncertainties"])
+    assert not result.get("preview")
+    assert {option["value"] for option in result["questions"][0]["options"]} == {"balance", "sim"}
 
 
 @pytest.mark.parametrize("shape", ["single", "combined_and", "later_and"])

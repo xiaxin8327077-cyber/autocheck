@@ -1,7 +1,7 @@
 import { createRuntime, errorMessage } from "../runtime.js";
 import { canChooseAllFields, candidateIssues, reviewCandidate, createTestEvidence, confirmationReadiness, previewReadiness, ruleScopeIssues, hasCapability, ownsResource } from "../state.js";
 import { bindComparisonField, comparisonFields, fieldTarget, hasComparison, isGrouped } from "../comparisons.js";
-import { createAiCandidatePanel } from "../components/ai_candidate.js";
+import { createAiCandidatePanel, candidateCondition, candidateFiltersText } from "../components/ai_candidate.js";
 import { createCandidateOptionsPanel, createRequestKeyRegistry } from "../components/candidate_options.js";
 import { createDialog } from "../components/dialog.js";
 import { button, element } from "../components/dom.js";
@@ -73,6 +73,7 @@ export function createWorkbench({
   let activeAnalysis = null;
   let supplementWorkbench = null;
   let supplementTitle = "";
+  let supplementAdoption = null;
   let returningSupplement = false;
   let deferredSupplements = [];
   let deferredSupplementInput = "";
@@ -631,6 +632,7 @@ export function createWorkbench({
     page.form.setCategories();
     if (work.mode === "ai") page.form.setModels();
     supplementTitle = supplement?.title || "";
+    supplementAdoption = supplement?.adoptionContext || null;
     if (supplement) page.form.restoreInput(supplement.signature);
     dialog = createDialog({
       host,
@@ -1239,17 +1241,59 @@ export function createWorkbench({
     });
   }
 
-  async function adoptSuggestion(suggestion) {
+  function selectedAdoptionOptions() {
+    return work.options.length ? work.options.filter(o => work.selectedOptions.includes(o.id))
+      .map(o => ({ candidate: work.optionWork[o.id]?.candidate || o.candidate,
+        preview: o.id === work.activeOptionId ? work.preview : work.optionWork[o.id]?.preview }))
+      : [{ candidate: work.candidate, preview: work.preview }];
+  }
+
+  function periodConditions(item) {
+    if (businessReview || item.category !== "period" || !item.adoption || item.references?.length !== 1
+        || !work.analysis?.analysis_id || !work.analysis.result?.analysis_context) return [];
+    const ref = item.references[0];
+    const summaries = new Set();
+    for (const { preview, candidate } of selectedAdoptionOptions()) {
+      const d = preview?.definition;
+      if (!d || d.join || !preview.sql_preview || !preview.content_sha256 || candidate?.questions?.length || preview.questions?.length
+          || d.table_name !== ref.table_name) return [];
+      const terms = d.expression?.conditions || [d.expression];
+      const source = terms[0]?.left;
+      const columnType = name => String(preview.columns?.find(c => c.column_name === name)?.data_type || "")
+        .toLowerCase().split("(")[0].trim();
+      const family = type => {
+        if (/^(?:tinyint|mediumint|smallint|int(?:eger|2|4|8)?|bigint|bit|decimal|numeric|float[48]?|double(?: precision)?|real|money|(?:big)?serial)$/.test(type)) return "number";
+        if (/^(?:char|varchar|text|tinytext|mediumtext|longtext|enum|set|uuid|character varying|character|bpchar)$/.test(type)) return "text";
+        if (/^(?:date|datetime|timestamp|time|year)$/.test(type)) return "date";
+        return "";
+      };
+      const targetType = family(columnType(ref.field_name));
+      if (!targetType || typeof source !== "string" || targetType !== family(columnType(source))) return [];
+      if (!terms.every(t => t.left === source && (!t.left_type || t.left_type === "field")
+          && (["is_null", "is_not_null"].includes(t.op) || (targetType === "number" && t.right_type === "value"
+            && Number.isFinite(t.right) && ["gt","gte","lt","lte","eq","neq"].includes(t.op))))) return [];
+      const renamed = terms.map(t => ({ ...t, left: ref.field_name }));
+      const expression = isGrouped(d.expression) ? { ...d.expression, conditions: renamed } : renamed[0];
+      const policies = { skip: "空值跳过", review: "空值待核查", zero: "数值空值按0", violate: "空值计异常", empty_string_as_null: "空字符串视为空值" };
+      summaries.add([candidateCondition({ ...d, expression, columns: preview.columns }), policies[d.null_policy]].filter(Boolean).join("，"));
+    }
+    return [...summaries];
+  }
+
+  async function adoptSuggestion(suggestion, inheritCheck = false) {
     if (!suggestionAdoptionReady(suggestion) || work.testing || work.busy || work.confirmBusy
         || work.optionsSaving || work.pendingOptionSave || work.readOnly || !hasCapability(user, "dv.ai_use")) return;
     if (suggestion.adoption) {
       const { source_id, model_id, reasoning_enabled } = page.form.read();
       const referenced = new Set(suggestion.references.map(ref => ref.table_name));
-      const options = work.options.length ? work.options.filter(o => work.selectedOptions.includes(o.id))
-        .map(o => work.optionWork[o.id]?.candidate || o.candidate) : [work.candidate];
+      const options = selectedAdoptionOptions();
+      const inheritedConditions = inheritCheck ? periodConditions(suggestion) : [];
+      if (inheritCheck && !inheritedConditions.length) return;
       const scopes = [];
+      const checks = [];
+      const parents = [];
       const categories = new Set();
-      for (const candidate of options) {
+      for (const { candidate, preview } of options) {
         if (!candidate || (!referenced.has(candidate.table_name) && !referenced.has(candidate.join?.table_name))) continue;
         if (candidate.report_category) categories.add(candidate.report_category);
         const filters = [];
@@ -1259,6 +1303,12 @@ export function createWorkbench({
           if (table) filters.push({ table, field: filter.field, op: filter.op, value: filter.value });
         }
         scopes.push({ table: candidate.table_name, filters });
+        const def = preview?.definition;
+        if (!businessReview && preview?.sql_preview && def?.expression && !candidate.questions?.length && !preview.questions?.length) {
+          checks.push({ table: def.table_name, related_table: def.join?.table_name, join: def.join, expression: def.expression,
+            null_policy: def.null_policy, null_handling: def.null_handling, equality_policy: def.equality_policy });
+          if (referenced.has(def.table_name) && preview.content_sha256) parents.push({ definition: def, hash: preview.content_sha256 });
+        }
       }
       const request = [
         suggestion.title, suggestion.reason !== suggestion.title ? suggestion.reason : "",
@@ -1266,10 +1316,25 @@ export function createWorkbench({
         "文档字段：" + suggestion.references.map(ref => `${ref.table_name}.${ref.field_name}`).join("、"),
         categories.size === 1 && "原方案报送分类：" + [...categories][0],
         suggestion.adoption.operations?.length && "建议运算：" + suggestion.adoption.operations.join("、"),
+        suggestion.applicability_filters?.length && "已核实的期间适用范围：" + JSON.stringify(suggestion.applicability_filters),
         scopes.some(group => group.filters.length) && "各原方案的适用范围：" + JSON.stringify(scopes),
+        checks.length && "已选方案的检查口径：" + JSON.stringify(checks),
+        checks.length && "用户已选且核实的适用范围默认保留在新方案的筛选条件中。建议明确改变某项范围时，仅替换对应条件，其余保留。新增期间限制与原范围叠加，须同时满足。主方案的异常表达式仅作背景，按建议的独立目标生成检查，不机械取反或合并。期间指标建议明确继承主方案边界时，沿用相应上下界、等号和空值口径。",
+        inheritCheck && "用户选择按原条件采纳。以下为该期间指标的已确认异常条件，原建议中的条件描述由本次选择替代：" + inheritedConditions.join("；"),
         suggestion.adoption.preconditions?.length && "原建议所列前提，请结合当前已确认业务知识核实：" + suggestion.adoption.preconditions.join("；"),
         suggestion.limitations?.length && "建议适用限制：" + suggestion.limitations.join("；"),
       ].filter(Boolean).join("\n");
+      let adoptionContext = null;
+      if (suggestion.category === "period" && referenced.size === 1 && work.analysis?.analysis_id && work.analysis.result?.analysis_context) {
+        const owner = { parent_analysis_id: work.analysis.analysis_id, parent_context: work.analysis.result.analysis_context,
+          suggestion_id: suggestion.id };
+        if (parents.length && parents.length === options.length && parents.every(p => !p.definition.join)
+            && (inheritCheck || suggestion.applicability_filters?.length || parents.some(p => p.definition.filters?.length))) {
+          adoptionContext = { ...owner, parents, ...(inheritCheck ? { inherit_check: true } : {}) };
+        } else if (suggestion.applicability_filters?.length) {
+          adoptionContext = { ...owner, mode: "suggestion_only" };
+        }
+      }
       const childRuntime = createRuntime({ notify });
       const parentInput = inputSignature();
       childRuntime.activate();
@@ -1294,7 +1359,7 @@ export function createWorkbench({
           render();
         } });
       try {
-        await supplementWorkbench.open({ mode: "ai", supplement: { title: suggestion.title,
+        await supplementWorkbench.open({ mode: "ai", supplement: { title: suggestion.title, adoptionContext,
           signature: JSON.stringify([source_id, request, model_id, reasoning_enabled]) } });
       } catch (error) {
         // An analysis error stays visible in the independent editor for retry.
@@ -1364,21 +1429,37 @@ export function createWorkbench({
     page.suggestionsList.replaceChildren();
     list.forEach((item) => {
       const adopted = Boolean(work.optionWork[`supplement-${item.id}`]) || deferredSupplements.some(o => o.suggestionId === item.id);
+      const conditions = periodConditions(item);
       const adopt = (item.adoption || (item.support_level === "supported" && item.definition)) && item.id && hasCapability(user, "dv.ai_use")
-        ? button(adopted ? "已采纳" : "采纳", { capability: "dv.ai_use", className: "dv-button dv-ai-supplement-adopt",
+        ? button(adopted ? "已采纳" : conditions.length ? "按原条件采纳" : "采纳", { capability: "dv.ai_use", className: "dv-button dv-ai-supplement-adopt",
           disabled: !suggestionAdoptionReady(item) || adopted || work.testing || work.busy || work.confirmBusy || work.optionsSaving || Boolean(work.pendingOptionSave) || work.readOnly,
         }) : null;
-      if (adopt) page.suggestionRemovers.push(listen(adopt, "click", () => adoptSuggestion(item)));
+      if (adopt) page.suggestionRemovers.push(listen(adopt, "click", () => adoptSuggestion(item, Boolean(conditions.length))));
+      const independent = adopt && conditions.length && !adopted
+        ? button("独立分析", { capability: "dv.ai_use", className: "dv-button", disabled: adopt.disabled }) : null;
+      if (independent) page.suggestionRemovers.push(listen(independent, "click", () => adoptSuggestion(item)));
       const card = element("div", { className: "dv-ai-supplement" },
         element("div", { className: "dv-ai-supplement-head" },
           element("strong", { text: item.title || "补充建议" }),
           element("span", { className: `dv-ai-supplement-support is-${item.support_level || "needs_confirmation"}`,
             text: item.support_level === "supported" ? "可进一步检查"
-              : item.support_level === "unsupported" ? "暂不支持直接生成" : item.adoption ? "可单独分析" : "需先确认口径" }), adopt));
+              : item.support_level === "unsupported" ? "暂不支持直接生成" : item.adoption ? "可单独分析" : "需先确认口径" }), adopt, independent));
+      if (conditions.length) card.append(element("div", { className: "dv-ai-supplement-reason",
+        text: "按原条件检查：" + conditions.join("；") }));
       card.append(element("div", { className: "dv-ai-supplement-reason", text: item.provenance === "model"
         ? (item.references_ambiguous ? "来源：模型建议，待确认文档归属" : "来源：模型建议，系统已核对文档引用")
         : "来源：待核实的建议依据" }));
-      if (item.reason) card.append(element("div", { className: "dv-ai-supplement-reason", text: item.reason }));
+      if (item.applicability_filters?.length) {
+        const source = selectedAdoptionOptions().find(({ candidate }) => candidate?.table_name === item.references[0]?.table_name);
+        if (source) {
+          const scope = candidateFiltersText({ columns: source.preview?.columns || source.candidate.columns,
+            filters: item.applicability_filters.map(f => ({ ...f, table: "base" })),
+            semantic_intent: { dictionary_snapshots: { base: item.applicability_dictionary || {} } } });
+          card.append(element("div", { className: "dv-ai-supplement-pre", text: "已核实的期间适用范围：" + scope }));
+        }
+      }
+      if (item.reason) card.append(element("div", { className: "dv-ai-supplement-reason",
+        text: (conditions.length ? "独立分析建议：" : "") + item.reason }));
       if (Array.isArray(item.references) && item.references.length) {
         card.append(element("div", { className: "dv-ai-supplement-refs", text: `证据：${item.references
           .map((ref) => `${ref.table_name || "—"}.${ref.field_name || "—"}`).join("；")}` }));
@@ -1389,7 +1470,7 @@ export function createWorkbench({
       }
       if (Array.isArray(item.limitations) && item.limitations.length) {
         card.append(element("ul", { className: "dv-ai-supplement-limits" },
-          item.limitations.map((text) => element("li", { text }))));
+          item.limitations.map((text) => element("li", { text: (conditions.length ? "独立分析限制：" : "") + text }))));
       }
       page.suggestionsList.append(card);
     });
@@ -1474,9 +1555,9 @@ export function createWorkbench({
         const detail = filter?.field ? `${filter.field} ${filter.op} ${[].concat(filter.value).join("、")}` : selected.value;
         return `${selected.label}（${detail}）`;
       }).join("、");
-      return { question_id: question.id || "", context: context || "", question: question.text, answer: meaning };
+      return { question_id: question.id || "", context: question.evidence_term || context || "", question: question.text, answer: meaning };
     });
-    if (batch.items.some(({ question }) => !question.options?.length)) {
+    if (batch.items.some(({ question }) => !question.options?.length || question.requires_analysis)) {
       if (businessReviewSession?.reselecting) {
         notify("当前口径仍需补充依据，请修改需求后重新分析。", "warning");
         return;
@@ -1781,6 +1862,8 @@ export function createWorkbench({
         clarification_answers: clarificationAnswers(context),
         source_id: context.source_id,
         await_first_poll: true,
+        ...(onSupplementReady ? { include_suggestions: false } : {}),
+        ...(supplementAdoption ? { adoption_context: supplementAdoption } : {}),
         ...previous,
       }, { signal: connection }), signal));
       if (!runtime.current(token) || activeAnalysis !== run) {

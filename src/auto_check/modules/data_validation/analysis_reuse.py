@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .contracts import AppError
+from .formula import arithmetic_fields, is_arithmetic
 from .query_grounding import check_request_coverage
 
 
@@ -30,6 +31,12 @@ def analysis_baseline(candidate: dict, fields: list[dict]) -> dict:
     explicit = candidate.get("description") or ""
     bindings, parts = set(), []
     for item in expression.get("conditions", [expression]):
+        if is_arithmetic(item):
+            names = arithmetic_fields(item)
+            if set(names) <= known:
+                bindings.update(("metric", name) for name in names)
+            # Cross-user memory shares verified field references, not unconfirmed formula literals.
+            continue
         if item.get("left") not in known:
             continue
         bindings.add(("metric", item["left"]))

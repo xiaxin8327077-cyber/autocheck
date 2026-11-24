@@ -2880,7 +2880,7 @@
 .auto-check-module[data-module="data_validation"] .dv-ai-request-meta select:focus-visible { outline: 2px solid var(--dv-accent); outline-offset: 2px; }
 /* 平台会把 select 增强为 shell/trigger；同步约束实际可见控件，而非只改隐藏原生 select。 */
 .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-shell { --select-height: 22px; --select-font-size: 12px; --select-font-weight: 400; display: inline-flex; width: auto; min-width: 0; max-width: 190px; height: 22px; min-height: 22px; max-height: 24px; border-radius: var(--ui-radius); }
-.auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-trigger { width: auto; min-width: 0; max-width: 190px; height: 22px; min-height: 22px; padding: 0 15px 0 0; border: 0; border-radius: var(--ui-radius); color: var(--dv-muted); background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; font: inherit; font-size: 12px; font-weight: 400; line-height: 22px; transform: none; }
+.auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-trigger { width: auto; min-width: 0; max-width: 190px; height: 22px; min-height: 22px; padding: 0 15px 0 0; border: 0; border-radius: var(--ui-radius); color: var(--dv-muted); background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; font: inherit; font-size: 12px; font-weight: 400; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transform: none; }
 .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-trigger::after { right: 3px; top: 50%; width: 5px; height: 5px; margin-top: -4px; border: 0; border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); filter: none; }
 .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-open .custom-select-trigger::after { transform: rotate(225deg); margin-top: -1px; }
 .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-trigger:focus-visible { outline: 2px solid var(--dv-accent); outline-offset: 2px; }
@@ -2893,12 +2893,17 @@
 .auto-check-module[data-module="data_validation"] .dv-ai-workbench-dialog .dv-ai-actions { justify-content: flex-end; gap: 18px; margin-top: 0; }
 .auto-check-module[data-module="data_validation"] .dv-ai-workbench-dialog .dv-ai-actions .dv-button { min-height: 28px; padding: 2px 0; border: 0; color: var(--dv-accent); background: transparent; box-shadow: none; font-size: 12px; }
 .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .dv-ai-edit-request { margin-left: auto; padding: 0; }
-.auto-check-module[data-module="data_validation"] .dv-ai-reasoning-control { display: inline-flex; align-items: center; gap: 6px; }
-.auto-check-module[data-module="data_validation"] .dv-ai-reasoning-switch { width: 32px; height: 18px; padding: 0; }
-.auto-check-module[data-module="data_validation"] .dv-ai-reasoning-switch::after { width: 12px; height: 12px; }
-.auto-check-module[data-module="data_validation"] .dv-ai-reasoning-switch.on::after { transform: translateX(14px); }
-.auto-check-module[data-module="data_validation"] .dv-ai-reasoning-switch:focus-visible { outline: 2px solid var(--dv-accent); outline-offset: 2px; }
-.auto-check-module[data-module="data_validation"] .dv-ai-reasoning-switch:disabled { opacity: .55; cursor: not-allowed; }
+/* 收起时随文字宽度；平台浮层挂到 body，展开后单独保证文字空间。 */
+body:has(.auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-open) .rsp-compact-select-dropdown {
+  min-width: 180px;
+  max-width: calc(100vw - 32px);
+}
+body:has(.auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-open) .rsp-compact-select-dropdown .custom-select-option {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
 .auto-check-module[data-module="data_validation"] .dv-ai-workbench-dialog .dv-description-text { font-size: 13px; color: var(--dv-text); line-height: 1.7; white-space: normal; overflow-wrap: anywhere; }
 .auto-check-module[data-module="data_validation"] .dv-ai-workbench-dialog .dv-description-actions { flex-wrap: wrap; }
 .auto-check-module[data-module="data_validation"] .dv-ai-result { min-width: 0; }
@@ -3017,7 +3022,9 @@
   .auto-check-module[data-module="data_validation"] .dv-ai-workbench-dialog .dv-config-section { padding: 22px 0; }
   .auto-check-module[data-module="data_validation"] .dv-ai-workbench-dialog .dv-description-collapsed { margin: 0; padding: 0; }
   .auto-check-module[data-module="data_validation"] .dv-ai-request-meta { gap: 6px; }
-  .auto-check-module[data-module="data_validation"] .dv-ai-request-meta select { max-width: 155px; font-size: 11px; }
+  .auto-check-module[data-module="data_validation"] .dv-ai-request-meta select { max-width: 165px; font-size: 11px; }
+  .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-shell { max-width: 165px; }
+  .auto-check-module[data-module="data_validation"] .dv-ai-request-meta .custom-select-trigger { max-width: 165px; }
   .auto-check-module[data-module="data_validation"] .dv-ai-conclusion { font-size: 21px; line-height: 1.65; }
   .auto-check-module[data-module="data_validation"] .dv-ai-choice { padding: 12px; gap: 10px; }
   .auto-check-module[data-module="data_validation"] .dv-ai-choice-title { font-size: 13px; }

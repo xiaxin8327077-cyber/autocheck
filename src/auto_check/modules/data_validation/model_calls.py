@@ -35,12 +35,16 @@ def model_error(exc: Exception, stage: str, *, analysis_id="", round_number=None
     return failure(code, stage, analysis_id=analysis_id, round_number=round_number)
 
 
-def failure(code: str, stage: str, *, category: str = "", analysis_id: str = "", round_number: int | None = None) -> AppError:
+def failure(code: str, stage: str, *, category: str = "", analysis_id: str = "", round_number: int | None = None,
+            repair_hint: str = "") -> AppError:
     reference = uuid4().hex[:12]
     # Never log exception messages, request bodies, URLs, credentials or model output.
     LOGGER.warning("Model call failed code=%s stage=%s reference=%s category=%s analysis=%s round=%s",
                    code, stage, reference, category or code.lower(), analysis_id or "-", round_number if round_number is not None else "-")
-    return AppError(code, stage=stage, reference=reference)
+    error = AppError(code, stage=stage, reference=reference)
+    error.category = category or code.lower()
+    error.repair_hint = repair_hint
+    return error
 
 
 def _check_active(event, stage):

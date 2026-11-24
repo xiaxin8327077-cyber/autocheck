@@ -10,6 +10,8 @@ export const OPERATOR_OPTIONS = [
   ["gte", "≥"],
   ["eq", "= 等于"],
   ["neq", "≠ 不等于"],
+  ["contains_any", "包含任一关键词"],
+  ["not_contains_any", "不包含任何关键词"],
 ];
 
 export const NULL_POLICY_OPTIONS = [

@@ -20,7 +20,7 @@ FIELDS = [("row_id", "业务编号", "varchar", "Y"), ("amount", "份额", "nume
 
 
 @pytest.mark.parametrize("with_proposal", [False, True])
-def test_only_model_business_proposals_reach_the_ui_without_another_model_call(with_proposal):
+def test_only_reviewed_model_business_proposals_reach_the_ui(with_proposal):
     raw = draft()
     if with_proposal:
         raw["ai_suggestions"] = [{"category": "consistency", "kind": "review",
@@ -28,17 +28,20 @@ def test_only_model_business_proposals_reach_the_ui_without_another_model_call(w
             "references": [{"table_name": "test_table", "field_name": "amount"},
                            {"table_name": "test_table", "field_name": "balance"}],
             "preconditions": ["确认统计范围与允许差额"], "limitations": []}]
-    rules, model = _rules_with_doc([_select_payload(), raw], fields=FIELDS)
+    replies = [_select_payload(), raw]
+    if with_proposal:
+        replies.append({"ai_suggestions": raw["ai_suggestions"]})
+    rules, model = _rules_with_doc(replies, fields=FIELDS)
     request = _request(request_text="份额低于19要核实", analysis_protocol=2)
     result = rules.parse_rule_request(user(), request)
-    assert len(model.calls) == 2
+    assert len(model.calls) == 2 + int(with_proposal)
     assert len(result["ai_suggestions"]) == int(with_proposal)
     if with_proposal:
         assert result["ai_suggestions"][0]["provenance"] == "model"
         assert result["ai_suggestions"][0]["support_level"] == "needs_confirmation"
     assert not result.get("comparison_suggestions")
     repeated = rules.parse_rule_request(user(), request)
-    assert len(model.calls) == 2 and repeated["ai_suggestions"] == result["ai_suggestions"]
+    assert len(model.calls) == 2 + int(with_proposal) and repeated["ai_suggestions"] == result["ai_suggestions"]
 
 
 @pytest.mark.parametrize("outside_draft", [False, True])
@@ -53,16 +56,17 @@ def test_model_proposals_survive_combined_envelopes_clarification_and_replay(out
                         "open_questions": ["请明确本次检查的业务条件"]})
     reply = {**_select_payload(), "draft": proposal}
     (reply if outside_draft else proposal)["ai_suggestions"] = suggestions
-    replies = [reply] if not clarification else [_select_payload(), {**proposal, "ai_suggestions": suggestions}]
+    replies = ([reply, {"ai_suggestions": suggestions}] if not clarification
+               else [_select_payload(), {**proposal, "ai_suggestions": suggestions}])
     rules, model = _rules_with_doc(replies, fields=FIELDS)
     request = _request(request_text="请看一下份额" if clarification else "份额低于19要核实", analysis_protocol=2)
     result = rules.parse_rule_request(user(), request)
-    assert len(model.calls) == (2 if clarification else 1)
+    assert len(model.calls) == 2
     assert len(result.get("ai_suggestions", [])) == 1
     assert result["ai_suggestions"][0]["title"] == suggestions[0]["title"]
     assert bool(result.get("preview")) is not clarification
     repeated = rules.parse_rule_request(user(), request)
-    assert len(model.calls) == (2 if clarification else 1) and repeated["ai_suggestions"] == result["ai_suggestions"]
+    assert len(model.calls) == 2 and repeated["ai_suggestions"] == result["ai_suggestions"]
 
 
 @pytest.mark.parametrize("unused_plans", [None, []])
@@ -333,7 +337,8 @@ def test_first_round_plan_envelopes_keep_both_metrics_scopes_suggestions_and_unc
     reply = {"plan_mode": mode, "plans": [{"target": source, "draft": first}, {
         "target": {"table": "contracts"}, "related_target": source, "draft": second}],
         "ai_suggestions": [suggestion("复核份额的统计期间")]}
-    rules, model = _rules_with_doc([reply], fields=[*FIELDS, ("phase", "存续状态", "varchar", "")])
+    final = {"ai_suggestions": [*reply["ai_suggestions"], *second["ai_suggestions"]]}
+    rules, model = _rules_with_doc([reply, final], fields=[*FIELDS, ("phase", "存续状态", "varchar", "")])
     _add_table(rules, name="contracts", cn="合同表", dimension="合同", fields=[
         ("row_id", "业务编号", "varchar", "Y"), ("shares", "合同实收", "numeric", ""),
         ("business_day", "数据日期", "date", "")])
@@ -343,7 +348,7 @@ def test_first_round_plan_envelopes_keep_both_metrics_scopes_suggestions_and_unc
     request = _request(request_text="存续的份额和合同实收低于19", analysis_protocol=2)
     for _ in range(2):
         result = rules.parse_rule_request(user(), request)
-        assert len(model.calls) == 1
+        assert len(model.calls) == 2
         assert {s["title"] for s in result["ai_suggestions"]} == {"复核份额的统计范围", "复核份额的统计期间"}
         candidates = [o["candidate"] for o in result["candidate_options"]]
         assert [(c["table_name"], c["expression"]["left"]) for c in candidates] == [("test_table", "amount"), ("contracts", "shares")]
@@ -392,9 +397,10 @@ def test_excluded_blank_cannot_hide_unknown_duplicate_missing_or_overlapping_dic
     with rules.storage.database.begin() as conn:
         conn.execute(update(DOC_FIELDS).where(DOC_FIELDS.c.field_name == "phase")
                      .values(dictionary="1-存续\n2-终止", logic="其他值及空值留空。"))
-    with pytest.raises(AppError) as error:
-        rules.parse_rule_request(user(), _request(request_text="存续份额低于19", analysis_protocol=2))
-    assert error.value.code == "MODEL_RESPONSE_INVALID"
+    result = rules.parse_rule_request(user(), _request(request_text="存续份额低于19", analysis_protocol=2))
+    assert not result.get("preview")
+    assert result["questions"] and result["questions"][0]["requires_analysis"]
+    assert {o["value"] for o in result["questions"][0]["options"]} == {"phase=1", "phase=2"}
 
 
 @pytest.mark.parametrize("conflict", ["branches", "mode", "boolean_number", "single_expression", "shared_filter"])

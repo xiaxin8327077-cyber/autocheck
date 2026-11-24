@@ -49,7 +49,7 @@ def build_result_aliases(definition, columns, related=None, project=None):
     for role, field, other in compiled_projection(definition, named_unique_keys=True):
         labels = project_labels if other and role == "project_name" else related_labels if other else base_labels
         caption = labels.get(field)
-        name = caption if caption and _usable_caption(caption, dialect) else field or _DERIVED[role]
+        name = caption if caption and _usable_caption(caption, dialect) else field or _ROLES[re.sub(r"_\d+$", "", role)]
         suffix = ""
         for number in range(1, len(seen) + 2):
             # PostgreSQL limits identifiers in bytes. MySQL derived-table column names use characters.

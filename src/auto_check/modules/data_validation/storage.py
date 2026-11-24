@@ -1267,7 +1267,7 @@ class RuleStorage:
             rows = []
             for issue in issues:
                 issue_kind = issue.get("issue_kind") or "comparison"
-                if not isinstance(issue_kind, str) or issue_kind not in {"numeric", "missing_value", "missing_record", "comparison", "legacy"}:
+                if not isinstance(issue_kind, str) or issue_kind not in {"numeric", "missing_value", "missing_record", "calculation_error", "comparison", "legacy"}:
                     raise ValueError("Invalid issue kind")
                 project_status = issue.get("project_name_status") or (
                     "unmapped" if issue.get("project_code") is not None or issue.get("project_name") is not None else "not_required"

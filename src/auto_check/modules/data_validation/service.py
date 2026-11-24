@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from auto_check.app.module_system.contracts import ModuleTaskExecutor
 
+from .adoption_scope import preserve_period_policy, verified_period_scope
 from .semantic_generation import SemanticAnalysis, reviewed_semantic_choices
 from .analysis_jobs import AnalysisRegistry
 from .analysis_reuse import MEMORY_CONTRACT, analysis_baseline, apply_owner_selections, memory_choice, owner_selections
@@ -914,6 +915,8 @@ class DataValidationService:
                               "request_text": payload["analysis_request_text"],
                               "reasoning_enabled": payload.get("reasoning_enabled", (previous or {}).get("reasoning_enabled", False)),
                               "clarification_answers": payload.get("clarification_answers", (previous or {}).get("clarification_answers", []))}
+            if (previous or {}).get("include_suggestions") is False:
+                analysis_input["include_suggestions"] = False
             if semantic or (previous and previous.get("analysis_protocol") == 2):
                 analysis_input["analysis_protocol"] = 2
             previous_request = (previous or {}).get("analysis_request_text", (previous or {}).get("description"))
@@ -931,7 +934,7 @@ class DataValidationService:
                     for candidate in candidates
                 ):
                     raise AppError("ANALYSIS_CONTEXT_CHANGED")
-            self._check_preview_context(user, analysis_input, payload["analysis_context"])
+            self._check_preview_context(user, analysis_input, payload["analysis_context"], period_scope=(previous or {}).get("period_scope"))
         source = next((item for item in self.list_selectable_sources() if str(item["id"]) == source_id), None)
         if source is None:
             raise AppError("SOURCE_UNAVAILABLE")
@@ -1042,6 +1045,8 @@ class DataValidationService:
                           if not semantic and definition.get("generation_mode") == "ai" and definition.get("null_policy") == "unresolved"
                           else ""),
         )
+        if semantic and "inherited_period_check" in definition["semantic_intent"]:
+            definition = preserve_period_policy(definition, columns)
         definition.update({"source_id": source_id, "dialect": str(source.get("dialect") or ""), "mapping_version": mapping})
 
         def needs_confirmation(questions: list[dict[str, Any]], uncertainties: list[str]) -> dict[str, Any]:
@@ -1120,11 +1125,11 @@ class DataValidationService:
             preview["uncertainties"] = merge(preview.get("uncertainties") or [], context_uncertainties)
         if review_only:
             if analysis_input:
-                self._check_preview_context(user, analysis_input, payload["analysis_context"])
+                self._check_preview_context(user, analysis_input, payload["analysis_context"], period_scope=(previous or {}).get("period_scope"))
             return {"status": "ready", "ready": True, "persisted": False, **document_display(table, related), "definition": preview["definition"],
                     "questions": [], "uncertainties": []}
         if analysis_input and preview.get("sql_preview"):
-            context = self._check_preview_context(user, analysis_input, payload["analysis_context"])
+            context = self._check_preview_context(user, analysis_input, payload["analysis_context"], period_scope=(previous or {}).get("period_scope"))
             if previous and previous.get("description") and not preview.get("questions"):
                 baseline = selected_baseline(previous, preview["definition"], fields)
                 if baseline:
@@ -1133,9 +1138,10 @@ class DataValidationService:
             preview.update(document_display(table, related))
         return preview
 
-    def _check_preview_context(self, user, analysis_input, expected):
+    def _check_preview_context(self, user, analysis_input, expected, *, period_scope=None):
         try:
-            current = self._analysis_inputs(user, analysis_input)["context"]
+            scope_options = {"period_scope": period_scope} if period_scope else {}
+            current = self._analysis_inputs(user, analysis_input, **scope_options)["context"]
         except AppError as exc:
             if exc.code in {"SOURCE_UNAVAILABLE", "VALIDATION_ERROR"}:
                 raise AppError("ANALYSIS_CONTEXT_CHANGED") from exc
@@ -1818,7 +1824,9 @@ class DataValidationService:
         self._emit_progress(progress, "semantics", "running", "正在解析业务语义与选表范围")
         if self.model is None:
             raise AppError("MODEL_UNAVAILABLE")
-        current = self._analysis_inputs(user, payload)
+        period_scope = verified_period_scope(self, user, payload)
+        scope_options = {"period_scope": period_scope} if period_scope else {}
+        current = self._analysis_inputs(user, payload, **scope_options)
         for _attempt in range(3):
             cancel_event.check()
             cache_writes = []
@@ -1828,17 +1836,22 @@ class DataValidationService:
                 if exc.code in {"MODEL_TIMEOUT", "ANALYSIS_TIMEOUT", "ANALYSIS_ROUND_LIMIT", "ANALYSIS_OUTPUT_LIMIT"}:
                     raise
                 cancel_event.check()
-                latest = self._analysis_inputs(user, payload)
+                latest = self._analysis_inputs(user, payload, **scope_options)
                 cancel_event.check()
                 if current["context"] == latest["context"]:
                     raise
             else:
                 cancel_event.check()
-                latest = self._analysis_inputs(user, payload)
+                latest = self._analysis_inputs(user, payload, **scope_options)
                 cancel_event.check()
                 if current["context"] == latest["context"]:
                     result["analysis_context"] = digest(current["context"])
+                    if period_scope:
+                        result["period_scope"] = period_scope
                     result["reasoning_enabled"] = current["reasoning_enabled"]
+                    if current.get("include_suggestions") is False:
+                        result["include_suggestions"] = False
+                        result["ai_suggestions"] = []
                     request_text = str(payload.get("request_text") or "")
                     result["analysis_request_text"] = request_text
                     result["clarification_answers"] = current["clarification_answers"]
@@ -1857,6 +1870,8 @@ class DataValidationService:
                     self.analyses.publish_result(cancel_event, result, publish)
                     return result
             self._emit_progress(progress, "semantics", "running", "分析依据已更新，正在按最新文档和报送分类重新核对")
+            if period_scope:
+                raise AppError("ANALYSIS_CONTEXT_CHANGED")
             current = latest
         raise AppError("CONFLICT_VERSION")
 
@@ -1879,7 +1894,10 @@ class DataValidationService:
         matches = [t for t in matches if (document_category(self._doc_category_scope(t, categories), categories) or {}).get("code") == code]
         return matches[0] if len(matches) == 1 else None
 
-    def _analysis_inputs(self, user: dict, payload: dict) -> dict:
+    def _analysis_inputs(self, user: dict, payload: dict, *, period_scope=None) -> dict:
+        include_suggestions = payload.get("include_suggestions", True)
+        if type(include_suggestions) is not bool:
+            raise AppError("VALIDATION_ERROR")
         if "reasoning_enabled" in payload and type(payload["reasoning_enabled"]) is not bool:
             raise AppError("VALIDATION_ERROR")
         reasoning_enabled = payload.get("reasoning_enabled", False)
@@ -1951,6 +1969,10 @@ class DataValidationService:
                                     for stage in ("select_and_generate", "generate_rule")]]
         if clarification_answers:
             protocol_contracts.append({"clarification_answers": clarification_answers})
+        if period_scope:
+            protocol_contracts.append({"period_scope": period_scope})
+        if not include_suggestions:
+            protocol_contracts.append({"include_suggestions": False})
         memory_context = {
             "source_id": source_id, "source_name": str(source["name"]), "dialect": str(source.get("dialect") or ""),
             "doc_sha256": str(document["content_sha256"]), "doc_version": int(document["version_no"]), "model_id": model_id,
@@ -1961,7 +1983,8 @@ class DataValidationService:
         return {"source": source, "document": document, "tables": tables, "categories": categories, "shortlist": shortlist,
                 "project_target": project_target, "fields_by_table": fields_by_table, "prompts": prompts,
                 "knowledge_prefix": knowledge_prefix, "knowledge_context": knowledge_context, "context": memory_context,
-                "reasoning_enabled": reasoning_enabled, "clarification_answers": clarification_answers}
+                "reasoning_enabled": reasoning_enabled, "clarification_answers": clarification_answers, "period_scope": period_scope,
+                "include_suggestions": include_suggestions}
 
     def _analyze_request(self, user, payload, inputs, progress, cancel_event, *, cache_writes=None):
         source, document, tables = inputs["source"], inputs["document"], inputs["tables"]

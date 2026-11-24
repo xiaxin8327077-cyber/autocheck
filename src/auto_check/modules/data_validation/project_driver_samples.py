@@ -6,15 +6,16 @@ import datetime
 import math
 
 from .contracts import AppError
+from .formula import is_arithmetic
 from .query_samples import (
     _column_types, _fail_value, _nested_cases, case_fields, evaluate_matched_rows,
     filter_matches, ordered_values, sql_equal,
 )
-from .query_spec import BASE, RELATED, base_type, comparison_conditions, is_finite_number, type_family, validate_query_spec
+from .query_spec import BASE, RELATED, base_type, comparison_conditions, excludes_unmatched_sum, is_finite_number, type_family, validate_query_spec
 
 
 MAX_DETAILS = 20
-ISSUE_KINDS = {"missing_record", "missing_value", "comparison", "numeric"}
+ISSUE_KINDS = {"missing_record", "missing_value", "comparison", "numeric", "calculation_error"}
 _INTEGER_TYPES = {
     "int", "integer", "bigint", "smallint", "tinyint", "mediumint", "bit",
     "int2", "int4", "int8", "serial", "bigserial",
@@ -53,7 +54,8 @@ def evaluate_project_case(definition: dict, row: dict) -> tuple[int, str | None]
         and all(sql_equal(project.get(pair[project_key]), entry.get(pair[detail_key])) for pair in join["on"])
     ]
     if not matches:
-        return 1, "missing_record"
+        matched_only = definition["project_driver"]["version"] >= 3 or excludes_unmatched_sum(join)
+        return (0, None) if matched_only else (1, "missing_record")
     scoped = [entry for entry in matches if in_scope(entry, detail_role)]
     if not scoped:
         return 0, None
@@ -194,6 +196,9 @@ def default_project_cases(definition, columns, related_columns):
     project, period = row["project"], row["report_date"]
     details = row["details"]
     for condition in comparison_conditions(definition):
+        if is_arithmetic(condition):
+            # Formula seeds already exercise each operand separately.
+            continue
         operands = [(BASE, condition["left"])]
         if condition.get("right_type", "field") == "field" and "right" in condition:
             operands.append((condition.get("right_table", BASE), condition["right"]))

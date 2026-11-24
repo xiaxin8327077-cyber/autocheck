@@ -68,7 +68,7 @@ text.value = fixture.result.description;
 await text.dispatch("input");
 await controlByLabel(original, "数据源 *").dispatch("change");
 await controlByLabel(original, "启用模型").dispatch("change");
-if (fixture.reasoning) await collectByClass(original, "dv-ai-reasoning-switch")[0].dispatch("click");
+assert.equal(collectByClass(original, "dv-ai-reasoning-switch").length, 0, "需求栏不得保留推理开关");
 await findButton(original, "✦ AI 分析").dispatch("click");
 if (fixture.child || fixture.cancelSnapshot) {
   for (const input of collectByClass(original, "dv-ai-option-check")) {
@@ -86,9 +86,24 @@ if (fixture.scopeReview === "separate") {
   check.checked = true;
   await check.dispatch("change");
 }
-const adopt = findButton(original, "采纳");
+if (fixture.scopeReview === "none") {
+  for (const input of collectByClass(original, "dv-ai-option-check").filter(el => el.checked)) {
+    input.checked = false;
+    await input.dispatch("change");
+  }
+  assert.ok(collectByClass(original, "dv-ai-option-check").every(el => !el.checked));
+}
+const period = fixture.result.ai_suggestions[0].category === "period";
+const joinedPeriod = period && fixture.result.candidate_options[0].candidate.preview.definition.join;
+if (joinedPeriod) assert.ok(!findButton(original, "按原条件采纳"));
+const adopt = findButton(original, period && !joinedPeriod ? (fixture.independent ? "独立分析" : "按原条件采纳") : "采纳");
 assert.ok(adopt && !adopt.disabled);
 const cardText = collectText(collectByClass(original, "dv-ai-supplement")[0]);
+if (fixture.result.ai_suggestions[0].applicability_dictionary) assert.ok(cardText.includes("项目状态") && cardText.includes("存续"), cardText);
+if (period && !joinedPeriod) {
+  assert.ok(cardText.includes("大于 1") && cardText.includes("小于 0"), cardText);
+  assert.ok(findButton(original, "独立分析"));
+}
 for (const note of fixture.result.ai_suggestions[0].preconditions) assert.ok(cardText.includes(note));
 assert.ok(cardText.includes("系统已核对文档引用"));
 await adopt.dispatch("click");
@@ -96,7 +111,8 @@ let child = collectByClass(host, "dv-workbench-dialog").at(-1);
 if (!fixture.child || fixture.pending) assert.notEqual(child, original);
 const request = requests[1];
 assert.ok(request && !request.revision_of);
-assert.equal(request.reasoning_enabled, Boolean(fixture.reasoning));
+assert.equal(request.include_suggestions, false);
+assert.equal(request.reasoning_enabled, false, "补充分析请求必须始终关闭推理");
 if (fixture.scopeReview === "unselected") assert.doesNotMatch(request.request_text, /"value":"2"/);
 if (fixture.scopeReview === "separate") {
   const groups = JSON.parse(request.request_text.split("\n").find(line => line.startsWith("各原方案的适用范围：")).split("：")[1]);

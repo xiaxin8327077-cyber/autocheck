@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections import Counter
 from decimal import Decimal, InvalidOperation
+from hashlib import sha256
 import json
 import re
 
 from .contracts import AppError
+from .formula import has_arithmetic
 from .project_context import base_type
 from .query_grounding import bind_model_join, dictionary_options, resolve_report_date
 from .query_spec import (
-    MAX_CONDITIONS, MAX_FILTERS, MAX_IN_VALUES, MAX_JOIN_KEYS, UNARY_OPS, _validate_filter_value, type_family,
+    MAX_CONDITIONS, MAX_FILTERS, MAX_IN_VALUES, MAX_JOIN_KEYS, TEXT_FILTER_OPS, UNARY_OPS, _validate_filter_value, type_family,
     validate_query_spec,
 )
 
@@ -20,7 +23,7 @@ class _Unbound(ValueError):
 
 
 def _items(value, limit):
-    if not isinstance(value, list) or len(value) > limit:
+    if not isinstance(value, list) or limit is not None and len(value) > limit:
         raise _Unbound("模型给出的结构化口径格式或数量不符合要求，请重新分析。")
     return value
 
@@ -52,6 +55,88 @@ def _document_codes(field):
     return codes
 
 
+def dictionary_partition_question(scope, base_fields, related_fields):
+    """Offer documented values after a model fails to partition a real classification field."""
+    if not isinstance(scope, dict) or not isinstance(scope.get("category"), str):
+        return None
+    role = scope.get("table", "base")
+    names = scope.get("fields")
+    if role not in ("base", "related") or not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
+        return None
+    fields = {f["field_name"]: f for f in (base_fields if role == "base" else related_fields)}
+    if any(n not in fields for n in names):
+        return None
+    options = []
+    try:
+        for name in dict.fromkeys(names):
+            field = fields[name]
+            codes = _document_codes(field)
+            counts = Counter(codes.values())
+            for code, label in codes.items():
+                caption = label if counts[label] == 1 else f"{label}（{code}）"
+                if len(names) != 1:
+                    caption = f"{field.get('field_cn') or name}·{caption}"
+                options.append({"label": caption, "value": f"{name}={code}"})
+    except _Unbound:
+        return None
+    table_id = fields[names[0]].get("table_id")
+    if table_id is None:
+        return None
+    category = scope["category"]
+    signature = sha256(category.encode()).hexdigest()[:12]
+    field_ids = ",".join(sorted(str(fields[name].get("id", name)) for name in set(names)))
+    return {"id": f"dictionary/{table_id}/{role}/{field_ids}/{signature}", "evidence_term": category, "requires_analysis": True,
+            "text": f"「{category}」应纳入哪一项文档分类取值？", "options": options}
+
+
+def apply_dictionary_answers(draft, base_fields, related_fields, answers):
+    """Rebind a selected document code even if the next model reply repeats the invalid range."""
+    intent = draft.get("semantic_intent")
+    if not isinstance(intent, dict) or not isinstance(intent.get("scopes"), list):
+        return
+    for answer in answers:
+        parts = answer.get("question_id", "").split("/")
+        if len(parts) != 5 or parts[0] != "dictionary" or parts[2] not in ("base", "related"):
+            continue
+        _, table_id, role, raw_fields, signature = parts
+        if sha256(answer.get("context", "").encode()).hexdigest()[:12] != signature:
+            continue
+        offered_fields = raw_fields.split(",")
+        for field in base_fields if role == "base" else related_fields:
+            name = field["field_name"]
+            if (str(field.get("table_id")) != table_id or str(field.get("id", name)) not in offered_fields
+                    or f"（{name}=" not in answer.get("answer", "")):
+                continue
+            try:
+                codes = _document_codes(field)
+            except _Unbound:
+                continue
+            for code, label in codes.items():
+                caption = label if list(codes.values()).count(label) == 1 else f"{label}（{code}）"
+                receipt = f"{caption}（{name}={code}）"
+                if answer["answer"] not in (receipt, f"{field.get('field_cn') or name}·{receipt}"):
+                    continue
+                candidates = [scope for scope in intent["scopes"] if isinstance(scope, dict) and scope.get("table", "base") == role
+                              and isinstance(scope.get("fields"), list) and name in scope["fields"]]
+                if len(candidates) > 1:
+                    candidates = [scope for scope in candidates if scope.get("category") == answer.get("context")]
+                    if len(candidates) != 1:
+                        continue
+                scope = candidates[0] if candidates else {}
+                if not candidates:
+                    intent["scopes"].append(scope)
+                scope.update(table=role, fields=[name], category=caption,
+                             memberships={name: {"include": [code], "exclude": [v for v in codes if v != code]}})
+                scope.pop("recommended", None)
+                scope.pop("ambiguous_document_label", None)
+                filters = draft.get("filters")
+                for item in filters if isinstance(filters, list) else ():
+                    if (isinstance(item, dict) and item.get("table", "base") == role and item.get("field") == name
+                            and item.get("op") in ("eq", "in", "neq", "not_in")):
+                        item.update(op="eq", value=code)
+                break
+
+
 def _code_key(value, numeric):
     if type(value) not in (int, float, str):
         return None
@@ -79,6 +164,9 @@ def _scope_options(scope, roles, snapshots):
         if not field:
             raise _Unbound(f"当前文档缺少分类字段 {name}，请核对字段归属。")
         codes = _document_codes(field)
+        ambiguous = scope.get("ambiguous_document_label")
+        if ambiguous and list(codes.values()).count(ambiguous) > 1:
+            raise _Unbound(f"「{ambiguous}」对应多个字典取值，请选择适用的文档分类。")
         partition = memberships[name]
         if not isinstance(partition, dict) or set(partition) != {"include", "exclude"}:
             raise _Unbound(f"请补全 {name} 的字典码分组。")
@@ -142,7 +230,7 @@ def _explicit_filter(raw, roles):
         raise _Unbound(f"请核实 {name} 的筛选操作及取值类型。") from None
     item["table"] = role
     dictionary = str(field.get("dictionary") or "").strip()
-    if dictionary and item["op"] not in UNARY_OPS:
+    if dictionary and item["op"] not in UNARY_OPS | TEXT_FILTER_OPS:
         codes = _document_codes(field)
         values = item["value"] if isinstance(item["value"], list) else [item["value"]]
         if any(value not in codes for value in values):
@@ -157,6 +245,26 @@ def _conditions(expression):
     if not _items(rows, MAX_CONDITIONS) or not all(isinstance(row, dict) for row in rows):
         raise _Unbound("请核实模型给出的比较条件。")
     return rows
+
+
+def _metric_slot(row, item):
+    """Locate an operand field or a field leaf inside its arithmetic tree."""
+    side = item["side"]
+    path = item.get("formula_path")
+    if row.get(side + "_type") != "formula":
+        if path is not None:
+            raise _Unbound("公式指标位置与比较操作数不一致。")
+        return row, side
+    if not isinstance(path, list) or not path:
+        raise _Unbound("请明确该指标对应的公式字段位置。")
+    node = row.get(side)
+    for step in path:
+        if step not in ("left", "right") or not isinstance(node, dict):
+            raise _Unbound("公式指标位置无效。")
+        node = node.get(step)
+    if not isinstance(node, dict) or set(node) != {"field"}:
+        raise _Unbound("该位置不是公式的字段操作数。")
+    return node, "field"
 
 
 def _metric_bindings(metrics, expression, roles):
@@ -176,12 +284,19 @@ def _metric_bindings(metrics, expression, roles):
                 continue
             if side == "right" and (row.get("op") in UNARY_OPS or row.get("right_type") == "value"):
                 continue
-            if index is None and len(rows) > 1 and row.get(side) not in [*names, item["term"]]:
+            try:
+                slot, key = _metric_slot(row, item)
+            except _Unbound:
+                if index is None and len(rows) > 1:
+                    continue
+                raise
+            if index is None and len(rows) > 1 and slot.get(key) not in [*names, item["term"]]:
                 continue
             role = row.get("right_table", "base") if side == "right" else "base"
-            if (i, side) in claimed or (targets and role != targets[0][1]):
+            location = (i, side, tuple(item.get("formula_path", ())))
+            if location in claimed or (targets and role != targets[0][1]):
                 raise _Unbound("模型给出的指标口径重叠或跨越了不同的表，请核实。")
-            claimed.add((i, side))
+            claimed.add(location)
             targets.append((i, role))
         if not targets:
             raise _Unbound(f"请明确「{item['term']}」用于哪个比较条件。")
@@ -199,16 +314,19 @@ def _bind_metrics(candidate, metrics, roles):
     ambiguous_count = sum(len(names) > 1 for _, names, _, _ in bindings)
     for metric, names, fields, indices in bindings:
         side = metric["side"]
-        paths = [f"expression.conditions.{i}.{side}" if "conditions" in expression else f"expression.{side}"
+        suffix = "." + ".".join([*metric["formula_path"], "field"]) if "formula_path" in metric else ""
+        paths = [(f"expression.conditions.{i}.{side}" if "conditions" in expression else f"expression.{side}") + suffix
                  for i in indices]
         recommended = metric.get("recommended")
-        current = rows[indices[0]].get(side)
+        slot, key = _metric_slot(rows[indices[0]], metric)
+        current = slot.get(key)
         chosen = recommended if recommended in names else current if current in names else names[0]
         rule_names = metric.get("rule_names", {}) if ambiguous_count == 1 and len(names) > 1 else {}
         if rule_names.get(chosen):
             candidate["rule_name"] = rule_names[chosen].strip()
         for i in indices:
-            rows[i][side] = chosen
+            slot, key = _metric_slot(rows[i], metric)
+            slot[key] = chosen
         questions = candidate["questions"]
         questions[:] = [q for q in questions if q["id"] not in paths]
         if len(names) > 1:
@@ -255,8 +373,8 @@ def join_decisions_refine(previous, current, *, base_fields=(), related_fields=(
         return False
     old_policy = previous.get("unmatched_policy") or "unresolved"
     new_policy = current.get("unmatched_policy") or "unresolved"
-    resolved = "review" if current.get("right_aggregate") == "sum" else "exclude"
-    return (old_policy in ("unresolved", resolved) and new_policy in ("unresolved", resolved)
+    resolved = ("review", "exclude") if current.get("right_aggregate") == "sum" else ("exclude",)
+    return (old_policy in ("unresolved", *resolved) and new_policy in ("unresolved", *resolved)
             and (old_policy == "unresolved" or old_policy == new_policy))
 
 
@@ -280,7 +398,7 @@ def _verify_join(join, roles):
     if "relationship_confirmed" in join and type(join["relationship_confirmed"]) is not bool:
         raise _Unbound("关联关系的分析结论必须是明确的布尔值。")
     policy = join.get("unmatched_policy")
-    allowed_policies = (None, "unresolved", "review") if join.get("right_aggregate") else (None, "unresolved", "exclude")
+    allowed_policies = (None, "unresolved", "review", "exclude") if join.get("right_aggregate") else (None, "unresolved", "exclude")
     if policy not in allowed_policies:
         raise _Unbound("所选缺关联记录的处理方式不适用于当前关联，请核实。")
     period = join.get("report_date_field")
@@ -298,7 +416,7 @@ def ground_semantic_candidate(candidate, draft, base_fields, related_fields):
         if not isinstance(intent, dict) or intent.keys() - {"metrics", "scopes", "open_questions"}:
             raise _Unbound("模型给出的结构化语义格式不完整，请重新分析。")
         intent = deepcopy(intent)
-        metrics = _items(intent.get("metrics", []), 2 * MAX_CONDITIONS)
+        metrics = _items(intent.get("metrics", []), None if has_arithmetic(candidate.get("expression")) else 2 * MAX_CONDITIONS)
         scopes = _items(intent.get("scopes", []), MAX_FILTERS)
         open_questions = _items(intent.get("open_questions", []), 100)
         if not all(isinstance(q, str) and q.strip() for q in open_questions):
@@ -434,14 +552,16 @@ def semantic_coverage_issue(definition, intent, base_fields, related_fields):
         actual = _conditions(actual_expression)
         if len(rows) != len(actual):
             return "请完整保留模型给出的各项检查条件。"
-        for metric, names, _, indices in _metric_bindings(_items(intent.get("metrics", []), 2 * MAX_CONDITIONS),
+        for metric, names, _, indices in _metric_bindings(_items(intent.get("metrics", []), None if has_arithmetic(expected) else 2 * MAX_CONDITIONS),
                                                          expected, roles):
             side = metric["side"]
-            chosen = actual[indices[0]].get(side)
-            if chosen not in names or any(actual[i].get(side) != chosen for i in indices):
+            selections = [_metric_slot(actual[i], metric) for i in indices]
+            chosen = selections[0][0].get(selections[0][1])
+            if chosen not in names or any(slot.get(key) != chosen for slot, key in selections):
                 return f"请确认「{metric['term']}」对应的文档字段。"
             for i in indices:
-                rows[i][side] = chosen
+                slot, key = _metric_slot(rows[i], metric)
+                slot[key] = chosen
         if actual_expression != expected:
             return "比较条件与模型给出的结构化口径不一致。"
         expected_driver = intent.get("expected_project_driver")

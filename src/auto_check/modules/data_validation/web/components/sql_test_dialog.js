@@ -2,6 +2,7 @@ import { errorMessage, isAbortError } from "../runtime.js";
 import { createDialog } from "./dialog.js";
 import { button, element, field, input } from "./dom.js";
 import { aiIcon } from "./ai_visuals.js";
+import { displayIssueKind } from "./result_fields.js";
 
 export function previousMonthEnd(now = new Date()) {
   const day = new Date(now.getFullYear(), now.getMonth(), 0);
@@ -95,7 +96,8 @@ export function openSqlTestDialog({ host, api, preview, parent = null, now = new
       head.append(element("tr", {}, element("th", { text: "序号" }),
         ...columns.map(column => element("th", { text: column.name }))));
       rows.forEach((row, index) => body.append(element("tr", {}, element("td", { text: index + 1 }),
-        ...columns.map(column => element("td", { text: cellValue(row, column.name) })))));
+        ...columns.map(column => element("td", { text: displayIssueKind(cellValue(row, column.name),
+          column.name === (snapshot.definition.result_aliases?.issue_kind || "issue_kind")) })))));
       status.className = `dv-status${result.truncated ? " is-warning" : " is-success"}`;
       status.textContent = "运行完成";
       feedback.textContent = result.truncated ? "仅展示前 10 条数据，其余数据未展示。" : `返回 ${rows.length} 条`;

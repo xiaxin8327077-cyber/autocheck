@@ -26,7 +26,7 @@ from .project_context import (
 
 BASE = "base"
 RELATED = "related"
-DRIVER_VERSION = 2
+DRIVER_VERSION = 3
 _UNSET = object()
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _JOIN_KEYS = {
@@ -54,7 +54,7 @@ def normalize_project_driver(raw: Any) -> dict[str, Any]:
     """Validate the complete public marker shape; booleans are not version integers."""
     if not isinstance(raw, dict) or set(raw) != {"version", "table_role"}:
         _fail()
-    if type(raw.get("version")) is not int or raw["version"] not in (1, DRIVER_VERSION):
+    if type(raw.get("version")) is not int or raw["version"] not in (1, 2, DRIVER_VERSION):
         _fail()
     if raw.get("table_role") not in (BASE, RELATED):
         _fail()
@@ -506,7 +506,7 @@ def bind_project_driver(
                 aggregate = raw_join.get("right_aggregate") == "sum"
                 candidate["join"] = {
                     **deepcopy(raw_join), "relationship_confirmed": True,
-                    "unmatched_policy": "review" if aggregate else "exclude",
+                    "unmatched_policy": "review" if aggregate and raw_join.get("unmatched_policy") != "exclude" else "exclude",
                 }
         else:
             detail_day = _selected_period(candidate, base_fields)
@@ -543,6 +543,10 @@ def bind_project_driver(
         if requested is not None and original.get("project_context") is not None:
             if normalize_project_context(original["project_context"]) != normalize_project_context(candidate["project_context"]):
                 raise ValueError("已声明的项目上下文与唯一项目实体或 TCMP 来源不一致。")
+        if not preserve_version and candidate.get("join"):
+            # The project template already adds the same-period match. Normalize only
+            # new drafts; stored versions must retain their exact SQL and hashes.
+            candidate["join"]["on"] = [required_pair]
         validate_project_driver(candidate)
     except (ValueError, AppError) as exc:
         message = str(exc) or "项目驱动结构与文档证据不一致。"

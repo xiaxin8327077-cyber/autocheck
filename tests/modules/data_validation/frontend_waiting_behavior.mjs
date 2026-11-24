@@ -176,13 +176,12 @@ const snapshots = [];
 let createCalls = 0;
 let getCalls = 0;
 let cancelCalls = 0;
-let expectedReasoning = false;
 const api = {
   createAnalysis: async (payload) => {
     createCalls += 1;
     assert.equal(payload.source_id, "src");
     assert.equal(payload.model_id, "model-1");
-    assert.equal(payload.reasoning_enabled, expectedReasoning, "推理开关必须随请求发送");
+    assert.equal(payload.reasoning_enabled, false, "新分析请求必须始终关闭推理");
     assert.equal(payload.await_first_poll, true, "模型只能在页面拿到 ID 后启动");
     assert.equal(payload.table, undefined);
     return {
@@ -229,16 +228,11 @@ await source.dispatch("change");
 const model = controlByLabel(workbench.element, "启用模型");
 model.value = "model-1";
 await model.dispatch("change");
-const reasoningSwitch = findByClass(workbench.element, "dv-ai-reasoning-switch");
-assert.equal(reasoningSwitch.getAttribute("role"), "switch");
-assert.equal(reasoningSwitch.getAttribute("aria-checked"), "false", "新建默认关闭推理");
+assert.equal(findByClass(workbench.element, "dv-ai-reasoning-switch"), null, "需求栏不得保留推理开关");
 await findButton(workbench.element, "✦ AI 分析").dispatch("click");
 await sleep(30);
 
 assert.equal(createCalls, 1);
-assert.equal(reasoningSwitch.disabled, true, "分析中不能切换推理模式");
-await reasoningSwitch.dispatch("click");
-assert.equal(reasoningSwitch.getAttribute("aria-checked"), "false");
 const progress = findByClass(workbench.element, "dv-ai-progress");
 assert.equal(progress.hidden, false, "等待区必须可见");
 assert.equal(collectByClass(workbench.element, "dv-ai-step").length, 0, "方案 A 不再显示三步清单");
@@ -316,10 +310,7 @@ assert.equal(createCalls, 1, "不得重调 parse/创建分析");
 
 // 结束：失败可重试、后台退出才显示结束，旧 GET 返回的候选不能覆盖结束过程。
 await findButton(workbench.element, "修改需求").dispatch("click");
-assert.equal(reasoningSwitch.disabled, false);
-await reasoningSwitch.dispatch("click");
-assert.equal(reasoningSwitch.getAttribute("aria-checked"), "true");
-expectedReasoning = true;
+assert.equal(findByClass(workbench.element, "dv-ai-reasoning-switch"), null, "改需求后仍不得出现推理开关");
 const request2 = controlByLabel(workbench.element, "需求描述 *");
 request2.value = "另一个需求";
 await request2.dispatch("input");

@@ -2,17 +2,19 @@ import { button, element } from "./dom.js";
 import { aiIcon } from "./ai_visuals.js";
 import { columnLabel, documentEvidence, filterValues, objectLabel, tableLabel } from "./candidate_evidence.js";
 import { documentPreviewGap } from "../runtime.js";
-import { hasComparison, isGrouped } from "../comparisons.js";
+import { formulaText, hasComparison, isGrouped } from "../comparisons.js";
 import { ALL_FIELD_CHOICES, canChooseAllFields, candidateIssues, reviewCandidate, visibleSql } from "../state.js";
 
 const OPERATORS = {
   lt: "小于", lte: "小于或等于", gt: "大于", gte: "大于或等于", eq: "为", neq: "不为",
   is_null: "为空", is_not_null: "不为空",
+  contains_any: "包含任一关键词", not_contains_any: "不包含任何关键词",
 };
 
 const FILTER_OP_LABELS = {
   lt: "早于", lte: "不晚于", gt: "晚于", gte: "不早于", eq: "为", neq: "不为",
   in: "属于", not_in: "不属于", is_null: "为空", is_not_null: "不为空",
+  contains_any: "包含任一关键词", not_contains_any: "不包含以下任何关键词",
 };
 
 function filterText(candidate, filter) {
@@ -67,10 +69,14 @@ export function candidateCondition(candidate) {
     const conditions = expression.conditions.map((item) => candidateCondition({ ...candidate, expression: item }));
     return (expression.logic === "all" ? "同时满足：" : "满足任一项：") + conditions.join(expression.logic === "all" ? "，且" : "，或");
   }
-  const left = columnLabel(candidate, expression.left) || "待确定的指标";
+  const label = (name) => columnLabel(candidate, name);
+  const left = expression.left_type === "formula" ? formulaText(expression.left, label) : label(expression.left) || "待确定的指标";
   const opLabel = OPERATORS[expression.op] || "比较";
   if (expression.op === "is_null" || expression.op === "is_not_null") return `${left}${opLabel}`;
-  let right = expression.right_type === "value" ? String(expression.right ?? "待确定值") : columnLabel(candidate, expression.right, expression.right_table) || "待确定的指标";
+  let right = expression.right_type === "formula" ? formulaText(expression.right, label)
+    : expression.right_type === "value" ? String(expression.right ?? "待确定值")
+      : columnLabel(candidate, expression.right, expression.right_table) || "待确定的指标";
+  if (Array.isArray(expression.right)) right = expression.right.map((word) => `「${word}」`).join("、");
   if (expression.right_type !== "value" && expression.right_table === "related") {
     const related = tableLabel(candidate, {}, true);
     if (related) right = `${related}的${right}`;

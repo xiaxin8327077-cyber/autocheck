@@ -987,6 +987,42 @@ def _dedupe_key(item: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _echoes_previewed_request(item: dict[str, Any], request: str, candidates: list[dict[str, Any]]) -> bool:
+    """An unchanged task over already previewed fields is not an additional check."""
+    def task_text(value: str) -> str:
+        # Quoted text can contain meaningful punctuation; do not normalize it or case.
+        if not isinstance(value, str) or any(mark in value for mark in ('"', "'", "“", "”", "‘", "’", "「", "」")):
+            return ""
+        return re.sub(r"[\s,，。；;!?！？]+", "", value)
+
+    key = task_text(request)
+    if (not key or task_text(item.get("title", "")) != key or item.get("category") == "period"
+            or item.get("kind") not in {"field_compare_unary", "field_compare_binary"}
+            or (item.get("adoption") or {}).get("operations")):
+        return False
+    refs = {(r["table_name"], r["field_name"]) for r in item.get("references") or []}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        preview = candidate.get("preview") or {}
+        definition = preview.get("definition")
+        if not preview.get("sql_preview") or not isinstance(definition, dict):
+            continue
+        owners = {"base": definition.get("table_name"), "related": (definition.get("join") or {}).get("table_name")}
+        expression = definition.get("expression") or {}
+        parts = expression.get("conditions", [expression])
+        if not isinstance(parts, list) or any(not isinstance(p, dict) or not isinstance(p.get("left"), str)
+                                               or p.get("right_type") == "formula" for p in parts):
+            continue
+        operands = {(owners["base"], p["left"]) for p in parts}
+        operands.update((owners.get(p.get("right_table", "base")), p["right"]) for p in parts
+                        if p.get("right_type") == "field" and isinstance(p.get("right"), str))
+        used = operands | {(owners.get(f.get("table", "base")), f.get("field")) for f in definition.get("filters") or []}
+        if refs and refs <= used and refs & operands:
+            return True
+    return False
+
+
 def build_ai_suggestions(
     model_suggestions: Any,
     *,
@@ -1048,6 +1084,8 @@ def build_ai_suggestions(
     result: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
     for suggestion in collected:
+        if model_only and _echoes_previewed_request(suggestion, request_text, candidates):
+            continue
         if filter_actionable and (
             suggestion.get("support_level") != "supported"
             or not any((ref["table_name"].lower(), ref["field_name"].lower()) in main_refs

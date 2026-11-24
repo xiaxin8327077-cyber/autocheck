@@ -121,7 +121,7 @@ def test_numeric_constant_does_not_treat_constant_as_quoted_column() -> None:
 def test_invalid_numeric_constant_raises(value) -> None:
     with pytest.raises(AppError) as caught:
         compile_rule({"definition": _definition(
-            expression={"left": "amount", "op": "eq", "right_type": "value", "right": value},
+            expression={"left": "amount", "op": "gt", "right_type": "value", "right": value},
         )})
     assert caught.value.code == "VALIDATION_ERROR"
 

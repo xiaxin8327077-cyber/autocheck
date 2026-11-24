@@ -61,7 +61,7 @@ def test_active_analysis_keeps_the_original_model_interpretation_on_recheck(monk
     definition = _definition()
     original = {**definition, "analysis_context": "snapshot"}
     monkeypatch.setattr(rules.analyses, "completed_result", lambda *_: original)
-    monkeypatch.setattr(rules, "_check_preview_context", lambda *_: {})
+    monkeypatch.setattr(rules, "_check_preview_context", lambda *_, **__: {})
     context = {"analysis_id": "analysis", "analysis_context": "snapshot", "model_id": "model-1",
                "analysis_request_text": definition["description"]}
     edited = deepcopy(definition)
@@ -94,12 +94,15 @@ def test_supplement_uses_its_own_issued_expression_when_rechecked_in_primary_ana
                   "expression": {"left": "f_start_totalnetvalue", "op": "is_null"}, "violation_message": "请核实"}
     monkeypatch.setattr("auto_check.modules.data_validation.semantic_generation.build_ai_suggestions",
                         lambda *_, **kw: [{"definition": supplement}])
+    # This test isolates the issued definition from the optional model-review RPC.
+    monkeypatch.setattr("auto_check.modules.data_validation.semantic_generation.SemanticAnalysis.supplement_suggestions",
+                        lambda self, candidates, previous=(): list(previous))
     result = rules.parse_rule_request(user(), request)
     issued = result["ai_suggestions"][0]["definition"]
     assert issued["semantic_intent"]["expected_expression"] == supplement["expression"]
     assert issued["semantic_intent"] != result["semantic_intent"]
     monkeypatch.setattr(rules.analyses, "completed_result", lambda *_: result)
-    monkeypatch.setattr(rules, "_check_preview_context", lambda *_: {})
+    monkeypatch.setattr(rules, "_check_preview_context", lambda *_, **__: {})
     payload = {"analysis_id": "id", "analysis_context": result["analysis_context"], "model_id": request["model_id"],
                "analysis_request_text": request["request_text"], "definition": {
                    **issued, "business_key": result["business_key"], "report_date_field": result["report_date_field"],

@@ -200,6 +200,59 @@ def test_v2_detail_keeps_each_real_row_and_missing_details_without_project_key_d
     assert not any(r["project_code"] == "D" for r in run.rows)
 
 
+@pytest.mark.parametrize("dialect", ["mysql", "postgresql"])
+@pytest.mark.parametrize("project_role", ["base", "related"])
+def test_v3_comparison_only_checks_existing_same_period_details(dialect, project_role):
+    rule = detail_rule(dialect)
+    rule["project_driver"] = {"version": 3, "table_role": project_role}
+    base, related = DETAIL, PROJECT
+    if project_role == "base":
+        rule.update(table_name="projects", business_key="code", report_date_field="day",
+                    project_context={"mode": "base", "code_field": "code", "name_field": "title", "confirmed": True},
+                    expression={"left": "total", "op": "lt", "right_type": "value", "right": 0})
+        rule["join"].update(table_name="lines", on=[{"left": "code", "right": "owner"}], report_date_field="stamp")
+        for item in rule["filters"]:
+            item["table"] = "base" if item["table"] == "related" else "related"
+        base, related = PROJECT, DETAIL
+    rule["join"]["on"].append({"left": rule["report_date_field"], "right": rule["join"]["report_date_field"]})
+    sql, run = actual(rule, base, related)
+    assert "INNER JOIN" in sql and "LEFT JOIN" not in sql
+    assert "dv_missing_record" not in sql and "missing_record" not in sql
+    date_match = 'd.`stamp` = p.`day`' if dialect == "mysql" else 'd."stamp" = p."day"'
+    assert sql.count(date_match) == 1
+    assert not any(row["project_code"] in ("B", "D", "E") for row in run.rows)
+    assert len([row for row in run.rows if row["project_code"] == "A"]) == 2
+    sample = {"report_date": DAY, "project": {"code": "B", "title": "B名称", "day": DAY, "enabled": 1, "total": -1},
+              "details": [{"owner": "B", "stamp": "2026-10-31", "num": "old", "amount": -1, "allowed": 1}]}
+    assert evaluate_case_with_kind(rule, sample) == (0, None)
+    sample["details"] = []
+    assert evaluate_case_with_kind(rule, sample) == (0, None)
+
+
+@pytest.mark.parametrize("dialect", ["mysql", "postgresql"])
+def test_v3_sum_excludes_absent_and_filtered_details_but_keeps_real_nulls(dialect):
+    rule = detail_rule(dialect)
+    rule.update(table_name="projects", business_key="code", report_date_field="day", null_policy="review",
+                project_driver={"version": 3, "table_role": "base"},
+                project_context={"mode": "base", "code_field": "code", "name_field": "title", "confirmed": True},
+                expression={"left": "total", "op": "neq", "right_type": "field", "right_table": "related", "right": "amount"})
+    rule["join"].update(table_name="lines", on=[{"left": "code", "right": "owner"}],
+                        report_date_field="stamp", right_aggregate="sum", unmatched_policy="review")
+    for item in rule["filters"]:
+        item["table"] = "base" if item["table"] == "related" else "related"
+    expected_sql, _ = actual(rule, PROJECT, DETAIL)
+    rule["join"]["on"].append({"left": "day", "right": "stamp"})
+    sql, run = actual(rule, PROJECT, DETAIL)
+    assert sql == expected_sql
+    assert "INNER JOIN" in sql and "missing_record" not in sql and "dv_missing_record" not in sql
+    assert sorted((row["project_code"], row["issue_kind"]) for row in run.rows) == [
+        ("C", "missing_value"), ("G", "numeric"), ("H", "numeric")]
+    for code, details in (("B", []), ("D", [{"owner": "D", "stamp": DAY, "num": "skip", "amount": 0, "allowed": 0}])):
+        sample = {"report_date": DAY, "project": {"code": code, "title": code + "名称", "day": DAY, "enabled": 1, "total": 0},
+                  "details": details}
+        assert evaluate_case_with_kind(rule, sample) == (0, None)
+
+
 @pytest.mark.parametrize("policy", ["zero", "review"])
 def test_v2_sum_aggregates_details_once_before_comparing_each_project_row(policy):
     rule = detail_rule("postgresql")

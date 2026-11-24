@@ -7,13 +7,14 @@ from auto_check.app.module_system.permissions import default_permission_evaluato
 from auto_check.app.module_system.routing import ModuleRouter
 from auto_check.modules.data_validation.api import register_routes
 from auto_check.modules.data_validation.module import MANIFEST
+from auto_check.modules.data_validation.project_driver import DRIVER_VERSION
 from tests.modules.data_validation.support import user
 from tests.modules.data_validation.test_ai_service import _request
 from tests.modules.data_validation.test_project_driver_binding import make_rules, semantic_draft
 
 
-@pytest.fixture
-def stored_rule():
+@pytest.fixture(params=[1, 2], ids=["saved-v1", "saved-v2"])
+def stored_rule(request):
     rules, _ = make_rules([
         {"target": {"table": "asset_rows"}, "report_category": "pbc_central"}, semantic_draft(),
     ])
@@ -22,8 +23,8 @@ def stored_rule():
         request_text="收益转让标识为是的项目，资产收益权余额应大于0", analysis_protocol=2,
     ))
     original = deepcopy(result["preview"]["definition"])
-    original["project_driver"]["version"] = 1
-    original["semantic_intent"]["expected_project_driver"]["version"] = 1
+    original["project_driver"]["version"] = request.param
+    original["semantic_intent"]["expected_project_driver"]["version"] = request.param
     rule_id = rules.save_draft(owner, original)["id"]
     first = rules.storage.latest_version(rule_id)
     rules.storage.set_status(rule_id, "enabled", first["id"])
@@ -42,7 +43,7 @@ def stored_rule():
     return rules, rule_id, first, save
 
 
-@pytest.mark.parametrize("submitted_version", [1, 2], ids=["editor-copy", "regenerated"])
+@pytest.mark.parametrize("submitted_version", [1, 2, DRIVER_VERSION], ids=["editor-copy", "v2-copy", "regenerated"])
 def test_saving_new_version_upgrades_only_the_draft_compiler(stored_rule, submitted_version):
     rules, rule_id, first, save = stored_rule
     edited = deepcopy(first["definition"])
@@ -55,10 +56,12 @@ def test_saving_new_version_upgrades_only_the_draft_compiler(stored_rule, submit
     second = rules.storage.latest_version(rule_id)
     assert second["version_no"] == 2 and second["status"] == "draft"
     old_intent = first["definition"]["semantic_intent"]
-    marker = {"version": 2, "table_role": "related"}
+    marker = {"version": DRIVER_VERSION, "table_role": "related"}
     assert second["definition"]["project_driver"] == marker
     assert second["definition"]["semantic_intent"] == {**old_intent, "expected_project_driver": marker}
-    assert "dv_duplicate_project" in first["sql_text"] and "dv_duplicate_project" not in second["sql_text"]
+    assert ("dv_duplicate_project" in first["sql_text"]) == (first["definition"]["project_driver"]["version"] == 1)
+    assert "dv_duplicate_project" not in second["sql_text"]
+    assert "LEFT JOIN" in first["sql_text"] and "INNER JOIN" in second["sql_text"]
     assert first["content_sha256"] != second["content_sha256"]
     assert rules.storage.get_version(rule_id, 1) == first
     assert rules.storage.get_rule(rule_id)["current_version_id"] == first["id"]

@@ -2,17 +2,19 @@
 from copy import deepcopy
 from itertools import combinations
 import re
+import json
 
 from .ai_service import model_expression
 from .contracts import AppError
-from .document_evidence import _GENERIC_METRICS, _business_aliases, referenced_fields
+from .formula import formula_fields
+from .document_evidence import _GENERIC_METRICS, _business_aliases, _label_forms, referenced_fields
 from .generation_policy import text_tokens
 from .parallel_checks import NONEMPTY_REQUIREMENT
 from .prompt_defaults import SEMANTIC_MAX_PLANS
 from .query_grounding import resolve_report_date
-from .query_spec import is_finite_number, is_numeric_comparison, type_family
+from .query_spec import is_finite_number, is_numeric_comparison, type_family, valid_comparison_literal
 from .semantic_grounding import (
-    _document_codes, _explicit_filter, _roles, _scope_options, _Unbound,
+    _document_codes, _explicit_filter, _metric_slot, _roles, _scope_options, _Unbound,
     join_decisions_refine, without_period_join_key,
 )
 
@@ -276,9 +278,13 @@ def document_choices(analysis, selection, pending, validate_intent):
             alternate_group = group
         elif (same_condition and len(hits) == 1 and hits[0]["table_id"] == base["id"]
               and len(named.intersection(hits[0]["fields"])) > 1):
+            policy = str(getattr(analysis, "prompts", {}).get("business_scope", ""))
+            policy_fields = set(re.findall(r"[a-z_][a-z0-9_]*", policy.lower()))
             for name in set(hits[0]["fields"]) - named:
-                periods = _PERIOD.findall(str(fields[name].get("field_cn") or ""))
-                if not periods or any(period in analysis.request for period in periods):
+                label = str(fields[name].get("field_cn") or "")
+                periods = _PERIOD.findall(label)
+                if (not periods or any(period in analysis.request for period in periods)
+                        or name.lower() in policy_fields or (label and label in policy)):
                     return None
         else:
             return None
@@ -341,13 +347,22 @@ def plan_facts(plan, base, related, all_fields, category):
         facts = {}
         if isinstance(part, dict):
             left = part.get("left")
+            for side in ("left", "right"):
+                if part.get(side + "_type") != "formula":
+                    continue
+                try:
+                    fields = formula_fields(part.get(side))
+                except AppError:
+                    continue
+                if all(type_family(roles["base"].get(n, {}).get("data_type")) == "number" for n in fields):
+                    facts[side + "_formula"] = json.dumps(part[side], sort_keys=True, separators=(",", ":"))
             if isinstance(left, str) and left in roles["base"]:
                 facts["left"] = left
             if part.get("op") in ("lt", "lte", "eq", "neq", "gt", "gte", "is_null", "is_not_null"):
                 facts["op"] = part["op"]
             if part.get("op") not in ("is_null", "is_not_null"):
                 right = part.get("right")
-                if is_finite_number(right) and part.get("right_type", "value") == "value":
+                if valid_comparison_literal(part.get("op"), right) and part.get("right_type", "value" if is_finite_number(right) else "field") == "value":
                     facts.update(right_type="value", right=right)
                 role = part.get("right_table", "base")
                 if (isinstance(right, str) and role in ("base", "related") and right in roles[role]
@@ -495,25 +510,31 @@ def choice_identity(previous, targets, selected):
         terms = set()
         sides = set()
         roles = set()
+        paths = set()
         for target in targets:
-            match = re.fullmatch(r"expression(?:\.conditions\.(\d+))?\.(left|right)", target)
+            match = re.fullmatch(r"expression(?:\.conditions\.(\d+))?\.(left|right)((?:\.(?:left|right))+\.field)?", target)
             if not match:
                 return {}
             index, side = int(match[1] or 0), match[2]
+            path = tuple(match[3].split(".")[1:-1]) if match[3] else ()
+            paths.add(path)
             if index >= len(rows):
                 return {}
             indices.append(index)
             sides.add(side)
             roles.add(rows[index].get("right_table", "base") if side == "right" else "base")
             metrics = [m for m in intent.get("metrics", []) if m.get("side") == side
+                       and tuple(m.get("formula_path", ())) == path
                        and m.get("condition_index", index) == index and selected in m.get("fields", [])]
             if len(metrics) != 1:
                 return {}
             terms.add(metrics[0].get("term"))
-        if len(terms) != 1 or len(sides) != 1 or len(roles) != 1:
+        if len(terms) != 1 or len(sides) != 1 or len(roles) != 1 or len(paths) != 1:
             return {}
         role = roles.pop()
         binding = {"kind": "metrics", "term": terms.pop(), "indices": indices, "side": sides.pop()}
+        if path:
+            binding["formula_path"] = list(path)
     else:
         return {}
     owner = base if role == "base" else (previous.get("join") or {}).get("table_name")
@@ -540,7 +561,11 @@ def _exact_metric_choices(analysis, selection, draft, expression):
         condition = conditions[i]
         if side not in ("left", "right") or (side == "right" and condition.get("right_type") == "value"):
             continue
-        name = condition.get(side)
+        try:
+            slot, key = _metric_slot(condition, item)
+        except _Unbound:
+            continue
+        name = slot.get(key)
         role = "related_target" if side == "right" and condition.get("right_table") == "related" else "target"
         target = draft.get(role, selection.get(role))
         if not target or not isinstance(name, str) or name not in names:
@@ -684,6 +709,65 @@ def qualified_peer_choice(analysis, selection, draft, *, owner_choices=(), singl
     result["semantic_intent"]["metrics"] = [{"side": "left", "term": term, "fields": names}]
     result["violation_message"] = "所选" + term + "字段为空"
     return result
+
+
+def bind_shared_measure(draft, fields, request):
+    """Keep one documented measure choice across its repeated comparisons."""
+    expr = draft.get("expression")
+    intent = draft.get("semantic_intent")
+    if (not isinstance(expr, dict) or set(expr) != {"logic", "conditions"} or expr["logic"] not in ("any", "all")
+            or not isinstance(intent, dict)):
+        return
+    rows, metrics = expr["conditions"], intent.get("metrics")
+    if (not isinstance(rows, list) or len(rows) < 2 or not all(isinstance(row, dict) for row in rows)
+            or not isinstance(metrics, list) or not metrics or not all(isinstance(m, dict) for m in metrics)):
+        return
+    first = metrics[0]
+    names, term = first.get("fields"), first.get("term")
+    request = request.lower()
+    if (not isinstance(names, list) or len(names) < 2 or not all(isinstance(n, str) for n in names)
+            or not isinstance(term, str) or not term or term.lower() not in request
+            or first.get("side") != "left" or "formula_path" in first):
+        return
+    shared = {k: v for k, v in first.items() if k != "condition_index"}
+    name_set = set(names)
+    indices = []
+    for m in metrics:
+        idx = m.get("condition_index", 0)
+        options = m.get("fields")
+        if (type(idx) is not int or not 0 <= idx < len(rows) or not isinstance(options, list)
+                or not all(isinstance(n, str) for n in options) or set(options) != name_set
+                or {**m, "condition_index": 0, "fields": names} != {**first, "condition_index": 0}):
+            return
+        indices.append(idx)
+    peers = [f for f in fields if f["field_name"] in names]
+    if len(peers) != len(name_set) or len({type_family(f.get("data_type")) for f in peers}) != 1:
+        return
+    for field in peers:
+        labels = [*_label_forms(field), *_business_aliases(field), field["field_name"].lower()]
+        if (not any(term.lower() in label for label in labels)
+                or any(label != term.lower() and label in request for label in labels)):
+            return
+    each_measure = re.search(r"(?:每|任一|任意|任何|全部|所有|各)(?:项|个|种)?(?:的)?" + re.escape(term)
+                             + "|" + re.escape(term) + r"(?:指标|字段)?(?:均|都|全部|任一|逐项|分别|只要有一[个项种])",
+                             request, re.I)
+    lefts = [row.get("left") for row in rows]
+    if any(name not in names for name in lefts):
+        return
+    unary = (all(set(row) == {"left", "op"} and row["op"] == rows[0]["op"] for row in rows)
+             and rows[0]["op"] in ("is_null", "is_not_null") and set(lefts) == name_set)
+    if each_measure:
+        if unary:
+            intent["metrics"] = [{"side": "left", "term": term, "fields": [name], "condition_index": i}
+                                 for i, name in enumerate(lefts)]
+        return
+    if unary:
+        draft["expression"] = rows[0]
+        draft["violation_message"] = "所选" + term + ("字段为空" if rows[0]["op"] == "is_null" else "字段有值")
+    elif not (len(set(lefts)) == 1 and sorted(indices) == list(range(len(rows)))
+              and all(row.get("right_type") == "value" for row in rows)):
+        return
+    intent["metrics"] = [shared]
 
 
 def missing_registered_grain(analysis, owner, item, declarations, role):

@@ -1,5 +1,7 @@
 import { OPERATOR_OPTIONS } from "../constants.js";
-import { isGrouped } from "../comparisons.js";
+import { isFormulaComparison, isGrouped, isKeywordOperator } from "../comparisons.js";
+import { createKeywordEditor } from "./keyword_editor.js";
+import { candidateCondition } from "./ai_candidate.js";
 import { button, element, field, input, select } from "./dom.js";
 
 const operators = [...OPERATOR_OPTIONS, ["is_null", "为空"], ["is_not_null", "不为空"]];
@@ -32,6 +34,11 @@ export function createConditionGroup({ listen, columnsForTable, onEdit }) {
     bind(logic, "change", () => { expression.logic = logic.value; onEdit(); });
     expression.conditions.forEach((item, index) => {
       const controls = element("div", { className: "dv-form-grid" });
+      if (isFormulaComparison(item)) {
+        root.append(element("div", { className: "dv-condition-row" }, element("strong", { text: `条件 ${index + 1}` }),
+          field("公式条件（只读）", element("span", { text: candidateCondition({ expression: item, columns: columnsForTable("base") }) }))));
+        return;
+      }
       const left = columnSelect("base", item.left);
       const op = select(operators, { value: item.op || "" });
       controls.append(field("左字段", left), field("异常触发关系", op));
@@ -40,29 +47,40 @@ export function createConditionGroup({ listen, columnsForTable, onEdit }) {
         item.op = op.value;
         if (["is_null", "is_not_null"].includes(op.value)) {
           delete item.right; delete item.right_type; delete item.right_table;
+        } else if (isKeywordOperator(op.value)) {
+          if (!Array.isArray(item.right)) item.right = [""];
+          item.right_type = "value";
+          delete item.right_table;
+        } else if (Array.isArray(item.right)) {
+          item.right = "";
         }
         render(); onEdit();
       });
-      if (!["is_null", "is_not_null"].includes(item.op)) {
-        const target = item.right_type === "value" ? "value" : item.right_table === "related" ? "related" : "base";
-        const types = [["value", "数值常量"], ["base", "主表字段"]];
+      if (isKeywordOperator(item.op)) {
+        const editor = createKeywordEditor(listen, () => { item.right = editor.read(); onEdit(); });
+        editor.set(item.right);
+        controls.append(editor.element);
+        removers.push(() => editor.dispose());
+      } else if (!["is_null", "is_not_null"].includes(item.op)) {
+        const target = item.right_type === "value" ? (typeof item.right === "string" ? "text" : "value") : item.right_table === "related" ? "related" : "base";
+        const types = [["value", "数值常量"], ["text", "文本常量"], ["base", "主表字段"]];
         if (columnsForTable("related").length || target === "related") types.push(["related", "关联表字段"]);
         const type = select(types, { value: target });
         controls.append(field("比较目标类型", type));
         bind(type, "change", () => {
-          item.right_type = type.value === "value" ? "value" : "field";
+          item.right_type = ["value", "text"].includes(type.value) ? "value" : "field";
           item.right = type.value === "value" ? null : "";
           if (type.value === "related") item.right_table = "related";
           else delete item.right_table;
           render(); onEdit();
         });
-        if (target === "value") {
-          const number = input({ type: "number", value: item.right ?? "" });
+        if (target === "value" || target === "text") {
+          const number = input({ type: target === "text" ? "text" : "number", value: item.right ?? "" });
           number.step = "any";
-          controls.append(field("数值常量", number));
+          controls.append(field(target === "text" ? "文本常量" : "数值常量", number));
           bind(number, "input", () => {
             const value = Number(number.value);
-            item.right = String(number.value).trim() && Number.isFinite(value) ? value : null;
+            item.right = target === "text" ? number.value : String(number.value).trim() && Number.isFinite(value) ? value : null;
             onEdit();
           });
         } else {

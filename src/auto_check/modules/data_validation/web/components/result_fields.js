@@ -1,6 +1,10 @@
 // 列来源只采用已保存的 SELECT 输出描述，不按字段名猜业务含义。
 const identity = (column) => JSON.stringify([column.name, column.source_field || ""]);
 
+export function displayIssueKind(value, isIssueKind) {
+  return isIssueKind && value === "calculation_error" ? "公式无法计算：除数为 0" : value;
+}
+
 export function queryColumns(issues) {
   const columns = new Map();
   (issues || []).forEach((issue) => (issue.query_result?.columns || []).forEach((column) => {

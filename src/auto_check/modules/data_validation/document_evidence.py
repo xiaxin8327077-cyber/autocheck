@@ -2,19 +2,26 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import ast
 import json
 from math import log
 import re
 
 from .generation_policy import text_tokens
-from .query_grounding import resolve_report_date
-from .query_spec import type_family
+from .contracts import AppError
+from .formula import arithmetic_fields, is_arithmetic
+from .query_grounding import dictionary_options, resolve_report_date
+from .query_spec import is_finite_number, type_family
 from .semantic_grounding import _document_codes, _Unbound
 
 
 def _tokens_in(tokens, row, keys):
     text = " ".join(str(row.get(k) or "") for k in keys).lower()
     return {t for t in tokens if t in text}
+
+
+def _dictionary_labels(field):
+    return " ".join(option["label"].lower() for option in dictionary_options(field))
 
 
 _TABLE_FACTS = ("dimension", "period", "scope", "source_desc")
@@ -30,6 +37,74 @@ def _business_aliases(field):
     return tuple(name.strip().lower() for name in re.split(r"[、，,]", declaration[1]) if name.strip())
 
 
+def documented_equation(request, fields):
+    """Read a single required equality written out with unambiguous document fields and arithmetic symbols."""
+    match = re.search(r"(?<![不未])(?:不满足|(?:应(?:当)?|须|必须)满足)(?:下列|以下|如下)?公式\s*[：:]\s*([^，,。；;\n]+)"
+                      r"(?:[，,]\s*(?:请)?(?:核实|核查|复核))?[。！.!\s]*$", request)
+    if not match:
+        return None
+    equation = match[1].translate(str.maketrans("（）＋－×÷＝", "()+-*/=")).lower()
+    if equation.count("=") != 1 or not re.search(r"[-+*/]", equation):
+        return None
+    names = defaultdict(set)
+    for field in fields:
+        if type_family(field.get("data_type")) == "number":
+            for name in (field["field_name"], field.get("field_cn"), *_business_aliases(field)):
+                if name:
+                    names[name.lower()].add(field["field_name"])
+    aliases = sorted(names, key=len, reverse=True)
+    if not aliases:
+        return None
+    tokens = re.compile("|".join(map(re.escape, aliases)) + r"|(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?|[-+*/()=]|\s+")
+    mapped, bindings = [], {}
+    offset = 0
+    for token in tokens.finditer(equation):
+        if token.start() != offset:
+            return None
+        value = token[0]
+        offset = token.end()
+        if value in names:
+            if len(names[value]) != 1:
+                return None
+            value = "v" + str(len(bindings))
+            bindings[value] = next(iter(names[token[0]]))
+        mapped.append(value)
+    if offset != len(equation) or not bindings:
+        return None
+    try:
+        left, right = [ast.parse(s.strip(), mode="eval").body for s in "".join(mapped).split("=")]
+    except (SyntaxError, RecursionError, ValueError):
+        return None
+    ops = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
+    def operand(node):
+        if isinstance(node, ast.Name) and node.id in bindings:
+            return {"field": bindings[node.id]}
+        if isinstance(node, ast.Constant) and is_finite_number(node.value):
+            return {"value": node.value}
+        if (isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd))
+                and isinstance(node.operand, ast.Constant) and is_finite_number(node.operand.value)):
+            return {"value": -node.operand.value if isinstance(node.op, ast.USub) else node.operand.value}
+        if isinstance(node, ast.BinOp) and type(node.op) in ops:
+            return {"op": ops[type(node.op)], "left": operand(node.left), "right": operand(node.right)}
+        raise ValueError
+    try:
+        left, right = operand(left), operand(right)
+        if "value" in left:
+            left, right = right, left
+        result = {"op": "neq"}
+        for side, node in (("left", left), ("right", right)):
+            kind = "formula" if "op" in node else next(iter(node))
+            if side == "right" or kind != "field":
+                result[side + "_type"] = kind
+            result[side] = node if kind == "formula" else node[kind]
+        if is_arithmetic(result):
+            arithmetic_fields(result)
+            return result
+    except (AppError, ValueError, RecursionError):
+        return None
+    return None
+
+
 def _single_direct_source(field):
     if not re.fullmatch(r'直取[。.]?|直接取(?:值|数)?[。.]?', str(field.get('logic') or '').strip()):
         return None
@@ -37,14 +112,16 @@ def _single_direct_source(field):
     columns = str(field.get('source_field') or '').strip().splitlines()
     if len(sources) != len(columns):
         return None
-    pairs = {(source.strip(), column.strip()) for source, column in zip(sources, columns)}
-    if len(pairs) != 1:
+    pairs = [(source.strip(), column.strip()) for source, column in zip(sources, columns)]
+    if (not pairs or len({column for _, column in pairs}) != 1 or
+            any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*', source)
+                for source, _ in pairs) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', pairs[0][1])):
         return None
-    source, column = next(iter(pairs))
-    if (not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*', source)
-            or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', column)):
+    names = {table.rsplit('.', 1)[-1] for table, _ in pairs}
+    base = min(names, key=len)
+    if names - {base, base + "_YYYY_MM"} or len(names) == 1 and len(set(pairs)) > 1:
         return None
-    return source.rsplit('.', 1)[-1], column
+    return base, pairs[0][1]
 
 
 def _first_alias_fields(aliases, request, weights, order, top_tables):
@@ -79,21 +156,14 @@ def _table_excerpt(value, wanted, limit):
 
 def _request_source_pairs(field, anchors):
     """Show a direct column source only when every documented line leads to one matched field."""
-    if not re.fullmatch(r"直取[。.]?|直接取(?:值|数)?[。.]?", str(field.get("logic") or "").strip()):
+    if _single_direct_source(field) not in anchors:
         return []
     tables = str(field.get("source_table") or "").splitlines()
     columns = str(field.get("source_field") or "").splitlines()
     if not 1 <= len(tables) == len(columns) <= 2:
         return []
     pairs = [(table.strip(), column.strip()) for table, column in zip(tables, columns)]
-    if any(not re.fullmatch(r"(?:[A-Za-z_]\w*\.){0,2}[A-Za-z_]\w*", table) for table, _ in pairs):
-        return []
-    origins = {(table.rsplit(".", 1)[-1], column) for table, column in pairs}
-    matches = origins & anchors
-    if len(matches) != 1:
-        return []
-    owner, name = matches.pop()
-    return pairs if origins <= {(owner, name), (owner + "_YYYY_MM", name)} else []
+    return pairs
 
 
 def _label_forms(field):
@@ -119,6 +189,10 @@ def _named_scope_fields(fields, selected, request):
             if label in request and any(s in label or label in s for s in selected_labels):
                 for match in re.finditer(re.escape(label), request):
                     spans[match.span()].add(field["field_name"])
+    return _independent_mentions(spans)
+
+
+def _independent_mentions(spans):
     # A plain noun occurring only inside a longer qualified name does not name two fields.
     named = set()
     covered_end = -1
@@ -132,7 +206,21 @@ def _named_scope_fields(fields, selected, request):
 class DocumentEvidence:
     def __init__(self, tables, fields, request):
         self.fields = fields
+        self.tables = tables
         self.request = str(request).lower()
+        # A dictionary state followed by its entity names the population. The noun
+        # can also prefix a metric alias at that boundary when the user omits 的.
+        self.metric_request = self.request
+        for table in tables:
+            grain = str(table.get("dimension") or "").strip().lower()
+            if not grain or grain not in self.request:
+                continue
+            labels = {str(o["label"]).lower() for field in fields.get(table["id"], []) if field.get("dictionary")
+                      for o in dictionary_options(field)}
+            for label in labels:
+                if label and label + grain in self.request:
+                    self.metric_request = re.sub(re.escape(label + grain) + r"(?!端|表)", " ", self.metric_request)
+        self.metric_tokens = text_tokens(self.metric_request)
         self.details = {}
         wanted = self.wanted = text_tokens(request)
         matches = {}
@@ -153,7 +241,7 @@ class DocumentEvidence:
                 registered = _business_aliases(f)
                 aliases.extend((i, f["field_name"], alias) for alias in registered)
                 for label in (str(f.get("field_cn") or "").lower(), *registered):
-                    if label and label in self.request:
+                    if label and label in self.metric_request:
                         self.document_names[label].add((i, f["field_name"]))
                 names = _tokens_in(wanted, f, ("field_cn", "field_name"))
                 sources = _tokens_in(wanted, f, ("source_field", "source_field_cn", "logic", "source_table", "source_table_cn"))
@@ -199,7 +287,7 @@ class DocumentEvidence:
         others = sorted((i for i in table_coverage if i not in top_tables),
                         key=lambda i: sum(table_coverage[i].values()), reverse=True)
         self.expansion_order = [*top_tables, *others]
-        alias_fields = _first_alias_fields(aliases, self.request, weights, self.expansion_order, top_tables)
+        alias_fields = _first_alias_fields(aliases, self.metric_request, weights, self.expansion_order, top_tables)
         self.table_summaries = {}
         self.partial_tables = set()
         for table in tables:
@@ -268,7 +356,7 @@ class DocumentEvidence:
                 continue
             for field in self.fields.get(table["id"], []):
                 label = str(field.get("field_cn") or "").lower()
-                alias = max((a for a in _business_aliases(field) if a in self.request), key=len, default="")
+                alias = max((a for a in _business_aliases(field) if a in self.metric_request), key=len, default="")
                 # Document headings can place a qualifier after the noun, e.g. "运行方式_原始".
                 reordered = next((form for form in _label_forms(field)[1:] if form in self.request), "")
                 if reordered:
@@ -281,6 +369,19 @@ class DocumentEvidence:
                     anchors.add((table["table_name"], field["field_name"]))
 
         if anchors:
+            for table in tables:
+                for field in self.fields.get(table["id"], []):
+                    if (table["table_name"], field["field_name"]) not in anchors:
+                        continue
+                    origin = self._document_origin(table, field)
+                    if not origin:
+                        continue
+                    owner, source = origin
+                    pair = (owner["table_name"], source["field_name"])
+                    if pair not in anchors:
+                        add(table, field, {"direct_sources": [list(p) for p in _request_source_pairs(field, {pair})],
+                            "document_origin": {"table": pair[0], "field": pair[1], "label": source.get("field_cn") or pair[1],
+                                                "dimension": owner.get("dimension") or ""}})
             # A copied column can live just outside the selected tables. Check only the
             # next two document candidates, and serialize only exact direct-source links.
             neighbors = [i for i in self.expansion_order if i not in selected][:2]
@@ -342,6 +443,30 @@ class DocumentEvidence:
         i = int(table["id"])
         return i not in self.partial_tables and len(self.details[i]) == len(self.fields.get(i, []))
 
+    def _document_origin(self, table, field):
+        direct = _single_direct_source(field)
+        family = type_family(field.get("data_type"))
+        if not direct or direct[0] == table["table_name"] or not family:
+            return None
+        matches = [(t, f) for t in self.tables if t["table_name"] == direct[0]
+                   and t.get("data_source_name") == table.get("data_source_name")
+                   for f in self.fields.get(t["id"], []) if f["field_name"] == direct[1]
+                   and type_family(f.get("data_type")) == family]
+        return matches[0] if len(matches) == 1 else None
+
+    def authoritative_metric_origin(self, table, name):
+        """Return a verified origin when a selected copy's own grain was not requested."""
+        caption = str(table.get("table_name_cn") or "").lower().removesuffix("表")
+        grain = str(table.get("dimension") or "").strip().lower()
+        short = re.sub(r"(?:明细|信息|清单|记录)$", "", caption)
+        if (table["id"] in self.named_tables or name.lower() in self.wanted or caption and caption in self.request or
+                any(entity + marker in self.request for entity in (grain, short) if len(entity) >= 2
+                    for marker in ("端", "表", "维度"))):
+            return None
+        field = next((f for f in self.fields.get(table["id"], []) if f["field_name"] == name), None)
+        origin = self._document_origin(table, field) if field else None
+        return (origin[0]["table_name"], origin[1]["field_name"]) if origin else None
+
     def exact_metric_field(self, table, name, term):
         """Bind a full request name only if its documented owner is unambiguous."""
         term = str(term or "").strip().lower()
@@ -355,6 +480,13 @@ class DocumentEvidence:
 
     def explicitly_named_scopes(self, table_id, selected):
         return _named_scope_fields(self.fields.get(table_id, ()), selected, self.request)
+
+    def named_metric_choices(self):
+        spans = defaultdict(set)
+        for label, owners in self.document_names.items():
+            for match in re.finditer(re.escape(label), self.request):
+                spans[match.span()].update(owners)
+        return _independent_mentions(spans)
 
     def unique_requested_category(self, table_id, field_name, term):
         """Recognize an explicit category modifier backed by exactly one dictionary in its table."""
@@ -374,7 +506,7 @@ class DocumentEvidence:
 
     def competing_fields(self, table, names, term, tables, *, category=False, across_tables=False):
         """Find evidence to review, without deciding that matching labels are interchangeable."""
-        tokens = self.wanted & text_tokens(term)
+        tokens = (self.wanted if category else self.metric_tokens) & text_tokens(term)
         own = {field["field_name"]: field for field in self.fields.get(table["id"], [])}
         selected = [own[name] for name in names if isinstance(name, str) and name in own]
         if not tokens or not selected:
@@ -386,17 +518,19 @@ class DocumentEvidence:
         keys = ("dictionary",) if category else ("field_name", "field_cn", "source_field_cn", "logic")
         explicit_alias = None if category else max(
             (alias for field in selected for alias in _business_aliases(field)
-             if alias in self.request and any(token in alias for token in tokens)),
+             if alias in self.metric_request and any(token in alias for token in tokens)),
             key=len, default=None)
-        anchor = explicit_alias or max((token for token in tokens if any(token in " ".join(str(field.get(key) or "") for key in keys).lower()
-                                                    for field in selected)), key=lambda token: self.weights.get(token, 0), default=None)
+        selected_text = [_dictionary_labels(f) if category else " ".join(str(f.get(k) or "") for k in keys).lower()
+                         for f in selected]
+        anchor = explicit_alias or max((token for token in tokens if any(token in text for text in selected_text)),
+                                      key=lambda token: self.weights.get(token, 0), default=None)
         if anchor is None:
             return []
 
         def score(field, *, selected_field=False):
             # A match on just “余额” cannot compete with an explicit “专项权益余额” alias.
             if category:
-                dictionary = str(field.get("dictionary") or "").lower()
+                dictionary = _dictionary_labels(field)
                 if anchor not in dictionary:
                     return 0
                 return max((self.weights[token] for token in tokens if token in dictionary), default=0)
@@ -420,6 +554,9 @@ class DocumentEvidence:
             return []
         families = {type_family(field.get("data_type")) for field in selected}
         owner_dimension = str(table.get("dimension") or "").strip().lower()
+        if across_tables and not category and owner_dimension and re.search(
+                re.escape(owner_dimension) + r"(?:端|表)(?:中|内)?(?:的)?\s*" + re.escape(anchor), self.metric_request):
+            across_tables = False
         scoped_date = (not category and families == {"date"} and
                        (table["id"] in self.named_tables or (owner_dimension and (
                            owner_dimension + "的" in self.request or
@@ -507,6 +644,11 @@ def referenced_fields(draft):
     if not isinstance(intent, dict):
         return names
     for part in conditions:
+        if is_arithmetic(part):
+            try:
+                names["base"].update(arithmetic_fields(part))
+            except AppError:
+                pass
         add("base", part.get("left"))
         if part.get("right_type", "field") == "field":
             add(part.get("right_table", "base"), part.get("right"))

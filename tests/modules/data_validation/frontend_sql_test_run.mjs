@@ -8,11 +8,12 @@ assert.equal(previousMonthEnd(new Date(2026, 10, 20)), "2026-10-31");
 const host = new FakeElement("div");
 let requests = [];
 let signals = [];
-const preview = { definition: { source_id: "src" }, content_sha256: "hash" };
+const preview = { definition: { source_id: "src", result_aliases: { issue_kind: "异常类型" },
+  expression: { left: "total", op: "neq", right_type: "formula", right: { op: "/", left: { field: "balance" }, right: { field: "units" } } } }, content_sha256: "hash" };
 const api = { runCandidateSql: async (payload, { signal }) => {
   requests.push(payload); signals.push(signal);
-  return { columns: [{ name: "项目编号" }, { name: "余额" }],
-    rows: [{ values: { 项目编号: "001", 余额: 0 } }, { values: { 项目编号: "002", 余额: null } }],
+  return { columns: [{ name: "项目编号" }, { name: "余额" }, { name: "异常类型" }],
+    rows: [{ values: { 项目编号: "001", 余额: 0, 异常类型: "calculation_error" } }, { values: { 项目编号: "002", 余额: null, 异常类型: "numeric" } }],
     row_count: 2, truncated: false };
 } };
 const dialog = openSqlTestDialog({ host, api, preview, now: new Date(2026, 10, 20) });
@@ -20,6 +21,8 @@ await dialog.ready;
 assert.equal(requests.length, 1);
 assert.equal(requests[0].report_date, "2026-10-31");
 assert.equal(requests[0].expected_hash, "hash");
+assert.deepEqual(requests[0].definition.expression, preview.definition.expression);
+assert.match(collectText(dialog.body), /公式无法计算：除数为 0/);
 assert.ok(collectText(dialog.body).includes("001"));
 assert.ok(collectText(dialog.body).includes("NULL"));
 assert.equal(collectByClass(dialog.body, "dv-sql-test-table")[0].children[1].children.length, 2);

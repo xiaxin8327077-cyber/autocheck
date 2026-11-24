@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 SEMANTIC_CALL_OPTIONS = {"reasoning_effort": "low", "max_tokens": 3072, "temperature": 0}
-SEMANTIC_ANALYSIS_REVISION = 17
+SEMANTIC_ANALYSIS_REVISION = 29
 SEMANTIC_MAX_BUDGET_UNITS = 3
 SEMANTIC_MAX_PLANS = 8
 SEMANTIC_TOTAL_OUTPUT_TOKENS = 10000
@@ -120,7 +120,7 @@ RULE_OUTPUT_CONTRACT = (
     "只有当文档证据完全无法形成当前字段比较表达式时，才允许 rule_type 为 null、expression 为空对象 {}，"
     "此时 uncertainties、dictionary_questions 或 unsupported_requirements 至少一项非空；不得为了凑出 field_compare 而编造字段。"
     "expression二元比较结构是 {\"left\": 真实字段名, \"op\": \"lt|lte|gt|gte|eq|neq\", "
-    "\"right_type\": \"field|value\", \"right\": 字段名或有限 JSON 数值}。"
+    "\"right_type\": \"field|value\", \"right\": 字段名、有限 JSON 数值或文本常量}。"
     "基础空值检查使用一元expression={left:真实字段名,op:is_null或is_not_null}，不含right/right_type/right_table。"
     "‘不能为空/必填/必须有值’表示命中为空的记录，op=is_null；‘必须为空’表示命中非空记录，op=is_not_null。"
     "一元检查null_policy固定violate、equality_policy固定allow_equal；不得再以不支持is null为由拒绝，不能追加skip把要找的空值排除。"
@@ -133,8 +133,8 @@ RULE_OUTPUT_CONTRACT = (
     "项目类别等适用范围始终进入 filters，作用于整个组合。不得把违规分支写成适用范围，也不得丢弃一个边界。"
     "同一模糊指标在多个分支里使用时使用相同字段用语；field_choices 可用 condition_index 指定从0起的分支序号。"
     "right_type=field 时 right 必须是给定字段清单中的真实字段名；默认为主表字段，引用关联表时在expression增加right_table=related；"
-    "left始终为主表字段，right_type=value时不得设置right_table=related。"
-    "可选filters数组表达最多8项AND筛选，每项为{table:base或related,field:真实字段名,op:eq|neq|lt|lte|gt|gte|in|not_in|is_null|is_not_null,value:参数值,confirmed:false}；"
+    "字段和公式均属本行。算术侧用left_type或right_type=formula，值为四则运算树；right_type=value时不得设置right_table=related。"
+    "可选filters数组表达最多8项AND筛选，每项为{table:base或related,field:真实字段名,op:eq|neq|lt|lte|gt|gte|in|not_in|contains_any|not_contains_any|is_null|is_not_null,value:参数值,confirmed:false}；"
     "报送取数范围说明目标表已经包含哪些数据，可用于选表和判断覆盖。上游取数及排除条件不得重复写入filters或列为待确认事项。"
     "filters只写需求明确提出、需要在所选表上进一步筛选的条件。"
     "业务类别也可直接修饰对象名称。请把这些范围词转成结构化filters，逐项引用字段字典中的完整取值；"
@@ -147,7 +147,8 @@ RULE_OUTPUT_CONTRACT = (
     "on最多4对等值键，禁止自由SQL/自定义join_type；同名不代表可关联，缺少关联依据应写uncertainties。"
     "两表日期必须代表同一业务期，不得用发生日或采集时间替代。confirmed和relationship_confirmed不得由模型设为true。"
     "后端核实文档唯一支持的筛选后直接采用，仍有多种口径时才请用户选择。"
-    "right_type=value 时 right 必须是有限 JSON 数值（int/float，不是字符串、布尔值或 null）。"
+    "right_type=value 时数值字段使用有限 JSON 数值；文本字段仅用eq/neq与非空字符串比较，字典码保留前导零。"
+    "文本包含任一或不包含任何关键词分别用contains_any、not_contains_any，value为文字数组。"
     "数值常量是否相等由 op 判断。"
     "字段选择必须综合名称、类型、含义及文档已有的单位/取数逻辑证据；"
     "金额字段在文档未特定标注单位时按元；明确标注万元、亿元等时按文档换算。其他单位冲突且证据不足时写入 uncertainties，禁止猜单位与近似替换，不得编造字段。"
@@ -201,7 +202,7 @@ fields 各行依次为物理名、业务名称、类型、附加事实，diction
 可选 report_category 和 draft（以下规则协议）。目标、键/日期、指标、分类或同义口径仍需展开时只返回
 target 和可选 related_target、candidate_targets、semantic_hints；系统将补充完整文档。
 目录只给业务名称而尚未展开物理字段时，仅返回target请求文档，不猜字段名，也不借用别表或上游源字段名填充当前表。
-主表承载被检查的 expression.left 指标，范围筛选可在关联表；需求中条件出现顺序不决定主表。有 join 时必须同时声明其 related_target。
+主表承载被检查的 expression.left 指标或算式。按整条公式选择具备全部当期、上期、增减项的表；表内已有上期字段直接使用本行，不另取上期、不自关联。不要把明细表声明成项目主表。范围筛选可在关联表；需求中条件出现顺序不决定主表。有 join 时必须同时声明其 related_target。
 确有多种表口径时最多两个额外 candidate_targets，分别独立取证。无法定位主表时才返回 uncertainties 或 unsupported_requirements。
 """
 
@@ -212,7 +213,16 @@ rule_type:"field_compare"、expression（命中异常）、violation_message、n
 每份规则还给出 business_key，按本次通用校验口径选择本表真实的结果定位字段；它只用于输出定位，不改变检查粒度。
 仅生成用户要求的校验。所有校验都不得自行附加项目编号为空或重复项目检查，也不得为结果定位增加排除空编号、唯一性筛选或异常分支；用户明确要求检查该问题时才表达对应条件。
 一元 expression={left,op:"is_null"或"is_not_null"}；比较={left,op:"lt/lte/gt/gte/eq/neq"之一,
-right_type:"value"或"field",right:数值或物理列}，关联表右字段加 right_table:"related"。
+right_type:"value"或"field",right:常量或物理列}，关联表右字段加 right_table:"related"。
+字面文字包含检查可直接作为异常expression：op为contains_any或not_contains_any，right_type为value，right为文字数组。
+“不能/不得包含A或B”命中contains_any；“必须包含A或B”命中not_contains_any。它们不等于非空检查，不得删词或换成is_not_null。
+严格区分英文大小写，百分号、千分号、下划线和反斜杠均按原文字面处理，不作为通配符。数值列按当前数据库的文本投影检查，不伪造无法入库的文字样例。
+当左侧或右侧包含计算，标该侧 left_type:"formula" 或 right_type:"formula"，其值为树：
+叶为 {"field":"本行真实数值列"} 或 {"value":有限JSON数值}，分支为 {"op":"+"|"-"|"*"|"/","left":节点,"right":节点}。
+按原式的括号、算符、每一项和顺序建树；不能用其中某字段代替整式。正常等式不成立要核实，或应满足等式，异常都取neq。
+例：库存应等于期初加到货减发货，异常 expression={"left":"stock","op":"neq","right_type":"formula","right":{"op":"-","left":{"op":"+","left":{"field":"opening"},"right":{"field":"received"}},"right":{"field":"sent"}}}。
+本行已有上期值时不查上一期或自关联。仅按文档为项目/明细定位选择项目驱动；不将普通明细标作项目主表。分母为0由执行器单列计算异常，不另建筛选或确认。
+数值常量使用有限JSON数值；文本字段的eq/neq可用不超过200字的字符串常量。文档字典标签映射到对应码值并保留前导零。文本常量比较采用skip，NULL及空字符串跳过。
 运算符始终表示异常，按下表取反正常要求：必须/应当 > x → lte x；>= x → lt x；< x → gte x；<= x → gt x；= x → neq x；!= x → eq x。
 禁止条件直接作为异常：不得 > x → gt x；不得 >= x → gte x；不得 < x → lt x；不得 <= x → lte x；不得 = x → eq x；不得 != x → neq x。
 若原句直接说“当某条件时列为异常”，保留该条件，不再取反。violation_message必须与expression命中方向一致。
@@ -224,6 +234,7 @@ left 始终属于 target 主表；字段操作数填写物理列名字符串，�
 semantic_intent 必有 metrics、scopes、open_questions 三个数组；没有则 []。
 metrics 每个字段操作数给 {side:"left"或"right",term:业务指标,fields:[真实候选列]}，
 只描述 expression 实际使用的字段操作数；right_type="value" 时没有 right 指标，范围字段也不属于 right 指标。
+公式中唯一的物理列已由树定位，可省略其metrics；若有不同口径则每一处字段分别给metrics一项，formula_path为从该侧根到字段的left/right数组（如["left","right"]）。加数、减数、乘数、除数彼此独立，不能合成同一位置的备选。普通字段侧保留原metrics。
 复合条件加从0起 condition_index。所有合理口径都保留，例如当期/累计、原始/当前、计划/实际，
 表名不能单独证明不同指标同义；文档或启用知识区分口径时保留区别，证据不足时具体问清指标或统计范围。
 币种沿用本次通用口径；已明确忽略币种时，不因币种或折币派生值额外增加选项、筛选或确认。需求明确指定派生指标时仍保留其真实字段。
@@ -234,16 +245,17 @@ scopes 只位于 semantic_intent 内，不另给顶层 scopes。
 仅按业务含义选择候选；共用字典不代表含义相同。不要重复写已由 scopes 表达的 filters 或逐列说明排除理由。
 文档描述上游已经执行的取数筛选时，不重复添加为当前规则范围；仅保留需求明确提出或文档明确要求在当前表补充的筛选。
 其他明确的筛选可用 filters:[{table:"base"或"related",field,op,value}]，最多8个AND；
-op支持eq/neq/lt/lte/gt/gte/in/not_in/is_null/is_not_null。不得自行增加或省略范围。
+op支持eq/neq/lt/lte/gt/gte/in/not_in/is_null/is_not_null/contains_any/not_contains_any。文本“包含任一”或“不含任何”关键词使用最后两项，value为1–50个非空文字组成的数组，各词最多200字，按字面子串匹配。多个筛选组之间取AND。不得自行增加或省略范围。
 “对状态为空的记录检查读数”中的状态为空属于filters，使用op:is_null、value:null；NULL不是一个字典码，不能用scopes的空include表示它。
 同源同日关联使用 join={table_name,on:[{left,right}],report_date_field:右表业务日期,relationship_confirmed:布尔值,unmatched_policy}。
 涉及项目时，后端从文档中的项目实体表取项目范围，使用project_driver={version:1,table_role:"base"或"related"}标明执行驱动侧。
 project_driver与expression属于同一规则对象：合并选表回复中放在draft内；分阶段直接输出规则时放在规则内。多方案分别声明，不给整组共用标记。
 target始终标明左侧被检查指标真实所属的表：项目指标用base驱动；明细指标以明细为target、项目为related_target，使用related驱动。
-项目表已有项目字段为权威口径；明细自身字段正常筛选。按项目编号与数据日期对应，存在的明细逐条检查，无对应明细单列提示，不自动汇总。
+项目表已有项目字段为权威口径；明细自身字段正常筛选。按项目编号与数据日期对应，只比较实际存在且符合范围的明细，不自动汇总或附加缺明细异常。
+项目表包含全部产品项目，不代表每个项目都有每类合同或明细。缺明细只能作为独立补充建议；先明确哪些项目应有该类明细，依据不足时将适用范围写入建议preconditions，不以全部项目为必须有明细的范围。
 正常明细筛除不当作原始明细缺失；有明细时金额NULL按本次已确认口径处理。项目表、字段归属或第三张表无法核实时保留具体缺口。
 relationship_confirmed表示你对关联关系是否已明确的分析结论；具体执行口径依本次需求、文档和可编辑通用校验口径决定，确有未决关系时给false并说明。
-缺关联处理可用值：普通关联exclude/unresolved，SUM汇总review/unresolved；分别表示暂不检查且另核、列待核查、未决定。依据本次通用口径选择，不把缺记录当通过。
+缺关联处理可用值：普通关联exclude/unresolved，SUM汇总exclude/review/unresolved。exclude仅比较实际匹配的组，review表示保留缺组供缺值策略处理。新项目比较只检查实际匹配的明细，未匹配不参与本条比较，不代表完整性已核实；缺记录检查须独立提出并核实业务范围。
 只有按键与业务日期先汇总右表再比较时在 join 内加 right_aggregate:"sum"。不能执行的要求列在 unsupported_requirements。
 一元空值检查 null_policy="violate"；数值比较优先适用本次通用口径对字段类型已确认的约定，无该约定时再按需求和字段定义选择"zero"（NULL按0）、"skip"（忽略缺值）或"review"（单列缺值）；
 未要求缺值核查时不得额外追加 is_null 条件或就数值NULL追问；“不能为0”命中 eq 0，不是小于等于0。
@@ -372,7 +384,8 @@ COMMON_MODEL_CHOICES_GUIDANCE = (
     "常规执行和结果展示口径由你结合本次需求、字段定义和取数依据确定，直接给出结论，不逐项要求用户确认。"
     "跨表检查按同一业务对象、同一业务日期对应；关系明确时确定关联键。"
     "数据所属期间按完整字段说明判断，不以项目事件日期或采集时间代替。"
-    "缺少关联信息不能视为通过：普通关联默认暂不检查并说明需另行核查，汇总核对缺明细默认列待核查；用户另有明确要求时按其要求及实际支持能力处理。"
+    "普通字段比较及汇总比较只核查实际匹配且符合范围的明细；项目没有某类合同或明细不自动报错。"
+    "缺明细可作为独立补充建议，必须说明哪些业务项目应有该类明细，范围依据不足时留待确认；不将全部产品项目作为默认必有明细范围。"
     "结果定位编号由你从本表真实字段中选择，以便业务人员查找记录，只用于输出定位，不据此聚合、去重或改变检查粒度。"
     "指标、适用范围、关系定义或计算口径有实质歧义时才询问，不把常规执行和展示选择变成业务确认题。"
 )

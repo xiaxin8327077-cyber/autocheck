@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import datetime as _datetime
 import math
-from decimal import Decimal, localcontext
+import re
+from decimal import Decimal, ROUND_HALF_UP, localcontext
 from typing import Any
 
 from .contracts import AppError
+from .formula import arithmetic_fields, evaluate_formula, formula_sample_rows, has_arithmetic, is_arithmetic
 from .query_spec import (
     BASE,
     MAX_IN_VALUES,
     RELATED,
+    TEXT_FILTER_OPS,
     UNARY_OPS,
     base_type,
     comparison_conditions,
@@ -25,6 +28,7 @@ from .query_spec import (
     is_new_spec,
     is_unary,
     type_family,
+    valid_comparison_literal,
     validate_query_spec,
 )
 
@@ -61,6 +65,15 @@ def sample_pairs(op: str, low: Any, high: Any) -> tuple[tuple[Any, Any], tuple[A
 
 
 def value_sample_pair(op: str, constant: Any) -> tuple[Any, Any]:
+    if op in TEXT_FILTER_OPS:
+        outside = "普通文本"
+        if any(word in outside for word in constant):
+            # At most 50 one-character keywords, so one of these 51 characters is outside.
+            outside = next(chr(0x4e00 + n) for n in range(len(constant) + 1) if chr(0x4e00 + n) not in constant)
+        return (outside, constant[0]) if op == "contains_any" else (constant[0], outside)
+    if isinstance(constant, str) and op in ("eq", "neq"):
+        other = _alternate(constant, "text")
+        return (other, constant) if op == "eq" else (constant, other)
     below = math.floor(constant) - 1
     above = math.ceil(constant) + 1
     if op == "eq":
@@ -89,6 +102,12 @@ def sql_compare(op: str, left: Any, right: Any) -> bool:
     """SQL 比较：任一侧 NULL 结果为 UNKNOWN，调用方按不触发违规处理。"""
     if left is None or right is None:
         return False
+    if op in TEXT_FILTER_OPS:
+        if _is_numeric_sample(left):
+            left = format(left, "f") if isinstance(left, Decimal) else str(left)
+        elif not isinstance(left, str):
+            raise AppError("VALIDATION_ERROR")
+        return bool(left) and filter_matches(op, left, right)
     if op == "lt":
         return left < right
     if op == "lte":
@@ -111,6 +130,9 @@ def filter_matches(op: str, value: Any, predicate: Any) -> bool:
         return value is not None
     if value is None:
         return False
+    if op in TEXT_FILTER_OPS:
+        contains = any(word in value for word in predicate)
+        return contains if op == "contains_any" else not contains
     if op == "eq":
         return value == predicate
     if op == "neq":
@@ -140,6 +162,32 @@ def _is_numeric_sample(value: Any) -> bool:
     if isinstance(value, Decimal):
         return value.is_finite()
     return False
+
+
+def keyword_sample_types(definition, columns):
+    if definition.get("rule_type") != "field_compare":
+        return {}
+    fields = {item["left"] for item in comparison_conditions(definition) if item.get("op") in TEXT_FILTER_OPS}
+    return {col["column_name"]: col.get("data_type") for col in columns or [] if col.get("column_name") in fields}
+
+
+def _keyword_sample_hit(definition, item, value):
+    dtype = (definition.get("_keyword_sample_types") or {}).get(item["left"])
+    if value is not None and type_family(dtype) == "number":
+        if not _is_numeric_sample(value):
+            raise AppError("VALIDATION_ERROR")
+        if base_type(dtype) in {"numeric", "decimal"}:
+            number = Decimal(str(value))
+            size = re.fullmatch(r"(?:numeric|decimal)\s*\(\s*\d+\s*(?:,\s*(-?\d+)\s*)?\)", dtype, re.I)
+            if size:
+                scale = int(size.group(1) or 0)
+                with localcontext() as context:
+                    context.prec = max(context.prec, number.adjusted() + scale + 2)
+                    number = number.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
+            value = format(abs(number) if not number else number, "f")
+    elif value is not None and type_family(dtype) == "string" and not isinstance(value, str):
+        raise AppError("VALIDATION_ERROR")
+    return sql_compare(item["op"], value, item["right"])
 
 
 def _coalesce_zero(value: Any) -> Any:
@@ -187,7 +235,7 @@ def _flat_evaluation(definition: dict[str, Any], row: dict[str, Any]) -> tuple[i
     left = row.get(left_name)
     if right_type == "value":
         right = expression.get("right")
-        if not _is_numeric_sample(right):
+        if not (_is_numeric_sample(right) or valid_comparison_literal(expression["op"], right)):
             raise AppError("VALIDATION_ERROR")
     elif right_type == "field":
         right = row.get(expression["right"])
@@ -217,6 +265,8 @@ def _flat_evaluation(definition: dict[str, Any], row: dict[str, Any]) -> tuple[i
     ):
         return 0, None
     op = expression["op"]
+    if op in TEXT_FILTER_OPS:
+        return (1, "comparison") if _keyword_sample_hit(definition, expression, left) else (0, None)
     violated = {
         "lt": left < right,
         "lte": left <= right,
@@ -242,17 +292,31 @@ def _group_evaluation(
     left_mode, right_mode = _null_modes(definition)
     any_condition = definition["expression"]["logic"] == "any"
     hit_kind = "numeric" if left_mode or right_mode else "comparison"
+    if any(is_arithmetic(item) for item in conditions):
+        hit_kind = "numeric"
     needs_review = False
     for related in matches:
         states: list[bool | None] = []
         for item in conditions:
+            if is_arithmetic(item):
+                count, kind = evaluate_formula({**definition, "expression": item}, base)
+                if kind == "calculation_error":
+                    return count, kind
+                states.append(None if kind == "missing_value" else bool(count))
+                continue
             left = base.get(item["left"])
             op = item["op"]
+            if op in TEXT_FILTER_OPS:
+                states.append(_keyword_sample_hit(definition, item, left))
+                continue
             if op in UNARY_OPS:
                 states.append(left is None if op == "is_null" else left is not None)
                 continue
             if item.get("right_type") == "value":
                 right = item["right"]
+                if definition.get("null_policy") == "skip" and isinstance(right, str) and left == "":
+                    states.append(False)
+                    continue
             else:
                 right = (related if item.get("right_table") == RELATED else base).get(item["right"])
             left, missing_left = _prepare_numeric_operand(left, left_mode)
@@ -315,6 +379,8 @@ def evaluate_matched_rows(
     """在已满足期间、关联和范围条件的记录上执行原表达式。"""
     expression = definition["expression"]
     join = spec["join"]
+    if is_arithmetic(expression):
+        return (0, None) if join and not matched else evaluate_formula(definition, base)
     if is_condition_group(definition):
         return _group_evaluation(definition, base, matched if join is not None else [{}])
     right_type = str(expression.get("right_type") or "field")
@@ -322,7 +388,7 @@ def evaluate_matched_rows(
     if join and join.get("right_aggregate") == "sum":
         parts = [entry.get(expression["right"]) for entry in matched]
         if not parts:
-            return 1, "missing_value"
+            return (0, None) if join["unmatched_policy"] == "exclude" else (1, "missing_value")
         if definition.get("null_policy") == "zero":
             left_value = 0 if left_value is None else left_value
             parts = [0 if value is None else value for value in parts]
@@ -368,12 +434,16 @@ def evaluate_matched_rows(
         )
     if right_type == "value":
         right_value = expression.get("right")
-        if not _is_numeric_sample(right_value):
+        if not valid_comparison_literal(expression["op"], right_value):
             raise AppError("VALIDATION_ERROR")
+        if definition.get("null_policy") == "skip" and isinstance(right_value, str) and left_value == "":
+            return 0, None
     else:
         right_value = base.get(expression["right"])
     if join is not None and not matched:
         return 0, None
+    if expression["op"] in TEXT_FILTER_OPS:
+        return (1, "comparison") if _keyword_sample_hit(definition, expression, left_value) else (0, None)
     if numeric_policy:
         left_compare, missing_left = _prepare_numeric_operand(left_value, left_mode)
         right_compare, missing_right = _prepare_numeric_operand(right_value, right_mode)
@@ -424,6 +494,9 @@ def case_fields(definition: dict[str, Any]) -> tuple[list[str], list[str]]:
     base: list[str] = []
     related: list[str] = []
     for item in comparison_conditions(definition):
+        if is_arithmetic(item):
+            base.extend(arithmetic_fields(item))
+            continue
         base.append(str(item["left"]))
         if item.get("op") not in UNARY_OPS and item.get("right_type", "field") == "field":
             (related if item.get("right_table") == RELATED else base).append(str(item["right"]))
@@ -484,6 +557,8 @@ def _not_in(values: list[Any], data_type: Any) -> Any:
 def _pass_value(item: dict[str, Any], data_type: Any) -> Any:
     op = item["op"]
     value = item["value"]
+    if op in TEXT_FILTER_OPS:
+        return value[0] if op == "contains_any" else ""
     if op == "is_null":
         return None
     if op == "is_not_null":
@@ -510,6 +585,8 @@ def _pass_value(item: dict[str, Any], data_type: Any) -> Any:
 def _fail_value(item: dict[str, Any], data_type: Any) -> Any:
     op = item["op"]
     value = item["value"]
+    if op in TEXT_FILTER_OPS:
+        return "" if op == "contains_any" else value[0]
     if op == "is_null":
         return ordered_values(data_type)[0]
     if op == "is_not_null":
@@ -537,6 +614,8 @@ def _expected_count(kind: str, op: str, equality_policy: str, right_type: str = 
     if kind == "violation":
         return 1
     if kind == "boundary":
+        if op in TEXT_FILTER_OPS:
+            return 0
         if right_type == "field" and equality_policy == "allow_equal":
             return 0
         return 0 if op in ("lt", "gt", "neq") else 1
@@ -668,9 +747,12 @@ def _group_cases(
         if _relational_evaluation(scope, row)[0]:
             results = [_relational_evaluation({**definition, "expression": item}, row) for item in conditions]
             combine = any if definition["expression"]["logic"] == "any" else all
-            if combine(hit and issue != "missing_value" for hit, issue in results):
+            if any(issue == "calculation_error" for _, issue in results):
+                count, kind = 1, "calculation_error"
+            elif combine(hit and issue != "missing_value" for hit, issue in results):
                 count = 1
-                kind = "numeric" if definition.get("null_policy") in ("zero", "review") else "comparison"
+                kind = ("numeric" if definition.get("null_policy") in ("zero", "review") or any(is_arithmetic(c) for c in conditions)
+                        else "comparison")
             elif combine(hit for hit, _ in results):
                 count, kind = 1, "missing_value"
         case = {"name": name, "row": row, "expected_count": count}
@@ -680,12 +762,20 @@ def _group_cases(
 
     # 模板数据先使用列类型，再由筛选、日期、关联键确定测试范围。未传列类型时数值常量仍为数值。
     for item in conditions:
-        if item.get("right_type") == "value" and not base_types.get(item["left"]):
+        if not is_arithmetic(item) and item["op"] not in TEXT_FILTER_OPS and item.get("right_type") == "value" and not base_types.get(item["left"]):
             base[item["left"]] = item["right"]
     add("范围内基准值", base, related)
     combined = {state: (dict(base), dict(related)) for state in ("命中", "未命中")}
     bounds: dict[str, list[Any]] = {}
     for index, item in enumerate(conditions, 1):
+        if item.get("op") in TEXT_FILTER_OPS:
+            for label, value in _keyword_case_values(item, base_types.get(item["left"])):
+                add(f"条件 {index} · {label}", {**base, item["left"]: value}, related)
+            continue
+        if is_arithmetic(item):
+            for label, seed in formula_sample_rows({**definition, "expression": item}, base):
+                add(f"条件 {index} · {label}", seed, related)
+            continue
         left, op = item["left"], item["op"]
         data_type = base_types.get(left)
         low, high = (1, 2) if type_family(data_type) == "number" else ordered_values(data_type)
@@ -743,6 +833,37 @@ def _group_cases(
     return cases
 
 
+def _keyword_case_values(expression, dtype):
+    if type_family(dtype) == "number":
+        for number in (0, 1, -12, 123):
+            yield f"数值 {number}", number
+        if _base_type(dtype) in {"numeric", "decimal", "float", "double", "real", "float4", "float8"}:
+            yield "小数", 1.25
+    else:
+        normal, violation = value_sample_pair(expression["op"], expression["right"])
+        yield "正常", normal
+        yield "明显异常", violation
+        for index, word in enumerate(expression["right"][1:], 2):
+            yield f"含第 {index} 个关键词", word
+        yield "空字符串", ""
+    yield "空值", None
+
+
+def _text_filter_seeds(filters, role):
+    """Choose one value satisfying all keyword filters on the same column."""
+    seeds = {}
+    for field in {f["field"] for f in filters if f["table"] == role and f["op"] in TEXT_FILTER_OPS}:
+        clauses = [f for f in filters if f["table"] == role and f["field"] == field]
+        excluded = [w for f in clauses if f["op"] == "not_contains_any" for w in f["value"]]
+        groups = [[w for w in f["value"] if not any(x in w for x in excluded)] for f in clauses if f["op"] == "contains_any"]
+        candidates = [w for group in groups for w in group]
+        candidates.extend((_pass_value(f, "text") for f in clauses if f["op"] not in TEXT_FILTER_OPS))
+        candidates.append(" · ".join(group[0] for group in groups if group))
+        seeds[field] = next((value for value in candidates if isinstance(value, str) and
+                             all(filter_matches(f["op"], value, f["value"]) for f in clauses)), "")
+    return seeds
+
+
 def _nested_cases(
     definition: dict[str, Any],
     base_columns: list[dict[str, Any]] | None,
@@ -760,6 +881,7 @@ def _nested_cases(
 
     base_filters = {item["field"]: item for item in spec["filters"] if item["table"] == BASE}
     related_filters = {item["field"]: item for item in spec["filters"] if item["table"] == RELATED}
+    text_seeds = {role: _text_filter_seeds(spec["filters"], role) for role in (BASE, RELATED)}
     left_keys = {pair["left"]: pair["right"] for pair in join["on"]} if join else {}
     right_keys = {pair["right"]: pair["left"] for pair in join["on"]} if join else {}
 
@@ -777,7 +899,7 @@ def _nested_cases(
             ):
                 row[field] = ordered_values(base_types.get(field))[1]
             elif field in base_filters:
-                row[field] = _pass_value(base_filters[field], base_types.get(field))
+                row[field] = text_seeds[BASE].get(field, _pass_value(base_filters[field], base_types.get(field)))
             elif field in left_keys:
                 row[field] = ordered_values(base_types.get(field))[0]
             else:
@@ -811,7 +933,7 @@ def _nested_cases(
                 row[field] = comparison_values[field]
             elif field in related_filters:
                 row[field] = (filter_overrides or {}).get(
-                    field, _pass_value(related_filters[field], related_types.get(field)),
+                    field, text_seeds[RELATED].get(field, _pass_value(related_filters[field], related_types.get(field))),
                 )
             else:
                 row[field] = ordered_values(related_types.get(field))[0]
@@ -819,6 +941,27 @@ def _nested_cases(
 
     if is_condition_group(definition):
         return _group_cases(definition, spec, base_row(), related_row(), anchor, base_types, related_types)
+    if expression.get("op") in TEXT_FILTER_OPS:
+        cases = []
+        name = expression["left"]
+        for label, value in _keyword_case_values(expression, base_types.get(name)):
+            row = {"base": {**base_row(), name: value}, "related": [related_row()] if join else [], "report_date": anchor}
+            count, _ = _relational_evaluation(definition, row)
+            cases.append({"name": label, "row": row, "expected_count": count})
+        return cases
+    if is_arithmetic(expression):
+        cases = []
+        for label, values in formula_sample_rows(definition, base_row()):
+            rows = []
+            if join:
+                record = related_row()
+                record.update({pair["right"]: values[pair["left"]] for pair in join["on"]})
+                rows = [record]
+            row = {"base": values, "related": rows, "report_date": anchor}
+            count, kind = _relational_evaluation(definition, row)
+            cases.append({"name": label, "row": row, "expected_count": count,
+                          **({"expected_issue_kind": kind} if kind else {})})
+        return cases
     assignment = {} if is_unary(definition) else _comparison_assignment(
         definition, spec, base_types, related_types,
     )
@@ -854,7 +997,8 @@ def _nested_cases(
         sum_case("两笔相同明细合计一致", 8, [4, 4], 0)
         sum_case("明细合计有差额", 8, [3, 4], 1, "numeric")
         sum_case("正负明细合计为零", 0, [2, -2], 0)
-        sum_case("同日无关联明细", 0, [], 1, "missing_value")
+        review_absent = join["unmatched_policy"] == "review"
+        sum_case("同日无关联明细", 0, [], int(review_absent), "missing_value" if review_absent else None)
         zero = definition.get("null_policy") == "zero"
         sum_case("明细中一项缺值", 4, [4, None], 0 if zero else 1, None if zero else "missing_value")
         sum_case("主表原值缺失", None, [0], 0 if zero else 1, None if zero else "missing_value")
@@ -927,6 +1071,24 @@ def _nested_cases(
     else:
         null_base[expression["left"]] = None
     add("空值", 0, null_base, null_rows)
+    if expression.get("right_type") == "value" and isinstance(expression.get("right"), str):
+        empty, rows = build("violation")
+        empty[expression["left"]] = ""
+        add("比较字段为空字符串", 0, empty, rows)
+
+    for item in spec["filters"]:
+        if item["op"] not in TEXT_FILTER_OPS:
+            continue
+        main, others = build("violation")
+        field = item["field"]
+        row = main if item["table"] == BASE else others[0]
+        if item["op"] == "contains_any":
+            row[field] = ""
+            label = "未包含任何指定词"
+        else:
+            row[field] = str(row[field]) + item["value"][0]
+            label = "同时含排除词"
+        add(f"{field} {label}", 0, main, others)
 
     if join is not None:
         multi_base, multi_rows = build("normal")
@@ -975,12 +1137,20 @@ def default_cases(
     columns: list[dict[str, Any]] | None = None,
     related_columns: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
+    keyword_types = keyword_sample_types(definition, columns)
+    if keyword_types:
+        definition = {**definition, "_keyword_sample_types": keyword_types}
     if "project_driver" in definition:
         from .project_driver_samples import default_project_cases
-        return default_project_cases(definition, columns, related_columns)
-    if is_new_spec(definition):
-        return _nested_cases(definition, columns, related_columns)
-    return _legacy_flat_cases(definition, columns)
+        cases = default_project_cases(definition, columns, related_columns)
+    elif is_new_spec(definition):
+        cases = _nested_cases(definition, columns, related_columns)
+    else:
+        return _legacy_flat_cases(definition, columns)
+    if (keyword_types or has_arithmetic(definition.get("expression"))) and len(cases) > 100:
+        # Sample across the full expression while respecting the preview API's case budget.
+        return [cases[index * (len(cases) - 1) // 99] for index in range(100)]
+    return cases
 
 
 def default_field_compare_cases(

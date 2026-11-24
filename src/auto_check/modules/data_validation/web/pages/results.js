@@ -6,7 +6,7 @@ import {
 import { button, downloadText, element, emptyState, field, input, statusBadge } from "../components/dom.js";
 import { createPagination } from "../components/pagination.js";
 import { categoryBadge, taskStatus } from "../components/task_list.js";
-import { queryCaptureNotice, queryColumns, queryValue } from "../components/result_fields.js";
+import { displayIssueKind, queryCaptureNotice, queryColumns, queryValue } from "../components/result_fields.js";
 import { createResultBatches } from "../components/result_batches.js";
 import { resultIcon } from "../components/result_icons.js";
 import { loadResultFonts } from "../components/result_fonts.js";
@@ -444,7 +444,10 @@ export function createResultsPage({
     items.forEach((issue, index) => issueBody.append(element("tr", {},
       element("td", { className: "dv-result-row-number", text: (state.issueQuery.page - 1) * state.issueQuery.page_size + index + 1 }),
       ...columns.map((column) => {
-        const value = queryValue(issue, column);
+        const captured = queryValue(issue, column);
+        const isIssueKind = captured === issue.issue_kind && !column.source_field
+          && /^(?:issue_kind|异常类型(?:（异常类型\d*）)?)$/.test(column.name);
+        const value = displayIssueKind(captured, isIssueKind);
         return element("td", { className: `dv-query-value dv-code${value.length < 80 && !value.includes("\n") ? " is-short" : ""}`, text: value });
       }))));
     captureNotice.textContent = captureMessage;

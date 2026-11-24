@@ -43,7 +43,7 @@ def _draft_snapshot(draft):
 
 def semantic_intent_snapshot(intent):
     result = _pick(intent, ("metrics", "scopes", "open_questions"))
-    result["metrics"] = [_pick(item, ("term", "side", "fields", "recommended", "condition_index", "rule_names"))
+    result["metrics"] = [_pick(item, ("term", "side", "fields", "recommended", "condition_index", "formula_path", "rule_names"))
                          for item in intent.get("metrics", [])]
     result["scopes"] = [_pick(item, ("category", "table", "fields", "recommended", "memberships", "excluded_fields"))
                         for item in intent.get("scopes", [])]

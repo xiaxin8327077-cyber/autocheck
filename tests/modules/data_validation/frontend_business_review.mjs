@@ -18,7 +18,8 @@ const dictionary = [{ value: "1", label: "开放式净值型" }, { value: "3", l
 const choices = fields.map((field, index) => ({ value: String(index), label: `运行方式${index + 1}（${field}）`,
   selection: { table: "base", field, op: "in", value: ["1","3"], confirmed: true } }));
 const question = { id: "filters.0", text: "采用哪个运行方式？", uncertainty: "范围", options: choices };
-const cols = ["id","period","nav","total",...fields].map((column_name) => ({ column_name, data_type: "numeric" }));
+const cols = ["id","period","nav","total",...fields].map((column_name) => ({ column_name, data_type: "numeric",
+  comment: ({ kind: "运行方式", kind2: "运行方式_原始" })[column_name] || "" }));
 function option(name, patch) {
   const candidate = { rule_type: "field_compare", rule_name: name, source_id: "src", dialect: "mysql",
     report_category: "group:pbc", table_name: "products", mapping_version: "doc-v2", analysis_protocol: 2,
@@ -97,13 +98,12 @@ async function select(i) {
 async function unselect(i) {
   const input = rows()[i].children[0]; input.checked = false; await input.dispatch("change");
 }
-async function start(patch, firstPatch, single = false, reasoning = false) {
+async function start(patch, firstPatch, single = false) {
   calls.length = 0;
   result = { candidate_options: single ? [option("nav", firstPatch)] : [option("nav", firstPatch), option("total", patch)] };
   await wb.open({ mode: "ai" });
   const input = controlByLabel(wb.element, "需求描述 *"); input.value = "净值型项目的净值不得为空";
   await input.dispatch("input");
-  if (reasoning) await collectByClass(wb.element, "dv-ai-reasoning-switch")[0].dispatch("click");
   await findButton(wb.element, "✦ AI 分析").dispatch("click");
   assert.equal(cards(), 0, "所有疑问答完前不显示方案");
   assert.deepEqual(calls, []);
@@ -297,6 +297,19 @@ await findButton(wb.element, "保存并启用").dispatch("click");
 assert.deepEqual(singleSaves.slice(beforeGroupEdits), [null, null], "编辑组合条件的保存及启用都创建独立草稿");
 
 const otherDictionary = [{ value: "A", label: "开放式净值型" }, { value: "C", label: "封闭式净值型" }];
+await start();
+await select(0);
+await select(1);
+await findButton(wb.element, "确认全部口径").dispatch("click");
+const namedDefinitions = calls.filter(([action]) => action === "sql").map(([, definition]) => definition);
+assert.equal(cards(), 4);
+assert.deepEqual(namedDefinitions.map(({ name }) => name), [
+  "nav · 运行方式", "nav · 运行方式_原始", "total · 运行方式", "total · 运行方式_原始",
+], "筛选字段展开使用文档中文名，四种组合名称清晰区分");
+await findButton(wb.element, "保存所选 4 条草稿").dispatch("click");
+assert.deepEqual([...savedRules.values()].slice(-4).map(({ name }) => name), namedDefinitions.map(({ name }) => name),
+  "保存回读保留生成的中文范围名称");
+
 const differingChoices = [choices[0], { ...choices[1], selection: { ...choices[1].selection, value: ["A", "C"] } }];
 await start({ questions: [{ ...question, options: differingChoices }], semantic_intent: { scopes: [scope],
   dictionary_snapshots: { base: { kind: dictionary, kind2: otherDictionary } } } });
@@ -336,7 +349,7 @@ assert.equal(cards(), 0);
 await findButton(wb.element, "重试生成预览").dispatch("click");
 assert.equal(cards(), 2);
 
-await start({ uncertainties: ["范围","是否另需合同截止日？"] }, undefined, false, true);
+await start({ uncertainties: ["范围","是否另需合同截止日？"] }, undefined, false);
 await select(1);
 const free = collectByClass(wb.element, "dv-business-question").flatMap((group) => group.children)
   .find((node) => node.tagName === "TEXTAREA");
@@ -346,7 +359,7 @@ await findButton(wb.element, "确认全部口径").dispatch("click");
 const supplement = requests.at(-1);
 assert.equal(supplement.request_text, "净值型项目的净值不得为空");
 assert.equal(controlByLabel(wb.element, "需求描述 *").value, supplement.request_text);
-assert.equal(supplement.reasoning_enabled, true);
+assert.equal(supplement.reasoning_enabled, false, "补充分析也不得重新开启推理");
 assert.ok(supplement.clarification_answers.some(item => item.question === "是否另需合同截止日？" && item.answer === "没有"));
 assert.ok(supplement.clarification_answers.some(item => item.question_id === "filters.0" && item.answer.includes("kind2")));
 assert.equal(calls.length, 0);
@@ -437,4 +450,48 @@ for (const confirmSelection of [false, true]) {
   if (confirmSelection) assert.equal(revision.revised_definition.expression.left, "total");
   else assert.equal(revision.revised_definition, undefined, "确认前修改需求不得提交预填指标为个人选择");
 }
+const evidenceQuestion = { id: "evidence/1/scopes/base/-/0/kind",
+  text: "是否按项目分类筛选净值型项目？", requires_analysis: true,
+  options: [{ label: "采用项目分类", value: "products.kind" }] };
+await start(null, { rule_type: null, expression: {}, questions: [evidenceQuestion],
+  uncertainties: [evidenceQuestion.text], filters: [] }, true);
+const priorRequests = requests.length;
+await select(0);
+await findButton(wb.element, "确认全部口径").dispatch("click");
+assert.equal(requests.length, priorRequests + 1, "尚无可预览规则的字段选择提交给语义分析");
+assert.equal(calls.length, 0);
+assert.equal(requests.at(-1).clarification_answers[0].answer, "采用项目分类（products.kind）");
+const formulaChoices = [{ value: "nav", label: "当期值" }, { value: "total", label: "累计值" }];
+const makeSlot = (path, text) => ({ id: "expression.right." + path + ".field", text, uncertainty: text, options: formulaChoices });
+const slots = [makeSlot("left", "分子取哪项数值？"), makeSlot("right.left", "分母取哪项数值？")];
+const equation = { left: "total", op: "neq", right_type: "formula",
+  right: { op: "/", left: { field: "total" }, right: { op: "-", left: { field: "nav" }, right: { value: 2 } } } };
+await start(null, { expression: equation, questions: slots, uncertainties: slots.map((slot) => slot.text),
+  filters: [], null_policy: "skip", semantic_intent: { metrics: [], scopes: [] } }, true);
+assert.equal(rows().length, 4, "公式内各个位置的字段候选分别确认");
+await select(0); await select(3);
+await findButton(wb.element, "确认全部口径").dispatch("click");
+const bound = structuredClone(equation);
+bound.right.left.field = "nav"; bound.right.right.left.field = "total";
+assert.deepEqual(calls.at(-1)[1].expression, bound);
+let testedFormula;
+const runFormulaSample = api.testCandidate;
+api.testCandidate = (payload) => { testedFormula = payload.definition.expression; return runFormulaSample(payload); };
+await findButton(wb.element, "生成并运行测试用例").dispatch("click");
+assert.deepEqual(testedFormula, bound);
+await findButton(wb.element, "保存草稿").dispatch("click");
+assert.deepEqual([...savedRules.values()].at(-1).definition.expression, bound);
+
+const relatedChoices = choices.map((choice) => ({ ...choice, selection: { ...choice.selection, table: "related" } }));
+await start(null, { semantic_intent: { scopes: [{ ...scope, table: "related" }] },
+  questions: [{ ...question, options: relatedChoices }],
+  filters: [{ ...relatedChoices[0].selection, confirmed: false }],
+  join: { table_name: "contracts", on: [{ left: "id", right: "id" }], report_date_field: "period",
+    relationship_confirmed: true, unmatched_policy: "exclude" },
+  related_columns: cols.map((column) => ({ ...column, comment: fields.includes(column.column_name)
+    ? `明细${column.comment}` : column.comment })) }, true);
+await select(0); await select(1);
+await findButton(wb.element, "确认全部口径").dispatch("click");
+assert.deepEqual(calls.filter(([action]) => action === "sql").map(([, definition]) => definition.name),
+  ["nav · 明细运行方式", "nav · 明细运行方式_原始"], "同名物理字段按所选表的元数据取中文名");
 runtime.destroy();

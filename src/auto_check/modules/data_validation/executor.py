@@ -7,6 +7,7 @@ from typing import Any
 
 from .compiler import compile_rule
 from .contracts import AppError
+from .formula import is_arithmetic
 from .generation_policy import review_ready
 from .issue_query_results import collect_row, output_projection
 from .project_context import (
@@ -140,6 +141,7 @@ def execute_version(
             compiled_sql, compiled_params = compile_rule(version)
             compiled_projection = sql == compiled_sql
             if (definition.get("result_aliases") or context is not None or is_condition_group(definition)
+                    or is_arithmetic(definition.get("expression"))
                     or definition.get("null_policy") in ("review", "zero")) and sql != compiled_sql:
                 # 新增/修改 project_context 或数值空值策略后，旧持久化 SQL 必须拒绝执行。
                 return RuleRun("ERROR", 0, False, "MAPPING_DRIFT")
@@ -193,7 +195,7 @@ def execute_version(
     query_results: list[dict[str, Any]] = []
     columns, collection_status = output_projection(definition, sql, compiled_projection, raw_columns, base_columns, related_columns)
     result_aliases = definition.get("result_aliases") if compiled_projection else None
-    row_template = (definition.get("project_driver") or {}).get("version") == 2
+    row_template = (definition.get("project_driver") or {}).get("version") in (2, 3)
     for values in result.rows:
         raw = dict(zip(raw_columns, values)) if raw_columns else {}
         query_result = collect_row(columns, collection_status, raw)

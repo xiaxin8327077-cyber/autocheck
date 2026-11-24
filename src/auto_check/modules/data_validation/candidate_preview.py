@@ -7,6 +7,7 @@ from typing import Any
 
 from .compiler import compile_rule, is_finite_number
 from .contracts import AppError, content_hash
+from .formula import arithmetic_fields, has_arithmetic, is_arithmetic
 from .generation_policy import ai_review_pending, validate_review
 from .project_driver_samples import ISSUE_KINDS, MAX_DETAILS, project_sample_schema, validate_project_sample
 from .query_spec import (
@@ -18,9 +19,10 @@ from .query_spec import (
     is_new_spec,
     is_unary,
     query_ready,
+    valid_comparison_literal,
     validate_spec_against_columns,
 )
-from .query_samples import case_fields, evaluate_case_with_kind
+from .query_samples import case_fields, evaluate_case_with_kind, keyword_sample_types
 from .result_aliases import build_result_aliases
 from .sql_display import inline_sql_parameters
 from .sql_guard import guard_generated_sql
@@ -71,10 +73,7 @@ def candidate_definition(payload: dict[str, Any]) -> dict[str, Any]:
 
 def compile_checked_definition(definition: dict[str, Any], documented_identifiers: list[str]) -> tuple[str, dict[str, Any]]:
     sql, params = compile_rule({"definition": definition})
-    if "project_driver" in definition:
-        guard_generated_sql(str(definition.get("dialect") or ""), sql, set(documented_identifiers), definition=definition)
-    else:
-        guard_generated_sql(str(definition.get("dialect") or ""), sql, set(documented_identifiers))
+    guard_generated_sql(str(definition.get("dialect") or ""), sql, set(documented_identifiers), definition=definition)
     return sql, params
 
 
@@ -101,8 +100,11 @@ def preview_definition(
     related = {str(column["column_name"]): column for column in related_columns or []}
     conditions = comparison_conditions(definition)
     for expression in conditions:
+        if is_arithmetic(expression):
+            arithmetic_fields(expression)
+            continue
         if not isinstance(expression, dict) or expression.get("op") not in (
-            "lt", "lte", "gt", "gte", "eq", "neq", "is_null", "is_not_null",
+            "lt", "lte", "gt", "gte", "eq", "neq", "is_null", "is_not_null", "contains_any", "not_contains_any",
         ):
             raise AppError("VALIDATION_ERROR")
         if not isinstance(expression.get("left"), str) or expression.get("left") not in names:
@@ -114,7 +116,7 @@ def preview_definition(
                 raise AppError("VALIDATION_ERROR")
             right_type = expression.get("right_type", "field")
             if right_type == "value":
-                if right_table == RELATED or not is_finite_number(expression.get("right")):
+                if right_table == RELATED or not valid_comparison_literal(expression["op"], expression.get("right")):
                     raise AppError("VALIDATION_ERROR")
             elif right_type != "field" or not isinstance(expression.get("right"), str):
                 raise AppError("VALIDATION_ERROR")
@@ -130,7 +132,7 @@ def preview_definition(
         raise AppError("VALIDATION_ERROR")
     if definition.get("equality_policy", "unresolved") not in ("unresolved", "allow_equal", "reject_equal"):
         raise AppError("VALIDATION_ERROR")
-    if (not is_condition_group(definition) and not only_unary and expression.get("right_type", "field") == "field"
+    if (not is_condition_group(definition) and not only_unary and (expression.get("right_type", "field") == "field" or is_arithmetic(expression))
             and definition.get("equality_policy") != "unresolved"):
         implied = "reject_equal" if expression["op"] in ("eq", "lte", "gte") else "allow_equal"
         if definition.get("equality_policy") not in (None, implied):
@@ -179,6 +181,7 @@ def compile_prepared_preview(prepared: dict[str, Any]) -> dict[str, Any]:
     sql, params = compile_checked_definition(definition, documented_identifiers)
     digest = content_hash(definition, str(definition.get("dialect") or ""), str(definition.get("mapping_version") or ""), sql)
     cases = default_field_compare_cases(definition, columns, second_columns)
+    keyword_types = keyword_sample_types(definition, columns)
     return {
         "definition": definition,
         "sql_preview": sql,
@@ -188,6 +191,7 @@ def compile_prepared_preview(prepared: dict[str, Any]) -> dict[str, Any]:
         "content_sha256": digest,
         "cases": [{**case, "status": "not_run", "actual_count": None} for case in cases],
         "sample_source": "document_synthetic",
+        **({"keyword_sample_types": keyword_types} if keyword_types else {}),
         "persisted": False,
         **({"columns": [{"column_name": col["column_name"], "comment": col.get("comment") or "",
                          "data_type": col["data_type"]} for col in columns]} if "project_driver" in definition else {}),
@@ -235,12 +239,15 @@ def _collect_values(row: dict[str, Any]) -> list[Any]:
 
 def run_preview_cases(preview: dict[str, Any], supplied: Any = None) -> dict[str, Any]:
     definition = preview["definition"]
+    if preview.get("keyword_sample_types"):
+        definition = {**definition, "_keyword_sample_types": preview["keyword_sample_types"]}
     selected = preview["cases"] if supplied is None else supplied
     if not isinstance(selected, list) or not 1 <= len(selected) <= 100:
         raise AppError("VALIDATION_ERROR")
     expression = definition["expression"]
     nested = is_new_spec(definition)
     project_driven = "project_driver" in definition
+    check_kind = project_driven or has_arithmetic(expression)
     if project_driven:
         project_types, detail_types = project_sample_schema(definition, preview["columns"], preview["related_columns"])
     elif nested:
@@ -302,16 +309,16 @@ def run_preview_cases(preview: dict[str, Any], supplied: Any = None) -> dict[str
             unresolved = any(value is None for value in _collect_values(row))
         try:
             actual_kind = None
-            if project_driven and not unresolved:
+            if check_kind and not unresolved:
                 actual, actual_kind = evaluate_case_with_kind(definition, row)
             else:
                 actual = None if unresolved else evaluate_case(definition, row)
         except (TypeError, ValueError, OverflowError):
             raise AppError("VALIDATION_ERROR") from None
-        matches = actual == expected and (not project_driven or expected_kind is None or actual_kind == expected_kind)
+        matches = actual == expected and (not check_kind or expected_kind is None or actual_kind == expected_kind)
         status = "not_run" if actual is None else "passed" if matches else "failed"
         result = {"name": name, "row": row, "expected_count": expected, "actual_count": actual, "status": status}
-        if project_driven:
+        if check_kind:
             result["actual_issue_kind"] = actual_kind
             if expected_kind is not None:
                 result["expected_issue_kind"] = expected_kind

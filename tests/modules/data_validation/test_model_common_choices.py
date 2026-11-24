@@ -209,7 +209,10 @@ def test_full_draft_repair_preserves_join_except_for_redundant_period(
             assert not result["questions"]
             definition = result["preview"]["definition"]
             assert definition["business_key"] == "contract_id"
-            assert definition["join"] == repaired["join"]
+            expected_join = deepcopy(repaired["join"])
+            expected_join["on"] = [pair for pair in expected_join["on"]
+                                   if pair != {"left": "business_day", "right": "business_day"}]
+            assert definition["join"] == expected_join
         else:
             with pytest.raises(AppError) as error:
                 rules.parse_rule_request(user(), request)

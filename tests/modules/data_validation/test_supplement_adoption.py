@@ -66,9 +66,9 @@ def analyze_suggestion(*, operation="SUM", documented=True, captured=None):
     reply = {"plan_mode": "parallel", "plans": [{"target": {"table": project["table_name"]}, "draft": draft},
              {"target": {"table": detail["table_name"]}, "related_target": {"table": project["table_name"]}, "draft": other}],
              "ai_suggestions": [suggestion]}
-    rules, model = make_rules([reply], [project, detail])
+    rules, model = make_rules([reply, {"ai_suggestions": [{"category": "consistency", **suggestion}]}], [project, detail])
     result = rules.parse_rule_request(user(), _request(request_text="存续项目的实收不得小于0", analysis_protocol=2))
-    assert len(model.calls) == 1
+    assert len(model.calls) == 2
     assert len(result.get("candidate_options", [])) == 2, result.get("uncertainties")
     return rules, result
 
@@ -124,7 +124,7 @@ def test_captured_paid_advice_uses_confirmed_knowledge_without_reasking(tmp_path
     rules.model.payloads.append(proposal)
     visit, analyze, router, owner = browser_and_routes(tmp_path, rules, result)
     ready = analyze(visit()["request"])
-    assert len(rules.model.calls) == 2 and confirmed in str(rules.model.calls[-1]["messages"])
+    assert len(rules.model.calls) == 3 and confirmed in str(rules.model.calls[-1]["messages"])
     assert ready["preview"] and not ready["questions"] and not ready["uncertainties"]
     for terminal in ({"status": "completed", "result": ready},
                      {"status": "failed", "error": {"code": "MODEL_UNAVAILABLE"}}):
@@ -170,6 +170,46 @@ def test_average_stays_informational():
     assert suggestion["support_level"] == "unsupported" and "adoption" not in suggestion
 
 
+@pytest.mark.skipif(not shutil.which("node"), reason="需要 Node.js 验证工作台按钮")
+def test_period_adoption_transports_only_the_selected_previewed_range(tmp_path):
+    rules, result = analyze_suggestion()
+    selected = result["candidate_options"][0]["candidate"]
+    definition = deepcopy(selected["preview"]["definition"])
+    bounds = {"logic": "any", "conditions": [
+        {"left": "project_received", "op": "gt", "right_type": "value", "right": 1},
+        {"left": "project_received", "op": "lt", "right_type": "value", "right": 0},
+    ]}
+    definition.update(expression=bounds, null_policy="skip", generation_mode="manual")
+    definition.pop("null_handling", None)
+    definition.pop("analysis_protocol", None)
+    definition.pop("semantic_intent", None)
+    selected["preview"] = rules.preview_candidate(user(), {"definition": definition})
+    offered = result["ai_suggestions"][0]
+    offered.update(category="period", kind="field_compare_unary", title="检查期初余额的适用范围",
+                   reason="期初余额适用已确认的边界。",
+                   references=[{"table_name": "project_snapshot", "field_name": "project_received"}],
+                   adoption={"operations": [], "preconditions": []})
+    offered["applicability_filters"] = [{"table": "project_snapshot", "field": "transfer_flag", "op": "eq", "value": "1"}]
+    offered["applicability_dictionary"] = {"transfer_flag": [{"value": "1", "label": "存续"}]}
+    visit, *_ = browser_and_routes(tmp_path, rules, result)
+    payload = visit()["request"]
+    independent = visit(independent=True)["request"]
+    assert independent.get("adoption_context", {}).get("inherit_check") is not True
+    assert independent["include_suggestions"] is False
+    assert payload["adoption_context"] == {"parent_analysis_id": "analysis-1", "parent_context": result["analysis_context"],
+                                          "suggestion_id": offered["id"], "inherit_check": True, "parents": [
+                                              {"definition": selected["preview"]["definition"], "hash": selected["preview"]["content_sha256"]}]}
+    request = payload["request_text"]
+    assert '"field":"transfer_flag","op":"eq","value":"1"' in request
+    assert "默认保留" in request and "新增期间限制" in request and "叠加" in request, "采纳请求须保留已确认范围并叠加建议新增的期间限制"
+    prefix = "已选方案的检查口径："
+    lines = [line[len(prefix):] for line in request.splitlines() if line.startswith(prefix)]
+    assert lines, "采纳请求缺少所选主规则的实际边界"
+    assert json.loads(lines[0]) == [{"table": "project_snapshot", "expression": bounds,
+                                     "null_policy": "review", "null_handling": {"left": "review", "right": "review"},
+                                     "equality_policy": "allow_equal"}]
+
+
 def browser_and_routes(tmp_path, rules, result):
     owner = {**user(), "capabilities": ["dv.ai_use", "dv.test", "dv.view"]}
     router = ModuleRouter(MANIFEST, default_permission_evaluator)
@@ -180,11 +220,11 @@ def browser_and_routes(tmp_path, rules, result):
     copy_web_modules(tmp_path)
     scenario = shutil.copy(Path(__file__).with_name("frontend_supplement_adoption.mjs"), tmp_path)
     shutil.copy(Path(__file__).with_name("frontend_workbench_dom.mjs"), tmp_path)
-    def visit(pending=None, child=None, reasoning=False, scope_review=None, end_session=False, failure=False,
-              cancel_snapshot=None):
-        fixture.write_text(json.dumps({"result": result, "pending": pending, "child": child, "reasoning": reasoning,
+    def visit(pending=None, child=None, scope_review=None, end_session=False, failure=False,
+              cancel_snapshot=None, independent=False):
+        fixture.write_text(json.dumps({"result": result, "pending": pending, "child": child,
                                        "scopeReview": scope_review, "endSession": end_session, "failure": failure,
-                                       "cancelSnapshot": cancel_snapshot}),
+                                       "cancelSnapshot": cancel_snapshot, "independent": independent}),
                            encoding="utf-8")
         run = subprocess.run(["node", scenario, fixture, requests], cwd=tmp_path, encoding="utf-8",
                              capture_output=True, timeout=60)
@@ -212,7 +252,7 @@ def test_button_starts_independent_analysis_and_transports_real_sample(tmp_path)
     rules.model.payloads.append(proposal)
     visit, analyze, router, owner = browser_and_routes(tmp_path, rules, result)
     payload = visit()["request"]
-    assert visit(reasoning=True, scope_review="unselected")["request"]["reasoning_enabled"] is True
+    assert visit(scope_review="unselected")["request"]["reasoning_enabled"] is False
     visit(scope_review="separate", end_session=True)
     visit(failure=True)
     assert payload["reasoning_enabled"] is False and payload["model_id"] == "model-1" and payload["source_id"] == "src"
@@ -220,7 +260,7 @@ def test_button_starts_independent_analysis_and_transports_real_sample(tmp_path)
     assert "revision_of" not in payload and "revised_definition" not in payload
     pending_proposal = deepcopy(proposal)
     pending_proposal["draft"]["semantic_intent"]["open_questions"] = ["募集份额与项目实收采用什么计量口径比较？"]
-    rules.model.payloads[1] = pending_proposal
+    rules.model.payloads[-1] = pending_proposal
     pending = analyze(payload)
     assert not pending.get("preview") and "计量口径" in str(pending.get("uncertainties"))
     rules.model.payloads.append(proposal)
@@ -246,7 +286,39 @@ def test_button_starts_independent_analysis_and_transports_real_sample(tmp_path)
                        [(day, "A", 4), (day, "A", 6), (day, "B", 10), ("2026-11-19", "C", 0)])
         rows = db.execute(preview["sql_preview"], {**preview["sql_params"], "report_date": day}).fetchall()
         assert {(row["TCMP编号"], row["异常类型"], row["关联记录数"]) for row in rows} == {
-            ("B", "numeric", 1), ("C", "missing_record", 0)}
+            ("B", "numeric", 1)}
     tested = call(router, "POST", "/ai/tests", owner, sample_payload)["data"]
     assert tested["passed_count"] and not tested["failed_count"] and not tested["not_run_count"]
     assert rules.list_rules(user(), {})["items"] == []
+
+@pytest.mark.skipif(not shutil.which("node"), reason="需要 Node.js 验证工作台按钮")
+def test_joined_period_parent_offers_only_an_independent_analysis(tmp_path):
+    rules, result = analyze_suggestion()
+    result["candidate_options"].reverse()
+    for i, option in enumerate(result["candidate_options"]):
+        option["recommended"] = i == 0
+    candidate = result["candidate_options"][0]["candidate"]
+    definition = candidate["preview"]["definition"]
+    result["ai_suggestions"][0].update(category="period", references=[{
+        "table_name": definition["table_name"], "field_name": definition["expression"]["left"]}])
+    visit, *_ = browser_and_routes(tmp_path, rules, result)
+    request = visit()["request"]
+    assert "adoption_context" not in request and request["include_suggestions"] is False
+    assert json.dumps(definition["join"], separators=(",", ":"), ensure_ascii=False) in request["request_text"]
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="需要 Node.js 验证工作台按钮")
+def test_joined_parent_sends_the_owned_period_suggestion_even_without_parent_receipts(tmp_path):
+    rules, result = analyze_suggestion()
+    result["candidate_options"].reverse()
+    for i, option in enumerate(result["candidate_options"]):
+        option["recommended"] = i == 0
+    definition = result["candidate_options"][0]["candidate"]["preview"]["definition"]
+    item = result["ai_suggestions"][0]
+    item.update(category="period", references=[{"table_name": definition["table_name"], "field_name": "funding_received"}],
+                applicability_filters=[{"table": definition["table_name"], "field": "funding_received", "op": "neq", "value": -2}])
+    visit, *_ = browser_and_routes(tmp_path, rules, result)
+    request = visit()["request"]
+    assert request["adoption_context"] == {"mode": "suggestion_only", "parent_analysis_id": "analysis-1",
+                                          "parent_context": result["analysis_context"], "suggestion_id": item["id"]}
+    assert visit(scope_review="none")["request"]["adoption_context"] == request["adoption_context"]

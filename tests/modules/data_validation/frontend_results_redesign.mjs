@@ -37,6 +37,10 @@ const items = [
   { id: 10, rule_id: 7, version_no: 2, rule_name: rule.name, report_category_name: category.name, project_code: "0001", project_name: "项目甲", business_key: "001", project_name_status: "ok", message: xss, issue_kind: "numeric", query_result: { columns: cols, values: { "合同编号": "000003", checked_value: 0, data_date: "2026-10-31", "异常说明": xss } } },
   { id: 11, rule_id: 7, version_no: 2, project_code: "0", project_name: null, project_name_status: "missing_null", issue_kind: "missing_value", query_result: { columns: cols, values: { "合同编号": "", checked_value: null, data_date: "2026-10-31" } } },
   { id: 12, rule_id: 7, version_no: 1, query_result: null },
+  { id: 13, rule_id: 7, version_no: 2, issue_kind: "calculation_error", query_result: {
+    columns: [{ name: "异常类型" }, { name: "原始文字", source_field: "note" }],
+    values: { "异常类型": "calculation_error", "原始文字": "calculation_error" },
+  } },
 ];
 const calls = [];
 const runtime = createRuntime({ notify() {} }); runtime.activate();
@@ -82,11 +86,13 @@ assert.match(collectText(page.panel), /checked_value/);
 assert.doesNotMatch(collectText(page.panel), /旧文档名称不应展示|f_netvalue/);
 const table = collectByClass(page.panel, "dv-issue-table")[0];
 const rows = table.children[1].children;
-assert.equal(rows.length, 3);
+assert.equal(rows.length, 4);
 assert.match(collectText(rows[0]), /000003/); assert.match(collectText(rows[0]), /2026-10-31/);
 assert.ok(rows[0].children.some((cell) => collectText(cell) === "0"), "0 必须原样保留");
 assert.match(collectText(rows[1]), /NULL/); assert.match(collectText(rows[1]), /空字符串/);
 assert.match(collectText(rows[2]), /未采集/);
+assert.match(collectText(rows[3]), /公式无法计算：除数为 0/);
+assert.ok(rows[3].children.some((cell) => collectText(cell) === "calculation_error"));
 assert.match(collectText(rows[0]), /<img src=x/); assert.equal(globalThis.__xss, undefined);
 assert.doesNotMatch(collectText(page.panel), /异常示例|示例项目/);
 await findButton(page.panel, "返回规则列表").dispatch("click");

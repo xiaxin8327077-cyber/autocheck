@@ -8,6 +8,7 @@ import re
 from collections import Counter
 from datetime import date, datetime, time
 from decimal import Decimal
+from .formula import arithmetic_projection, has_arithmetic, is_arithmetic
 
 from .query_spec import RELATED, UNARY_OPS, comparison_conditions, is_condition_group, needs_issue_kind
 
@@ -83,18 +84,22 @@ def _project_rule_projection(definition):
         ("data_date", join["report_date_field"] if related else definition.get("report_date_field") or "report_date", related),
     ]
     for index, part in enumerate(comparison_conditions(definition)):
+        if is_arithmetic(part):
+            suffix = f"_{index + 1}" if index else ""
+            columns.extend((role + suffix, field, other) for role, field, other in arithmetic_projection(part))
+            continue
         suffix = f"_{index + 1}" if index else ""
         columns.append(("checked_value" + suffix, part["left"], False))
         if part["op"] not in UNARY_OPS and part.get("right_type", "field") == "field":
             columns.append(("comparison_value" + suffix, part["right"], part.get("right_table") == RELATED))
     projection, seen = [], set()
     for role, field, other in columns:
-        if (field, other) not in seen:
+        if not field or (field, other) not in seen:
             seen.add((field, other))
             projection.append((role, field, other))
     if join.get("right_aggregate") == "sum":
         projection.append(("related_count", "", True))
-    if join or definition["null_policy"] == "review":
+    if join or definition["null_policy"] == "review" or has_arithmetic(definition["expression"]):
         projection.append(("issue_kind", "", False))
     projection.append(("violation_message", "", False))
     return projection
@@ -111,7 +116,7 @@ def compiled_projection(definition, *, named_unique_keys=False):
         return columns
     context = definition.get("project_context") or {}
     driver = definition.get("project_driver") or {}
-    if driver.get("version") == 2:
+    if driver.get("version") in (2, 3):
         return _project_rule_projection(definition)
     project_related = driver.get("table_role") == RELATED
     if context:
@@ -126,11 +131,16 @@ def compiled_projection(definition, *, named_unique_keys=False):
         expr = conditions[0]
         date = definition["join"]["report_date_field"] if project_related else definition.get("report_date_field") or "report_date"
         columns.append(("data_date", date, project_related))
-        if all(c["left"] == expr["left"] for c in conditions):
+        if has_arithmetic(definition["expression"]):
+            for index, part in enumerate(conditions, 1):
+                if is_arithmetic(part):
+                    suffix = f"_{index}" if index > 1 else ""
+                    columns.extend((role + suffix, field, other) for role, field, other in arithmetic_projection(part))
+        elif all(c["left"] == expr["left"] for c in conditions):
             columns.append(("checked_value", expr["left"], False))
         if aggregate:
             columns.extend([("related_count", "", True), ("comparison_value", expr["right"], True)])
-        elif (not is_condition_group(definition) and expr["op"] not in UNARY_OPS
+        elif (not is_arithmetic(expr) and not is_condition_group(definition) and expr["op"] not in UNARY_OPS
               and (expr.get("right_type") or "field") == "field" and (driver or expr.get("right_table") != RELATED)):
             columns.append(("comparison_value", expr["right"], expr.get("right_table") == RELATED))
     if driver or needs_issue_kind(definition):
