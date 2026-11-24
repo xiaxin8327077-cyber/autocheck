@@ -7243,6 +7243,33 @@ const CAPABILITY_MENU_TREE = [
     ],
   },
   {
+    label: "数据质量",
+    type: "group",
+    children: [
+      {
+        label: "数据校验",
+        type: "group",
+        children: [
+          { code: "dv.view", label: "页面查看", type: "menu" },
+          { code: "dv.manage", label: "维护校验规则", type: "function" },
+          { code: "dv.ai_use", label: "使用 AI 生成校验规则", type: "function" },
+          { code: "dv.test", label: "测试校验规则", type: "function" },
+          { code: "dv.confirm", label: "确认并启用自己的校验规则", type: "function" },
+          { code: "dv.run", label: "执行数据校验", type: "function" },
+        ],
+      },
+      {
+        label: "校验结果",
+        type: "group",
+        children: [
+          { code: "dv.view_results", label: "页面查看", type: "function" },
+          { code: "dv.export", label: "导出校验结果", type: "function" },
+        ],
+      },
+      { code: "dv.admin", label: "校验设置", type: "function" },
+    ],
+  },
+  {
     label: "系统管理",
     type: "group",
     children: [
@@ -15449,6 +15476,7 @@ document.getElementById("aboutChangelog")?.addEventListener("click", (e) => {
       <ul>
         <li>智能核数支持手动刷新结果，并在校验日期出现新结果或当期结果变化时提示确认。</li>
         <li>他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。</li>
+        <li>数据质量接入角色权限管理。</li>
         <li>数据校验模块：AI 校验默认关闭推理并控制输出，完善多方案和建议采纳，简化 SQL。</li>
         <li>修复实收本金整笔缺失时未展示客户类型为空明细的问题。</li>
         <li>修复 SQL 文本内冒号导致的数据源参数识别错误。</li>

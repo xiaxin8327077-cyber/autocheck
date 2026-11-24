@@ -42,7 +42,9 @@ def test_v13_display_version_and_release_notes_are_consistent():
     refresh_notes = app_js.split('>v1.3.3</span>', 1)[1].split('</ul>', 1)[0]
     progress_note = "他人对数执行结束后提示是否加载；执行冲突时可选择查看对方进度。"
     principal_note = "修复实收本金整笔缺失时未展示客户类型为空明细的问题。"
-    assert refresh_notes.count("<li>") == 6
+    assert refresh_notes.count("<li>") == 7
+    permissions_note = "数据质量接入角色权限管理。"
+    assert refresh_notes.count(permissions_note) == 1 and permissions_note in readme
     reasoning_note = "AI 校验默认关闭推理并控制输出，完善多方案和建议采纳，简化 SQL。"
     assert refresh_notes.count(reasoning_note) == 1 and reasoning_note in readme
     binding_note = "修复 SQL 文本内冒号导致的数据源参数识别错误。"
@@ -8170,6 +8172,19 @@ def test_user_management_page_and_role_based_navigation_are_present():
     assert ".user-stats" in css
     assert ".user-table-card" in css
     assert ".role-badge" in css
+
+
+def test_role_permissions_tree_exposes_data_quality_capabilities():
+    from auto_check.app.capabilities import CAPABILITY_DEFINITIONS
+
+    app_js = _read(APP_JS)
+    tree = app_js.split("const CAPABILITY_MENU_TREE = [", 1)[1].split("\n];", 1)[0]
+    group = re.search(r'^  \{\n    label: "数据质量",.*?^  \},', tree, re.MULTILINE | re.DOTALL)
+    assert group is not None, "角色权限缺少数据质量分组"
+
+    visible_codes = re.findall(r'code: "(dv\.[a-z_]+)"', group.group())
+    expected_codes = [code for code in CAPABILITY_DEFINITIONS if code.startswith("dv.")]
+    assert sorted(visible_codes) == sorted(expected_codes)
 
 
 def test_role_permissions_page_and_capability_access_are_present():
