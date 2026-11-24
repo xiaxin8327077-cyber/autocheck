@@ -197,7 +197,6 @@ export function createWorkbench({
         listen,
         onToggle: (id, checked) => toggleOption(id, checked),
         onActive: (id) => toggleOptionCard(id),
-        onSaveOption: (id) => saveOptionAndEnable(id),
         onSaveSelected: () => saveSelectedOptions(),
       })
       : null;
@@ -909,6 +908,7 @@ export function createWorkbench({
     if (!page || work.mode !== "ai") return;
     page.detailHome.hidden = work.options.length > 0;
     if (!work.options.length || !work.expandedOptionId) {
+      page.optionsPanel?.animateExpanded("");
       unmountOptionDetail();
       return;
     }
@@ -917,6 +917,7 @@ export function createWorkbench({
     slot.hidden = false;
     slot.replaceChildren();
     slot.append(page.candidate.element, page.editor);
+    page.optionsPanel.animateExpanded(work.expandedOptionId);
   }
 
   function toggleOptionCard(id) {
@@ -1003,64 +1004,6 @@ export function createWorkbench({
     }
   }
 
-  async function saveOptionAndEnable(id) {
-    if (work.busy || work.optionsSaving || work.pendingOptionSave) return;
-    const state = work.optionWork[id];
-    if (!state) return;
-    const gate = optionGate(id);
-    if (!gate.enabled) {
-      notify(gate.reasons.join("；") || "该方案暂不能启用", "warning");
-      if (id !== work.activeOptionId) loadOptionIntoForm(id);
-      return;
-    }
-    if (id !== work.activeOptionId) loadOptionIntoForm(id);
-    syncActiveOptionState();
-    const current = work.optionWork[id];
-    const definition = canonicalOptionDefinition(current);
-    const token = runtime.next("workbench-confirm");
-    work.busy = true; render();
-    try {
-      let detail;
-      if (current.saved && current.savedCanonical === canonicalOptionKey(definition)) {
-        detail = await runtime.request(token, (signal) => api.rule(current.saved.id, { signal }));
-      } else {
-        const saved = await runtime.request(token, (signal) => api.save(definition, null, { signal }));
-        if (!runtime.current(token)) return;
-        current.saved = saved;
-        current.savedCanonical = canonicalOptionKey(definition);
-        detail = await runtime.request(token, (signal) => api.rule(saved.id, { signal }));
-      }
-      if (!runtime.current(token)) return;
-      if (detail.content_sha256 !== current.preview.content_sha256) {
-        throw new Error("已保存规则版本已变化，请到规则列表核实后继续。");
-      }
-      const cases = current.previewEvidence ? current.previewCases : null;
-      const result = await runtime.request(token, (signal) => api.test(detail.id, {
-        version_no: detail.version_no, ...(cases ? { cases } : {}),
-      }, { signal }));
-      if (!runtime.current(token)) return;
-      const failed = Number(result.failed_count) || 0;
-      const notRun = Number(result.not_run_count) || 0;
-      const passed = Number(result.passed_count) || 0;
-      if (!Array.isArray(result.cases) || !result.cases.length || failed || notRun || !passed) {
-        throw new Error("该方案测试未全部通过，不能启用");
-      }
-      await runtime.request(token, (signal) => api.confirm(detail.id, {
-        version_no: detail.version_no, expected_hash: detail.content_sha256,
-      }, { signal }));
-      if (!runtime.current(token)) return;
-      current.saved = { ...(current.saved || {}), id: detail.id, rule_code: detail.rule_code, name: detail.name };
-      current.savedCanonical = canonicalOptionKey(definition);
-      notify(`方案已保存并启用：${detail.rule_code || ""}`, "success");
-      render();
-    } catch (error) {
-      if (!runtime.current(token)) return;
-      notify(errorMessage(error, "保存并启用失败"), "error");
-      render();
-    } finally {
-      if (runtime.current(token)) { work.busy = false; render(); }
-    }
-  }
 
   async function saveSelectedOptionsAndEnable() {
     if (work.busy || work.optionsSaving || work.testing || work.previewBusy || work.confirmBusy || work.aiLoading) return;
@@ -2199,7 +2142,6 @@ export function createWorkbench({
           selected: work.selectedOptions, activeId: work.expandedOptionId,
           savedRules: work.savedOptionRules, saving: work.optionsSaving,
           locked: Boolean(work.busy || work.optionsSaving || work.testing || work.pendingOptionSave),
-          gates: Object.fromEntries(work.options.map((option) => [option.id, optionGate(option.id)])),
           savedDuplicate: work.options.length > 0 && work.selectedOptions.length > 0
             && work.options.filter((option) => work.selectedOptions.includes(option.id)).every((option) => {
               const state = work.optionWork[option.id];

@@ -19,20 +19,24 @@ def test_multi_candidate_contract_is_real() -> None:
     assert "batchSaveCandidates" in api and "/ai/candidates/batch-save" in api
     assert "candidate_options" in workbench and "comparison_suggestions" in workbench
     assert "setupMultiOptions" in workbench and "activateOption" in workbench and "toggleOption" in workbench
-    assert "saveSelectedOptions" in workbench and "saveOptionAndEnable" in workbench
+    assert "saveSelectedOptions" in workbench and "saveSelectedOptionsAndEnable" in workbench
+    assert "return saveSelectedOptionsAndEnable()" in workbench
+    assert "saveOptionAndEnable" not in workbench and "onSaveOption" not in workbench
     assert "requestKeyRegistry" in workbench and "createRequestKeyRegistry" in workbench
     assert "workbench-preview" in workbench and "workbench-test" in workbench
 
     assert "可选校验方案" in options and "按已选口径生成的方案" in options
     assert "dv-ai-option-check" in options and "dv-ai-option-card" in options
-    assert "查看/完善此方案" in options and "保存当前方案并启用" in options and "完善并启用此方案" in options
+    assert "查看此方案" in options
+    assert "保存当前方案并启用" not in options and "完善并启用此方案" not in options
+    assert "onSaveOption" not in options
     evidence = read("components", "candidate_evidence.js")
     assert "检查对象" in options and "dv-ai-option-current" in options and "原始证据" in evidence
     assert "dv-ai-option-detail-slot" in options and "getSlotEl" in options
     assert "tableLabel" in options and "documentEvidence" in options
     assert "保存所选" in options and "dv-ai-saved-results" in options
     assert "可进一步检查的一致性" in options
-    for token in ("grain", "tableLabel", "field_label", "match_reason", "differences", "recommended", "gates", "locked"):
+    for token in ("grain", "tableLabel", "field_label", "match_reason", "differences", "recommended", "locked"):
         assert token in options
     assert "footerBulk" in workbench and "optionGate" in workbench and "batchSaveCandidates" in workbench
     assert "ai_suggestions" in workbench and "dv-ai-supplements" in workbench and "renderSuggestions" in workbench

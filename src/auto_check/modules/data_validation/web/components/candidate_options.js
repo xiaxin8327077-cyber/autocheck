@@ -35,7 +35,7 @@ export function createRequestKeyRegistry() {
 }
 
 export function createCandidateOptionsPanel({
-  listen, onToggle, onActive, onSaveOption, onSaveSelected,
+  listen, onToggle, onActive, onSaveSelected,
 } = {}) {
   const root = element("section", { className: "dv-ai-options", hidden: true });
   const title = element("h2", { className: "dv-ai-options-title", text: "发现多个有依据的校验方案" });
@@ -49,12 +49,28 @@ export function createCandidateOptionsPanel({
   const cardElements = new Map();
   const slotElements = new Map();
   let selectedIds = [];
+  let expandedId = "";
+  let expansionAnimation = null;
   return {
     element: root,
     get selectedIds() { return [...selectedIds]; },
     getCardEl(id) { return cardElements.get(String(id)) || null; },
     getSlotEl(id) { return slotElements.get(String(id)) || null; },
-    update(payload, { selected = [], activeId = "", savedRules = [], saving = false, locked = false, gates = {}, savedDuplicate = false, hideSave = false } = {}) {
+    animateExpanded(id) {
+      const next = String(id || "");
+      if (next === expandedId) return;
+      expandedId = next;
+      expansionAnimation?.cancel();
+      expansionAnimation = null;
+      const content = slotElements.get(next)?.children[0];
+      if (content?.animate) {
+        expansionAnimation = content.animate([
+          { opacity: 0, transform: "translateY(4px)" },
+          { opacity: 1, transform: "translateY(0)" },
+        ], { duration: 160, easing: "ease-out" });
+      }
+    },
+    update(payload, { selected = [], activeId = "", savedRules = [], saving = false, locked = false, savedDuplicate = false, hideSave = false } = {}) {
       const options = Array.isArray(payload?.candidate_options) ? payload.candidate_options : [];
       const parallel = payload?.parallel_checks === true;
       const bySelection = options.length > 0 && options.every((item) => item.fromSelection);
@@ -66,7 +82,6 @@ export function createCandidateOptionsPanel({
       list.replaceChildren();
       const selectedSet = new Set(selectedIds);
       options.forEach((option) => {
-        const gate = gates[option.id] || { enabled: false, reasons: [] };
         const card = element("div", {
           className: `dv-ai-option-card${option.id === activeId ? " is-active" : ""}${selectedSet.has(option.id) ? " is-selected" : ""}`,
           attrs: {
@@ -85,11 +100,14 @@ export function createCandidateOptionsPanel({
         check.dataset.optionId = String(option.id);
         listen(check, "click", (event) => { event?.stopPropagation?.(); });
         listen(check, "change", () => { if (!check.disabled) onToggle?.(option.id, check.checked); });
-        const title = element("div", { className: "dv-ai-option-title" },
-          element("strong", { text: summary }),
+        const badges = [
           option.supplemental ? element("span", { className: "dv-ai-option-recommended", text: "补充规则" }) : null,
           hasRecommendation && option.recommended && !option.fromSelection ? element("span", { className: "dv-ai-option-recommended", text: "推荐" }) : null,
-          option.id === activeId ? element("span", { className: "dv-ai-option-current", text: "当前查看" }) : null);
+          option.id === activeId ? element("span", { className: "dv-ai-option-current", text: "当前查看" }) : null,
+        ].filter(Boolean);
+        const title = element("div", { className: "dv-ai-option-title" },
+          element("strong", { text: summary }),
+          badges.length ? element("span", { className: "dv-ai-option-badges" }, badges) : null);
         const name = tableLabel(candidate, option);
         const sameNameAcrossTables = name && name !== candidate.table_name && options.some((other) =>
           other.candidate?.table_name && other.candidate.table_name !== candidate.table_name && tableLabel(other.candidate, other) === name);
@@ -107,13 +125,7 @@ export function createCandidateOptionsPanel({
               .filter(Boolean).map((text) => element("div", { text }))));
         }
         const actions = element("div", { className: "dv-ai-option-actions" },
-          button("查看/完善此方案", { listen, className: "dv-button dv-button-plain", onClick: () => { if (!locked) onActive?.(option.id); } }),
-          button(option.id === activeId ? "保存当前方案并启用" : "完善并启用此方案", { listen, className: "dv-button", onClick: () => { if (!locked && gate.enabled) onSaveOption?.(option.id); } }));
-        const expanded = option.id === activeId;
-        actions.children[1].disabled = locked || !expanded || !gate.enabled;
-        actions.children[1].title = !expanded
-          ? "展开方案后可启用"
-          : (gate.enabled ? "保存该方案为草稿并在测试通过后启用" : (gate.reasons.join("；") || "需先完成测试并通过"));
+          button("查看此方案", { listen, className: "dv-button dv-button-plain", onClick: () => { if (!locked) onActive?.(option.id); } }));
         Array.from(actions.children).forEach((control) => listen(control, "click", (event) => { event?.stopPropagation?.(); }));
         const slot = element("div", { className: "dv-ai-option-detail-slot", hidden: true });
         card.append(check, body, actions, slot);

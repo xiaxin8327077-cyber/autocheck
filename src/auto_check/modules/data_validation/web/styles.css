@@ -1794,13 +1794,35 @@
   display: grid;
   gap: 3px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 min(220px, calc(100% - 26px));
 }
 
 .auto-check-module[data-module="data_validation"] .dv-ai-option-title {
   display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-option-title > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-option-badges {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-option-recommended,
+.auto-check-module[data-module="data_validation"] .dv-ai-option-current {
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.6;
 }
 
 .auto-check-module[data-module="data_validation"] .dv-ai-option-recommended {

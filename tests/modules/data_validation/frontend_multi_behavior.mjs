@@ -361,9 +361,16 @@ checks[1].checked = true;
 await checks[1].dispatch("change");
 assert.match(collectText(findByClass(workbench.element, "dv-ai-options-save")), /保存所选 2 条草稿/);
 
-// 切换活动卡：载入对应 candidate，保留各自 previewCases。
+// 卡片只提供查看入口；切换活动卡不能保存、重验或启用。
 const actions = collectByClass(workbench.element, "dv-ai-option-actions");
-const actionButtons = actions.map((group) => findButton(group, "查看/完善此方案"));
+for (const group of actions) {
+  assert.deepEqual(group.children.filter((child) => child.tagName === "BUTTON").map(collectText), ["查看此方案"],
+    "方案卡右侧只保留查看/完善入口，不得再有单条保存并启用按钮");
+  assert.equal(findButton(group, "保存当前方案并启用"), null);
+  assert.equal(findButton(group, "完善并启用此方案"), null);
+}
+const actionButtons = actions.map((group) => findButton(group, "查看此方案"));
+assert.ok(actionButtons.every(Boolean), "每张方案卡都保留查看/完善入口");
 await actionButtons[1].dispatch("click");
 const activeCards = collectByClass(workbench.element, "dv-ai-option-card").filter((card) => card.classList.contains("is-active"));
 assert.equal(activeCards.length, 1);
@@ -371,6 +378,10 @@ assert.match(collectText(activeCards[0]), /合同粒度方案/);
 assert.equal(conclusion(), "合同粒度方案");
 await actionButtons[0].dispatch("click");
 assert.equal(conclusion(), "项目粒度方案");
+assert.equal(batchCalls.length, 0, "查看方案不能创建草稿");
+assert.equal(saveCalls.length, 0, "查看方案不能走单条保存接口");
+assert.equal(testCalls.length, 0, "查看方案不能重验保存版本");
+assert.equal(confirmCalls.length, 0, "查看方案不能启用规则");
 
 // 手风琴展示 SQL 与问题，测试用例统一显示在独立区域。
 const cardsNow = () => collectByClass(workbench.element, "dv-ai-option-card");
@@ -432,13 +443,11 @@ assert.equal(batchCalls.length, 3);
 assert.notEqual(batchCalls[2].request_key, batchCalls[1].request_key, "改选择必须换 request_key");
 assert.equal(batchCalls[2].definitions.length, 1, "只创建未保存的第三项");
 
-// 单方案“保存此方案并启用”只处理该方案；未展开时不得模糊启用。
+// 多张已保存方案也只能从底部统一重验并启用，未勾选项不在启用范围内。
 const cardA = cardsNow().find((card) => optionIdOf(card) === "opt-a");
 await cardA.children[1].dispatch("click");
-assert.equal(optionIdOf(activeCard()), "opt-a", "启用前必须展开当前方案");
-const enableButtons = () => collectByClass(workbench.element, "dv-ai-option-actions")
-  .map((group) => findButton(group, "保存当前方案并启用") || findButton(group, "完善并启用此方案"));
-assert.equal(enableButtons()[0].disabled, true, "未测试通过不得启用");
+assert.equal(optionIdOf(activeCard()), "opt-a");
+assert.equal(findButton(workbench.element, "保存并启动以上3个方案").disabled, true, "未测试通过不得启用");
 const generating = findButton(testingSection, "生成并运行测试用例").dispatch("click");
 await sleep(10);
 assert.equal(findByClass(testingSection, "dv-ai-test-preparing").hidden, false);
@@ -453,13 +462,22 @@ optionChecks()[2].checked = false;
 await optionChecks()[2].dispatch("change");
 assert.equal(selectedCaseCount(), options[0].candidate.preview.cases.length + options[1].candidate.preview.cases.length);
 assert.equal(collectByClass(detailSlot(activeCard()), "dv-test-panel").length, 0);
-assert.equal(enableButtons()[0].disabled, false, "测试通过后启用解锁");
+const selectedFooterEnable = findButton(workbench.element, "保存并启动以上2个方案");
+assert.ok(selectedFooterEnable, "底部统一入口随勾选数量更新");
+assert.equal(selectedFooterEnable.disabled, false, "测试通过后统一启用解锁");
 const savesBefore = saveCalls.length;
-await enableButtons()[0].dispatch("click");
+const batchesBeforeEnable = batchCalls.length;
+const testsBeforeEnable = testCalls.length;
+const confirmationsBeforeEnable = confirmCalls.length;
+await selectedFooterEnable.dispatch("click");
 await sleep(30);
-assert.equal(saveCalls.length, savesBefore, "已保存未改方案启用复用 rule_id，不重复创建");
-assert.equal(testCalls.length, 1);
-assert.equal(confirmCalls.length, 1, "仅启用所选方案");
+assert.equal(saveCalls.length, savesBefore, "统一启用不得回退到单条保存接口");
+assert.equal(batchCalls.length, batchesBeforeEnable, "已保存未改方案复用 rule_id，不重复创建");
+assert.equal(testCalls.length, testsBeforeEnable + 2, "两个勾选方案都必须重验保存版本");
+assert.equal(confirmCalls.length, confirmationsBeforeEnable + 2, "仅启用两个勾选方案");
+assert.equal(new Set(testCalls.slice(-2).map((entry) => entry.id)).size, 2, "重验不能重复处理同一方案");
+assert.deepEqual(confirmCalls.slice(-2).map((entry) => entry.id), testCalls.slice(-2).map((entry) => entry.id),
+  "启用的是刚刚重验通过的保存版本");
 
 runtime.destroy();
 
@@ -498,7 +516,7 @@ for (const option of footerOptions.slice(0, 2)) {
 const footerScenario = await openSingleAi({ ...result, candidate_options: footerOptions });
 const footerRoot = footerScenario.wb.element;
 const currentCard = collectByClass(footerRoot, "dv-ai-option-card")[2];
-await findButton(currentCard, "查看/完善此方案").dispatch("click");
+await findButton(currentCard, "查看此方案").dispatch("click");
 const footerEnable = findButton(footerRoot, "保存并启动以上2个方案");
 assert.ok(footerEnable, "主按钮明确显示已勾选方案数量");
 assert.equal(footerEnable.disabled, true, "勾选方案未测试时禁止启动");
@@ -511,7 +529,7 @@ assert.equal(footerEnable.disabled, false, "完成所选方案的测试后可统
 assert.deepEqual(previewTestCalls.slice(-3).map(({ definition }) => definition.name),
   [candidateA.rule_name, candidateB.rule_name, candidateC.rule_name]);
 assert.equal(findButton(footerRoot, "保存所选 2 条草稿").disabled, false, "测试当前方案不改变草稿勾选");
-const toggleCurrentCard = () => findButton(collectByClass(footerRoot, "dv-ai-option-card")[2], "查看/完善此方案").click();
+const toggleCurrentCard = () => findButton(collectByClass(footerRoot, "dv-ai-option-card")[2], "查看此方案").click();
 await toggleCurrentCard();
 assert.equal(footerEnable.disabled, false, "没有展开方案也能启动已勾选方案");
 await toggleCurrentCard();
@@ -525,12 +543,46 @@ await findButton(footerTesting, "运行当前及所选方案测试").click();
 assert.equal(footerEnable.disabled, false);
 const confirmationsBefore = confirmCalls.length;
 const batchBeforeFooter = batchCalls.length;
+const testsBeforeFooter = testCalls.length;
+const savesBeforeFooter = saveCalls.length;
 await footerEnable.click();
-assert.equal(batchCalls.length, batchBeforeFooter + 1);
+assert.equal(batchCalls.length, batchBeforeFooter + 1, "多选统一入口必须先走真实批量保存");
 assert.deepEqual(batchCalls.at(-1).definitions.map((d) => d.name), [candidateA.rule_name, candidateB.rule_name], "保存全部勾选方案，不保存未勾选的当前方案");
+assert.equal(saveCalls.length, savesBeforeFooter, "多选统一入口不得逐条调用保存接口");
+assert.equal(testCalls.length, testsBeforeFooter + 2, "多选统一入口必须逐条重验保存版本");
 assert.equal(confirmCalls.length, confirmationsBefore + 2);
 assert.equal(testCalls.slice(-2).every((entry) => entry.payload.cases[0].expected_count === 0), true, "每个保存版本沿用对应方案自己的用例");
+assert.deepEqual(confirmCalls.slice(-2).map((entry) => entry.id), testCalls.slice(-2).map((entry) => entry.id),
+  "多选只启用刚重验通过的保存版本");
 footerScenario.runtime.destroy();
+
+// 只勾选一条时也从底部走批量保存、保存版本重验和启用，不能依赖卡片单条入口。
+const singleFooterOptions = structuredClone(options.slice(0, 2));
+singleFooterOptions.forEach((option, index) => { option.recommended = index === 0; });
+const singleFooterScenario = await openSingleAi({ ...result, candidate_options: singleFooterOptions });
+const singleFooterRoot = singleFooterScenario.wb.element;
+assert.deepEqual(collectByClass(singleFooterRoot, "dv-ai-option-check").map((input) => input.checked), [true, false]);
+const singleFooterEnable = findButton(singleFooterRoot, "保存并启动以上1个方案");
+assert.ok(singleFooterEnable, "单选也保留底部统一保存并启用入口");
+assert.equal(singleFooterEnable.disabled, true, "单选未测试时同样禁止启用");
+await findButton(singleFooterRoot, "生成并运行测试用例").click();
+assert.equal(singleFooterEnable.disabled, false);
+const batchBeforeSingle = batchCalls.length;
+const testsBeforeSingle = testCalls.length;
+const confirmationsBeforeSingle = confirmCalls.length;
+const savesBeforeSingle = saveCalls.length;
+await singleFooterEnable.click();
+assert.equal(batchCalls.length, batchBeforeSingle + 1, "单选统一入口必须走批量保存");
+assert.deepEqual(batchCalls.at(-1).definitions.map((definition) => definition.name), [candidateA.rule_name],
+  "单选只保存勾选方案，不带入同页未勾选方案");
+assert.equal(saveCalls.length, savesBeforeSingle, "单选统一入口同样不得调用旧单条保存接口");
+assert.equal(testCalls.length, testsBeforeSingle + 1, "单选保存后必须重验服务端保存版本");
+assert.equal(confirmCalls.length, confirmationsBeforeSingle + 1, "单选只启用一个勾选方案");
+assert.equal(confirmCalls.at(-1).id, testCalls.at(-1).id, "单选启用的是刚重验通过的保存版本");
+assert.equal(confirmCalls.at(-1).payload.expected_hash, persistedRules.get(confirmCalls.at(-1).id).content_sha256,
+  "启用确认必须携带刚回读保存版本的哈希");
+assert.equal(singleFooterScenario.wb.isOpen(), false, "单选完整保存重验启用后正常关闭");
+singleFooterScenario.runtime.destroy();
 
 const singleWithSuggestions = await openSingleAi({
   ...candidateA,

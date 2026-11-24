@@ -113,9 +113,9 @@ async function scenario(flags = {}) {
 
 const all = await scenario({ failPreview: "方案丙" });
 const third = collectByClass(all.wb.element, "dv-ai-option-card")[2];
-await findButton(third, "查看/完善此方案").dispatch("click");
+await findButton(third, "查看此方案").dispatch("click");
 await all.generate();
-await findButton(collectByClass(all.wb.element, "dv-ai-option-card")[2], "查看/完善此方案").dispatch("click");
+await findButton(collectByClass(all.wb.element, "dv-ai-option-card")[2], "查看此方案").dispatch("click");
 assert.equal(all.primary().textContent, "保存并启动以上2个方案");
 assert.equal(all.primary().disabled, false, "未展开或未勾选方案失败，不影响已勾选且通过的方案");
 assert.equal(findButton(all.wb.element, "保存所选 2 条草稿").hidden, true);
