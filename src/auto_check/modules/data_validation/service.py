@@ -1024,6 +1024,11 @@ class DataValidationService:
                 raise AppError("VALIDATION_ERROR")
         if semantic:
             intent = definition["semantic_intent"]
+            inherited_scope = intent.get("inherited_adoption_scope")
+            if inherited_scope is not None and (not isinstance(inherited_scope, dict)
+                    or "report_date_field" in inherited_scope and inherited_scope["report_date_field"] != definition.get("report_date_field")
+                    or "unmatched_policy" in inherited_scope and inherited_scope["unmatched_policy"] != (raw_join or {}).get("unmatched_policy")):
+                raise AppError("VALIDATION_ERROR")
             if "expected_null_policy" in intent:
                 policy = intent["expected_null_policy"]
                 if policy not in ("unresolved", "skip", "violate", "empty_string_as_null", "review", "zero"):

@@ -40,7 +40,8 @@ def test_multi_candidate_contract_is_real() -> None:
         assert token in options
     assert "footerBulk" in workbench and "optionGate" in workbench and "batchSaveCandidates" in workbench
     assert "ai_suggestions" in workbench and "dv-ai-supplements" in workbench and "renderSuggestions" in workbench
-    assert "suggestionScopeReady()" in workbench and "page.suggestionsSection.hidden = !list.length" in workbench
+    assert "page.suggestionsSection.hidden = !list.length" in workbench
+    assert 'mode: "inherit_selected"' in workbench and "createSupplementInline" in workbench
     assert "当前文档尚不足以给出可靠的额外建议" not in workbench
     form = read("components", "rule_form.js")
     state = read("state.js")

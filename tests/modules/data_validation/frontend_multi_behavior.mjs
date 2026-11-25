@@ -599,7 +599,7 @@ const emptySupp = findByClass(singleEmpty.wb.element, "dv-ai-supplements");
 assert.ok(emptySupp.hidden, "为空时不显示建议区或空占位");
 singleEmpty.runtime.destroy();
 
-// 真实多维度发现后的只读建议，在口径尚未确认时也应可见；不能由建议直接采纳或启用。
+// 口径确认阶段隐藏建议；方案生成后仍完整显示待核实的一致性建议。
 const pendingOptions = structuredClone(options.slice(0, 2));
 for (const option of pendingOptions) {
   option.candidate.preview = null;
@@ -620,9 +620,8 @@ const pendingComparison = await openSingleAi({ ...pendingOptions[0].candidate,
   candidate_options: pendingOptions, ai_suggestions: [comparisonNotice], comparison_suggestions: [],
 });
 const pendingNotice = findByClass(pendingComparison.wb.element, "dv-ai-supplements");
-assert.ok(pendingNotice && !pendingNotice.hidden, "多维度一致性建议不能因为口径待确认或缺少 SQL 而消失");
-assert.match(collectText(pendingNotice), /核对项目实收与资金端份额合计是否一致/);
-assert.match(collectText(pendingNotice), /需确认单位与允许差额/);
+assert.ok(pendingNotice?.hidden, "主方案口径确认阶段不得展示补充建议");
+assert.doesNotMatch(collectText(pendingNotice), /核对项目实收与资金端份额合计是否一致/);
 assert.equal(findButton(pendingNotice, "采纳"), null, "只读建议不能绕过确认生成规则");
 assert.equal(findButton(pendingNotice, "保存并启用"), null);
 const pendingRequest = controlByLabel(pendingComparison.wb.element, "需求描述 *");
@@ -636,6 +635,8 @@ const readyComparison = await openSingleAi({ ...candidateA, candidate_options: o
 });
 assert.ok(!findByClass(readyComparison.wb.element, "dv-ai-supplements").hidden,
   "只有待人工确认的一致性建议时也应保留，不要求另有可采纳建议");
+assert.match(collectText(findByClass(readyComparison.wb.element, "dv-ai-supplements")), /核对项目实收与资金端份额合计是否一致/);
+assert.match(collectText(findByClass(readyComparison.wb.element, "dv-ai-supplements")), /需确认单位与允许差额/);
 readyComparison.runtime.destroy();
 
 const supplement = { ...candidateA.preview.definition, name: "实收合计一致性", null_policy: "review",

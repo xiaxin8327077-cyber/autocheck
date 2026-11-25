@@ -20,6 +20,7 @@ from .issue_query_results import encode_result
 
 METADATA = MetaData()
 EXECUTION_CHUNK = 500
+_RULE_DESCRIPTION_LIMIT = 1_000
 
 ANALYSIS_RESULTS = Table(
     "data_validation_analysis_results", METADATA,
@@ -48,7 +49,7 @@ RULES = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("rule_code", String(32), nullable=False),
     Column("name", String(200), nullable=False),
-    Column("description", String(1000), nullable=False),
+    Column("description", String(_RULE_DESCRIPTION_LIMIT), nullable=False),
     Column("creator_user_id", String(64), nullable=False),
     Column("status", String(32), nullable=False),
     Column("current_version_id", Integer),
@@ -636,7 +637,8 @@ class RuleStorage:
         """事务内插入规则与版本；规则编号由自增主键生成，单/批共用避免同码。"""
         stamp = _now()
         rule_id = int(connection.execute(insert(RULES).values(
-            rule_code="", name=name, description=description, creator_user_id=creator_user_id,
+            rule_code="", name=name, description=description[:_RULE_DESCRIPTION_LIMIT],
+            creator_user_id=creator_user_id,
             status=status, current_version_id=None, source_id=str(definition.get("source_id") or ""),
             table_name=str(definition.get("table_name") or ""), rule_type=str(definition.get("rule_type") or ""),
             report_category=str(definition.get("report_category") or ""), updated_at=stamp,
@@ -744,7 +746,8 @@ class RuleStorage:
                 generation_mode=str(definition.get("generation_mode") or "manual"), status="draft", created_at=stamp,
             )).inserted_primary_key[0]
             connection.execute(update(RULES).where(RULES.c.id == rule_id).values(
-                name=str(definition.get("name") or ""), description=str(definition.get("description") or ""),
+                name=str(definition.get("name") or ""),
+                description=str(definition.get("description") or "")[:_RULE_DESCRIPTION_LIMIT],
                 source_id=str(definition.get("source_id") or ""), table_name=str(definition.get("table_name") or ""),
                 rule_type=str(definition.get("rule_type") or ""),
                 report_category=str(definition.get("report_category") or ""), updated_at=stamp,

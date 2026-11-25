@@ -70,6 +70,64 @@ def test_batch_saves_independent_drafts_with_real_grain_and_unique_codes() -> No
     assert len(set(codes)) == 3 and all(code.startswith("DV") for code in codes)
 
 
+@pytest.fixture
+def rules_with_description_limit():
+    rules = _rules()
+    # SQLite ignores VARCHAR length. Enforce the MySQL rule-table limit on both writes.
+    with rules.storage.database.begin() as conn:
+        for operation in ("insert", "update"):
+            conn.exec_driver_sql(
+                f"CREATE TRIGGER enforce_description_{operation} BEFORE {operation} "
+                "ON data_validation_rules WHEN length(NEW.description) > 1000 "
+                "BEGIN SELECT RAISE(ABORT, 'rule description exceeds 1000 characters'); END"
+            )
+    return rules
+
+
+def test_batch_saves_seven_plans_with_a_long_supplement_description(rules_with_description_limit):
+    rules = rules_with_description_limit
+    owner = {**user(), "capabilities": ["dv.manage"]}
+    router = ModuleRouter(MANIFEST, default_permission_evaluator)
+    register_routes(router, lambda: rules)
+    description = "补充方案的适用范围与已确认检查条件。" * 90
+    supplement = _definition(name="补充方案", description=description, generation_mode="ai")
+    preview = rules.preview_candidate(owner, {"definition": supplement})
+    payload = {
+        "request_key": str(uuid.uuid4()),
+        "definitions": [_definition(name=f"主方案{index}") for index in range(1, 7)] + [supplement],
+    }
+
+    saved = _call(router, "POST", "/ai/candidates/batch-save", owner, body=payload)
+    assert saved.status == 200
+    batch = saved.body["data"]
+    assert batch["count"] == 7
+    supplement_row = batch["rules"][-1]
+    assert supplement_row["description"] == description[:1000]
+    detail = rules.get_rule(owner, supplement_row["id"])
+    assert detail["definition"]["description"] == description
+    assert detail["content_sha256"] == preview["content_sha256"]
+
+    retried = _call(router, "POST", "/ai/candidates/batch-save", owner, body=payload)
+    assert retried.status == 200
+    assert retried.body["data"]["reused"] is True
+    assert retried.body["data"]["rules"] == batch["rules"]
+    assert len(rules.storage.visible_rules(owner["id"])) == 7
+
+
+def test_edit_keeps_the_full_description_in_the_new_version(rules_with_description_limit):
+    rules = rules_with_description_limit
+    owner = user()
+    created = rules.save_draft(owner, _definition())
+    description = "保存后的完整规则说明。" * 100
+
+    rules.save_draft(owner, _definition(description=description), rule_id=created["id"])
+
+    detail = rules.get_rule(owner, created["id"])
+    assert detail["description"] == description[:1000]
+    assert detail["definition"]["description"] == description
+    assert detail["version_no"] == 2
+
+
 def test_batch_is_idempotent_by_request_key_and_payload_hash() -> None:
     rules = _rules()
     key = str(uuid.uuid4())

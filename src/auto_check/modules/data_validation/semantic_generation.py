@@ -10,7 +10,9 @@ from threading import current_thread
 import unicodedata
 from uuid import uuid4
 
-from .adoption_scope import apply_period_check, attach_period_applicability, bind_period_filters, verify_bound_period_filters
+from .adoption_scope import (adopted_join_matches, adopted_scope_label, apply_period_check, attach_period_applicability,
+                             bind_adopted_join, bind_period_filters, distinguish_adopted_scopes, name_adopted_scope,
+                             reconcile_confirmed_scope_partitions, verify_adopted_goal, verify_bound_period_filters)
 from .ai_service import model_expression, model_judgment, refine_candidate
 from .ai_suggestions import CATEGORIES, KINDS, MAX_REFERENCES, MAX_SUGGESTIONS, build_ai_suggestions
 from .analysis_reuse import memory_choice
@@ -18,7 +20,7 @@ from .analysis_memory import digest
 from .analysis_jobs import AnalysisControl, MAX_MODEL_ROUNDS
 from .analysis_result_cache import model_snapshot, semantic_intent_snapshot
 from .candidate_choices import check_without_category_prefix, difference_lines, document_category, document_display, option_id
-from .candidate_preview import compile_prepared_preview
+from .candidate_preview import candidate_definition, compile_prepared_preview
 from .conditional_reviews import category_scope_only
 from .document_evidence import DocumentEvidence, _business_aliases, compact_directory, documented_equation, referenced_fields
 from .documented_origins import drop_unused_project_lookup, prefer_document_origin
@@ -686,7 +688,10 @@ class SemanticAnalysis:
         self.service = service
         self.user = user
         self.inputs = inputs
-        self.inherited_checks = (inputs.get("period_scope") or {}).get("checks") or []
+        adoption_scope = inputs.get("period_scope") or {}
+        variants = adoption_scope.get("variants") or []
+        self.inherited_checks = adoption_scope.get("checks") or (
+            variants if variants and all(v.get("check") for v in variants) else [])
         self.request = request_text
         self.progress = progress
         self.cancel = cancel_event
@@ -714,6 +719,12 @@ class SemanticAnalysis:
         self.categories = inputs["categories"]
         self.prompts = inputs["prompts"]
         self.prefix = inputs["knowledge_prefix"] + "通用校验口径：\n" + self.prompts["business_scope"] + "\n"
+        if variants:
+            verified = {key: adoption_scope[key] for key in ("suggestion", "variants", "applicability_filters") if key in adoption_scope}
+            self.prefix += ("\n本次采纳建议与用户已选方案的已核实口径：" + _json(verified)
+                            + "。保留各已选范围、关联与日期，采用建议声明的指标及检查目标。"
+                            "已选范围和已登记适用范围由系统应用；filters和scopes只声明上述已核实范围之外的新增限制。"
+                            "已核实的条件无需重复询问。期间方案提供check时沿用该条件；汇总比较按建议自身的运算和容差。\n")
         if inputs.get("clarification_answers"):
             self.prefix += ("\n当前用户对上一轮业务问题的回答（独立上下文数据，原始需求保持不变）："
                             + _json(inputs["clarification_answers"])
@@ -798,11 +809,11 @@ class SemanticAnalysis:
                 if self.inputs.get("include_suggestions") is False:
                     block.pop("ai_suggestions", None)
                 intent = block.get("semantic_intent")
-                if period.get("checks") and block.get("rule_type") == "field_compare" and isinstance(intent, dict):
+                if self.inherited_checks and block.get("rule_type") == "field_compare" and isinstance(intent, dict):
                     # Review the user's chosen predicate from the first draft. Materialization
                     # below expands every distinct selected predicate and scope.
                     target_field = period["fields"][0]
-                    apply_period_check(block, period["checks"][0]["check"], target_field, target_field)
+                    apply_period_check(block, self.inherited_checks[0]["check"], target_field, target_field)
                 if isinstance(intent, dict) and isinstance(intent.get("filters"), list):
                     if "filters" in block and not _same_declaration(block["filters"], intent["filters"]):
                         raise _IncompleteDraft("规则与语义说明中的筛选条件不一致")
@@ -2428,28 +2439,55 @@ class SemanticAnalysis:
         suggestions = [*self.model_suggestions,
                        *(raw["ai_suggestions"] if isinstance(raw.get("ai_suggestions"), list) else [])]
         period_scope = self.inputs.get("period_scope")
-        materialized_plans = [(i, draft, None, None) for i, draft in enumerate(plans)]
+        selected_adoption = bool((period_scope or {}).get("variants"))
+        materialized_plans = [(i, draft, None) for i, draft in enumerate(plans)]
         if period_scope:
-            variants = period_scope.get("checks") or [{"filters": filters} for filters in period_scope["groups"]]
-            materialized_plans = [(i, deepcopy(draft), variant["filters"], variant.get("check")) for i, draft in enumerate(plans)
+            variants = (period_scope.get("variants") or period_scope.get("checks")
+                        or [{"filters": filters} for filters in period_scope["groups"]])
+            materialized_plans = [(i, deepcopy(draft), variant) for i, draft in enumerate(plans)
                                   for variant in variants]
-        for plan_index, draft, inherited_group, check in materialized_plans:
+        for plan_index, draft, variant in materialized_plans:
+            inherited_group = variant["filters"] if variant else None
+            check = (variant or {}).get("check")
+            selected_scope = variant if selected_adoption else None
             default = targets[0]
             target = draft.get("target", default.get("target", default))
             category_code = draft.get("report_category", default.get("report_category"))
+            if selected_scope and isinstance(target, dict) and target.get("table") == selected_scope["table"]:
+                category_code = selected_scope.get("report_category") or category_code
             table = self.resolve(target, category_code)
             related_target = draft.get("related_target", default.get("related_target") if target == default.get("target") else None)
+            inherited_date = None
+            if selected_scope and draft.get("rule_type"):
+                related_target = bind_adopted_join(draft, table["table_name"], related_target, period_scope, selected_scope)
+                if table["table_name"] == selected_scope["table"]:
+                    inherited_date = selected_scope.get("report_date_field")
+                    if selected_scope.get("business_key"):
+                        draft["business_key"] = selected_scope["business_key"]
+                elif selected_scope.get("join"):
+                    inherited_date = selected_scope["join"]["report_date_field"]
             related = self.resolve(related_target, category_code) if related_target else None
-            if table["id"] not in allowed or related and (related["id"] not in allowed or related["id"] == table["id"]):
+            adopted_tables = ((selected_scope or {}).get("table"), (selected_scope or {}).get("join", {}).get("table_name"))
+            if table["id"] not in allowed or related and (related["id"] == table["id"] or
+                    related["id"] not in allowed and related["table_name"] not in adopted_tables):
                 raise _IncompleteDraft("方案只能采用本轮已提供完整字段的独立主表及关联表")
             fields = self.fields[table["id"]]
             other = self.fields[related["id"]] if related else []
-            if check and draft.get("rule_type") == "field_compare" and isinstance(draft.get("semantic_intent"), dict):
-                field = period_scope["fields"][0]
-                label = next((f["field_cn"] for f in fields if f["field_name"] == field and f.get("field_cn")), field)
-                apply_period_check(draft, check, field, label)
             _normalize_documented_operands(draft, fields, other, self.request, self.inputs.get("clarification_answers") or [])
+            if draft.get("rule_type") == "field_compare" and isinstance(draft.get("semantic_intent"), dict):
+                check_field = period_scope["fields"][0] if check else None
+                if selected_scope and selected_scope.get("period_checks"):
+                    used = referenced_fields({"expression": draft.get("expression")})["base"]
+                    if len(used) == 1:
+                        check_field = next(iter(used))
+                        check = selected_scope["period_checks"].get(check_field)
+                if check:
+                    label = next((f["field_cn"] for f in fields if f["field_name"] == check_field and f.get("field_cn")), check_field)
+                    apply_period_check(draft, check, check_field, label)
             bind_shared_measure(draft, fields, self.request)
+            if selected_scope:
+                reconcile_confirmed_scope_partitions(draft, table["table_name"], (related or {}).get("table_name"),
+                                                     period_scope, inherited_group, fields, other)
             try:
                 _validate_intent(draft, fields, other)
             except _IncompleteDraft as exc:
@@ -2476,7 +2514,8 @@ class SemanticAnalysis:
                 if inherited_group is not None:
                     inherited = bind_period_filters(draft, table["table_name"], (related or {}).get("table_name"),
                                                     period_scope, inherited_group)
-                candidate = self.candidate(draft, table, category_code, fields, other, existing, judgment)
+                candidate = self.candidate(draft, table, category_code, fields, other, existing, judgment,
+                                           inherited_date=inherited_date)
                 if check:
                     candidate.pop("null_handling", None)
                     candidate.update(deepcopy(check))
@@ -2484,6 +2523,19 @@ class SemanticAnalysis:
                     candidate["semantic_intent"]["inherited_period_check"] = deepcopy(check)
                 if inherited_group is not None:
                     verify_bound_period_filters(candidate, inherited, period_scope["groups"])
+                if selected_scope:
+                    verify_adopted_goal(candidate, table["table_name"], (related or {}).get("table_name"), period_scope)
+                    adopted_join = draft.get("join") if selected_scope.get("join") else None
+                    if (inherited_date and candidate.get("report_date_field") != inherited_date
+                            or adopted_join and not adopted_join_matches(candidate.get("join"), adopted_join, inherited_date)):
+                        raise ScopeEvidenceRequired("补充建议需要保留已选方案的日期及缺少关联记录时的处理口径。")
+                    candidate["semantic_intent"]["inherited_adoption_scope"] = {
+                        **({"report_date_field": inherited_date} if inherited_date else {}),
+                        **({"unmatched_policy": adopted_join["unmatched_policy"]} if adopted_join else {}),
+                    }
+                    suffix = adopted_scope_label(inherited_group, period_scope["groups"], table["table_name"],
+                                                 (related or {}).get("table_name"), fields, other)
+                    name_adopted_scope(candidate, suffix)
                 # Independent parallel rules may cover different named metrics. A range
                 # on a single metric still needs both ends in every interpretation.
                 if (terms and (len(terms) == 1 or mode != "parallel" or len(plans) == 1)
@@ -2503,15 +2555,21 @@ class SemanticAnalysis:
             field = "、".join(dict.fromkeys(item["term"] for item in metrics))
             candidate.update(document_display(table, related))
             grain = candidate["grain"]
-            signature = _json([candidate.get("report_category"), candidate.get("expression"), candidate.get("filters"),
-                               candidate.get("join"), candidate.get("project_driver"), candidate["semantic_intent"]])
+            if selected_adoption:
+                signature = json.dumps([candidate_definition(candidate), candidate.get("questions") or []],
+                                       ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            else:
+                signature = _json([candidate.get("report_category"), candidate.get("expression"), candidate.get("filters"),
+                                   candidate.get("join"), candidate.get("project_driver"), candidate["semantic_intent"]])
             options.append({"id": option_id(self.context["source_id"], table["table_name"], field, self.request,
                                             self.context["doc_sha256"], signature),
                             "label": candidate.get("rule_name") or label, "table_label": label, "field_label": field,
                             "grain": grain, "recommended": draft.get("recommended") is True,
                             "differences": difference_lines(label, grain, field),
                             "match_reason": str(draft.get("match_reason") or "")[:240], "candidate": candidate})
-        if len({o["id"] for o in options}) != len(options):
+        if selected_adoption:
+            distinguish_adopted_scopes(options)
+        elif len({o["id"] for o in options}) != len(options):
             raise _IncompleteDraft("请合并完全相同的方案，仅保留具有独立业务含义的方案")
         candidates = [o["candidate"] for o in options]
         if self.request_conditions and all(c.get("rule_type") and not c.get("uncertainties") and
@@ -2519,15 +2577,24 @@ class SemanticAnalysis:
             self.check_request_conditions(facts)
         verify_grain_facts(self, facts)
         self.preview_after_all_reviews(candidates)
-        ready_definitions = set()
-        for candidate in candidates:
+        ready_definitions, pending_ids, retained_options = set(), set(), []
+        for option in options:
+            candidate = option["candidate"]
             preview = candidate.get("preview")
-            if not preview or candidate.get("questions") or candidate.get("uncertainties") or candidate.get("unsupported_requirements"):
-                continue
-            signature = _execution_signature(preview["definition"])
-            if signature in ready_definitions:
-                raise _IncompleteDraft("请合并执行条件和业务范围完全相同的方案，仅保留独立校验")
-            ready_definitions.add(signature)
+            if preview and not any(candidate.get(key) for key in ("questions", "uncertainties", "unsupported_requirements")):
+                signature = _execution_signature(preview["definition"])
+                if signature in ready_definitions:
+                    if not selected_adoption:
+                        raise _IncompleteDraft("请合并执行条件和业务范围完全相同的方案，仅保留独立校验")
+                    continue
+                ready_definitions.add(signature)
+            elif selected_adoption:
+                if option["id"] in pending_ids:
+                    continue
+                pending_ids.add(option["id"])
+            retained_options.append(option)
+        options = retained_options
+        candidates = [o["candidate"] for o in options]
         primary = dict(next((c for c in candidates if c.get("rule_type")), candidates[0]))
         if len(options) > 1:
             primary["candidate_options"] = options
@@ -2730,7 +2797,7 @@ class SemanticAnalysis:
             for candidate, review in zip(candidates, prepared):
                 self.service._apply_candidate_preview(candidate, compile_prepared_preview(review))
 
-    def candidate(self, draft, table, category_code, fields, other, existing, judgment):
+    def candidate(self, draft, table, category_code, fields, other, existing, judgment, *, inherited_date=None):
         filters = draft.get("filters")
         if isinstance(filters, list) and any(isinstance(item, dict) and item.get("op") in ("regexp", "not_regexp") for item in filters):
             raise ScopeEvidenceRequired("当前支持按文字关键词包含或排除记录；该条件包含正则表达式，请明确需要匹配的文字。")
@@ -2762,6 +2829,8 @@ class SemanticAnalysis:
                          scope_description=str(table.get("table_name_cn") or table["table_name"]),
                          mapping_version=f"doc-v{self.context['doc_version']}-{self.context['doc_sha256'][:12]}",
                          model_judgments={**self.context["model_judgments"], "generate_rule": judgment}, notices=[])
+        if inherited_date:
+            candidate["report_date_field"] = inherited_date
         related_table = next((t for t in self.tables if t["table_name"] == (draft.get("join") or {}).get("table_name")
                               and self.fields.get(t["id"]) == other), None) if other else None
         candidate.update(document_display(table, related_table))

@@ -11,6 +11,7 @@ from uuid import uuid4
 from auto_check.app.module_system.contracts import ModuleHttpResponse, ModuleRequest
 
 from .contracts import AppError
+from .diagnostic_logging import log_batch_save_error
 from .service import DataValidationService
 from .sql_test_run import run_candidate_sql
 
@@ -42,6 +43,15 @@ def register_routes(router: Any, service_getter: Callable[[], DataValidationServ
                     error["reference"] = exc.reference
                 return ModuleHttpResponse.json(status, {"error": error})
             except Exception as exc:
+                if path == "/ai/candidates/batch-save":
+                    reference = uuid4().hex[:12]
+                    log_batch_save_error(exc, reference)
+                    return ModuleHttpResponse.json(500, {"error": {
+                        "code": "BATCH_SAVE_RESULT_UNKNOWN",
+                        "message": "批量保存结果待确认，请再次点击保存按钮核实。",
+                        "stage": "batch_save",
+                        "reference": reference,
+                    }})
                 if path != "/ai/preview":
                     raise
                 reference = uuid4().hex[:12]

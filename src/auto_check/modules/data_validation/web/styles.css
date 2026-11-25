@@ -1974,6 +1974,75 @@
 }
 
 
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--ui-content-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-subsection-surface);
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-progress {
+  margin: 0;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-body {
+  min-block-size: 0;
+  padding: 4px 0;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-symbol,
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-copy p {
+  display: none;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-copy,
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-timer,
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-track {
+  margin-top: 6px;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-title {
+  font-size: 13px;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-track {
+  background: var(--ui-content-border);
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-ai-wait-stage {
+  position: static;
+  width: auto;
+  height: auto;
+  clip-path: none;
+  white-space: normal;
+  margin-top: 6px;
+  color: var(--dv-muted);
+  font-size: 12px;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-dialog-close {
+  width: auto;
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.auto-check-module[data-module="data_validation"] .dv-ai-supplement-inline .dv-dialog-close.dv-button-danger {
+  color: var(--action-danger);
+  border-color: color-mix(in srgb, var(--action-danger) 45%, var(--ui-content-border));
+}
+
 .auto-check-module[data-module="data_validation"] .dv-button.is-loading:disabled {
   opacity: 1;
 }

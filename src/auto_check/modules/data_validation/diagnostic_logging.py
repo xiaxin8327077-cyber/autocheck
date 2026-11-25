@@ -7,12 +7,17 @@ import os
 from pathlib import Path
 import re
 from threading import RLock
+from traceback import walk_tb
+
+from sqlalchemy.exc import DBAPIError
 
 
 LOGGER = logging.getLogger("auto_check.modules.data_validation")
 MAX_LOG_BYTES = 1024 * 1024
 _LOCK = RLock()
 _previous_level = None
+_BATCH_SAVE_FAILURE = "Batch save result unknown reference=%s stage=%s type=%s driver_code=%s frames=%s"
+_FRAME = r"[A-Za-z_][A-Za-z0-9_]{0,79}\.py:[0-9]{1,6}"
 _EVENTS = {
     "Model call failed code=%s stage=%s reference=%s category=%s analysis=%s round=%s":
         ("code", "stage", "reference", "category", "analysis", "round"),
@@ -21,6 +26,7 @@ _EVENTS = {
     "Semantic review analysis=%s round=%d stage=generate_rule category=%s path=%s":
         ("analysis", "round", "category", "path"),
     "AI analysis failed reference=%s type=%s": ("reference", "type"),
+    _BATCH_SAVE_FAILURE: ("reference", "stage", "type", "driver_code", "frames"),
     "AI analysis limit code=%s analysis=%s round=%d phase=%s reference=%s":
         ("code", "analysis", "round", "phase", "reference"),
     'Semantic JSON invalid reference=%s analysis=%s round=%d stage=%s chars=%d reason=%s line=%d column=%d':
@@ -34,12 +40,13 @@ _ENUMS = {
         "structure", "unknown_field", "dictionary_partition", "field_binding", "rule_validation",
         "invalid_json_object", "selection_structure", "candidate_targets_structure",
         "missing_target_and_explanation", "target_document_binding", "MODEL_RESPONSE_INVALID", "VALIDATION_ERROR"},
-    "stage": {"select_table", "generate_rule", "test_model", "select_and_generate", "review_interpretations", "repair_rule", "repair_json"},
+    "stage": {"select_table", "generate_rule", "test_model", "select_and_generate", "review_interpretations", "repair_rule", "repair_json", "batch_save"},
     "status": {"failed", "received", "incomplete", "empty"},
     "phase": {"preparing", "model_wait", "local_check", "publishing"},
     'reason': {'syntax', 'object_required'},
     "type": {"RuntimeError", "ValueError", "TypeError", "KeyError", "OSError", "OperationalError",
-             "IntegrityError", "TimeoutError", "AssertionError", "AttributeError", "IndexError"},
+             "IntegrityError", "TimeoutError", "AssertionError", "AttributeError", "IndexError",
+             "DataError", "ProgrammingError", "DatabaseError", "InterfaceError", "InternalError"},
 }
 _USAGE_KEYS = {"prompt_tokens", "completion_tokens", "total_tokens", "prompt_cache_hit_tokens",
                "prompt_cache_miss_tokens", "reasoning_tokens", "cached_tokens"}
@@ -55,6 +62,10 @@ def _safe_value(field, value):
                 if type(value) is dict and type(value.get(key)) is int and 0 <= value[key] < 2**63}
     if field in {"round", "duration_ms", 'chars', 'line', 'column'}:
         return value if type(value) is int and 0 <= value < 2**63 else ("-" if value == "-" else 0)
+    if field == "driver_code":
+        return value if type(value) is int and 1 <= value <= 99999 else "-"
+    if field == "frames":
+        return value if type(value) is str and re.fullmatch(rf"{_FRAME}(?: -> {_FRAME}){{0,7}}", value) else "-"
     if type(value) is not str or len(value) > 120:
         return "-"
     if field == "reference" and re.fullmatch("[0-9a-f]{12}", value):
@@ -66,6 +77,20 @@ def _safe_value(field, value):
     if field == "path" and all(p in _PATH_PARTS or re.fullmatch("[0-9]{1,3}", p) for p in value.split(".")):
         return value
     return "-"
+
+
+def log_batch_save_error(error: Exception, reference: str) -> None:
+    frames = []
+    for frame, line in walk_tb(error.__traceback__):
+        filename = os.path.basename(frame.f_code.co_filename.replace("\\", "/"))
+        location = f"{filename}:{line}"
+        if re.fullmatch(_FRAME, location):
+            frames.append(location)
+    driver_args = getattr(error.orig, "args", ()) if isinstance(error, DBAPIError) else ()
+    LOGGER.error(
+        _BATCH_SAVE_FAILURE, reference, "batch_save", _safe_value("type", type(error).__name__),
+        _safe_value("driver_code", driver_args[0] if driver_args else None), " -> ".join(frames[-8:]),
+    )
 
 
 class _AnalysisFile(RotatingFileHandler):

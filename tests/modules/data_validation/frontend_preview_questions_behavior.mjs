@@ -208,7 +208,7 @@ assert.match(collectText(wb.element), /本表用哪个项目名称/, "先列出�
 assert.ok(findByClass(wb.element, "dv-testing-section").hidden, "旧预览不应开放测试");
 assert.ok(findButton(wb.element, "保存并启用").hidden);
 const suggestions = () => findByClass(wb.element, "dv-ai-supplements");
-assert.ok(!suggestions().hidden, "主规则待确认时也展示模型建议，不因此隐藏");
+assert.ok(suggestions().hidden, "主规则口径待确认时不显示补充建议");
 const answerCurrent = async () => {
   const radios = collectByClass(wb.element, "dv-ai-choices").flatMap((group) => group.children.map((label) => label.children.find((child) => child.tagName === "INPUT")));
   assert.equal(radios.length, 1, "一次只渲染一个分阶段问题");
@@ -228,7 +228,7 @@ assert.equal(previewCalls[0].analysis_context, "current-doc-and-settings");
 assert.equal(previewCalls[0].analysis_request_text, "项目需求");
 assert.ok(previewCalls[0].model_id);
 assert.ok(collectText(wb.element).includes("确认项目关联"), "preview 返回的新问题必须合入并显示");
-assert.ok(!suggestions().hidden, "预览仍有独立口径时建议继续展示，测试和启用仍受门禁控制");
+assert.ok(suggestions().hidden, "预览仍有口径待确认时继续隐藏补充建议");
 assert.ok(findByClass(wb.element, "dv-testing-section").hidden, "预检仍需确认时不接受返回的旧 SQL");
 await choose(inputChoices(allQuestions())[0]);
 await findButton(wb.element, "确认全部口径").dispatch("click");

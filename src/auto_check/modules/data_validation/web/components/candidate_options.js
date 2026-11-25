@@ -70,7 +70,8 @@ export function createCandidateOptionsPanel({
         ], { duration: 160, easing: "ease-out" });
       }
     },
-    update(payload, { selected = [], activeId = "", savedRules = [], saving = false, locked = false, savedDuplicate = false, hideSave = false } = {}) {
+    update(payload, { selected = [], activeId = "", savedRules = [], saving = false, locked = false,
+      selectionLocked = false, savedDuplicate = false, hideSave = false } = {}) {
       const options = Array.isArray(payload?.candidate_options) ? payload.candidate_options : [];
       const parallel = payload?.parallel_checks === true;
       const bySelection = options.length > 0 && options.every((item) => item.fromSelection);
@@ -93,7 +94,7 @@ export function createCandidateOptionsPanel({
         check.type = "checkbox";
         check.className = "dv-ai-option-check";
         check.checked = selectedSet.has(option.id);
-        check.disabled = locked;
+        check.disabled = locked || selectionLocked;
         const candidate = option.candidate || {};
         const summary = hasComparison(candidate.expression) ? candidateRuleName(candidate) : option.label || option.field_label || "校验方案";
         check.setAttribute("aria-label", `选择方案 ${[tableLabel(candidate, option), summary].filter(Boolean).join(" · ")}`);
@@ -148,7 +149,7 @@ export function createCandidateOptionsPanel({
         list.append(card);
       });
       saveButton.textContent = saving ? "保存中…" : `保存所选 ${selectedSet.size} 条草稿`;
-      saveButton.disabled = saving || locked || !selectedSet.size || savedDuplicate;
+      saveButton.disabled = saving || locked || selectionLocked || !selectedSet.size || savedDuplicate;
       saveButton.hidden = hideSave;
       saved.replaceChildren();
       (savedRules || []).forEach((rule) => {

@@ -11,6 +11,7 @@ import pytest
 from auto_check.app.module_system.permissions import default_permission_evaluator
 from auto_check.app.module_system.routing import ModuleRouter
 from auto_check.modules.data_validation.api import register_routes
+from auto_check.modules.data_validation.adoption_scope import verified_period_scope
 from auto_check.modules.data_validation.module import MANIFEST
 from tests.modules.data_validation.support import user
 from tests.modules.data_validation.test_ai_service import _request
@@ -110,6 +111,10 @@ def test_captured_paid_advice_uses_confirmed_knowledge_without_reasking(tmp_path
              "reference": "内存验收中的用户确认", "valid_from": "", "valid_to": ""}
     knowledge.save(user(), {"expected_revision": 0, "entries": [entry]})
     knowledge.save(user(), {"expected_revision": 1, "enabled": True}, activation=True)
+    # Parent analysis must be created after the knowledge snapshot it owns.
+    rules.model.payloads.extend(deepcopy(rules.model.payloads[:2]))
+    result = rules.parse_rule_request(user(), _request(request_text="存续项目的实收不得小于0", analysis_protocol=2))
+    assert len(result["candidate_options"]) == 2
     _, generated, _ = compared_sources(shared_alias=True, join_keys=[KEY])
     proposal = deepcopy(generated.payloads[0])
     project, funding = CAPTURED_PAID_ADVICE["references"]
@@ -124,7 +129,7 @@ def test_captured_paid_advice_uses_confirmed_knowledge_without_reasking(tmp_path
     rules.model.payloads.append(proposal)
     visit, analyze, router, owner = browser_and_routes(tmp_path, rules, result)
     ready = analyze(visit()["request"])
-    assert len(rules.model.calls) == 3 and confirmed in str(rules.model.calls[-1]["messages"])
+    assert confirmed in str(rules.model.calls[-1]["messages"])
     assert ready["preview"] and not ready["questions"] and not ready["uncertainties"]
     for terminal in ({"status": "completed", "result": ready},
                      {"status": "failed", "error": {"code": "MODEL_UNAVAILABLE"}}):
@@ -174,16 +179,6 @@ def test_average_stays_informational():
 def test_period_adoption_transports_only_the_selected_previewed_range(tmp_path):
     rules, result = analyze_suggestion()
     selected = result["candidate_options"][0]["candidate"]
-    definition = deepcopy(selected["preview"]["definition"])
-    bounds = {"logic": "any", "conditions": [
-        {"left": "project_received", "op": "gt", "right_type": "value", "right": 1},
-        {"left": "project_received", "op": "lt", "right_type": "value", "right": 0},
-    ]}
-    definition.update(expression=bounds, null_policy="skip", generation_mode="manual")
-    definition.pop("null_handling", None)
-    definition.pop("analysis_protocol", None)
-    definition.pop("semantic_intent", None)
-    selected["preview"] = rules.preview_candidate(user(), {"definition": definition})
     offered = result["ai_suggestions"][0]
     offered.update(category="period", kind="field_compare_unary", title="检查期初余额的适用范围",
                    reason="期初余额适用已确认的边界。",
@@ -193,27 +188,33 @@ def test_period_adoption_transports_only_the_selected_previewed_range(tmp_path):
     offered["applicability_dictionary"] = {"transfer_flag": [{"value": "1", "label": "存续"}]}
     visit, *_ = browser_and_routes(tmp_path, rules, result)
     payload = visit()["request"]
-    independent = visit(independent=True)["request"]
-    assert independent.get("adoption_context", {}).get("inherit_check") is not True
-    assert independent["include_suggestions"] is False
-    assert payload["adoption_context"] == {"parent_analysis_id": "analysis-1", "parent_context": result["analysis_context"],
-                                          "suggestion_id": offered["id"], "inherit_check": True, "parents": [
+    assert payload["adoption_context"] == {"mode": "inherit_selected", "parent_analysis_id": payload["adoption_context"]["parent_analysis_id"], "parent_context": result["analysis_context"],
+                                          "suggestion_id": offered["id"], "parents": [
                                               {"definition": selected["preview"]["definition"], "hash": selected["preview"]["content_sha256"]}]}
-    request = payload["request_text"]
-    assert '"field":"transfer_flag","op":"eq","value":"1"' in request
-    assert "默认保留" in request and "新增期间限制" in request and "叠加" in request, "采纳请求须保留已确认范围并叠加建议新增的期间限制"
-    prefix = "已选方案的检查口径："
-    lines = [line[len(prefix):] for line in request.splitlines() if line.startswith(prefix)]
-    assert lines, "采纳请求缺少所选主规则的实际边界"
-    assert json.loads(lines[0]) == [{"table": "project_snapshot", "expression": bounds,
-                                     "null_policy": "review", "null_handling": {"left": "review", "right": "review"},
-                                     "equality_policy": "allow_equal"}]
+    assert offered["title"] in payload["request_text"] and offered["reason"] in payload["request_text"]
 
 
 def browser_and_routes(tmp_path, rules, result):
     owner = {**user(), "capabilities": ["dv.ai_use", "dv.test", "dv.view"]}
     router = ModuleRouter(MANIFEST, default_permission_evaluator)
     register_routes(router, lambda: rules)
+    def register_parent(parent_result):
+        # Use the real registry and owner boundary, including its completed result.
+        parent = rules.analyses.start(owner, {}, worker=lambda *_: deepcopy(parent_result))
+        parent_id = parent["analysis_id"]
+        for _ in range(100):
+            parent = rules.analyses.get(owner, parent_id)
+            if parent["status"] != "running":
+                assert parent["status"] == "completed", parent
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("父分析任务未完成")
+        assert rules.analyses.completed_result(owner, parent_id) == parent_result
+        return parent_id
+
+    parent_id = register_parent(result)
+    scoped_result = scoped_parent_id = None
     # Both input and output of the browser analysis call cross the Python route boundary.
     # First collect its proposed request. Then replay its response through the same UI.
     fixture, requests = tmp_path / "fixture.json", tmp_path / "requests.json"
@@ -221,10 +222,33 @@ def browser_and_routes(tmp_path, rules, result):
     scenario = shutil.copy(Path(__file__).with_name("frontend_supplement_adoption.mjs"), tmp_path)
     shutil.copy(Path(__file__).with_name("frontend_workbench_dom.mjs"), tmp_path)
     def visit(pending=None, child=None, scope_review=None, end_session=False, failure=False,
-              cancel_snapshot=None, independent=False):
-        fixture.write_text(json.dumps({"result": result, "pending": pending, "child": child,
+              cancel_snapshot=None, independent=False, confirmation_result=None, late=None):
+        nonlocal scoped_result, scoped_parent_id
+        if scope_review in ("separate", "unselected") and scoped_result is None:
+            scoped_result = deepcopy(result)
+            alternate = deepcopy(scoped_result["candidate_options"][0])
+            alternate.update(id="alternate-filter", recommended=False)
+            definition = deepcopy(alternate["candidate"]["preview"]["definition"])
+            definition["filters"][0]["value"] = "2"
+            scope = definition["semantic_intent"]["scopes"][0]
+            scope.update(category="终止")
+            scope["memberships"]["transfer_flag"] = {"include": ["2"], "exclude": ["1"]}
+            preview = rules.preview_candidate(owner, {"definition": definition})
+            assert preview.get("sql_preview") and preview.get("content_sha256")
+            alternate["candidate"].update(filters=deepcopy(preview["definition"]["filters"]),
+                                          semantic_intent=deepcopy(preview["definition"]["semantic_intent"]),
+                                          preview=preview)
+            scoped_result["candidate_options"].append(alternate)
+            scoped_parent_id = register_parent(scoped_result)
+        current_result = scoped_result if scope_review in ("separate", "unselected") else result
+        current_id = scoped_parent_id if scope_review in ("separate", "unselected") else parent_id
+        if confirmation_result is not None:
+            current_result = {**confirmation_result, "description": result["description"],
+                              "ai_suggestions": deepcopy(result["ai_suggestions"])}
+        fixture.write_text(json.dumps({"result": current_result, "parentAnalysisId": current_id, "pending": pending, "child": child,
                                        "scopeReview": scope_review, "endSession": end_session, "failure": failure,
-                                       "cancelSnapshot": cancel_snapshot, "independent": independent}),
+                                       "cancelSnapshot": cancel_snapshot, "independent": independent,
+                                       "confirmationOnly": confirmation_result is not None, "late": late}),
                            encoding="utf-8")
         run = subprocess.run(["node", scenario, fixture, requests], cwd=tmp_path, encoding="utf-8",
                              capture_output=True, timeout=60)
@@ -253,21 +277,28 @@ def test_button_starts_independent_analysis_and_transports_real_sample(tmp_path)
     visit, analyze, router, owner = browser_and_routes(tmp_path, rules, result)
     payload = visit()["request"]
     assert visit(scope_review="unselected")["request"]["reasoning_enabled"] is False
-    visit(scope_review="separate", end_session=True)
+    separate = visit(scope_review="separate", end_session=True)["request"]
+    inherited = verified_period_scope(rules, owner, separate)
+    assert {str(group[0]["value"]) for group in inherited["groups"]} == {"1", "2"}
     visit(failure=True)
     assert payload["reasoning_enabled"] is False and payload["model_id"] == "model-1" and payload["source_id"] == "src"
-    assert all(value in payload["request_text"] for value in ("project_received", "funding_received", "各明细都已入账", "transfer_flag", "sum"))
+    assert result["ai_suggestions"][0]["title"] in payload["request_text"]
     assert "revision_of" not in payload and "revised_definition" not in payload
     pending_proposal = deepcopy(proposal)
     pending_proposal["draft"]["semantic_intent"]["open_questions"] = ["募集份额与项目实收采用什么计量口径比较？"]
     rules.model.payloads[-1] = pending_proposal
     pending = analyze(payload)
     assert not pending.get("preview") and "计量口径" in str(pending.get("uncertainties"))
+    visit(confirmation_result=pending)
     rules.model.payloads.append(proposal)
     accepted = visit(pending)["clarification"]
     assert accepted["request_text"] == payload["request_text"] and accepted["reasoning_enabled"] is False
     ready = analyze(accepted)
     assert ready["preview"], ready.get("uncertainties")
+    visit(child=ready, late="completed")
+    visit(child=ready, late="changed")
+    visit(late="changed-running")
+    visit(late="running")
     sample_payload = visit(pending, ready)["sample"]
     definition = sample_payload["definition"]
     assert definition["expression"]["op"] == "neq" and definition["expression"]["right_table"] == "related"
@@ -292,7 +323,7 @@ def test_button_starts_independent_analysis_and_transports_real_sample(tmp_path)
     assert rules.list_rules(user(), {})["items"] == []
 
 @pytest.mark.skipif(not shutil.which("node"), reason="需要 Node.js 验证工作台按钮")
-def test_joined_period_parent_offers_only_an_independent_analysis(tmp_path):
+def test_joined_period_parent_uses_selected_preview(tmp_path):
     rules, result = analyze_suggestion()
     result["candidate_options"].reverse()
     for i, option in enumerate(result["candidate_options"]):
@@ -303,12 +334,12 @@ def test_joined_period_parent_offers_only_an_independent_analysis(tmp_path):
         "table_name": definition["table_name"], "field_name": definition["expression"]["left"]}])
     visit, *_ = browser_and_routes(tmp_path, rules, result)
     request = visit()["request"]
-    assert "adoption_context" not in request and request["include_suggestions"] is False
-    assert json.dumps(definition["join"], separators=(",", ":"), ensure_ascii=False) in request["request_text"]
+    assert request["adoption_context"]["mode"] == "inherit_selected"
+    assert request["adoption_context"]["parents"][0]["definition"]["join"] == definition["join"]
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="需要 Node.js 验证工作台按钮")
-def test_joined_parent_sends_the_owned_period_suggestion_even_without_parent_receipts(tmp_path):
+def test_joined_parent_requires_selected_preview_for_period_suggestion(tmp_path):
     rules, result = analyze_suggestion()
     result["candidate_options"].reverse()
     for i, option in enumerate(result["candidate_options"]):
@@ -319,6 +350,6 @@ def test_joined_parent_sends_the_owned_period_suggestion_even_without_parent_rec
                 applicability_filters=[{"table": definition["table_name"], "field": "funding_received", "op": "neq", "value": -2}])
     visit, *_ = browser_and_routes(tmp_path, rules, result)
     request = visit()["request"]
-    assert request["adoption_context"] == {"mode": "suggestion_only", "parent_analysis_id": "analysis-1",
-                                          "parent_context": result["analysis_context"], "suggestion_id": item["id"]}
-    assert visit(scope_review="none")["request"]["adoption_context"] == request["adoption_context"]
+    assert request["adoption_context"]["mode"] == "inherit_selected"
+    assert request["adoption_context"]["suggestion_id"] == item["id"]
+    visit(scope_review="none")

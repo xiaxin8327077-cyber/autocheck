@@ -1,7 +1,7 @@
 import { createRuntime, errorMessage } from "../runtime.js";
 import { canChooseAllFields, candidateIssues, reviewCandidate, createTestEvidence, confirmationReadiness, previewReadiness, ruleScopeIssues, hasCapability, ownsResource } from "../state.js";
-import { bindComparisonField, comparisonFields, fieldTarget, hasComparison, isGrouped } from "../comparisons.js";
-import { createAiCandidatePanel, candidateCondition, candidateFiltersText } from "../components/ai_candidate.js";
+import { bindComparisonField, comparisonFields, comparisons, fieldTarget, hasComparison, isGrouped, operandFields } from "../comparisons.js";
+import { createAiCandidatePanel, candidateFiltersText } from "../components/ai_candidate.js";
 import { createCandidateOptionsPanel, createRequestKeyRegistry } from "../components/candidate_options.js";
 import { createDialog } from "../components/dialog.js";
 import { button, element } from "../components/dom.js";
@@ -12,6 +12,7 @@ import { readScopeChoice, rememberScopeChoice } from "../components/scope_choice
 import { applyBusinessAnswers, collectBusinessQuestions, preparedOptions, reviewDefinition } from "../candidate_review.js";
 import { createBusinessQuestionsPanel } from "../components/business_questions.js";
 import { openSqlTestDialog } from "../components/sql_test_dialog.js";
+import { createSupplementInline } from "../components/supplement_inline.js";
 
 const CHANNELS = ["workbench-detail", "workbench-metadata", "workbench-ai", "workbench-save", "workbench-test", "workbench-confirm", "workbench-preview"];
 const ANALYSIS_POLL_MS = 900;
@@ -71,12 +72,9 @@ export function createWorkbench({
   let elapsedTimer = null;
   let analysisTimer = null;
   let activeAnalysis = null;
-  let supplementWorkbench = null;
-  let supplementTitle = "";
+  let supplementSession = null;
   let supplementAdoption = null;
   let returningSupplement = false;
-  let deferredSupplements = [];
-  let deferredSupplementInput = "";
   let businessReview = null;
   let businessReviewSession = null;
   let clarificationContext = null;
@@ -118,7 +116,7 @@ export function createWorkbench({
       } : null,
       onRetry: () => businessReview ? verifyBusinessReview() : applyDecision(), notify,
       onChoice: (id, value) => {
-        if (work.pendingOptionSave) return;
+        if (work.pendingOptionSave || supplementSession) return;
         work.selectedChoice = { id, value }; render(); page?.candidate.focusSelected();
       },
     }) : null;
@@ -169,7 +167,7 @@ export function createWorkbench({
       element("span", { className: "dv-ai-wait-symbol", attrs: { "aria-hidden": "true" } },
         element("span", { className: "dv-ai-wait-mark" }, aiIcon("star"))),
       element("div", { className: "dv-ai-wait-copy" },
-        element("strong", { className: "dv-ai-wait-title", text: "AI 正在分析你的校验需求" }),
+        element("strong", { className: "dv-ai-wait-title", text: supplementAdoption ? "AI 正在核对补充建议" : "AI 正在分析你的校验需求" }),
         element("p", { text: "结合文档中的表结构与字段说明，理解你的业务口径。" })),
       element("span", { className: "dv-ai-wait-timer" },
         element("span", {}, "已等待 ", aiWaitTimer, " 秒")),
@@ -178,6 +176,11 @@ export function createWorkbench({
     const aiProgress = isAi
       ? element("section", { className: "dv-ai-progress", hidden: true }, aiWaitBody, aiProgressText)
       : null;
+    const retrySupplement = supplementAdoption ? button("重试采纳", {
+      listen, className: "dv-button dv-button-primary", hidden: true,
+      onClick: () => businessReview?.retry && !work.candidate?.analysis_context_changed
+        ? verifyBusinessReview() : startSupplementAnalysis(),
+    }) : null;
     const editRequest = isAi ? button("修改需求", { listen, className: "dv-ai-text-button dv-ai-edit-request", onClick: expandDescription }) : null;
     if (isAi) form.groups.aiContext.append(editRequest);
     const collapsedBar = isAi ? element("div", { className: "dv-description-collapsed", hidden: true }, collapsedText) : null;
@@ -244,10 +247,10 @@ export function createWorkbench({
     const root = element("section", { className: "dv-workbench dv-workbench-modal-content dv-single-page" },
       inputSection, aiProgress, configSection, suggestionsSection, testingSection);
     const scene = {
-      suggestionsSection, suggestionsList, suggestionRemovers: [],
+      suggestionsSection, suggestionsList, suggestionRemovers: [], suggestionButtons: new Map(),
       form, candidate, businessQuestions, reselectBusiness, optionsPanel, detailHome, editor, switchButton, tests, saveButton, footerBulk, confirmButton, saveHint, saveNote, verifyHint,
       collapsedText, collapsedBar, waitRequest, waitRequestText, waitSource, waitModel,
-      aiProgress, aiWaitBody, aiWaitTimer, aiWaitStage, aiProgressText, aiProgressNote, continueWaiting,
+      aiProgress, aiWaitBody, aiWaitTimer, aiWaitStage, aiProgressText, aiProgressNote, continueWaiting, retrySupplement,
       inputSection, configSection, testingSection, root, editRequest, choiceContinue,
       testLaunch, testLaunchLabel, testPreparing, testTitle, testCount,
     };
@@ -326,7 +329,7 @@ export function createWorkbench({
   }
 
   function changeCase(index, expected, target = work) {
-    if (!target.previewCases || work.busy || work.confirmBusy || work.optionsSaving || work.pendingOptionSave
+    if (!target.previewCases || supplementSession || work.busy || work.confirmBusy || work.optionsSaving || work.pendingOptionSave
         || work.testing || work.previewBusy || ![0, 1].includes(expected)) return;
     target.previewCases = target.previewCases.map((item, offset) => ({ ...item,
       expected_count: offset === index ? expected : item.expected_count, status: "not_run", actual_count: null }));
@@ -409,7 +412,7 @@ export function createWorkbench({
   }
 
   async function applyDecision(key, value) {
-    if (work.busy || work.previewBusy || work.aiLoading || work.pendingOptionSave || analysisStale()) return;
+    if (supplementSession || work.busy || work.previewBusy || work.aiLoading || work.pendingOptionSave || analysisStale()) return;
     const choice = work.candidate?.questions?.find((item) => item.id === key);
     if (key && !choice) return;
     if (canChooseAllFields(choice) && Array.isArray(value)) {
@@ -548,8 +551,14 @@ export function createWorkbench({
     catch (error) { if (runtime.isActive()) notify(`未能确认上次分析已结束：${errorMessage(error)}`, "warning"); }
   }
 
+  function stopSupplement() {
+    const session = supplementSession;
+    supplementSession = null;
+    session?.workbench.close();
+  }
+
   function invalidate() {
-    supplementWorkbench?.close();
+    stopSupplement();
     sqlTestDialog?.close(); sqlTestDialog = null;
     businessReview = null;
     businessReviewSession = null;
@@ -611,7 +620,6 @@ export function createWorkbench({
     invalidate();
     clarificationContext = null;
     dialog?.close();
-    deferredSupplements = [];
     Object.assign(work, {
       mode: mode === "ai" ? "ai" : "manual", ruleId: ruleId || null, detail: null, evidence: null, candidate: null,
       revision: 0, readOnly: false, busy: false, aiLoading: false, aiError: "", aiElapsed: 0, testing: false,
@@ -625,46 +633,65 @@ export function createWorkbench({
     stopElapsed();
     lastConfigVisible = false;
     lastTestingVisible = false;
+    supplementAdoption = supplement?.adoptionContext || null;
+    returningSupplement = false;
     page = buildPage(work.mode);
     page.form.reset(null, seed);
     page.form.setSources();
     page.form.setCategories();
     if (work.mode === "ai") page.form.setModels();
-    supplementTitle = supplement?.title || "";
-    supplementAdoption = supplement?.adoptionContext || null;
     if (supplement) page.form.restoreInput(supplement.signature);
-    dialog = createDialog({
-      host,
+    const dispose = () => {
+      stopElapsed();
+      invalidate();
+      dialog = null;
+      footerButton = null;
+      page = null;
+      onClose?.();
+    };
+    dialog = supplement ? createSupplementInline({ host: supplement.host, listen, onClose: dispose }) : createDialog({
+      host, onClose: dispose,
       title: ruleId ? "编辑、测试与确认规则" : work.mode === "ai" ? "AI 新建校验规则" : "新建校验规则",
       icon: work.mode === "ai" ? aiMark() : null,
       subtitle: work.mode === "ai" ? "/ 分析结果" : "",
       className: `dv-workbench-dialog${work.mode === "ai" ? " dv-ai-workbench-dialog" : ""}`,
-      onClose: () => {
-        stopElapsed();
-        invalidate();
-        dialog = null;
-        footerButton = null;
-        page = null;
-        onClose?.();
-      },
       onError: (message) => notify(message, "error"),
     });
-    footerButton = button("取消");
+    footerButton = supplement ? dialog.closeButton : button("取消");
     dialog.bind(footerButton, "click", () => {
       if (work.aiLoading) {
         return cancelWaiting();
       }
       close();
     });
-    if (work.mode === "ai") dialog.footer.append(page.saveNote, page.businessQuestions.progress,
+    if (supplement) {
+      dialog.setTitle(`采纳补充建议 · ${supplement.title}`);
+      dialog.body.append(page.aiProgress, page.businessQuestions.element);
+      dialog.footer.append(page.businessQuestions.progress,
+        element("div", { className: "dv-ai-footer-actions" }, page.continueWaiting, footerButton,
+          page.retrySupplement, page.businessQuestions.submit));
+    } else if (work.mode === "ai") dialog.footer.append(page.saveNote, page.businessQuestions.progress,
       element("div", { className: "dv-ai-footer-actions" }, page.continueWaiting, page.reselectBusiness, footerButton, page.footerBulk,
         page.saveButton, page.confirmButton, page.choiceContinue, page.businessQuestions.submit));
     else dialog.footer.append(footerButton);
-    dialog.body.append(page.root);
+    if (!supplement) dialog.body.append(page.root);
     render();
     if (ruleId) await loadDetail(ruleId);
-    if (supplement) await parse();
+    if (supplement) {
+      footerButton.focus();
+      await startSupplementAnalysis();
+    }
     return dialog;
+  }
+
+  async function startSupplementAnalysis() {
+    try {
+      await parse();
+    } catch (error) {
+      if (!dialog) return;
+      work.aiError ||= errorMessage(error, "采纳补充建议失败");
+      render();
+    }
   }
 
   async function loadDetail(ruleId) {
@@ -938,7 +965,7 @@ export function createWorkbench({
 
   function toggleOption(id, checked) {
     if (work.pendingOptionSave) { render(); return; }
-    if (work.busy || work.optionsSaving || work.testing) return;
+    if (supplementSession || work.busy || work.optionsSaving || work.testing) return;
     const current = new Set(work.selectedOptions);
     if (checked) current.add(id); else current.delete(id);
     work.selectedOptions = [...current];
@@ -947,7 +974,7 @@ export function createWorkbench({
   }
 
   async function saveSelectedOptions() {
-    if (work.pendingOptionSave) return;
+    if (supplementSession || work.pendingOptionSave) return;
     if (work.busy || work.optionsSaving || work.testing || work.previewBusy || work.confirmBusy || work.aiLoading) return;
     if (work.readOnly || !hasCapability(user, "dv.manage") || analysisStale()) {
       notify(analysisStale() ? "请先应用需求修改后保存" : "当前无权保存规则", "warning");
@@ -1006,7 +1033,7 @@ export function createWorkbench({
 
 
   async function saveSelectedOptionsAndEnable() {
-    if (work.busy || work.optionsSaving || work.testing || work.previewBusy || work.confirmBusy || work.aiLoading) return;
+    if (supplementSession || work.busy || work.optionsSaving || work.testing || work.previewBusy || work.confirmBusy || work.aiLoading) return;
     syncActiveOptionState();
     const gate = selectedOptionGate();
     if (!gate.enabled) { notify(gate.reasons.join("；"), "warning"); return; }
@@ -1110,30 +1137,51 @@ export function createWorkbench({
     }
   }
 
-  function suggestionScopeReady() {
-    return work.mode === "ai" && !work.aiLoading && !work.previewBusy && !work.aiError
-      && !analysisStale() && Boolean(work.preview?.sql_preview && work.preview?.definition)
-      && !work.candidate?.questions?.length && !work.preview.questions?.length
-      && ruleScopeIssues(work.preview.definition).length === 0
-      && ruleScopeIssues(work.candidate || {}).length === 0;
+  function adoptionOptions() {
+    if (work.mode !== "ai" || businessReview || work.aiLoading || work.aiError || analysisStale()) return [];
+    const options = work.options.length
+      ? work.options.filter((option) => !option.supplemental).map((option) => {
+        const target = work.optionWork[option.id];
+        const active = option.id === work.activeOptionId;
+        return {
+          selected: work.selectedOptions.includes(option.id),
+          candidate: active ? work.candidate : target?.candidate,
+          preview: active ? work.preview : target?.preview,
+        };
+      })
+      : [{ selected: true, candidate: work.candidate, preview: work.preview }];
+    return options.filter(({ candidate, preview }) => readyAdoptionPreview(candidate, preview));
   }
 
-  function suggestionAdoptionReady(item) {
-    if (item.adoption) {
-      return !supplementWorkbench && !work.aiLoading && !work.aiError && !work.previewBusy && !analysisStale()
-        && !work.options.some(o => o.suggestionId === item.id) && !deferredSupplements.some(o => o.suggestionId === item.id)
-        && !item.references_ambiguous && item.support_level !== "unsupported" && Boolean(item.references?.length);
-    }
-    if (!suggestionScopeReady()) return false;
-    const table = String(work.candidate?.table_name || "").toLowerCase();
-    const fields = comparisonFields(work.candidate?.expression).map((name) => name.toLowerCase());
-    return item?.support_level === "supported" && !item.references_ambiguous
-      && Array.isArray(item.references) && item.references.some((ref) =>
-        String(ref?.table_name || "").toLowerCase() === table
-        && fields.includes(String(ref?.field_name || "").toLowerCase()));
+  function readyAdoptionPreview(candidate, preview) {
+    return Boolean(preview?.sql_preview && preview.content_sha256 && preview.definition)
+      && !candidate?.questions?.length && !preview.questions?.length
+      && !ruleScopeIssues(preview.definition).length && !ruleScopeIssues(candidate || {}).length;
+  }
+
+  function relevantAdoptionParents(item, options = adoptionOptions()) {
+    return options.filter(({ selected, preview }) => {
+      if (!selected) return false;
+      const definition = preview.definition;
+      // A period check changes the metric while preserving the original main table and its scope.
+      if (item.category === "period") return item.references?.some((ref) => ref.table_name === definition.table_name);
+      return item.references?.some(({ table_name, field_name }) => comparisons(definition.expression).some((part) =>
+        (table_name === definition.table_name && operandFields(part, "left").includes(field_name))
+        || (table_name === (part.right_table === "related" ? definition.join?.table_name : definition.table_name)
+          && operandFields(part, "right").includes(field_name))));
+    }).map(({ preview }) => ({ definition: preview.definition, hash: preview.content_sha256 }));
+  }
+
+  function suggestionAdoptionReady(item, options = adoptionOptions()) {
+    return !supplementSession && !work.previewBusy && item.support_level !== "unsupported" && !item.references_ambiguous
+      && !work.optionWork[`supplement-${item.id}`]
+      && Boolean(item.adoption
+        ? work.analysis?.analysis_id && work.analysis.result?.analysis_context && relevantAdoptionParents(item, options).length
+        : item.definition && item.support_level === "supported" && relevantAdoptionParents(item, options).length);
   }
 
   function appendSupplementCards(cards) {
+    if (!cards.length) return;
     if (!work.options.length) {
       const primary = work.candidate;
       const id = "primary";
@@ -1150,7 +1198,7 @@ export function createWorkbench({
       work.options.push(card);
       work.optionWork[card.id] = { candidate: card.candidate, definition: null, selectedChoice: null,
         preview: card.candidate.preview, previewCases: null, previewEvidence: null, analysisInput: work.analysisInput, saved: null };
-      if (card.recommended) work.selectedOptions.push(card.id);
+      work.selectedOptions.push(card.id);
     }
     work.requestKeyRegistry.refresh();
     work.expandedOptionId = cards[0].id;
@@ -1158,161 +1206,73 @@ export function createWorkbench({
   }
 
   function returnSupplementWhenReady() {
-    if (!onSupplementReady || returningSupplement || activeAnalysis || businessReview || work.previewBusy
+    if (!onSupplementReady || returningSupplement || activeAnalysis || businessReview || work.previewBusy || work.aiError
         || !work.preview?.sql_preview || analysisStale()) return;
     const options = work.options.length ? work.options : [{ id: "primary", label: work.candidate.rule_name, candidate: work.candidate }];
     const cards = options.map(option => {
       const state = work.optionWork[option.id];
       const candidate = state?.candidate || option.candidate;
-      return { ...option, candidate: { ...candidate, preview: state?.preview || candidate.preview },
-        recommended: !work.options.length || work.selectedOptions.includes(option.id) };
+      return { ...option, candidate: { ...candidate, preview: state?.preview || candidate.preview } };
     });
-    if (cards.some(card => !card.candidate.preview?.sql_preview)) return;
+    if (cards.some(({ candidate }) => !readyAdoptionPreview(candidate, candidate.preview))) return;
     const anchor = previewPayload({}, work.candidate);
     delete anchor.definition;
+    const inline = dialog;
     returningSupplement = true;
     // Finish the current refresh before disposing its form and listeners.
     queueMicrotask(() => {
-      if (!dialog) return;
+      if (dialog !== inline) return;
       try {
         onSupplementReady(cards, anchor);
         close();
       } catch (error) {
         returningSupplement = false;
-        notify(errorMessage(error, "补充方案未能加入当前工作台"), "error");
+        work.aiError = errorMessage(error, "补充方案未能加入当前工作台");
+        render();
       }
     });
   }
 
-  function selectedAdoptionOptions() {
-    return work.options.length ? work.options.filter(o => work.selectedOptions.includes(o.id))
-      .map(o => ({ candidate: work.optionWork[o.id]?.candidate || o.candidate,
-        preview: o.id === work.activeOptionId ? work.preview : work.optionWork[o.id]?.preview }))
-      : [{ candidate: work.candidate, preview: work.preview }];
-  }
-
-  function periodConditions(item) {
-    if (businessReview || item.category !== "period" || !item.adoption || item.references?.length !== 1
-        || !work.analysis?.analysis_id || !work.analysis.result?.analysis_context) return [];
-    const ref = item.references[0];
-    const summaries = new Set();
-    for (const { preview, candidate } of selectedAdoptionOptions()) {
-      const d = preview?.definition;
-      if (!d || d.join || !preview.sql_preview || !preview.content_sha256 || candidate?.questions?.length || preview.questions?.length
-          || d.table_name !== ref.table_name) return [];
-      const terms = d.expression?.conditions || [d.expression];
-      const source = terms[0]?.left;
-      const columnType = name => String(preview.columns?.find(c => c.column_name === name)?.data_type || "")
-        .toLowerCase().split("(")[0].trim();
-      const family = type => {
-        if (/^(?:tinyint|mediumint|smallint|int(?:eger|2|4|8)?|bigint|bit|decimal|numeric|float[48]?|double(?: precision)?|real|money|(?:big)?serial)$/.test(type)) return "number";
-        if (/^(?:char|varchar|text|tinytext|mediumtext|longtext|enum|set|uuid|character varying|character|bpchar)$/.test(type)) return "text";
-        if (/^(?:date|datetime|timestamp|time|year)$/.test(type)) return "date";
-        return "";
-      };
-      const targetType = family(columnType(ref.field_name));
-      if (!targetType || typeof source !== "string" || targetType !== family(columnType(source))) return [];
-      if (!terms.every(t => t.left === source && (!t.left_type || t.left_type === "field")
-          && (["is_null", "is_not_null"].includes(t.op) || (targetType === "number" && t.right_type === "value"
-            && Number.isFinite(t.right) && ["gt","gte","lt","lte","eq","neq"].includes(t.op))))) return [];
-      const renamed = terms.map(t => ({ ...t, left: ref.field_name }));
-      const expression = isGrouped(d.expression) ? { ...d.expression, conditions: renamed } : renamed[0];
-      const policies = { skip: "空值跳过", review: "空值待核查", zero: "数值空值按0", violate: "空值计异常", empty_string_as_null: "空字符串视为空值" };
-      summaries.add([candidateCondition({ ...d, expression, columns: preview.columns }), policies[d.null_policy]].filter(Boolean).join("，"));
-    }
-    return [...summaries];
-  }
-
-  async function adoptSuggestion(suggestion, inheritCheck = false) {
+  async function adoptSuggestion(suggestion, card) {
     if (!suggestionAdoptionReady(suggestion) || work.testing || work.busy || work.confirmBusy
         || work.optionsSaving || work.pendingOptionSave || work.readOnly || !hasCapability(user, "dv.ai_use")) return;
     if (suggestion.adoption) {
-      const { source_id, model_id, reasoning_enabled } = page.form.read();
-      const referenced = new Set(suggestion.references.map(ref => ref.table_name));
-      const options = selectedAdoptionOptions();
-      const inheritedConditions = inheritCheck ? periodConditions(suggestion) : [];
-      if (inheritCheck && !inheritedConditions.length) return;
-      const scopes = [];
-      const checks = [];
-      const parents = [];
-      const categories = new Set();
-      for (const { candidate, preview } of options) {
-        if (!candidate || (!referenced.has(candidate.table_name) && !referenced.has(candidate.join?.table_name))) continue;
-        if (candidate.report_category) categories.add(candidate.report_category);
-        const filters = [];
-        for (const filter of candidate.filters || []) {
-          if (filter.confirmed !== true) continue;
-          const table = filter.table === "related" ? candidate.join?.table_name : candidate.table_name;
-          if (table) filters.push({ table, field: filter.field, op: filter.op, value: filter.value });
-        }
-        scopes.push({ table: candidate.table_name, filters });
-        const def = preview?.definition;
-        if (!businessReview && preview?.sql_preview && def?.expression && !candidate.questions?.length && !preview.questions?.length) {
-          checks.push({ table: def.table_name, related_table: def.join?.table_name, join: def.join, expression: def.expression,
-            null_policy: def.null_policy, null_handling: def.null_handling, equality_policy: def.equality_policy });
-          if (referenced.has(def.table_name) && preview.content_sha256) parents.push({ definition: def, hash: preview.content_sha256 });
-        }
-      }
-      const request = [
-        suggestion.title, suggestion.reason !== suggestion.title ? suggestion.reason : "",
-        suggestion.kind && "建议检查类型：" + suggestion.kind,
-        "文档字段：" + suggestion.references.map(ref => `${ref.table_name}.${ref.field_name}`).join("、"),
-        categories.size === 1 && "原方案报送分类：" + [...categories][0],
-        suggestion.adoption.operations?.length && "建议运算：" + suggestion.adoption.operations.join("、"),
-        suggestion.applicability_filters?.length && "已核实的期间适用范围：" + JSON.stringify(suggestion.applicability_filters),
-        scopes.some(group => group.filters.length) && "各原方案的适用范围：" + JSON.stringify(scopes),
-        checks.length && "已选方案的检查口径：" + JSON.stringify(checks),
-        checks.length && "用户已选且核实的适用范围默认保留在新方案的筛选条件中。建议明确改变某项范围时，仅替换对应条件，其余保留。新增期间限制与原范围叠加，须同时满足。主方案的异常表达式仅作背景，按建议的独立目标生成检查，不机械取反或合并。期间指标建议明确继承主方案边界时，沿用相应上下界、等号和空值口径。",
-        inheritCheck && "用户选择按原条件采纳。以下为该期间指标的已确认异常条件，原建议中的条件描述由本次选择替代：" + inheritedConditions.join("；"),
-        suggestion.adoption.preconditions?.length && "原建议所列前提，请结合当前已确认业务知识核实：" + suggestion.adoption.preconditions.join("；"),
-        suggestion.limitations?.length && "建议适用限制：" + suggestion.limitations.join("；"),
-      ].filter(Boolean).join("\n");
-      let adoptionContext = null;
-      if (suggestion.category === "period" && referenced.size === 1 && work.analysis?.analysis_id && work.analysis.result?.analysis_context) {
-        const owner = { parent_analysis_id: work.analysis.analysis_id, parent_context: work.analysis.result.analysis_context,
-          suggestion_id: suggestion.id };
-        if (parents.length && parents.length === options.length && parents.every(p => !p.definition.join)
-            && (inheritCheck || suggestion.applicability_filters?.length || parents.some(p => p.definition.filters?.length))) {
-          adoptionContext = { ...owner, parents, ...(inheritCheck ? { inherit_check: true } : {}) };
-        } else if (suggestion.applicability_filters?.length) {
-          adoptionContext = { ...owner, mode: "suggestion_only" };
-        }
-      }
+      const { source_id, model_id } = page.form.read();
+      const adoptionContext = {
+        mode: "inherit_selected",
+        parent_analysis_id: work.analysis.analysis_id,
+        parent_context: work.analysis.result.analysis_context,
+        suggestion_id: suggestion.id,
+        parents: relevantAdoptionParents(suggestion),
+      };
+      const request = [suggestion.title, suggestion.reason !== suggestion.title ? suggestion.reason : ""].filter(Boolean).join("\n");
       const childRuntime = createRuntime({ notify });
-      const parentInput = inputSignature();
       childRuntime.activate();
-      const parentOverlay = dialog.element;
-      parentOverlay.hidden = true;
-      supplementWorkbench = createWorkbench({ state, api, user, notify, host, confirmAction, onChanged, onRetrySources, onRetryModels,
+      const session = { input: inputSignature(), workbench: null };
+      session.workbench = createWorkbench({ state, api, user, notify, host, confirmAction, onChanged, onRetrySources, onRetryModels,
+        runtime: childRuntime, listen: childRuntime.listen,
         onSupplementReady: (options, anchor) => {
-          if (!dialog || parentInput !== inputSignature()) return;
-          const cards = options.map((option, index) => ({ ...option,
-            id: `supplement-${suggestion.id}${index ? "-" + index : ""}`, supplemental: true, suggestionId: suggestion.id,
+          if (supplementSession !== session || !dialog || session.input !== inputSignature()) return;
+          appendSupplementCards(options.map((option, index) => ({ ...option,
+            id: `supplement-${suggestion.id}${index ? "-" + index : ""}`, supplemental: true,
             label: option.label || suggestion.title, match_reason: suggestion.reason,
-            candidate: { ...option.candidate, supplementAnalysis: anchor } }));
-          if (businessReview || !work.candidate?.rule_type) {
-            deferredSupplements.push(...cards);
-            deferredSupplementInput = JSON.stringify(JSON.parse(parentInput).slice(0, 4));
-          } else appendSupplementCards(cards);
+            candidate: { ...option.candidate, supplementAnalysis: anchor } })));
         },
-        runtime: childRuntime, listen: childRuntime.listen, onClose: () => {
+        onClose: () => {
           childRuntime.destroy();
-          supplementWorkbench = null;
-          parentOverlay.hidden = false;
+          if (supplementSession !== session) return;
+          supplementSession = null;
           render();
-        } });
-      try {
-        await supplementWorkbench.open({ mode: "ai", supplement: { title: suggestion.title, adoptionContext,
-          signature: JSON.stringify([source_id, request, model_id, reasoning_enabled]) } });
-      } catch (error) {
-        // An analysis error stays visible in the independent editor for retry.
-        if (!supplementWorkbench?.isOpen()) {
-          childRuntime.destroy();
-          supplementWorkbench = null;
-          parentOverlay.hidden = false;
-        }
-        throw error;
-      }
+          const button = page?.suggestionButtons.get(suggestion.id);
+          if (button && !button.disabled) button.focus();
+        },
+      });
+      supplementSession = session;
+      render();
+      await session.workbench.open({ mode: "ai", supplement: {
+        host: card, title: suggestion.title, adoptionContext,
+        signature: JSON.stringify([source_id, request, model_id, false]),
+      } });
       return;
     }
     if (!suggestion.definition) return;
@@ -1365,35 +1325,40 @@ export function createWorkbench({
 
   function renderSuggestions() {
     if (!page || !page.suggestionsSection) return;
+    if (supplementSession) {
+      // Keep the active card and its clarification form mounted during parent refreshes.
+      page.suggestionButtons.forEach((control) => { control.disabled = true; });
+      return;
+    }
     page.suggestionRemovers.splice(0).forEach((remove) => remove?.());
-    const list = !onSupplementReady && work.mode === "ai" && !work.aiLoading && !work.aiError && !analysisStale()
-      ? work.aiSuggestions.filter((item) => item && typeof item === "object") : [];
+    page.suggestionButtons.clear();
+    const options = adoptionOptions();
+    const list = options.length ? work.aiSuggestions.filter((item) => item && typeof item === "object") : [];
     page.suggestionsSection.hidden = !list.length;
     page.suggestionsList.replaceChildren();
     list.forEach((item) => {
-      const adopted = Boolean(work.optionWork[`supplement-${item.id}`]) || deferredSupplements.some(o => o.suggestionId === item.id);
-      const conditions = periodConditions(item);
+      const adopted = Boolean(work.optionWork[`supplement-${item.id}`]);
       const adopt = (item.adoption || (item.support_level === "supported" && item.definition)) && item.id && hasCapability(user, "dv.ai_use")
-        ? button(adopted ? "已采纳" : conditions.length ? "按原条件采纳" : "采纳", { capability: "dv.ai_use", className: "dv-button dv-ai-supplement-adopt",
-          disabled: !suggestionAdoptionReady(item) || adopted || work.testing || work.busy || work.confirmBusy || work.optionsSaving || Boolean(work.pendingOptionSave) || work.readOnly,
+        ? button(adopted ? "已采纳" : "采纳", { capability: "dv.ai_use", className: "dv-button dv-ai-supplement-adopt",
+          disabled: !suggestionAdoptionReady(item, options) || adopted || work.testing || work.busy || work.confirmBusy || work.optionsSaving || Boolean(work.pendingOptionSave) || work.readOnly,
         }) : null;
-      if (adopt) page.suggestionRemovers.push(listen(adopt, "click", () => adoptSuggestion(item, Boolean(conditions.length))));
-      const independent = adopt && conditions.length && !adopted
-        ? button("独立分析", { capability: "dv.ai_use", className: "dv-button", disabled: adopt.disabled }) : null;
-      if (independent) page.suggestionRemovers.push(listen(independent, "click", () => adoptSuggestion(item)));
       const card = element("div", { className: "dv-ai-supplement" },
         element("div", { className: "dv-ai-supplement-head" },
           element("strong", { text: item.title || "补充建议" }),
           element("span", { className: `dv-ai-supplement-support is-${item.support_level || "needs_confirmation"}`,
             text: item.support_level === "supported" ? "可进一步检查"
-              : item.support_level === "unsupported" ? "暂不支持直接生成" : item.adoption ? "可单独分析" : "需先确认口径" }), adopt, independent));
-      if (conditions.length) card.append(element("div", { className: "dv-ai-supplement-reason",
-        text: "按原条件检查：" + conditions.join("；") }));
+              : item.support_level === "unsupported" ? "暂不支持直接生成" : "需先确认口径" }), adopt));
+      if (adopt) {
+        page.suggestionButtons.set(item.id, adopt);
+        page.suggestionRemovers.push(listen(adopt, "click", () => {
+          if (!adopt.disabled) return adoptSuggestion(item, card);
+        }));
+      }
       card.append(element("div", { className: "dv-ai-supplement-reason", text: item.provenance === "model"
         ? (item.references_ambiguous ? "来源：模型建议，待确认文档归属" : "来源：模型建议，系统已核对文档引用")
         : "来源：待核实的建议依据" }));
       if (item.applicability_filters?.length) {
-        const source = selectedAdoptionOptions().find(({ candidate }) => candidate?.table_name === item.references[0]?.table_name);
+        const source = options.find(({ preview }) => preview.definition.table_name === item.references?.[0]?.table_name);
         if (source) {
           const scope = candidateFiltersText({ columns: source.preview?.columns || source.candidate.columns,
             filters: item.applicability_filters.map(f => ({ ...f, table: "base" })),
@@ -1402,7 +1367,7 @@ export function createWorkbench({
         }
       }
       if (item.reason) card.append(element("div", { className: "dv-ai-supplement-reason",
-        text: (conditions.length ? "独立分析建议：" : "") + item.reason }));
+        text: item.reason }));
       if (Array.isArray(item.references) && item.references.length) {
         card.append(element("div", { className: "dv-ai-supplement-refs", text: `证据：${item.references
           .map((ref) => `${ref.table_name || "—"}.${ref.field_name || "—"}`).join("；")}` }));
@@ -1413,7 +1378,7 @@ export function createWorkbench({
       }
       if (Array.isArray(item.limitations) && item.limitations.length) {
         card.append(element("ul", { className: "dv-ai-supplement-limits" },
-          item.limitations.map((text) => element("li", { text: (conditions.length ? "独立分析限制：" : "") + text }))));
+          item.limitations.map((text) => element("li", { text }))));
       }
       page.suggestionsList.append(card);
     });
@@ -1452,7 +1417,7 @@ export function createWorkbench({
   }
 
   function reselectBusinessQuestions() {
-    if (!canReselectBusinessQuestions() || work.pendingOptionSave || work.readOnly || !hasCapability(user, "dv.ai_use")
+    if (!canReselectBusinessQuestions() || supplementSession || work.pendingOptionSave || work.readOnly || !hasCapability(user, "dv.ai_use")
         || work.busy || work.testing || work.preparingTests || work.confirmBusy || work.previewBusy || work.aiLoading || work.optionsSaving) return;
     const session = businessReviewSession;
     session.reselecting = true;
@@ -1564,7 +1529,7 @@ export function createWorkbench({
       businessReview = null;
       work.previewBusy = false;
       page.businessQuestions.clear();
-      if (batch.options.length === 1) applySingleResult(batch.options[0].candidate);
+      if (batch.options.length === 1) applySingleResult({ ...batch.options[0].candidate, ai_suggestions: batch.result.ai_suggestions || [] });
       else {
         const originalIds = new Set(batch.result.candidate_options.map((item) => item.id));
         setupMultiOptions({ ...batch.result, candidate_options: batch.options.map((item) => ({
@@ -1610,7 +1575,7 @@ export function createWorkbench({
     const represented = new Set(single.candidate.questions.flatMap((item) => [item.text, item.uncertainty]));
     const legacyRecheck = !result.analysis_protocol && !result.preview_error && !result.unsupported_requirements?.length
       && result.uncertainties?.some((note, index) => !represented.has(note) && !result.uncertainty_resolutions?.[index]);
-    if (!single.candidate.preview && (result.analysis_protocol === 2 || (single.candidate.questions.length
+    if (!single.candidate.preview && (supplementAdoption || result.analysis_protocol === 2 || (single.candidate.questions.length
         && !legacyRecheck && collectBusinessQuestions([single]).length > 1))) {
       work.aiSuggestions = result.ai_suggestions || [];
       startBusinessReview({ ...result, candidate_options: [single] });
@@ -1672,7 +1637,7 @@ export function createWorkbench({
       return false;
     }
     finishAnalysis();
-    if (supplementTitle && run.ending) {
+    if (supplementAdoption && run.ending) {
       close();
       return true;
     }
@@ -1683,13 +1648,20 @@ export function createWorkbench({
       return true;
     } else {
       const error = { ...snapshot.error };
+      const supplementError = supplementAdoption && {
+        MODEL_UNAVAILABLE: "模型连接不可用，请检查启用状态后重试采纳。",
+        MODEL_TIMEOUT: "补充建议分析超时，请稍后重试采纳。",
+        MODEL_RESPONSE_INVALID: "模型返回的补充方案格式无效，请重试采纳。",
+        ANALYSIS_FAILED: "补充建议分析失败，请重试采纳。",
+        ANALYSIS_CONTEXT_CHANGED: "原方案的依据已更新，请重新分析原需求后再采纳。",
+      }[error.code];
       if (error.code === "ANALYSIS_TIMEOUT") {
         const limit = Number.isFinite(snapshot.timeout_ms) ? `（${snapshot.timeout_ms / 1000} 秒）` : "";
-        error.message = `已达到分析总时限${limit}，请重新分析或转手工继续。`;
+        error.message = `已达到分析总时限${limit}，${supplementAdoption ? "请重试采纳" : "请重新分析或转手工继续"}。`;
       } else if (error.code === "ANALYSIS_ROUND_LIMIT") {
         error.message = "本次分析已达到模型调用轮数上限。请补充待校验的对象、字段或条件后重新分析。";
       }
-      work.aiError = errorMessage({ payload: { error } }, "AI 分析失败");
+      work.aiError = supplementError || errorMessage({ payload: { error } }, "AI 分析失败");
     }
     render();
     return true;
@@ -1762,10 +1734,8 @@ export function createWorkbench({
   async function parse() {
     if (work.pendingOptionSave) { notify("请先重试保存，核实上一次保存结果。", "warning"); return; }
     if (activeAnalysis) return;
+    stopSupplement();
     const context = page.form.read();
-    if (deferredSupplements.length && JSON.stringify(JSON.parse(inputSignature()).slice(0, 4)) !== deferredSupplementInput) {
-      deferredSupplements = [];
-    }
     if (!context.request_text) throw new Error("请先填写需求描述");
     if (!context.model_id) throw new Error(state.modelsStatus === "error" ? "模型加载失败，请转手工继续或重试" : "请选择可用模型，或转手工继续");
     if (!context.source_id || !context.dialect) throw new Error("请先选择有效数据源");
@@ -1805,8 +1775,7 @@ export function createWorkbench({
         clarification_answers: clarificationAnswers(context),
         source_id: context.source_id,
         await_first_poll: true,
-        ...(onSupplementReady ? { include_suggestions: false } : {}),
-        ...(supplementAdoption ? { adoption_context: supplementAdoption } : {}),
+        ...(supplementAdoption ? { analysis_protocol: 2, include_suggestions: false, adoption_context: supplementAdoption } : {}),
         ...previous,
       }, { signal: connection }), signal));
       if (!runtime.current(token) || activeAnalysis !== run) {
@@ -1830,7 +1799,7 @@ export function createWorkbench({
       work.descriptionCollapsed = false;
       page.form.setBusy(work.busy);
       render();
-      throw error;
+      if (!supplementAdoption) throw error;
     }
   }
 
@@ -1856,7 +1825,7 @@ export function createWorkbench({
   }
 
   async function saveDraft() {
-    if (work.pendingOptionSave) return;
+    if (supplementSession || work.pendingOptionSave) return;
     const payload = definitionForSave();
     const reviewed = work.ruleId && savedAiRule() ? page.form.reviewedUncertainties() : [];
     const request = reviewed.length ? { ...payload, reviewed_uncertainties: reviewed } : payload;
@@ -1938,7 +1907,7 @@ export function createWorkbench({
 
   async function runTests() {
     if (work.mode === "ai") {
-      if (work.pendingOptionSave) return;
+      if (supplementSession || work.pendingOptionSave) return;
       if (work.testing || work.busy || work.previewBusy || work.aiLoading || work.optionsSaving || work.confirmBusy
           || work.readOnly || !hasCapability(user, "dv.test")) return;
       const targets = previewTestTargets();
@@ -2007,6 +1976,7 @@ export function createWorkbench({
   }
 
   async function confirmFromPage() {
+    if (supplementSession) return;
     if (work.mode === "ai" && work.options.length) return saveSelectedOptionsAndEnable();
     if (work.mode === "ai") {
       const readiness = previewReadiness(work.preview, work.previewEvidence, analysisStale() || work.previewBusy);
@@ -2014,7 +1984,7 @@ export function createWorkbench({
       const digest = work.preview.content_sha256;
       const accepted = await confirmAction?.("保存并启用这条规则？系统会保存真实版本，并在后端重新运行你检查的测试用例；全部通过才启用，不会自动执行校验任务。");
       if (accepted === false) return;
-      if (analysisStale() || work.preview?.content_sha256 !== digest || !work.previewEvidence) throw new Error("规则已修改，请重新运行测试");
+      if (supplementSession || analysisStale() || work.preview?.content_sha256 !== digest || !work.previewEvidence) throw new Error("规则已修改，请重新运行测试");
       const token = runtime.next("workbench-confirm");
       work.confirmBusy = true; render();
       try {
@@ -2093,7 +2063,7 @@ export function createWorkbench({
       stale: work.mode === "ai" && analysisStale(),
       canTest: hasCapability(user, "dv.test"),
       readOnly: work.readOnly,
-      busy: work.busy || work.confirmBusy || work.previewBusy || Boolean(work.pendingOptionSave),
+      busy: Boolean(supplementSession || work.busy || work.confirmBusy || work.previewBusy || work.pendingOptionSave),
       testing: work.testing,
     };
   }
@@ -2111,12 +2081,52 @@ export function createWorkbench({
     section?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }
 
+  function renderAnalysisProgress(message = work.aiError || work.analysisNote, failed = Boolean(work.aiError)) {
+    page.aiProgress.hidden = !work.aiLoading && !message;
+    page.aiProgress.classList.toggle("is-loading", work.aiLoading);
+    page.aiProgress.classList.toggle("is-error", !work.aiLoading && failed);
+    page.aiWaitBody.hidden = !work.aiLoading;
+    page.aiProgressText.hidden = work.aiLoading;
+    page.aiProgressText.textContent = work.aiLoading ? "" : message;
+    renderElapsed();
+    renderAnalysisStage();
+  }
+
+  function renderAnalysisExit() {
+    const run = activeAnalysis;
+    footerButton.textContent = run ? (run.stopError ? "重试结束会话" : run.ending ? "正在结束…" : "结束会话")
+      : work.detail ? "关闭" : "取消";
+    footerButton.classList.toggle("dv-button-danger", Boolean(run));
+    footerButton.setAttribute("aria-label", footerButton.textContent);
+    footerButton.disabled = Boolean(run?.ending && !run.stopError)
+      || work.busy || work.testing || work.confirmBusy || (work.previewBusy && !supplementAdoption);
+  }
+
+  function renderSupplement() {
+    const busy = work.aiLoading || work.previewBusy;
+    const items = businessReview?.items || [];
+    const showQuestions = items.length > 0 && !businessReview.retry && !work.aiLoading;
+    page.businessQuestions.update(items, { busy });
+    page.businessQuestions.setVisible(showQuestions);
+    const previews = work.options.length
+      ? Object.values(work.optionWork).map(({ candidate, preview }) => ({ candidate, preview }))
+      : [{ candidate: work.candidate, preview: work.preview }];
+    const missingPreview = work.candidate && !businessReview
+      && previews.some(({ candidate, preview }) => !readyAdoptionPreview(candidate, preview));
+    const failure = work.aiError || (businessReview?.retry || missingPreview
+      ? work.candidate?.preview_request_error || work.candidate?.preview_error || "补充方案尚未生成完整 SQL，请重试。" : "");
+    const progress = work.previewBusy ? "正在核对已选口径并生成 SQL…" : work.analysisNote;
+    renderAnalysisProgress(failure || progress, Boolean(failure));
+    page.retrySupplement.hidden = busy || (!failure && !work.analysisNote);
+    renderAnalysisExit();
+    returnSupplementWhenReady();
+  }
+
   function render() {
     if (!page || !dialog) return;
-    if (deferredSupplements.length && !businessReview && !work.aiLoading && work.preview?.sql_preview && !analysisStale()) {
-      appendSupplementCards(deferredSupplements.splice(0));
-      return;
-    }
+    if (supplementAdoption) return renderSupplement();
+    if (supplementSession && supplementSession.input !== inputSignature()) stopSupplement();
+    const adopting = Boolean(supplementSession);
     const editing = page.editor?.contains?.(document.activeElement) ? document.activeElement : null;
     const question = work.candidate?.questions?.[0];
     const stale = work.mode === "ai" && Boolean(work.candidate) && analysisStale();
@@ -2131,7 +2141,7 @@ export function createWorkbench({
     if (!question || work.selectedChoice?.id !== question.id) work.selectedChoice = lastChoice;
     if (work.options.length && work.candidate && !work.loadingOption) syncActiveOptionState();
     page.candidate?.update(work.candidate, page.form.read(), { loading: work.aiLoading || work.previewBusy, error: work.aiError,
-      stale, preview: work.preview, selectedChoice: work.selectedChoice, lastChoice, locked: Boolean(work.pendingOptionSave),
+      stale, preview: work.preview, selectedChoice: work.selectedChoice, lastChoice, locked: adopting || Boolean(work.pendingOptionSave),
       canRecheck: canRequestPreview(work.candidate), option: work.options.find((item) => item.id === work.activeOptionId) });
     if (work.mode === "ai" && page.optionsPanel) {
       page.optionsPanel.update(
@@ -2142,6 +2152,7 @@ export function createWorkbench({
           selected: work.selectedOptions, activeId: work.expandedOptionId,
           savedRules: work.savedOptionRules, saving: work.optionsSaving,
           locked: Boolean(work.busy || work.optionsSaving || work.testing || work.pendingOptionSave),
+          selectionLocked: adopting,
           savedDuplicate: work.options.length > 0 && work.selectedOptions.length > 0
             && work.options.filter((option) => work.selectedOptions.includes(option.id)).every((option) => {
               const state = work.optionWork[option.id];
@@ -2165,9 +2176,9 @@ export function createWorkbench({
     const busy = work.busy || work.testing || work.confirmBusy || work.previewBusy || work.aiLoading || work.optionsSaving;
     if (page.reselectBusiness) {
       page.reselectBusiness.hidden = !canReselectBusinessQuestions();
-      page.reselectBusiness.disabled = busy || work.preparingTests || Boolean(work.pendingOptionSave) || work.readOnly || !hasCapability(user, "dv.ai_use");
+      page.reselectBusiness.disabled = busy || adopting || work.preparingTests || Boolean(work.pendingOptionSave) || work.readOnly || !hasCapability(user, "dv.ai_use");
     }
-    page.form.lockGroup(busy || Boolean(work.pendingOptionSave) || work.readOnly);
+    page.form.lockGroup(busy || adopting || Boolean(work.pendingOptionSave) || work.readOnly);
 
     const configVisible = isAi ? Boolean(work.candidate || work.options.length) : page.form.metadataColumns().length > 0;
     const readyToTest = targets.length > 0 && targets.every((target) => target.preview?.sql_preview);
@@ -2187,7 +2198,7 @@ export function createWorkbench({
       const testScope = testsUncheckedCurrent
         ? (work.selectedOptions.length ? "当前及所选方案" : "当前方案") : "所选方案";
       page.testLaunch.hidden = false;
-      page.testLaunch.disabled = busy || Boolean(work.pendingOptionSave) || !readyToTest;
+      page.testLaunch.disabled = busy || adopting || Boolean(work.pendingOptionSave) || !readyToTest;
       page.testLaunchLabel.textContent = work.preparingTests ? "正在生成并运行…"
         : hasNewCases && !testsUncheckedCurrent ? "生成并运行测试用例" : multi ? `运行${testScope}测试` : "重新运行测试";
       page.testLaunch.setAttribute("aria-label", page.testLaunchLabel.textContent);
@@ -2206,7 +2217,7 @@ export function createWorkbench({
       page.form.setRequestEditing(Boolean(work.candidate));
       const question = work.candidate?.questions?.[0];
       page.choiceContinue.hidden = !question || stale || (multi && !work.expandedOptionId);
-      page.choiceContinue.disabled = busy || Boolean(work.pendingOptionSave) || analysisStale() || work.selectedChoice?.id !== question?.id
+      page.choiceContinue.disabled = busy || adopting || Boolean(work.pendingOptionSave) || analysisStale() || work.selectedChoice?.id !== question?.id
         || (Array.isArray(work.selectedChoice?.value) && !work.selectedChoice.value.length);
       page.editor.hidden = !isGrouped(work.candidate?.expression) || Boolean(question) || stale;
       const { request_text, source_id, model_id } = page.form.read();
@@ -2218,17 +2229,7 @@ export function createWorkbench({
       }
       page.form.setAnalyzing(work.aiLoading);
       page.form.lockInputs(busy || Boolean(work.pendingOptionSave));
-      if (page.aiProgress) {
-        const waiting = work.aiLoading || Boolean(work.aiError) || Boolean(work.analysisNote);
-        page.aiProgress.hidden = !waiting;
-        page.aiProgress.classList.toggle("is-loading", Boolean(work.aiLoading));
-        page.aiProgress.classList.toggle("is-error", !work.aiLoading && Boolean(work.aiError));
-        page.aiWaitBody.hidden = !work.aiLoading;
-        page.aiProgressText.hidden = work.aiLoading;
-        page.aiProgressText.textContent = work.aiLoading ? "" : (work.aiError || work.analysisNote);
-        renderElapsed();
-        renderAnalysisStage();
-      }
+      renderAnalysisProgress();
     }
 
     if (configVisible && !lastConfigVisible) scrollToSection(isAi ? page.inputSection : page.configSection);
@@ -2238,11 +2239,11 @@ export function createWorkbench({
 
     const save = saveReadiness();
     page.saveButton.hidden = isAi;
-    page.saveButton.disabled = busy || work.readOnly || !save.ready || !hasCapability(user, "dv.manage");
+    page.saveButton.disabled = busy || adopting || work.readOnly || !save.ready || !hasCapability(user, "dv.manage");
     if (isAi && page.footerBulk) {
       const multi = work.options.length > 0;
       page.footerBulk.hidden = true;
-      page.footerBulk.disabled = busy || work.readOnly || !hasCapability(user, "dv.manage") || analysisStale() || !readyToTest
+      page.footerBulk.disabled = busy || adopting || work.readOnly || !hasCapability(user, "dv.manage") || analysisStale() || !readyToTest
         || work.options.filter((option) => work.selectedOptions.includes(option.id)).every((option) => {
           const state = work.optionWork[option.id];
           return state.saved && state.savedCanonical === canonicalOptionKey(canonicalOptionDefinition(state));
@@ -2262,7 +2263,7 @@ export function createWorkbench({
 
     page.confirmButton.hidden = isAi && (stale || (!multi && !work.preview));
     page.confirmButton.textContent = isAi ? (multi ? `保存并启动以上${gate.selected.length}个方案` : "保存并启用") : "确认启用";
-    page.confirmButton.disabled = busy || work.readOnly || !readiness.ready || (isAi && !hasCapability(user, "dv.manage"));
+    page.confirmButton.disabled = busy || work.readOnly || !readiness.ready || adopting || (isAi && !hasCapability(user, "dv.manage"));
     page.confirmButton.title = readiness.ready ? "确认固化并启用当前版本" : readiness.reasons.join("；");
     if (multi && !page.confirmButton.hidden && !busy) {
       page.saveHint.textContent = work.pendingOptionSave ? "保存结果待确认，请再次点击保存按钮核实"
@@ -2278,22 +2279,13 @@ export function createWorkbench({
       const modelUnavailable = state.modelsStatus === "error" || !state.models.length;
       page.switchButton.hidden = !work.aiError && !modelUnavailable;
     }
-    if (footerButton) {
-      const run = activeAnalysis;
-      footerButton.textContent = run ? (run.stopError ? "重试结束会话" : run.ending ? "正在结束…" : "结束会话")
-        : work.detail ? "关闭" : "取消";
-      footerButton.classList.toggle("dv-button-danger", Boolean(run));
-      footerButton.setAttribute("aria-label", footerButton.textContent);
-      footerButton.disabled = Boolean(run?.ending && !run.stopError)
-        || work.busy || work.testing || work.confirmBusy || work.previewBusy;
-    }
+    if (footerButton) renderAnalysisExit();
     if (dialog) dialog.closeButton.disabled = Boolean(activeAnalysis?.ending)
       || work.busy || work.testing || work.confirmBusy || work.previewBusy;
     dialog?.setTitle(work.ruleId
       ? `${work.readOnly ? "查看" : "编辑、测试与确认"} ${work.detail?.rule_code || "规则"}`
-      : supplementTitle ? `AI 补充规则 · ${supplementTitle}` : work.mode === "ai" ? "AI 新建校验规则" : "新建校验规则");
+      : work.mode === "ai" ? "AI 新建校验规则" : "新建校验规则");
     mountOptionDetail();
-    returnSupplementWhenReady();
     if (businessReview && !businessReview.retry && !stale && !work.previewBusy) page.detailHome.hidden = true;
     if (editing?.isConnected && document.activeElement !== editing) editing.focus({ preventScroll: true });
     return readiness;

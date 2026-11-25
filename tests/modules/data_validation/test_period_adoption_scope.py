@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 import sqlite3
 import time
 
@@ -7,12 +8,18 @@ import pytest
 from auto_check.modules.data_validation.contracts import AppError
 from tests.modules.data_validation.support import user
 from tests.modules.data_validation.test_ai_service import _request
+from tests.modules.data_validation.test_compared_grain_evidence import compared_sources, KEY
 from tests.modules.data_validation.test_supplement_adoption import analyze_suggestion
 
 
-def period_request(*, two_scopes=False, second_threshold=None, child_scope=None, joined=False, applicability=None):
+def period_request(*, two_scopes=False, second_threshold=None, child_scope=None, joined=False, applicability=None,
+                   parent_filters=True, extra_references=(), configured_facts=(), metric_first=False):
     rules, parent = analyze_suggestion()
     candidate = parent["candidate_options"][int(joined)]["candidate"]
+    if not parent_filters:
+        candidate["semantic_intent"].update(scopes=[], dictionary_snapshots={})
+        definition = {**candidate["preview"]["definition"], "semantic_intent": candidate["semantic_intent"], "filters": []}
+        candidate["preview"] = rules.preview_candidate(user(), {"definition": definition})
     previews = [candidate["preview"]]
     if two_scopes or second_threshold is not None:
         other = deepcopy(candidate)
@@ -36,7 +43,18 @@ def period_request(*, two_scopes=False, second_threshold=None, child_scope=None,
     if joined:
         parent["ai_suggestions"][0]["references"] = [{"table_name": candidate["table_name"],
                                                    "field_name": candidate["expression"]["left"]}]
+    references = parent["ai_suggestions"][0]["references"]
+    if metric_first:
+        references.extend(extra_references)
+    else:
+        references[:0] = extra_references
     args = _request(request_text=parent["analysis_request_text"], analysis_protocol=2)
+    if configured_facts:
+        from auto_check.modules.data_validation.adoption_scope import attach_period_applicability
+        inputs = rules._analysis_inputs(user(), args)
+        source_id = parent["source_id"]
+        settings = "\n".join("PERIOD_APPLICABILITY " + json.dumps({**fact, "source_id": source_id}) for fact in configured_facts)
+        attach_period_applicability(parent["ai_suggestions"], settings, source_id, inputs["tables"], inputs["fields_by_table"])
     job = rules.analyses.start(user(), args, worker=lambda *_: parent)
     for _ in range(100):
         if rules.analyses.completed_result(user(), job["analysis_id"]):
@@ -224,7 +242,6 @@ def test_joined_parent_preview_cannot_be_reduced_to_a_single_table_scope(exact):
         rules.parse_rule_request(user(), request)
 
 def test_configured_period_facts_belong_to_a_documented_source_table_and_metric():
-    import json
     from auto_check.modules.data_validation.adoption_scope import attach_period_applicability
     item = {"category": "period", "adoption": {"operations": []}, "references": [
         {"table_name": "orders", "field_name": "opening"}]}
@@ -294,3 +311,288 @@ def test_suggestion_only_does_not_publish_an_unbound_owning_table():
     context["mode"] = "suggestion_only"
     child = rules.parse_rule_request(user(), request)
     assert not child.get("preview") and "文档字段不一致" in str(child["uncertainties"])
+
+
+@pytest.mark.parametrize("parent_filters", [False, True])
+def test_adopted_period_preserves_parent_join_scope_and_predicate(parent_filters):
+    rules, request = period_request(joined=True, parent_filters=parent_filters)
+    request["include_suggestions"] = False
+    request["adoption_context"]["mode"] = "inherit_selected"
+    draft = deepcopy(rules.model.payloads[0]["plans"][1]["draft"])
+    draft.pop("join")
+    draft["expression"] = {"left": "funding_received", "op": "is_null"}
+    draft["semantic_intent"]["scopes"] = []
+    rules.model.payloads[-3:] = [{"target": {"table": "funding_rows"}, "draft": draft}, draft]
+
+    preview = rules.parse_rule_request(user(), request)["preview"]
+    definition = preview["definition"]
+    assert definition["join"] == {
+        "table_name": "project_snapshot", "on": [{"left": "funding_owner", "right": "project_key"}],
+        "report_date_field": "day", "relationship_confirmed": True, "unmatched_policy": "exclude",
+    }
+    assert definition["expression"] == {"left": "funding_received", "op": "lt", "right_type": "value", "right": 0}
+    expected = [{"table": "related", "field": "transfer_flag", "op": "eq", "value": "1", "confirmed": True}]
+    assert definition["filters"] == (expected if parent_filters else [])
+    assert definition["description"] == request["request_text"]
+    assert definition["name"] == "募集实收小于0"
+
+
+def test_adopted_period_distinguishes_names_for_distinct_scopes_only():
+    rules, request = period_request(two_scopes=True)
+    context = request["adoption_context"]
+    context["mode"] = "inherit_selected"
+    context["parents"].append(deepcopy(context["parents"][0]))
+    request["include_suggestions"] = False
+
+    options = rules.parse_rule_request(user(), request)["candidate_options"]
+    assert len(options) == 2
+    assert {option["label"] for option in options} == {"项目实收小于0（项目状态：存续）", "项目实收小于0（项目状态：终止）"}
+    assert {option["candidate"]["preview"]["definition"]["name"] for option in options} == {option["label"] for option in options}
+
+
+def sum_adoption_request(*, both_parents=False, extra_references=()):
+    rules, parent = analyze_suggestion()
+    [suggestion] = parent["ai_suggestions"]
+    suggestion["references"] += list(extra_references)
+    args = _request(request_text=parent["analysis_request_text"], analysis_protocol=2)
+    job = rules.analyses.start(user(), args, worker=lambda *_: parent)
+    for _ in range(100):
+        if rules.analyses.completed_result(user(), job["analysis_id"]):
+            break
+        time.sleep(.01)
+    parents = parent["candidate_options"] if both_parents else parent["candidate_options"][1:]
+    receipts = [p["candidate"]["preview"] for p in parents]
+    _, model, _ = compared_sources(shared_alias=True, join_keys=[KEY])
+    rules.model.payloads.append(deepcopy(model.payloads[0]))
+    request = _request(request_text=suggestion["title"], analysis_protocol=2, include_suggestions=False,
+                       adoption_context={"mode": "inherit_selected", "parent_analysis_id": job["analysis_id"],
+                                         "parent_context": parent["analysis_context"], "suggestion_id": suggestion["id"],
+                                         "parents": [{"definition": p["definition"], "hash": p["content_sha256"]} for p in receipts]})
+    return rules, request
+
+
+def test_adopted_sum_keeps_scope_from_reverse_parent_join():
+    rules, request = sum_adoption_request()
+
+    preview = rules.parse_rule_request(user(), request)["preview"]
+    definition = preview["definition"]
+    assert definition["join"]["right_aggregate"] == "sum"
+    assert definition["join"]["unmatched_policy"] == "exclude"
+    assert definition["expression"] == {"left": "project_received", "op": "neq", "right_type": "field",
+                                       "right": "funding_received", "right_table": "related"}
+    assert definition["filters"] == [{"table": "base", "field": "transfer_flag", "op": "eq", "value": "1", "confirmed": True}]
+    tampered = {**definition, "join": {**definition["join"], "unmatched_policy": "review"}}
+    with pytest.raises(AppError, match="VALIDATION_ERROR"):
+        rules.preview_candidate(user(), {"definition": tampered})
+    with sqlite3.connect(":memory:") as db:
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE project_snapshot (day, project_key, project_name, transfer_flag, project_received)")
+        db.execute("CREATE TABLE funding_rows (day, funding_id, funding_owner, funding_received)")
+        day = "2026-11-20"
+        db.executemany("INSERT INTO project_snapshot VALUES (?, ?, ?, ?, ?)", [
+            (day, "A", "存续不一致", "1", 10), (day, "B", "终止不一致", "2", 20),
+            (day, "C", "存续缺同日明细", "1", 30), (day, "D", "存续一致", "1", 9),
+        ])
+        db.executemany("INSERT INTO funding_rows VALUES (?, ?, ?, ?)", [
+            (day, 1, "A", 4), (day, 2, "A", 5), (day, 3, "B", 19),
+            ("2026-11-19", 4, "C", 29), (day, 5, "D", 4), (day, 6, "D", 5),
+        ])
+        rows = db.execute(preview["sql_preview"], {**preview["sql_params"], "report_date": day}).fetchall()
+        assert [row["TCMP编号"] for row in rows] == ["A"]
+
+
+@pytest.mark.parametrize("policies", [("zero", "review"), ("review", "zero")])
+def test_adopted_sum_keeps_distinct_null_policies(policies):
+    rules, request = sum_adoption_request()
+    proposal = rules.model.payloads[-1]
+    targets = {key: proposal[key] for key in ("target", "related_target")}
+    rules.model.payloads[-1] = {**targets, "plan_mode": "alternatives", "plans": [
+        {**targets, **deepcopy(proposal["draft"]), "null_policy": policy} for policy in policies]}
+
+    options = rules.parse_rule_request(user(), request)["candidate_options"]
+    assert len({option["id"] for option in options}) == 2
+    assert {o["candidate"]["preview"]["definition"]["null_policy"] for o in options} == {"zero", "review"}
+    assert {o["label"].split("（")[-1] for o in options} == {"空值按0）", "空值待核查）"}
+
+
+def test_adopted_sum_names_distinct_missing_record_scopes():
+    rules, request = sum_adoption_request(both_parents=True)
+
+    options = rules.parse_rule_request(user(), request)["candidate_options"]
+    names = {o["candidate"]["preview"]["definition"]["join"]["unmatched_policy"]: o["label"] for o in options}
+    assert set(names) == {"exclude", "review"}
+    assert "仅核查有同日关联的记录" in names["exclude"]
+    assert "缺同日关联记录待核查" in names["review"]
+    assert {o["candidate"]["preview"]["definition"]["name"] for o in options} == set(names.values())
+
+
+def test_adopted_sum_accepts_relationship_and_scope_evidence_in_suggestion_references():
+    rules, request = sum_adoption_request(extra_references=[
+        {"table_name": "project_snapshot", "field_name": field} for field in ("project_key", "day", "transfer_flag")
+    ] + [{"table_name": "funding_rows", "field_name": field} for field in ("funding_owner", "day")])
+
+    definition = rules.parse_rule_request(user(), request)["preview"]["definition"]
+    assert definition["expression"]["left"] == "project_received"
+    assert definition["expression"]["right"] == "funding_received"
+    assert definition["join"]["right_aggregate"] == "sum"
+
+
+def test_adopted_sum_does_not_replace_a_metric_with_only_a_filter_reference():
+    from auto_check.modules.data_validation.adoption_scope import verify_adopted_goal
+    from auto_check.modules.data_validation.documented_choices import ScopeEvidenceRequired
+
+    draft = {"expression": {"left": "other_value", "op": "neq", "right_type": "field", "right_table": "related", "right": "detail_value"},
+             "join": {"right_aggregate": "sum", "table_name": "details"},
+             "filters": [{"table": "base", "field": "owner_value", "op": "gt", "value": 0}]}
+    scope = {"suggestion": {"kind": "aggregate_consistency", "references": [
+        {"table_name": "owners", "field_name": "owner_value"}, {"table_name": "details", "field_name": "detail_value"}]}}
+    with pytest.raises(ScopeEvidenceRequired):
+        verify_adopted_goal(draft, "owners", "details", scope)
+
+
+def test_adopted_period_binds_the_metric_even_when_scope_evidence_is_referenced_first():
+    rules, request = period_request(joined=True, extra_references=[
+        {"table_name": "project_snapshot", "field_name": "transfer_flag"},
+        {"table_name": "funding_rows", "field_name": "day"},
+    ])
+    request["include_suggestions"] = False
+    request["adoption_context"]["mode"] = "inherit_selected"
+    draft = deepcopy(rules.model.payloads[0]["plans"][1]["draft"])
+    draft.pop("join")
+    draft["expression"] = {"left": "funding_received", "op": "is_null"}
+    draft["semantic_intent"]["scopes"] = []
+    rules.model.payloads[-3:] = [{"target": {"table": "funding_rows"}, "draft": draft}, draft]
+
+    definition = rules.parse_rule_request(user(), request)["preview"]["definition"]
+    assert definition["expression"] == {"left": "funding_received", "op": "lt", "right_type": "value", "right": 0}
+    assert definition["filters"][0]["field"] == "transfer_flag"
+    assert definition["report_date_field"] == "day"
+
+
+@pytest.mark.parametrize("metric_first", [False, True])
+def test_adopted_period_applies_only_the_actual_metrics_configured_scope(metric_first):
+    table = "funding_rows"
+    rules, request = period_request(joined=True, metric_first=metric_first,
+        extra_references=[{"table_name": table, "field_name": field} for field in ("funding_id", "day")],
+        configured_facts=[
+            {"table": table, "field": "funding_received", "filters": [{"field": "funding_received", "op": "neq", "value": -2}]},
+            {"table": table, "field": "funding_id", "filters": [{"field": "funding_received", "op": "gt", "value": 0}]},
+        ])
+    request["include_suggestions"] = False
+    request["adoption_context"]["mode"] = "inherit_selected"
+    draft = deepcopy(rules.model.payloads[0]["plans"][1]["draft"])
+    draft.pop("join")
+    draft["semantic_intent"]["scopes"] = []
+    rules.model.payloads[-3:] = [{"target": {"table": table}, "draft": draft}, draft]
+
+    preview = rules.parse_rule_request(user(), request)["preview"]
+    assert {f["op"] for f in preview["definition"]["filters"]} == {"eq", "neq"}
+    with sqlite3.connect(":memory:") as db:
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE project_snapshot (day, project_key, project_name, transfer_flag, project_received)")
+        db.execute("CREATE TABLE funding_rows (day, funding_id, funding_owner, funding_received)")
+        day = "2026-11-20"
+        db.executemany("INSERT INTO project_snapshot VALUES (?, ?, ?, '1', 0)", [(day, k, k) for k in ("eligible", "excluded")])
+        db.executemany("INSERT INTO funding_rows VALUES (?, ?, ?, ?)", [(day, 1, "eligible", -1), (day, 2, "excluded", -2)])
+        rows = db.execute(preview["sql_preview"], {**preview["sql_params"], "report_date": day}).fetchall()
+        assert [r["TCMP编号"] for r in rows] == ["eligible"]
+
+
+def test_adopted_period_requests_clarification_for_different_checked_metric_scopes():
+    from auto_check.modules.data_validation.adoption_scope import attach_period_applicability, bind_period_filters
+    from auto_check.modules.data_validation.documented_choices import ScopeEvidenceRequired
+
+    table = "entries"
+    names = ("initial_value", "closing_value")
+    suggestion = {"category": "period", "adoption": {"operations": []},
+                  "references": [{"table_name": table, "field_name": name} for name in names]}
+    settings = "\n".join("PERIOD_APPLICABILITY " + json.dumps({
+        "source_id": "src", "table": table, "field": field,
+        "filters": [{"field": "period", "op": "eq", "value": value}],
+    }) for field, value in zip(names, ("A", "B")))
+    attach_period_applicability([suggestion], settings, "src", [{"id": 1, "table_name": table}],
+                                {1: [{"field_name": name, "data_type": "numeric"} for name in names]
+                                 + [{"field_name": "period", "data_type": "varchar"}]})
+    draft = {"expression": {"left": names[0], "op": "neq", "right_type": "field", "right": names[1]}}
+    with pytest.raises(ScopeEvidenceRequired, match="适用范围不同"):
+        bind_period_filters(draft, table, None, {"suggestion": suggestion}, [])
+
+
+@pytest.mark.parametrize("case", ["captured", "new_scope", "conflicting_scope"])
+def test_captured_period_reply_uses_confirmed_scope_without_reasking(case):
+    from auto_check.modules.data_validation.adoption_scope import attach_period_applicability
+    from tests.modules.data_validation.test_project_driver_binding import field, make_rules, table
+
+    # Structured reply from the captured 2026-11-25 adoption. The positive code
+    # matched the registered scope but the model returned 0 as the excluded code.
+    owner = "proj_info_dtl_pboc"
+    captured = {"target": {"table": owner}, "draft": {
+        "business_key": "c_projinnercode", "project_driver": {"version": 1, "table_role": "base"},
+        "rule_name": "当期新发项目初始净值非空检查", "rule_type": "field_compare",
+        "expression": {"left": "f_initial_nav", "op": "is_null"},
+        "violation_message": "当期新发项目初始净值为空", "null_policy": "violate",
+        "semantic_intent": {"metrics": [{"side": "left", "term": "当期新发项目初始净值", "fields": ["f_initial_nav"]}],
+            "scopes": [{"category": "当期新发项目", "fields": ["c_is_newproj"],
+                        "memberships": {"c_is_newproj": {"include": ["1"], "exclude": ["0"]}}}], "open_questions": []},
+    }}
+    base = deepcopy(captured)
+    base["draft"].update(rule_name="净值型项目单位净值非空检查", expression={"left": "f_netvalue", "op": "is_null"},
+                         violation_message="单位净值为空")
+    base["draft"]["semantic_intent"].update(
+        metrics=[{"side": "left", "term": "单位净值", "fields": ["f_netvalue"]}],
+        scopes=[{"category": "净值型", "fields": ["c_oper_mode"],
+                 "memberships": {"c_oper_mode": {"include": ["1", "3"], "exclude": ["2"]}}}])
+    docs = [table(1, owner, "项目明细", "项目", [
+        field("c_projinnercode", "TCMP编号", pk="Y", source=("upstream.entity", "entity_id"),
+              logic="直接取项目主数据的项目编号[entity_id]。"),
+        field("project_name", "项目名全称"),
+        field("d_cldate", "数据日期", "date"), field("f_netvalue", "单位净值", "numeric"),
+        field("f_initial_nav", "初始净值", "numeric"), field("c_is_newproj", "是否当期新增", dictionary="1-是\n2-否"),
+        field("c_oper_mode", "运行方式", dictionary="1-开放式净值型\n2-非净值型\n3-封闭式净值型"),
+        field("delivery_kind", "交付方式", dictionary="A-现货\nB-远期"),
+    ])]
+    rules, model = make_rules([base], tables=docs)
+    args = _request(request_text="净值型项目的单位净值不得为空，按运行方式判断净值型项目",
+                    analysis_protocol=2, include_suggestions=False)
+    parent = rules.parse_rule_request(user(), args)
+    receipt = parent["preview"]
+    assert receipt, (parent.get("questions"), parent.get("uncertainties"), parent.get("unsupported_requirements"), parent.get("preview_error"))
+    [suggestion] = attach_period_applicability([{
+        "id": "captured-period", "category": "period", "kind": "field_compare_unary", "adoption": {"operations": []},
+        "references": [{"table_name": owner, "field_name": "f_initial_nav"}],
+    }], "PERIOD_APPLICABILITY " + json.dumps({
+        "source_id": "src", "table": owner, "field": "f_initial_nav",
+        "filters": [{"field": "c_is_newproj", "op": "eq", "value": "1"}],
+    }), "src", docs, {1: docs[0]["fields"]})
+    parent["ai_suggestions"] = [suggestion]
+    job = rules.analyses.start(user(), args, worker=lambda *_: parent)
+    for _ in range(100):
+        if rules.analyses.completed_result(user(), job["analysis_id"]):
+            break
+        time.sleep(.01)
+    wrong = {"c_is_newproj": {"include": ["1"], "exclude": ["0"]}}
+    if case == "new_scope":
+        wrong = {"delivery_kind": {"include": ["0"], "exclude": ["A"]}}
+        captured["draft"]["semantic_intent"]["scopes"].append({"category": "指定交付方式", "fields": ["delivery_kind"],
+                                                             "memberships": deepcopy(wrong)})
+    elif case == "conflicting_scope":
+        captured["draft"]["semantic_intent"]["scopes"][0]["memberships"]["c_is_newproj"] = {"include": ["2"], "exclude": ["1"]}
+    model.payloads.extend([captured, {"patch": {"memberships": wrong}}])
+    request = _request(request_text="新增净值型项目的初始净值不得为空", analysis_protocol=2, include_suggestions=False,
+                       adoption_context={"mode": "inherit_selected", "parent_analysis_id": job["analysis_id"],
+                                         "parent_context": parent["analysis_context"], "suggestion_id": "captured-period",
+                                         "parents": [{"definition": receipt["definition"], "hash": receipt["content_sha256"]}]})
+
+    result = rules.parse_rule_request(user(), request)
+    if case == "new_scope":
+        assert not result.get("preview")
+        [question] = result["questions"]
+        assert {option["value"] for option in question["options"]} == {"delivery_kind=A", "delivery_kind=B"}
+    elif case == "conflicting_scope":
+        assert not result.get("preview")
+        assert any("c_is_newproj" in item and "范围不同" in item for item in result["uncertainties"])
+    else:
+        assert not result.get("questions") and len(model.calls) == 2
+        definition = result["preview"]["definition"]
+        assert {f["field"]: f["value"] for f in definition["filters"]} == {"c_oper_mode": ["1", "3"], "c_is_newproj": "1"}
+        assert definition["semantic_intent"]["scopes"][0]["memberships"]["c_is_newproj"]["exclude"] == ["2"]
