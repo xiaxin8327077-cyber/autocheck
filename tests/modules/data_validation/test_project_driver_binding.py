@@ -511,6 +511,62 @@ def test_repair_can_complete_a_missing_driver_without_changing_the_metric():
     assert result["expression"] == incomplete["expression"]
 
 
+@pytest.mark.parametrize("role", ["base", "related"])
+def test_document_binding_checks_project_driver_hint_for_scalar_model_draft(role):
+    draft = semantic_draft(marker=False)
+    selection = {"target": {"table": "asset_rows"}, "report_category": "pbc_central"}
+    request = _request(request_text="收益转让标识为是的项目，资产收益权余额应大于0", analysis_protocol=2)
+    unmarked, unmarked_model = make_rules([{**selection, "draft": draft}])
+    marked, model = make_rules([{**selection, "draft": {
+        **draft, "project_driver": {"version": 1, "table_role": role},
+    }}])
+    expected = unmarked.parse_rule_request(user(), request)["preview"]
+    actual = marked.parse_rule_request(user(), request)["preview"]
+
+    assert len(model.calls) == len(unmarked_model.calls)
+    assert actual["definition"] == expected["definition"]
+    assert actual["sql_preview"] == expected["sql_preview"]
+    assert actual["content_sha256"] == expected["content_sha256"]
+    assert actual["definition"]["project_driver"] == {"version": DRIVER_VERSION, "table_role": "related"}
+    forged = {**actual["definition"], "project_driver": {"version": DRIVER_VERSION, "table_role": "base"}}
+    with pytest.raises(AppError):
+        marked.preview_candidate(user(), {"definition": forged})
+
+
+def test_wrong_scalar_model_driver_hint_still_requires_document_lineage():
+    tables = document_tables()
+    asset = next(item for item in tables if item["table_name"] == "asset_rows")
+    key = next(item for item in asset["fields"] if item["field_name"] == "owner_ref")
+    key.update(source_table="", source_field="")
+    draft = semantic_draft()
+    draft["project_driver"]["table_role"] = "base"
+    selection = {"target": {"table": "asset_rows"}, "report_category": "pbc_central"}
+    rules, _ = make_rules([{**selection, "draft": draft}], tables)
+    result = rules.parse_rule_request(user(), _request(
+        request_text="收益转让标识为是的项目，资产收益权余额应大于0", analysis_protocol=2,
+    ))
+    assert not result["preview"]
+    assert any("来源" in note for note in result["uncertainties"])
+
+
+@pytest.mark.parametrize(("marker", "raises"), [
+    (None, False),
+    ({"version": 99, "table_role": "base"}, True),
+    ({"version": 1, "table_role": "sideways"}, True),
+])
+def test_scalar_model_driver_hint_does_not_bypass_marker_validation(marker, raises):
+    draft = {**semantic_draft(marker=False), "project_driver": marker}
+    selection = {"target": {"table": "asset_rows"}, "report_category": "pbc_central"}
+    rules, _ = make_rules([{**selection, "draft": draft}])
+    request = _request(request_text="收益转让标识为是的项目，资产收益权余额应大于0", analysis_protocol=2)
+    if raises:
+        with pytest.raises(AppError, match="MODEL_RESPONSE_INVALID"):
+            rules.parse_rule_request(user(), request)
+    else:
+        result = rules.parse_rule_request(user(), request)
+        assert not result["preview"]
+
+
 def test_failed_new_project_binding_cannot_be_cleared_into_a_detail_preview():
     tables = document_tables()
     tables[0]["fields"][1]["is_pk"] = ""

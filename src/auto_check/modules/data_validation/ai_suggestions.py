@@ -11,9 +11,15 @@ import json
 import re
 from typing import Any, Callable, Iterable
 
+from .ai_service import model_expression, refine_candidate
 from .candidate_choices import field_label, grain_label, semantic_core
-from .query_grounding import documented_aggregate_join, is_period_date_field, resolve_report_date
-from .query_spec import COMPARISON_OPS, UNARY_OPS, is_finite_number, type_family
+from .contracts import AppError
+from .document_evidence import referenced_fields
+from .formula import is_arithmetic
+from .query_grounding import dictionary_options, documented_aggregate_join, is_period_date_field, resolve_report_date
+from .query_samples import filter_matches
+from .query_spec import COMPARISON_OPS, MAX_FILTERS, UNARY_OPS, comparison_conditions, is_finite_number, type_family, _validate_filter_value
+from .semantic_grounding import _document_codes, _explicit_filter, _Unbound
 
 CATEGORIES = (
     "coverage_gap",
@@ -369,8 +375,187 @@ def _model_capability_limit(
     return ""
 
 
+def _possible_scope(filters, field):
+    if len(filters) == 1 and filters[0]["op"] in UNARY_OPS:
+        return True
+    for item in filters:
+        op, value = item["op"], item["value"]
+        if op in ("eq", "in", "is_null"):
+            values = value if op == "in" else [value]
+            return any(all(filter_matches(f["op"], value, f["value"]) for f in filters) for value in values)
+    if field.get("dictionary"):
+        return any(all(filter_matches(f["op"], value, f["value"]) for f in filters)
+                   for value in [None, *_document_codes(field)])
+    if type_family(field.get("data_type")) == "number":
+        low = max(((f["value"], f["op"] == "gt") for f in filters if f["op"] in ("gt", "gte")), default=None)
+        high = min(((f["value"], f["op"] == "lte") for f in filters if f["op"] in ("lt", "lte")), default=None)
+        if low and high and low[0] >= high[0]:
+            return low[0] == high[0] and not low[1] and high[1] and all(
+                filter_matches(f["op"], low[0], f["value"]) for f in filters)
+    return True
+
+
+def _scope_replacements(raw, index, category_codes, select_category_tables, confirmed_fields):
+    if raw == []:
+        return [], ""
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_FILTERS or any(
+            not isinstance(item, dict) or not {"table_name", "field_name", "op"} <= item.keys() for item in raw):
+        raise _Unbound("建议更换的筛选条件格式不完整。")
+    binding = _model_references(raw, index, category_codes, select_category_tables)
+    if binding is None:
+        raise _Unbound("建议更换的筛选字段缺少文档依据。")
+    _, documents = binding
+    replacements, labels, groups = [], [], {}
+    for item in raw:
+        doc = documents[_normalize_name(item["table_name"]).lower()]
+        field = index.field(doc, item["field_name"]) if doc else None
+        if not field or (doc["table_name"], field["field_name"]) not in confirmed_fields:
+            raise _Unbound("建议更换的筛选字段应对应已核实的主方案范围。")
+        raw_filter = {"field": field["field_name"], "op": item["op"], **({"value": item["value"]} if "value" in item else {})}
+        bound = _explicit_filter(raw_filter, {"base": {field["field_name"]: field}})
+        replacement = {**_reference(doc, field), "op": bound["op"], "value": bound["value"]}
+        if replacement in replacements:
+            continue
+        replacements.append(replacement)
+        groups.setdefault((doc["table_name"], field["field_name"]), (field, []))[1].append(bound)
+        dictionary = {option["value"]: option["label"] for option in dictionary_options(field)}
+        values = bound["value"] if isinstance(bound["value"], list) else [bound["value"]]
+        text = "、".join(dictionary.get(value, str(value)) for value in values if value is not None)
+        operators = {"eq": "：", "in": "：", "neq": "不等于", "not_in": "排除", "gt": "大于", "gte": "大于等于",
+                     "lt": "小于", "lte": "小于等于", "is_null": "为空", "is_not_null": "非空", "contains": "包含",
+                     "not_contains": "不包含", "contains_any": "包含任一", "not_contains_any": "不包含任一"}
+        labels.append((field_label(field) or field["field_name"]) + operators.get(bound["op"], "：") + text)
+    if any(not _possible_scope(filters, field) for field, filters in groups.values()):
+        raise _Unbound("建议更换后的同一字段筛选条件无法同时满足，请核实适用范围。")
+    return replacements, "，".join(labels)
+
+
+def confirmed_scope_fields(candidates):
+    result = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        definition = (candidate.get("preview") or {}).get("definition") or candidate
+        owners = {"base": definition.get("table_name"), "related": (definition.get("join") or {}).get("table_name")}
+        result.update((owners.get(f.get("table", "base")), f["field"])
+                      for f in definition.get("filters") or [] if isinstance(f, dict)
+                      and f.get("confirmed") is True and isinstance(f.get("field"), str))
+    return result
+
+
+def scope_declaration_missing(suggestion, confirmed_fields):
+    refs = suggestion.get("references")
+    if ("scope_replacements" in suggestion or suggestion.get("kind") == "aggregate_consistency"
+            or not isinstance(refs, list)):
+        return False
+    fields = {(_normalize_name(table).lower(), name.lower()) for table, name in confirmed_fields}
+    return any((_normalize_name(ref.get("table_name")).lower(), _normalize_name(ref.get("field_name")).lower()) in fields
+               for ref in refs if isinstance(ref, dict))
+
+
+def valid_check_target_structure(target):
+    return (isinstance(target, dict) and isinstance(target.get("table_name"), str)
+            and isinstance(target.get("expression"), dict) and bool(target["expression"]))
+
+
+def check_target_missing(suggestion):
+    return (bool(suggestion.get("scope_replacements"))
+            and suggestion.get("kind") in ("field_compare_unary", "field_compare_binary")
+            and not valid_check_target_structure(suggestion.get("check_target")))
+
+
+def _bound_check_target(raw, index, documents, references, kind):
+    if not isinstance(raw, dict) or not isinstance(raw.get("expression"), dict):
+        raise _Unbound("请补充建议独立的检查字段、异常条件和比较值。")
+    base = documents.get(_normalize_name(raw.get("table_name")).lower())
+    related_name = _normalize_name(raw.get("related_table_name")).lower()
+    related = documents.get(related_name) if related_name else None
+    if base is None or related_name and (related is None or base == related):
+        raise _Unbound("请核实建议检查指标的真实文档表及其归属。")
+    def columns(doc):
+        return [{**field, "column_name": field["field_name"]} for field in (index.fields(doc) if doc else [])]
+
+    try:
+        refined = refine_candidate({"rule_type": "field_compare", "expression": raw["expression"]},
+                                   columns=columns(base), related_columns=columns(related), dialect="", existing=[])
+        if refined.get("uncertainties"):
+            raise _Unbound("请核实建议检查指标的真实字段。")
+        expression = refined["expression"]
+        terms = comparison_conditions(refined)
+        for term in terms:
+            if is_arithmetic(term) or term["op"] in UNARY_OPS:
+                continue
+            field = index.field(base, term["left"])
+            if term.get("right_type") == "value":
+                _validate_filter_value({"op": term["op"], "value": term["right"]}, field["data_type"])
+            else:
+                right = index.field(related if term.get("right_table") == "related" else base, term["right"])
+                if not right or type_family(field.get("data_type")) != type_family(right.get("data_type")):
+                    raise _Unbound("建议中参与比较的指标类型不一致。")
+    except AppError as exc:
+        raise _Unbound("请核实建议的检查字段、比较操作和取值类型。") from exc
+    fields = referenced_fields({"expression": expression})
+    owners = {"base": base["table_name"], "related": related["table_name"] if related else None}
+    actual = {(owners[role], name) for role, names in fields.items() for name in names}
+    cited = {(ref["table_name"], ref["field_name"]) for ref in references}
+    if (not actual or not actual <= cited
+            or kind == "field_compare_unary" and any(term["op"] not in UNARY_OPS for term in terms)):
+        raise _Unbound("建议检查条件必须使用建议所引用的真实指标并符合所声明的检查类型。")
+    return {"table_name": base["table_name"], "expression": expression,
+            **({"related_table_name": related["table_name"]} if fields["related"] else {})}
+
+
+def _has_check_target_alias(item):
+    return (isinstance(item, dict) and item.get("kind") in ("field_compare_unary", "field_compare_binary")
+            and isinstance(item.get("expression"), dict) and not valid_check_target_structure(item.get("check_target")))
+
+
+def _normalize_check_target_alias(item, index, documents, references):
+    expression = model_expression(item["expression"])
+    fields = referenced_fields({"expression": expression})
+    refs_by_table = {}
+    for ref in references:
+        refs_by_table.setdefault(ref["table_name"], set()).add(ref["field_name"].lower())
+
+    def owner(names):
+        names = {name.lower() for name in names}
+        matches = [table for table, refs in refs_by_table.items() if names <= refs]
+        return matches[0] if names and len(matches) == 1 else None
+
+    base = owner(fields["base"])
+    related = owner(fields["related"])
+    if not base or fields["related"] and (not related or related == base):
+        return item
+    target = {"table_name": base, "expression": expression}
+    if related:
+        target["related_table_name"] = related
+    try:
+        target = _bound_check_target(target, index, documents, references, item["kind"])
+    except _Unbound:
+        return item
+    return {**item, "check_target": target}
+
+
+def normalize_suggestion_check_targets(items, *, tables, fields_by_table, candidates, select_category_tables=None):
+    """Bind a typed expression returned at the suggestion level to its documented operands."""
+    if not any(_has_check_target_alias(item) for item in items):
+        return items
+    index = _DocumentIndex(tables, fields_by_table)
+    category_codes = {str(candidate.get("report_category") or "") for candidate in candidates}
+    normalized = []
+    for item in items:
+        binding = (_model_references(item.get("references"), index, category_codes, select_category_tables)
+                   if _has_check_target_alias(item) else None)
+        if binding:
+            references, documents = binding
+            item = _normalize_check_target_alias(item, index, documents, references)
+        normalized.append(item)
+    return normalized
+
+
 def _model_suggestion(
     item: Any, index: _DocumentIndex, category_codes: set[str] | None, select_category_tables: CategoryTableSelector | None,
+    confirmed_fields=(),
 ) -> dict[str, Any] | None:
     model_only = category_codes is not None
     if not isinstance(item, dict):
@@ -385,6 +570,8 @@ def _model_suggestion(
     if binding is None:
         return None
     references, documents = binding
+    if model_only and _has_check_target_alias(item):
+        item = _normalize_check_target_alias(item, index, documents, references)
     ambiguous = [name for name, doc in documents.items() if doc is None]
     category = _infer_category(item, references, model_only=model_only)
     operations = _declared_aggregates(item)
@@ -423,6 +610,33 @@ def _model_suggestion(
         if references and not ambiguous and not limit and kind != "review":
             # An invitation to a separate grounded analysis, never an executable definition.
             suggestion["adoption"] = {"operations": sorted(operations), "preconditions": preconditions}
+            if item.get("_scope_replacement_repeats_parent"):
+                suggestion.pop("adoption", None)
+                suggestion["support_level"] = "needs_confirmation"
+                suggestion.setdefault("limitations", []).append("建议声明更换范围，但与相关主方案的原范围相同，请核实实际检查目标。")
+            elif scope_declaration_missing(item, confirmed_fields):
+                suggestion.pop("adoption", None)
+                suggestion["support_level"] = "needs_confirmation"
+                suggestion.setdefault("limitations", []).append("建议对已选筛选范围是保留还是更换，尚需核实。")
+            elif "scope_replacements" in item:
+                try:
+                    replacements, caption = _scope_replacements(item["scope_replacements"], index, category_codes,
+                                                                 select_category_tables, confirmed_fields)
+                    raw_target = item.get("check_target")
+                    explicit_goal = category != "period" and valid_check_target_structure(raw_target)
+                    check_target = (_bound_check_target(item.get("check_target"), index, documents, references, kind)
+                                    if (replacements or explicit_goal) and kind in ("field_compare_unary", "field_compare_binary") else None)
+                except _Unbound as exc:
+                    suggestion.pop("adoption", None)
+                    suggestion["support_level"] = "needs_confirmation"
+                    suggestion.setdefault("limitations", []).append(str(exc))
+                else:
+                    suggestion["scope_replacements"] = replacements
+                    if check_target:
+                        suggestion["check_target"] = check_target
+                    if replacements:
+                        caption = f"（{caption[:80]}）"
+                        suggestion["title"] = title[:MAX_TITLE_LENGTH - len(caption)] + caption
         content = json.dumps(suggestion, ensure_ascii=False, sort_keys=True).encode("utf-8")
         suggestion["id"] = hashlib.sha256(content).hexdigest()[:12]
     return suggestion
@@ -1069,8 +1283,9 @@ def build_ai_suggestions(
         if scoped is not None:
             collected.append(scoped)
     category_codes = {str(candidate.get("report_category") or "") for candidate in candidates if isinstance(candidate, dict)}
+    confirmed_fields = confirmed_scope_fields(candidates) if model_only else set()
     for item in _model_items(model_suggestions):
-        suggestion = _model_suggestion(item, index, category_codes if model_only else None, select_category_tables)
+        suggestion = _model_suggestion(item, index, category_codes if model_only else None, select_category_tables, confirmed_fields)
         if suggestion is not None:
             collected.append(suggestion)
     if filter_actionable:

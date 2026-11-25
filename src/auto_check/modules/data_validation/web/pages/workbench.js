@@ -61,6 +61,7 @@ export function createWorkbench({
     analysisInput: "", previewBusy: false, selectedChoice: null,
     analysis: null, analysisNote: "",
     options: [], selectedOptions: [], activeOptionId: "", expandedOptionId: "", optionWork: {}, comparisonSuggestions: [], aiSuggestions: [],
+    adoptedSupplements: new Map(),
     requestKeyRegistry: null, savedOptionRules: [], optionsSaving: false, pendingOptionSave: null,
   };
   let dialog = null;
@@ -628,6 +629,7 @@ export function createWorkbench({
       analysisInput: "", previewBusy: false, selectedChoice: null,
       analysis: null, analysisNote: "",
       options: [], selectedOptions: [], activeOptionId: "", expandedOptionId: "", optionWork: {}, comparisonSuggestions: [], aiSuggestions: [],
+      adoptedSupplements: new Map(),
       requestKeyRegistry: null, savedOptionRules: [], optionsSaving: false, pendingOptionSave: null,
     });
     stopElapsed();
@@ -1159,6 +1161,38 @@ export function createWorkbench({
       && !ruleScopeIssues(preview.definition).length && !ruleScopeIssues(candidate || {}).length;
   }
 
+  function optionExecutionKey(candidate, preview) {
+    if (!readyAdoptionPreview(candidate, preview) || preview.definition.rule_type !== "field_compare") return "";
+    // Use the verified definition. Completed review notes and display text may differ between analyses.
+    const presentation = new Set(["name", "rule_name", "description", "violation_message", "semantic_intent",
+      "result_aliases", "uncertainties", "uncertainty_resolutions"]);
+    const definition = Object.fromEntries(Object.entries(preview.definition).filter(([key]) => !presentation.has(key)));
+    // The query validator treats missing, null and empty filter lists as absent. The compiler defaults
+    // absent/null handling to an empty per-side configuration.
+    for (const key of ["filters", "null_evidence"]) {
+      const value = definition[key];
+      if (value == null || (Array.isArray(value) && !value.length)) delete definition[key];
+    }
+    const handling = definition.null_handling;
+    if (handling == null || (typeof handling === "object" && !Array.isArray(handling) && !Object.keys(handling).length)) {
+      delete definition.null_handling;
+    }
+    // A backend integer outside this range may already have been rounded during JSON parsing.
+    const precise = (value) => {
+      if (typeof value === "number") return Math.abs(value) <= Number.MAX_SAFE_INTEGER;
+      if (value && typeof value === "object") return Object.values(value).every(precise);
+      return true;
+    };
+    if (!precise(definition)) return "";
+    if (Array.isArray(definition.filters)) {
+      // Filter conjunction and membership are order independent. Keep typed values and all other execution fields.
+      definition.filters = definition.filters.map((filter) => ["in", "not_in"].includes(filter.op) && Array.isArray(filter.value)
+        ? { ...filter, value: filter.value.map((value) => canonicalOptionKey([value])).sort() }
+        : filter).map(canonicalOptionKey).sort();
+    }
+    return canonicalOptionKey(definition);
+  }
+
   function relevantAdoptionParents(item, options = adoptionOptions()) {
     return options.filter(({ selected, preview }) => {
       if (!selected) return false;
@@ -1174,35 +1208,66 @@ export function createWorkbench({
 
   function suggestionAdoptionReady(item, options = adoptionOptions()) {
     return !supplementSession && !work.previewBusy && item.support_level !== "unsupported" && !item.references_ambiguous
-      && !work.optionWork[`supplement-${item.id}`]
+      && !adoptedSuggestion(item.id)
       && Boolean(item.adoption
         ? work.analysis?.analysis_id && work.analysis.result?.analysis_context && relevantAdoptionParents(item, options).length
         : item.definition && item.support_level === "supported" && relevantAdoptionParents(item, options).length);
   }
 
-  function appendSupplementCards(cards) {
+  function adoptedSuggestion(id) {
+    const optionId = work.adoptedSupplements.get(id);
+    return Boolean(optionId && work.optionWork[optionId]);
+  }
+
+  function appendSupplementCards(suggestionId, cards) {
     if (!cards.length) return;
     if (!work.options.length) {
       const primary = work.candidate;
       const id = "primary";
-      work.options = [{ id, label: primary.rule_name, candidate: primary, recommended: true,
-        table_label: primary.table_name_cn || primary.table_name, field_label: comparisonFields(primary.expression).join("、") }];
+      work.options = [{ id, label: primary.rule_name || work.preview.definition.name, candidate: primary, recommended: true,
+        table_label: primary.table_name_cn || primary.table_name,
+        field_label: comparisonFields(primary.expression).map((field) =>
+          page.form.metadataColumns().find((column) => column.column_name === field)?.comment || field).join("、"),
+        grain: primary.grain || "", match_reason: "原校验方案" }];
       work.activeOptionId = id;
       work.selectedOptions = [id];
-      work.optionWork[id] = { saved: work.ruleId ? work.detail : null };
+      const saved = work.ruleId ? work.detail : null;
+      work.optionWork[id] = { saved, savedCanonical: canonicalOptionKey(saved?.definition) };
+      if (saved) work.savedOptionRules = [saved];
       work.requestKeyRegistry = createRequestKeyRegistry();
     }
     syncActiveOptionState();
+    const selected = new Set(work.selectedOptions);
+    const executionOptions = new Map();
+    for (const option of work.options) {
+      const { candidate, preview } = work.optionWork[option.id];
+      const key = optionExecutionKey(candidate, preview);
+      const existing = executionOptions.get(key);
+      if (key && (!existing || (selected.has(option.id) && !selected.has(existing.id)))) {
+        executionOptions.set(key, { id: option.id, duplicate: true });
+      }
+    }
+    let target;
     for (const card of cards) {
-      if (work.optionWork[card.id]) continue;
+      const key = optionExecutionKey(card.candidate, card.candidate.preview);
+      const existing = executionOptions.get(key) || (work.optionWork[card.id] && { id: card.id, duplicate: true });
+      const option = existing || { id: card.id, duplicate: false };
+      target ??= option;
+      selected.add(option.id);
+      if (existing) continue;
       work.options.push(card);
       work.optionWork[card.id] = { candidate: card.candidate, definition: null, selectedChoice: null,
         preview: card.candidate.preview, previewCases: null, previewEvidence: null, analysisInput: work.analysisInput, saved: null };
-      work.selectedOptions.push(card.id);
+      if (key) executionOptions.set(key, option);
     }
-    work.requestKeyRegistry.refresh();
-    work.expandedOptionId = cards[0].id;
-    loadOptionIntoForm(cards[0].id);
+    if (selected.size !== work.selectedOptions.length) {
+      work.selectedOptions = [...selected];
+      work.requestKeyRegistry.refresh();
+    }
+    work.adoptedSupplements.set(suggestionId, target.id);
+    work.expandedOptionId = target.id;
+    loadOptionIntoForm(target.id);
+    return target.duplicate ? target.id : "";
   }
 
   function returnSupplementWhenReady() {
@@ -1253,7 +1318,7 @@ export function createWorkbench({
         runtime: childRuntime, listen: childRuntime.listen,
         onSupplementReady: (options, anchor) => {
           if (supplementSession !== session || !dialog || session.input !== inputSignature()) return;
-          appendSupplementCards(options.map((option, index) => ({ ...option,
+          session.focusOptionId = appendSupplementCards(suggestion.id, options.map((option, index) => ({ ...option,
             id: `supplement-${suggestion.id}${index ? "-" + index : ""}`, supplemental: true,
             label: option.label || suggestion.title, match_reason: suggestion.reason,
             candidate: { ...option.candidate, supplementAnalysis: anchor } })));
@@ -1263,8 +1328,8 @@ export function createWorkbench({
           if (supplementSession !== session) return;
           supplementSession = null;
           render();
-          const button = page?.suggestionButtons.get(suggestion.id);
-          if (button && !button.disabled) button.focus();
+          const focus = page?.optionsPanel?.getCardEl(session.focusOptionId) || page?.suggestionButtons.get(suggestion.id);
+          if (focus && !focus.disabled) focus.focus();
         },
       });
       supplementSession = session;
@@ -1277,8 +1342,6 @@ export function createWorkbench({
     }
     if (!suggestion.definition) return;
     const id = `supplement-${suggestion.id}`;
-    if (work.optionWork[id]) return;
-    const primary = work.candidate;
     const token = runtime.next("workbench-preview");
     const snapshot = inputSignature();
     work.previewBusy = true;
@@ -1290,34 +1353,16 @@ export function createWorkbench({
       const response = canRequestPreview(proposed)
         ? await runtime.request(token, (signal) => api.preview(previewPayload(proposed, proposed), { signal })) : null;
       if (!runtime.current(token) || inputSignature() !== snapshot) return;
-      if (!work.options.length) {
-        const primaryId = `primary-${work.preview.content_sha256}`;
-        work.options = [{ id: primaryId, label: primary.rule_name || work.preview.definition.name,
-          candidate: primary, recommended: true, table_label: primary.table_name_cn || primary.table_name,
-          field_label: comparisonFields(primary.expression).map((name) =>
-            page.form.metadataColumns().find((field) => field.column_name === name)?.comment || name).join("、"),
-          grain: primary.grain || "", match_reason: "原校验方案",
-        }];
-        work.activeOptionId = primaryId;
-        work.selectedOptions = [primaryId];
-        work.optionWork[primaryId] = {};
-        work.requestKeyRegistry = createRequestKeyRegistry();
-        syncActiveOptionState();
-      }
       const primaryOption = work.options.find((option) => option.candidate?.table_name === proposed.table_name);
-      proposed.columns = primaryOption?.candidate?.columns || [];
+      const primary = primaryOption?.candidate || (work.candidate.table_name === proposed.table_name ? work.candidate : null);
+      proposed.columns = primary?.columns || [];
       const candidate = response ? receivePreview(proposed, response) : reviewCandidate(proposed);
-      work.options.push({ id, supplemental: true, label: suggestion.title, grain: primaryOption?.grain || "",
-        table_label: primaryOption?.table_label || candidate.table_name, field_label: primaryOption?.field_label || comparisonFields(candidate.expression).join("、"),
+      const focus = appendSupplementCards(suggestion.id, [{ id, supplemental: true, label: suggestion.title, grain: primaryOption?.grain || primary?.grain || "",
+        table_label: primaryOption?.table_label || primary?.table_name_cn || candidate.table_name,
+        field_label: primaryOption?.field_label || comparisonFields(candidate.expression).join("、"),
         match_reason: suggestion.reason, candidate,
-      });
-      work.optionWork[id] = { candidate, definition: null, selectedChoice: null, preview: candidate.preview,
-        previewCases: null, previewEvidence: null, analysisInput: snapshot, saved: null,
-      };
-      work.selectedOptions = [...work.selectedOptions, id];
-      work.requestKeyRegistry.refresh();
-      work.expandedOptionId = id;
-      loadOptionIntoForm(id);
+      }]);
+      if (focus) page.optionsPanel?.getCardEl(focus)?.focus();
     } finally {
       if (runtime.current(token)) { work.previewBusy = false; render(); }
     }
@@ -1337,7 +1382,7 @@ export function createWorkbench({
     page.suggestionsSection.hidden = !list.length;
     page.suggestionsList.replaceChildren();
     list.forEach((item) => {
-      const adopted = Boolean(work.optionWork[`supplement-${item.id}`]);
+      const adopted = adoptedSuggestion(item.id);
       const adopt = (item.adoption || (item.support_level === "supported" && item.definition)) && item.id && hasCapability(user, "dv.ai_use")
         ? button(adopted ? "已采纳" : "采纳", { capability: "dv.ai_use", className: "dv-button dv-ai-supplement-adopt",
           disabled: !suggestionAdoptionReady(item, options) || adopted || work.testing || work.busy || work.confirmBusy || work.optionsSaving || Boolean(work.pendingOptionSave) || work.readOnly,
@@ -1762,6 +1807,7 @@ export function createWorkbench({
     work.previewCases = null;
     work.selectedChoice = null;
     work.options = []; work.selectedOptions = []; work.activeOptionId = ""; work.expandedOptionId = ""; work.optionWork = {};
+    work.adoptedSupplements.clear();
     work.comparisonSuggestions = []; work.aiSuggestions = []; work.savedOptionRules = []; work.optionsSaving = false;
     startElapsed();
     page.form.setBusy(true);

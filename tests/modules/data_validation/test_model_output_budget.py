@@ -16,9 +16,8 @@ def analysis_with_usage(usages, *, reasoning=True):
     rules, model = _rules_with_doc([{'target': {'table': 'test_table'}}], fields=FIELDS)
     for name in ('ledger_b', 'ledger_c'):
         _add_table(rules, name=name, cn=name, dimension='业务记录', fields=FIELDS)
-    request = _request(request_text='核对份额', analysis_protocol=2)
+    request = _request(request_text='核对份额', analysis_protocol=2, reasoning_enabled=reasoning)
     inputs = rules._analysis_inputs(user(), request)
-    inputs['reasoning_enabled'] = reasoning
     analysis = SemanticAnalysis(rules, user(), inputs, request['request_text'], None, None)
     calls = []
     def detailed(_model_id, messages, *, options, **_kwargs):

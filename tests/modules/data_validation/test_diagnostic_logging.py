@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from auto_check.modules.data_validation.model_calls import LOGGER, failure, semantic_completion
 from auto_check.modules.data_validation.module import create_module
 from auto_check.modules.data_validation.contracts import AppError
+from auto_check.modules.data_validation.semantic_generation import _model_json_object
 
 
 @pytest.fixture(autouse=True)
@@ -44,8 +45,11 @@ def test_module_opens_filters_and_closes_diagnostics_once(tmp_path):
         assert secret not in content
         LOGGER.warning('Semantic JSON invalid reference=%s analysis=%s round=%d stage=%s chars=%d reason=%s line=%d column=%d',
                        error.reference, '123456abcdef', 2, 'repair_json', 42, 'syntax', 1, 14)
+        raw = '{"draft":"' + secret + '"},"ai_suggestions":[]}'
+        assert _model_json_object(raw)["draft"] == secret
         content = log.read_text(encoding='utf-8')
         assert 'chars=42 reason=syntax line=1 column=14' in content
+        assert f"Semantic JSON recovered early_root_close chars={len(raw)}" in content
         assert secret not in content
         assert root_state == (root.level, list(root.handlers))
     finally:

@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 
 from .analysis_memory import digest
+from .ai_suggestions import check_target_missing, scope_declaration_missing
 from .business_display import field_label, table_label
 from .contracts import AppError
 from .document_evidence import referenced_fields
@@ -63,6 +64,138 @@ def attach_period_applicability(items, business_scope, source_id, tables, fields
             item["support_level"] = "needs_confirmation"
             item.setdefault("limitations", []).append("请核实业务口径设置中期间适用范围的 JSON、文档字段和字典取值。")
     return items
+
+
+def normalize_supplement_scope_replacements(items, business_scope, source_id, tables, fields_by_table, candidates):
+    """Keep registered additional scope and a repeated parent scope out of replacement metadata."""
+    if not any(isinstance(item, dict) and item.get("scope_replacements") for item in items):
+        return items
+    inherited = []
+    for candidate in candidates:
+        definition = (candidate.get("preview") or {}).get("definition") or candidate
+        owners = {"base": definition.get("table_name"), "related": (definition.get("join") or {}).get("table_name")}
+        rows = definition.get("filters") or []
+        filters = [{**f, "table": owners.get(f.get("table", "base"))} for f in rows
+                   if f.get("confirmed") is True]
+        # A dictionary-field question already contains the document-bound predicates for
+        # its alternatives. They can identify a restatement, but only the eventual
+        # selected receipt authorizes a filter on the adopted rule.
+        pending = {f"filters.{i}" for i, row in enumerate(rows) if row.get("confirmed") is False}
+        alternatives = []
+        for question in candidate.get("questions") or []:
+            if question.get("id") not in pending:
+                continue
+            for option in question.get("options") or []:
+                predicate = option.get("selection")
+                if isinstance(predicate, dict) and predicate.get("confirmed") is True:
+                    alternatives.append({**predicate, "table": owners.get(predicate.get("table", "base"))})
+        inherited.append((set(owners.values()), filters, alternatives))
+
+    def normalize(item):
+        if not isinstance(item, dict):
+            return item
+        if "_scope_replacement_repeats_parent" in item:
+            item = {key: value for key, value in item.items() if key != "_scope_replacement_repeats_parent"}
+        aggregate = item.get("kind") == "aggregate_consistency"
+        period = item.get("category") == "period" and "PERIOD_APPLICABILITY " in business_scope
+        changes, refs = item.get("scope_replacements"), item.get("references")
+        if not isinstance(changes, list) or not changes or not isinstance(refs, list) or not refs or any(
+                not isinstance(r, dict) or not all(isinstance(r.get(key), str) for key in ("table_name", "field_name")) for r in refs):
+            return item
+        referenced = {r["table_name"] for r in refs}
+        relevant = [(filters, alternatives) for owners, filters, alternatives in inherited if owners & referenced]
+        groups = [filters for filters, _ in relevant]
+
+        def column(change):
+            return (change.get("table_name"), change.get("field_name")) if isinstance(change, dict) else (None, None)
+
+        def same_column(fact, change):
+            return (fact["table"], fact["field"]) == column(change)
+
+        def matches(change, facts):
+            return isinstance(change, dict) and any(same_column(fact, change) and _same_filter(fact, change) for fact in facts)
+
+        def repeats_group(change, filters):
+            changed = [other for other in changes if column(change) == column(other)]
+            existing = [fact for fact in filters if same_column(fact, change)]
+            return bool(existing and all(matches(other, existing) for other in changed)
+                        and all(any(_same_filter(fact, other) for other in changed) for fact in existing))
+
+        if aggregate:
+            # A common inherited predicate is already in every relevant scope. If scopes
+            # differ, retain the declaration so a real replacement is still verified.
+            return {**item, "scope_replacements": [change for change in changes if not (
+                groups and all(repeats_group(change, filters) for filters in groups))]}
+
+        if not period:
+            if groups and all(repeats_group(change, filters) for change in changes for filters in groups):
+                return {**item, "_scope_replacement_repeats_parent": True}
+            return item
+
+        [registered] = attach_period_applicability([{"category": "period", "adoption": True, "references": refs}],
+                                                    business_scope, source_id, tables, fields_by_table)
+        facts = registered.get("applicability_filters") or []
+        by_metric = registered.get("applicability_by_metric") or []
+        if by_metric:
+            target = item.get("check_target")
+            if isinstance(target, dict) and isinstance(target.get("table_name"), str) and (
+                    target.get("related_table_name") is None or isinstance(target["related_table_name"], str)):
+                try:
+                    facts = _period_applicability(target, target.get("table_name"), target.get("related_table_name"), {"suggestion": registered})
+                except ScopeEvidenceRequired:
+                    return item
+            elif len(by_metric) == 1:
+                facts = by_metric[0]["filters"]
+        if not facts:
+            return item
+
+        period_groups = [filters + alternatives for filters, alternatives in relevant]
+
+        def repeats_inherited_scope(change):
+            same_field_groups = [rows for rows in period_groups if any(same_column(fact, change) for fact in rows)]
+            return bool(same_field_groups) and all(repeats_group(change, filters) for filters in same_field_groups)
+
+        return {**item, "scope_replacements": [change for change in changes if not (
+            all(matches(other, facts) for other in changes if column(change) == column(other))
+            or repeats_inherited_scope(change))]}
+
+    return [normalize(item) for item in items]
+
+
+def supplement_scope_comparison(candidates, suggestions):
+    """Pair each confirmed scope with its documented labels and the actual violation expression."""
+    proposed = []
+    for suggestion in suggestions:
+        changes = suggestion.get("scope_replacements")
+        if isinstance(changes, list):
+            proposed.extend(change for change in changes if isinstance(change, dict))
+
+    def describe(predicate, options):
+        value = predicate.get("value")
+        values = value if isinstance(value, list) else [value]
+        return {"op": predicate.get("op"), "value": value,
+                "文档码值": [option for option in options if option["value"] in values]}
+
+    comparison = []
+    for candidate in candidates:
+        definition = (candidate.get("preview") or {}).get("definition") or candidate
+        base = definition.get("table_name")
+        related = (definition.get("join") or {}).get("table_name")
+        confirmed = []
+        for predicate in definition.get("filters") or []:
+            if predicate.get("confirmed") is not True:
+                continue
+            is_related = predicate.get("table") == "related"
+            owner, name = related if is_related else base, predicate["field"]
+            columns = candidate.get("related_columns" if is_related else "columns") or []
+            field = next((col for col in columns if col["column_name"] == name), {})
+            options = dictionary_options(field)
+            changes = [describe(change, options) for change in proposed
+                       if (change.get("table_name"), change.get("field_name")) == (owner, name)]
+            confirmed.append({"table_name": owner, "field_name": name, **describe(predicate, options), "待审替换": changes})
+        if confirmed:
+            comparison.append({"已核实筛选": confirmed, "当前异常条件": {"table_name": base, "expression": definition.get("expression")}})
+    return comparison
 
 
 def period_check(definition, columns, target_field):
@@ -149,6 +282,7 @@ def verified_period_scope(service, user, payload):
             or selected and "inherit_check" in reference):
         raise AppError("VALIDATION_ERROR")
     if (not suggestion.get("adoption") or not tables
+            or selected and check_target_missing(suggestion)
             or not selected and (suggestion.get("category") != "period" or len(tables) != 1)
             or (mode != "suggestion_only" and (not isinstance(receipts, list) or not receipts))):
         raise AppError("ANALYSIS_CONTEXT_CHANGED")
@@ -166,7 +300,14 @@ def verified_period_scope(service, user, payload):
             raise AppError("ANALYSIS_CONTEXT_CHANGED")
         return {"table": table, "fields": sorted({r["field_name"] for r in refs}), "groups": [[]],
                 "applicability_filters": deepcopy(facts)}
+    replacements = [{"table": item["table_name"], "field": item["field_name"], "op": item["op"],
+                     "value": deepcopy(item["value"]), "confirmed": True}
+                    for item in suggestion.get("scope_replacements", [])] if selected else []
+    replaced_fields = {(f["table"], f["field"]) for f in replacements}
+    replacement_signature = {_filter_identity(f) for f in replacements}
     groups, checks, variants = {}, {}, {}
+    missing_replacements = set()
+    replacement_changes_scope = False
     for receipt in receipts:
         definition = receipt.get("definition") if isinstance(receipt, dict) else None
         if (not isinstance(definition, dict) or not selected and definition.get("table_name") != table
@@ -190,6 +331,19 @@ def verified_period_scope(service, user, payload):
                 raise AppError("ANALYSIS_CONTEXT_CHANGED")
             owner = join["table_name"] if f.get("table") == "related" else parent_table
             filters.append({**f, "table": owner})
+        selected_fields = {(f["table"], f["field"]) for f in filters}
+        if selected and scope_declaration_missing(suggestion, selected_fields):
+            raise AppError("ANALYSIS_CONTEXT_CHANGED")
+        missing_fields = replaced_fields - selected_fields
+        for owner, name in missing_fields:
+            columns = (preview.get("columns") if owner == parent_table else
+                       preview.get("related_columns") if owner == join.get("table_name") else None)
+            field = next((column for column in (columns or []) if column.get("column_name") == name), None)
+            missing_replacements.add(field_label(field) or f"{owner}.{name}")
+        if replacements and not missing_fields:
+            original_signature = {_filter_identity(f) for f in filters if (f["table"], f["field"]) in replaced_fields}
+            replacement_changes_scope |= original_signature != replacement_signature
+            filters = [f for f in filters if (f["table"], f["field"]) not in replaced_fields] + replacements
         filters.sort(key=digest)
         filter_signature = sorted(_filter_identity(f) for f in filters) if selected else filters
         groups[digest(filter_signature)] = filters
@@ -204,7 +358,7 @@ def verified_period_scope(service, user, payload):
                        "report_date_field": validated.get("report_date_field"), "filters": filters}
             if join:
                 variant["join"] = deepcopy(join)
-            if suggestion.get("category") == "period":
+            if suggestion.get("category") == "period" and not suggestion.get("check_target"):
                 period_checks = {}
                 for ref in refs:
                     if ref["table_name"] == parent_table:
@@ -219,10 +373,13 @@ def verified_period_scope(service, user, payload):
                 variant["business_key"] = validated.get("business_key")
             variants[digest({**variant, "filters": filter_signature})] = variant
     return {"table": table, "fields": sorted({r["field_name"] for r in refs}), "groups": [groups[k] for k in sorted(groups)],
+            **({"missing_replacement_fields": sorted(missing_replacements)} if missing_replacements else {}),
+            **({"unchanged_replacement_scope": True} if replacements and not missing_replacements and not replacement_changes_scope else {}),
             **({"applicability_filters": deepcopy(suggestion["applicability_filters"])} if suggestion.get("applicability_filters") else {}),
             **({"checks": [checks[k] for k in sorted(checks)]} if checks else {}),
             **({"suggestion": {key: deepcopy(suggestion[key]) for key in (
-                    "category", "kind", "references", "reason", "adoption", "limitations", "applicability_by_metric") if key in suggestion},
+                    "category", "kind", "title", "references", "reason", "adoption", "limitations", "applicability_by_metric",
+                    "scope_replacements", "check_target") if key in suggestion},
                 "variants": [variants[k] for k in sorted(variants)]} if selected else {})}
 
 
@@ -281,6 +438,9 @@ def adopted_join_matches(current, expected, left_day):
 
 def verify_adopted_goal(definition, table, related, scope):
     suggestion = scope["suggestion"]
+    check = suggestion.get("check_target")
+    if check and definition.get("expression") != check["expression"]:
+        raise ScopeEvidenceRequired("补充方案的指标、异常条件或比较值与已核实建议不同，请核实检查目标。")
     aggregate = suggestion.get("kind") == "aggregate_consistency"
     period = suggestion.get("category") == "period"
     if not (aggregate or period):
@@ -299,6 +459,45 @@ def verify_adopted_goal(definition, table, related, scope):
                               or not operands["base"] or not operands["related"])):
         message = "请核实补充建议指定的两侧指标、关联和按明细求和的范围。" if aggregate else "请核实期间建议指定的指标及适用范围。"
         raise ScopeEvidenceRequired(message)
+
+
+def adopted_sum_operands(draft, table, related, scope):
+    """Identify operands already bound to the verified suggestion's physical fields."""
+    suggestion = scope.get("suggestion") or {}
+    expression, join = draft.get("expression"), draft.get("join")
+    if (not scope.get("variants") or suggestion.get("kind") != "aggregate_consistency"
+            or draft.get("rule_type") != "field_compare" or not related or not isinstance(expression, dict)
+            or not isinstance(join, dict) or join.get("table_name") != related or join.get("right_aggregate") != "sum"
+            or expression.get("op") != "neq" or expression.get("right_type", "field") != "field"
+            or expression.get("right_table") != "related"):
+        return {}
+    left, right = expression.get("left"), expression.get("right")
+    refs = {(ref["table_name"], ref["field_name"]) for ref in suggestion["references"]}
+    if not isinstance(left, str) or not isinstance(right, str) or not {(table, left), (related, right)} <= refs:
+        return {}
+    return {"left": left, "right": right}
+
+
+def bind_adopted_check(draft, table, related, scope, base_fields, related_fields):
+    check = scope["suggestion"].get("check_target")
+    if not check or draft.get("rule_type") != "field_compare" or not isinstance(draft.get("semantic_intent"), dict):
+        return
+    if check["table_name"] != table or check.get("related_table_name") not in (None, related):
+        raise ScopeEvidenceRequired("补充建议需使用已核实检查目标所属的文档对象，请明确适用范围。")
+    expression = deepcopy(check["expression"])
+    draft["expression"] = expression
+    grouped = "conditions" in expression
+    fields = {"base": {f["field_name"]: f for f in base_fields}, "related": {f["field_name"]: f for f in related_fields}}
+    metrics = []
+    for index, term in enumerate(expression.get("conditions", [expression])):
+        for side in ("left", "right"):
+            name = term.get(side)
+            if not isinstance(name, str) or term.get(side + "_type", "field") != "field":
+                continue
+            role = term.get("right_table", "base") if side == "right" else "base"
+            metrics.append({"side": side, "fields": [name], "term": field_label(fields[role].get(name)) or name,
+                            **({"condition_index": index} if grouped else {})})
+    draft["semantic_intent"]["metrics"] = metrics
 
 
 def adopted_scope_label(group, groups, table, related, fields, other):
@@ -392,6 +591,30 @@ def _period_applicability(draft, table, related, scope):
     if len(signatures) > 1:
         raise ScopeEvidenceRequired("期间建议中的检查指标适用范围不同，请明确本次检查的指标和范围。")
     return matched[0]
+
+
+def remove_adopted_scope_proposals(draft, table, related, scope, *, include_inherited=False):
+    """A verified adoption supersedes the model's restatement of that same scope field."""
+    changes = (scope.get("suggestion") or {}).get("scope_replacements") or []
+    replaced = {(change["table_name"], change["field_name"]) for change in changes}
+    if include_inherited:
+        replaced.update((item["table"], item["field"]) for group in scope.get("groups", []) for item in group)
+    if not replaced:
+        return
+    owners = {"base": table, "related": related}
+
+    def superseded(row, fields):
+        return (isinstance(row, dict) and isinstance(row.get("table", "base"), str)
+                and any((owners.get(row.get("table", "base")), field) in replaced for field in fields if isinstance(field, str)))
+
+    filters = draft.get("filters")
+    if isinstance(filters, list):
+        draft["filters"] = [row for row in filters if not isinstance(row, dict) or not superseded(row, [row.get("field")])]
+    intent = draft.get("semantic_intent")
+    scopes = intent.get("scopes") if isinstance(intent, dict) else None
+    if isinstance(scopes, list):
+        intent["scopes"] = [row for row in scopes if not isinstance(row, dict) or not isinstance(row.get("fields"), list)
+                            or not superseded(row, row["fields"])]
 
 
 def reconcile_confirmed_scope_partitions(draft, table, related, scope, group, base_fields, related_fields):

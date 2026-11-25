@@ -61,6 +61,27 @@ def test_retained_compound_metrics_keep_their_order_and_choices():
     assert result["semantic_intent"]["open_questions"] == first["semantic_intent"]["open_questions"]
 
 
+@pytest.mark.parametrize("repaired", [True, False])
+def test_confirmed_scope_that_makes_a_null_check_impossible_requires_a_repair(repaired):
+    first = repeated_scope(("01",))
+    first["expression"] = {"left": "state", "op": "is_null"}
+    first["semantic_intent"]["metrics"] = [{"side": "left", "term": "设备状态", "fields": ["state"]}]
+    corrected = deepcopy(first)
+    corrected["expression"]["left"] = "device_type"
+    corrected["semantic_intent"]["metrics"] = [{"side": "left", "term": "设备类别", "fields": ["device_type"]}]
+    rules, model = _rules_with_doc([combined(first), combined(first), corrected if repaired else first], fields=[
+        *FIELDS, ("state", "设备状态", "varchar", ""), ("device_type", "设备类别", "varchar", "")])
+    with rules.storage.database.begin() as conn:
+        conn.execute(update(DOC_FIELDS).where(DOC_FIELDS.c.field_name == "state").values(dictionary=DOC[0]["dictionary"]))
+    result = run(rules, "运行中设备的类别不能为空")
+    if repaired:
+        assert result["preview"]["definition"]["expression"] == corrected["expression"]
+    else:
+        assert not result.get("preview") and result["uncertainties"]
+    assert any("同一字段" in call["messages"][0]["content"] and "不可能" in call["messages"][0]["content"]
+               for call in model.calls[1:])
+
+
 @pytest.mark.parametrize("case", [
     "any", "different_code", "duplicate_condition", "duplicate_code", "condition_extra", "scope_extra", "group_extra",
     "metric_extra", "ambiguous_metric", "related_scope", "multiple_scopes", "multiple_fields", "incomplete_codes",

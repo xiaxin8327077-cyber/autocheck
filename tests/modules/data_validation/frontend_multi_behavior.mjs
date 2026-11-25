@@ -482,13 +482,16 @@ assert.deepEqual(confirmCalls.slice(-2).map((entry) => entry.id), testCalls.slic
 runtime.destroy();
 
 // 单候选也显示独立 AI补充建议；为空显示中性说明，不伪造空泛建议。
-async function openSingleAi(result) {
+async function openSingleAi(result, adoptedResult) {
   const singleApi = {
     ...api,
-    createAnalysis: async () => ({ analysis_id: `a-${Math.random().toString(16).slice(2)}`, status: "completed", elapsed_ms: 0, steps: [], result }),
+    createAnalysis: async ({ adoption_context }) => ({ analysis_id: `a-${Math.random().toString(16).slice(2)}`,
+      status: "completed", elapsed_ms: 0, steps: [], result: adoption_context ? adoptedResult : result }),
   };
   const singleRuntime = createRuntime({ notify: () => {} });
   singleRuntime.activate();
+  const schedule = singleRuntime.setTimer;
+  singleRuntime.setTimer = (callback, delay) => schedule(callback, delay === 3000 ? 0 : delay);
   const wb = createWorkbench({
     state, runtime: singleRuntime, api: singleApi, listen: singleRuntime.listen,
     user: { id: "1", role: "user", capabilities: ["dv.ai_use", "dv.manage", "dv.test", "dv.confirm"] },
@@ -661,6 +664,145 @@ assert.equal(batchCalls.at(-1).definitions.at(-1).join.right_aggregate, "sum");
 adopted.runtime.destroy();
 api.preview = defaultPreview;
 
+const sumDefinition = {
+  ...supplement, name: candidateA.rule_name, null_policy: "zero", violation_message: "原汇总规则提示",
+  filters: [{ table: "base", field: "project_code", op: "in", value: ["01", "02"], confirmed: true }],
+  join: { ...supplement.join, unmatched_policy: "exclude" },
+  project_driver: { version: 3, table_role: "base" },
+  semantic_intent: { metrics: [{ term: "项目实收", side: "left", fields: ["f_endp_amt"] }] },
+};
+function sumCandidate(definition, hash) {
+  return { ...candidateA, ...definition, rule_name: definition.name, related_columns: candidateB.columns,
+    preview: { ...candidateA.preview, definition, content_sha256: hash, sql_preview: "SELECT SUM(amount)" } };
+}
+const originalSum = sumCandidate(sumDefinition, candidateA.preview.content_sha256);
+const supplementAdvice = { id: "same-sum", category: "consistency", support_level: "needs_confirmation",
+  title: "复核项目金额和合同金额合计", reason: "按项目汇总合同金额核对", adoption: {},
+  references: [{ table_name: candidateA.table_name, field_name: "f_endp_amt" },
+    { table_name: candidateB.table_name, field_name: "f_contract_amt" }] };
+const sumOption = { ...options[0], id: "original-sum", candidate: originalSum };
+const sameSumDefinition = { ...sumDefinition, name: "补充汇总规则", description: "补充请求", rule_name: "补充汇总规则",
+  violation_message: "补充汇总规则提示", semantic_intent: { metrics: [{ term: "比较金额", side: "left", fields: ["f_endp_amt"] }] },
+  filters: [{ ...sumDefinition.filters[0], value: ["02", "01"] }],
+  expression: { right_table: "related", right: "f_contract_amt", right_type: "field", op: "neq", left: "f_endp_amt" },
+};
+const duplicateSum = sumCandidate(sameSumDefinition, "child-sum-hash");
+const sumAnalysis = { ...originalSum, analysis_context: {}, ai_suggestions: [supplementAdvice] };
+const unselectedSumTwin = { ...sumOption, id: "another-sum", recommended: false };
+for (const deselectBeforeAdoption of [true, false]) {
+  const candidate_options = [{ ...options[1], recommended: true }, ...(deselectBeforeAdoption
+    ? [sumOption, unselectedSumTwin] : [unselectedSumTwin, sumOption])];
+  const savedSum = await openSingleAi({ ...sumAnalysis, candidate_options }, duplicateSum);
+  const savedSumRoot = savedSum.wb.element;
+  const optionChecks = () => collectByClass(savedSumRoot, "dv-ai-option-check");
+  await findButton(savedSumRoot, "生成并运行测试用例").dispatch("click");
+  await findButton(savedSumRoot, "保存所选 2 条草稿").dispatch("click");
+  const batchesBeforeDuplicate = batchCalls.length;
+  const testsBeforeDuplicate = previewTestCalls.length;
+  if (deselectBeforeAdoption) {
+    const check = optionChecks().find(({ dataset }) => dataset.optionId === "original-sum");
+    check.checked = false;
+    await check.dispatch("change");
+    assert.ok(findButton(savedSumRoot, "保存并启动以上1个方案"));
+  }
+  await findButton(savedSumRoot, "采纳").dispatch("click");
+  const sumCards = collectByClass(savedSumRoot, "dv-ai-option-card");
+  assert.deepEqual(sumCards.map(optionIdOf), candidate_options.map(({ id }) => id), "执行口径相同的采纳结果复用原有卡片");
+  assert.deepEqual(optionChecks().filter(({ checked }) => checked).map(({ dataset }) => dataset.optionId),
+    ["opt-b", "original-sum"], "仅勾选一张同执行口径的原汇总方案");
+  const reusedSumCard = sumCards.find((card) => optionIdOf(card) === "original-sum");
+  assert.equal(reusedSumCard.getAttribute("aria-pressed"), "true", "查看原汇总卡片");
+  assert.equal(document.activeElement, reusedSumCard, "焦点转到已复用的汇总卡片");
+  assert.equal(findButton(savedSumRoot, "已采纳").disabled, true);
+  assert.equal(findButton(savedSumRoot, "保存并启动以上2个方案").disabled, false, "原测试证据继续有效");
+  assert.equal(previewTestCalls.length, testsBeforeDuplicate);
+  await findButton(savedSumRoot, "保存并启动以上2个方案").dispatch("click");
+  assert.equal(batchCalls.length, batchesBeforeDuplicate, "已保存的原汇总卡片无需重复写入");
+  assert.equal(savedSum.wb.isOpen(), false);
+  savedSum.runtime.destroy();
+}
+
+const differentSumDefinitions = [
+  { filters: [{ ...sumDefinition.filters[0], value: ["1", "02"] }] },
+  { expression: { ...sumDefinition.expression, op: "gt" } },
+  { null_policy: "review" },
+  { report_date_field: "first_seen_date" },
+  { join: { ...sumDefinition.join, report_date_field: "other_date" } },
+  { join: { ...sumDefinition.join, on: [{ left: "project_code", right: "contract_code" }] } },
+  { join: { ...sumDefinition.join, right_aggregate: "" } },
+  { business_key: "row_locator" },
+  { project_driver: { version: 3, table_role: "related" } },
+];
+for (const [i, patch] of [...differentSumDefinitions, { expression: { ...candidateB.expression, right: 1 } }].entries()) {
+  const changesThreshold = i === differentSumDefinitions.length;
+  const parent = changesThreshold ? candidateB : originalSum;
+  const child = sumCandidate({ ...parent.preview.definition, ...patch, name: `不同口径 ${i}` }, `child-hash-${i}`);
+  const suggestion = changesThreshold ? { ...supplementAdvice,
+    references: [{ table_name: candidateB.table_name, field_name: "f_contract_amt" }] } : supplementAdvice;
+  const scenario = await openSingleAi({ ...parent, analysis_context: {}, ai_suggestions: [suggestion] }, child);
+  await findButton(scenario.wb.element, "采纳").dispatch("click");
+  assert.equal(collectByClass(scenario.wb.element, "dv-ai-option-card").length, 2,
+    `执行条件不同必须保留新卡 ${Object.keys(patch)}`);
+  assert.equal(collectByClass(scenario.wb.element, "dv-ai-option-check").filter(({ checked }) => checked).length, 2);
+  scenario.runtime.destroy();
+}
+
+const largeThresholdA = sumCandidate({ ...candidateB.preview.definition,
+  expression: { ...candidateB.expression, right: JSON.parse("9007199254740992") } }, "large-threshold-a");
+const largeThresholdB = sumCandidate({ ...candidateB.preview.definition, name: "另一大整数阈值",
+  expression: { ...candidateB.expression, right: JSON.parse("9007199254740993") } }, "large-threshold-b");
+const largeThreshold = await openSingleAi({ ...largeThresholdA, analysis_context: {}, ai_suggestions: [{ ...supplementAdvice,
+  references: [{ table_name: candidateB.table_name, field_name: "f_contract_amt" }] }] }, largeThresholdB);
+await findButton(largeThreshold.wb.element, "采纳").dispatch("click");
+assert.equal(collectByClass(largeThreshold.wb.element, "dv-ai-option-card").length, 2,
+  "超出 JSON Number 精确范围的阈值需要保留独立方案");
+largeThreshold.runtime.destroy();
+
+const previousBatch = batchCalls.filter((call) => call.definitions.length === 2
+  && !call.definitions.some((definition) => definition.join?.right_aggregate)).at(-1);
+// 日期多选真实预览形态：主方案保留已完成的字段选择；子方案显式返回空筛选和空值默认。
+const dates = {
+  ...candidateA.preview.definition, table_name: "proj_info_dtl_pboc", report_date_field: "d_cldate", null_policy: "skip",
+  expression: { left: "d_begdate", op: "gt", right_type: "field", right: "d_preddate" },
+  project_driver: { version: 3, table_role: "base" },
+  uncertainties: ["预计结束日采用哪个指标字段？"],
+  uncertainty_resolutions: ["明确选择 产品预计终止日期_系统（d_preddate）"],
+};
+function dateCandidate(definition, hash) {
+  const columns = [...candidateA.columns, ...["d_begdate", "d_cldate", "d_preddate", "d_preddate_pbc"]
+    .map((column_name) => ({ column_name, data_type: "date" }))];
+  return { ...candidateA, ...definition, columns, rule_name: definition.name,
+    preview: { ...candidateA.preview, definition, content_sha256: hash,
+      sql_preview: `SELECT project_code FROM proj_info_dtl_pboc WHERE d_begdate > ${definition.expression.right}` } };
+}
+const systemDate = dateCandidate(dates, candidateA.preview.content_sha256);
+const pbcDate = dateCandidate({ ...dates, name: candidateB.rule_name,
+  expression: { ...dates.expression, right: "d_preddate_pbc" } }, candidateB.preview.content_sha256);
+const datesChild = dateCandidate({ ...dates, name: "补充系统日期规则", filters: [], null_handling: null, null_evidence: [],
+  uncertainties: [], uncertainty_resolutions: [] }, "child-dates-hash");
+const datesScenario = await openSingleAi({ ...systemDate, analysis_context: {},
+  candidate_options: [{ id: "pbc-date", candidate: pbcDate, recommended: true },
+    { id: "system-date", candidate: systemDate, recommended: true }],
+  ai_suggestions: [{ ...supplementAdvice, id: "same-system-date", title: "补充系统预计结束日检查", reason: "核对项目日期顺序",
+    references: [{ table_name: dates.table_name, field_name: "d_begdate" }] }],
+}, datesChild);
+const datesRoot = datesScenario.wb.element;
+await findButton(datesRoot, "生成并运行测试用例").dispatch("click");
+await findButton(datesRoot, "保存所选 2 条草稿").dispatch("click");
+const batchesBeforeDatesAdoption = batchCalls.length;
+const testsBeforeDatesAdoption = previewTestCalls.length;
+await findButton(datesRoot, "采纳").dispatch("click");
+assert.deepEqual(collectByClass(datesRoot, "dv-ai-option-card").map(optionIdOf), ["pbc-date", "system-date"],
+  "无筛选和空值默认的预览复用已逐项确认的系统日期原卡");
+assert.equal(optionIdOf(document.activeElement), "system-date");
+assert.equal(previewTestCalls.length, testsBeforeDatesAdoption);
+const enableDates = findButton(datesRoot, "保存并启动以上2个方案");
+assert.equal(enableDates.disabled, false, "两条日期规则的原测试证据继续有效");
+await enableDates.dispatch("click");
+assert.equal(batchCalls.length, batchesBeforeDatesAdoption, "沿用原保存版本");
+assert.equal(datesScenario.wb.isOpen(), false);
+datesScenario.runtime.destroy();
+
 // zero 门禁反例：字段-字段、字段-有限常量放行；字符串常量/一元/缺右类型拒绝；review 放行。
 const readinessFor = (definition) => confirmationReadiness(
   { definition, version_no: 0, content_sha256: "h" },
@@ -679,5 +821,5 @@ assert.equal(readinessFor({ ...zeroBase, null_policy: "review", expression: { le
 console.log(JSON.stringify({
   ok: true,
   assertions: "multi/options/selection/switch/batch-save/request-key/enable/suggestions/gates/idempotent",
-  batch_payload: batchCalls.filter((call) => call.definitions.length === 2 && !call.definitions.some((definition) => definition.join?.right_aggregate)).at(-1),
+  batch_payload: previousBatch,
 }));

@@ -10,11 +10,15 @@ from threading import current_thread
 import unicodedata
 from uuid import uuid4
 
-from .adoption_scope import (adopted_join_matches, adopted_scope_label, apply_period_check, attach_period_applicability,
-                             bind_adopted_join, bind_period_filters, distinguish_adopted_scopes, name_adopted_scope,
-                             reconcile_confirmed_scope_partitions, verify_adopted_goal, verify_bound_period_filters)
+from .adoption_scope import (adopted_join_matches, adopted_scope_label, adopted_sum_operands, apply_period_check, attach_period_applicability,
+                             bind_adopted_check, bind_adopted_join, bind_period_filters, distinguish_adopted_scopes, name_adopted_scope,
+                             normalize_supplement_scope_replacements, reconcile_confirmed_scope_partitions, remove_adopted_scope_proposals,
+                             supplement_scope_comparison, verify_adopted_goal,
+                             verify_bound_period_filters)
 from .ai_service import model_expression, model_judgment, refine_candidate
-from .ai_suggestions import CATEGORIES, KINDS, MAX_REFERENCES, MAX_SUGGESTIONS, build_ai_suggestions
+from .ai_suggestions import (CATEGORIES, KINDS, MAX_REFERENCES, MAX_SUGGESTIONS, build_ai_suggestions,
+                             check_target_missing, confirmed_scope_fields, normalize_suggestion_check_targets,
+                             scope_declaration_missing, valid_check_target_structure)
 from .analysis_reuse import memory_choice
 from .analysis_memory import digest
 from .analysis_jobs import AnalysisControl, MAX_MODEL_ROUNDS
@@ -35,7 +39,7 @@ from .formula import arithmetic_fields, formula_fields, has_arithmetic, is_arith
 from .model_calls import LOGGER, failure, semantic_completion
 from .parallel_checks import parse_mixed_group, parse_numeric_group
 from .prompt_defaults import (
-    DEFAULT_PROMPTS, SEMANTIC_CALL_OPTIONS, SEMANTIC_COMBINED_EXAMPLE, SEMANTIC_MAX_BUDGET_UNITS, SEMANTIC_MAX_PLANS,
+    DEFAULT_PROMPTS, SEMANTIC_COMBINED_EXAMPLE, SEMANTIC_MAX_BUDGET_UNITS, SEMANTIC_MAX_PLANS,
     SEMANTIC_OUTPUT_CONTRACT, SEMANTIC_SELECTION_CONTRACT, SEMANTIC_TOTAL_OUTPUT_TOKENS,
     semantic_budget_instruction,
 )
@@ -45,7 +49,7 @@ from .query_spec import MAX_CONDITIONS, apply_numeric_null_policy, is_condition_
 from .request_text_predicates import bind_text_predicates
 from .request_scopes import bind_conditional_text_scopes
 from .text_requirements import bind_named_dictionary_requirements
-from .semantic_grounding import _document_codes, _metric_slot, _roles, _scope_options, _Unbound, apply_dictionary_answers, dictionary_partition_question, ground_semantic_candidate, join_decisions_refine
+from .semantic_grounding import _code_key, _document_codes, _metric_slot, _roles, _scope_options, _Unbound, apply_dictionary_answers, dictionary_partition_question, ground_semantic_candidate, join_decisions_refine
 
 
 SEMANTIC_MEMORY_CONTRACT = (
@@ -107,9 +111,16 @@ def _execution_signature(definition):
             return ("number", Decimal(str(value)))
         return (type(value).__name__, value)
 
-    # Result captions are generated from the verified fields in projection order.
-    prose = {"name", "description", "violation_message", "semantic_intent", "result_aliases"}
-    return freeze({key: value for key, value in definition.items() if key not in prose})
+    # Callers compare verified previews. Display captions and completed review prose can vary.
+    prose = {"name", "rule_name", "description", "violation_message", "semantic_intent", "result_aliases",
+             "uncertainties", "uncertainty_resolutions"}
+    execution = {key: value for key, value in definition.items() if key not in prose}
+    for key in ("filters", "null_evidence"):
+        if execution.get(key) in (None, []):
+            execution.pop(key, None)
+    if execution.get("null_handling") in (None, {}):
+        execution.pop("null_handling", None)
+    return freeze(execution)
 
 
 def _literal_parts(text):
@@ -233,8 +244,22 @@ def _model_json_object(raw):
         return result
     def invalid_number(_value):
         raise ValueError('Non-finite JSON number')
+    decoder_options = {"object_pairs_hook": unique_members, "parse_constant": invalid_number}
     try:
-        value = json.loads(text, object_pairs_hook=unique_members, parse_constant=invalid_number)
+        value = json.loads(text, **decoder_options)
+    except json.JSONDecodeError as exc:
+        if exc.msg != "Extra data" or text[exc.pos:exc.pos + 1] != ",":
+            raise AppError('VALIDATION_ERROR') from exc
+        decoder = json.JSONDecoder(**decoder_options)
+        try:
+            first, _ = decoder.raw_decode(text)
+            remaining = decoder.decode("{" + text[exc.pos + 1:])
+        except ValueError:
+            raise AppError('VALIDATION_ERROR') from exc
+        if not isinstance(first, dict) or not remaining or first.keys() & remaining.keys():
+            raise AppError('VALIDATION_ERROR') from exc
+        value = {**first, **remaining}
+        LOGGER.info("Semantic JSON recovered early_root_close chars=%d", len(text))
     except (TypeError, ValueError) as exc:
         raise AppError('VALIDATION_ERROR') from exc
     if not isinstance(value, dict):
@@ -654,13 +679,14 @@ def _normalize_documented_operands(draft, base_fields, related_fields, request="
     intent = draft.get("semantic_intent")
     scopes = intent.get("scopes") if isinstance(intent, dict) else None
     if isinstance(scopes, list):
-        _normalize_excluded_blanks(scopes, _roles(base_fields, related_fields))
+        _normalize_scope_exclusions(scopes, _roles(base_fields, related_fields))
         draft.update(_fold_documented_scope(draft, base_fields, related_fields))
     _normalize_formula_metrics(draft, base_fields)
     return draft
 
 
-def _normalize_excluded_blanks(scopes, roles):
+def _normalize_scope_exclusions(scopes, roles):
+    """Remove only out-of-domain exclusions from an already complete documented partition."""
     for scope in scopes:
         if not isinstance(scope, dict) or not isinstance(scope.get("memberships"), dict):
             continue
@@ -670,17 +696,24 @@ def _normalize_excluded_blanks(scopes, roles):
             if name not in fields or not isinstance(partition, dict):
                 continue
             included, excluded = partition.get("include"), partition.get("exclude")
-            if (not isinstance(included, list) or not included or "" in included
-                    or not isinstance(excluded, list) or excluded.count("") != 1):
+            if not isinstance(included, list) or not included or not isinstance(excluded, list) or not excluded:
                 continue
             try:
                 codes = _document_codes(fields[name])
             except _Unbound:
                 continue
-            # The predicate uses only positive memberships. An unregistered blank explicitly
-            # excluded by the model has no effect. The full remaining partition is still validated.
-            if "" not in codes:
-                partition["exclude"] = [value for value in excluded if value != ""]
+            numeric = type_family(fields[name].get("data_type")) == "number"
+            domain = {_code_key(code, numeric) for code in codes}
+            positive = {_code_key(value, numeric) for value in included}
+            negative = ["" if value == "" else _code_key(value, numeric) for value in excluded]
+            outside = set(negative) - domain
+            # A single excluded blank is a known placeholder. Multiple blanks, a
+            # mixture of placeholders and unknown codes, or duplicate codes need review.
+            if (not outside or None in negative or len(set(negative)) != len(negative)
+                    or "" in outside and len(outside) != 1 or not positive <= domain
+                    or domain - positive != domain.intersection(negative)):
+                continue
+            partition["exclude"] = [value for value, key in zip(excluded, negative) if key in domain]
 
 
 class SemanticAnalysis:
@@ -723,7 +756,9 @@ class SemanticAnalysis:
             verified = {key: adoption_scope[key] for key in ("suggestion", "variants", "applicability_filters") if key in adoption_scope}
             self.prefix += ("\n本次采纳建议与用户已选方案的已核实口径：" + _json(verified)
                             + "。保留各已选范围、关联与日期，采用建议声明的指标及检查目标。"
-                            "已选范围和已登记适用范围由系统应用；filters和scopes只声明上述已核实范围之外的新增限制。"
+                            "已选范围和已登记适用范围由系统应用；scope_replacements逐项更换父方案的同表同字段范围，其他范围保留。"
+                            "check_target 的 expression 是已核实建议的异常条件，保持其比较方向和阈值。"
+                            "filters和scopes只声明上述已核实范围之外的新增限制。"
                             "已核实的条件无需重复询问。期间方案提供check时沿用该条件；汇总比较按建议自身的运算和容差。\n")
         if inputs.get("clarification_answers"):
             self.prefix += ("\n当前用户对上一轮业务问题的回答（独立上下文数据，原始需求保持不变）："
@@ -740,9 +775,9 @@ class SemanticAnalysis:
         if not remaining:
             raise failure("ANALYSIS_OUTPUT_LIMIT", public_stage, analysis_id=self.analysis_id, round_number=self.round_number)
         supplement = stage == "supplement_suggestions"
-        allocated = min(SEMANTIC_CALL_OPTIONS["max_tokens"] * (1 if supplement else self.budget_units), remaining)
-        options = {**SEMANTIC_CALL_OPTIONS, "max_tokens": allocated,
-                   "reasoning_effort": "low" if self.inputs.get("reasoning_enabled") else "none"}
+        call_options = self.inputs["call_options"]
+        allocated = min(call_options["max_tokens"] * (1 if supplement else self.budget_units), remaining)
+        options = {**call_options, "max_tokens": allocated}
         bounded_prompt = prompt
         if self.model_suggestions:
             previous = model_snapshot({"ai_suggestions": self.model_suggestions})["selection"]["ai_suggestions"]
@@ -1067,6 +1102,43 @@ class SemanticAnalysis:
             bound["candidate_targets"] = extra
         return bound
 
+    def document_range_choices(self, selection, plan):
+        """Bind a repeated range operand to the user's measure before the model's narrower label."""
+        expr = plan.get("expression")
+        intent = plan.get("semantic_intent")
+        if not isinstance(expr, dict) or not isinstance(intent, dict) or plan.get("join"):
+            return plan
+        rows = expr.get("conditions")
+        metrics = intent.get("metrics")
+        if (not isinstance(metrics, list) or not metrics or not isinstance(rows, list) or len(rows) < 2 or not all(
+                isinstance(row, dict) and row.get("right_type") == "value" for row in rows)):
+            return plan
+        name = rows[0].get("left")
+        label = metrics[0].get("term") if isinstance(metrics[0], dict) else None
+        if (not isinstance(name, str) or not isinstance(label, str) or label in self.request
+                or any(row.get("left") != name for row in rows)
+                or any(not isinstance(m, dict) or m.get("side") != "left" or m.get("fields") != [name]
+                       or m.get("term") != label for m in metrics)):
+            return plan
+        group = parse_numeric_group(self.request)
+        if not group or len({term for term, _, _ in group[1]}) != 1:
+            return plan
+        owner = self.resolve(plan.get("target", selection.get("target")), plan.get("report_category", selection.get("report_category")))
+        hits = self.index.competing_fields(owner, [name], label, [owner])
+        if not hits:
+            return plan
+        anchor = hits[0]["request_term"]
+        names = [f["field_name"] for f in self.fields[owner["id"]] if f["field_name"] in hits[0]["fields"]
+                 and type_family(f.get("data_type")) == "number" and str(f.get("field_cn") or "").endswith(anchor)]
+        named = self.index.named_metric_choices()
+        if (not group[1][0][0].endswith(anchor) or len(names) < 2 or name not in names
+                or any((owner["id"], n) in named or n.lower() in self.index.wanted for n in names)):
+            return plan
+        result = deepcopy(plan)
+        for metric in result["semantic_intent"]["metrics"]:
+            metric.update(term=anchor, fields=list(names))
+        return result
+
     def documented_peer_choice(self, selection, proposal, owner_choices=()):
         """Use the same condition indices during discovery, review and final grounding."""
         plans = proposal.get("plans", [proposal])
@@ -1074,9 +1146,24 @@ class SemanticAnalysis:
             return proposal
         normalized = []
         changed = False
+        inherited = self.original_adoption_scope(owner_choices)
         for plan in plans:
             item = drop_unused_project_lookup(self, selection, plan)
             item = prefer_document_origin(self, selection, item)
+            if (len(plans) == 1 and isinstance(item, dict) and not owner_choices and not self.inputs.get("period_scope")
+                    and not self.inputs.get("clarification_answers")):
+                item = self.document_range_choices(selection, item)
+            if inherited and isinstance(item, dict):
+                target = item.get("target", selection.get("target"))
+                related = item.get("related_target", selection.get("related_target") if target == selection.get("target") else None)
+                if isinstance(target, dict):
+                    joined = item.get("join")
+                    related_name = (related.get("table") if isinstance(related, dict) else
+                                    joined.get("table_name") if isinstance(joined, dict) else None)
+                    reviewed = deepcopy(item)
+                    remove_adopted_scope_proposals(reviewed, target.get("table"), related_name, inherited, include_inherited=True)
+                    if reviewed != item:
+                        item = reviewed
             changed |= item is not plan
             plan = item
             expr = plan.get("expression") if isinstance(plan, dict) else None
@@ -1135,6 +1222,15 @@ class SemanticAnalysis:
         proposal = qualified_peer_choice(self, selection, proposal, owner_choices=owner_choices)
         return defer_period_metric_choices(self, selection, proposal, owner_choices)
 
+    def original_adoption_scope(self, owner_choices):
+        scope = self.inputs.get("period_scope") or {}
+        suggestion = scope.get("suggestion") or {}
+        title, reason = suggestion.get("title"), suggestion.get("reason")
+        original = "\n".join(part for part in (title, reason if reason != title else None) if part)
+        if scope.get("variants") and self.request == original and not owner_choices and not self.inputs.get("clarification_answers"):
+            return scope
+        return {}
+
     def expand_interpretation_evidence(self, selection, owner_choices=()):
         """A plausible first answer cannot hide equally specific, unreviewed document evidence."""
         if self.inherited_checks:
@@ -1158,6 +1254,7 @@ class SemanticAnalysis:
         if not isinstance(plans, list):
             return selection, False
         deferred = deferred_period_fields(self, selection, proposal, owner_choices)
+        scope = self.original_adoption_scope(owner_choices)
         declarations, entries = set(), []
         for plan in plans:
             if not isinstance(plan, dict):
@@ -1170,11 +1267,23 @@ class SemanticAnalysis:
             except _IncompleteDraft:
                 continue
             roles = {"base": base, "related": related}
+            # An unbound draft can propose a scope field as the outcome. Its metric
+            # roles must not become required evidence for the corrected draft.
+            try:
+                _normalize_documented_operands(deepcopy(plan), self.fields[base["id"]],
+                    self.fields[related["id"]] if related else [], self.request, self.inputs.get("clarification_answers") or [])
+            except _IncompleteDraft:
+                continue
+            except AppError as exc:
+                if exc.code not in ("MODEL_RESPONSE_INVALID", "VALIDATION_ERROR"):
+                    raise
+                continue
             intent = plan.get("semantic_intent") or {}
             if not isinstance(intent, dict):
                 continue
             expression = plan.get("expression") or {}
             conditions = expression.get("conditions", [expression]) if isinstance(expression, dict) else []
+            locked = adopted_sum_operands(plan, base["table_name"], (related or {}).get("table_name"), scope)
             for key in ("metrics", "scopes"):
                 rows = intent.get(key) or []
                 if not isinstance(rows, list):
@@ -1199,7 +1308,8 @@ class SemanticAnalysis:
                         index = item.get("condition_index", 0)
                         formula_metric = (key == "metrics" and isinstance(conditions, list) and type(index) is int
                                           and 0 <= index < len(conditions) and is_arithmetic(conditions[index]))
-                        entries.append((key, item, owner, role, base, row_index, formula_metric))
+                        bound_metric = (key == "metrics" and index == 0 and bool(locked) and item["fields"] == [locked.get(item.get("side"))])
+                        entries.append((key, item, owner, role, base, row_index, formula_metric, bound_metric))
             join = plan.get("join")
             if (len(plans) == 1 and related and related["id"] != base["id"] and isinstance(join, dict)
                     and join.get("table_name") == related["table_name"] and isinstance(conditions, list)):
@@ -1217,7 +1327,7 @@ class SemanticAnalysis:
                             and any(f["field_name"] == right for f in self.fields[related["id"]])):
                         declarations.add(("metrics", related["id"], "base", "left", index, right))
         pending = []
-        for key, item, owner, role, base, row_index, formula_metric in entries:
+        for key, item, owner, role, base, row_index, formula_metric, bound_metric in entries:
             if formula_metric:  # Each leaf already has its own document options.
                 continue
             reviewed = any(self.matches_owner_choice(choice, key, item, owner, role, base, row_index)
@@ -1231,7 +1341,7 @@ class SemanticAnalysis:
                     raise ScopeEvidenceRequired(f"多个检查项中仍有独立指标口径 {missing_grain}，请明确各维度和检查项的组合。")
             candidates = self.index.competing_fields(owner, item["fields"], item.get("term" if key == "metrics" else "category", ""),
                 self.tables, category=key == "scopes",
-                across_tables=primary_metric and len(item["fields"]) == 1 and len(plans) == 1)
+                across_tables=primary_metric and not bound_metric and len(item["fields"]) == 1 and len(plans) == 1)
             if key == "metrics" and deferred:
                 candidates = [{**candidate, "fields": [name for name in candidate["fields"]
                                if (candidate["table_id"], name) not in deferred]} for candidate in candidates]
@@ -1323,7 +1433,7 @@ class SemanticAnalysis:
     def remember_declared_interpretations(self, entries):
         # Expansion must not let the next reply replace an already discovered interpretation.
         # Preserve other original metric/scope groups as well, even if only one group needed expansion.
-        for key, item, owner, role, _base, _index, _formula_metric in entries:
+        for key, item, owner, role, _base, _index, _formula_metric, _bound_metric in entries:
             for name in item["fields"]:
                 field = next((field for field in self.fields[owner["id"]] if field["field_name"] == name), None)
                 if field is None:
@@ -1779,6 +1889,13 @@ class SemanticAnalysis:
 
     def run(self, examples, owner_choices, existing, *, reuse_result=True):
         self.owner_choices = owner_choices
+        adoption_scope = self.inputs.get("period_scope") or {}
+        missing = adoption_scope.get("missing_replacement_fields")
+        if missing:
+            fields = "、".join(missing)
+            return self.clarify([f"这条建议要更换「{fields}」的范围，但有已选方案未使用对应筛选。请选中包含原筛选的方案后重新采纳。"])
+        if adoption_scope.get("unchanged_replacement_scope"):
+            return self.clarify(["这条建议声明更换范围，但替换条件与所有已选方案的原范围相同。请核实建议实际要检查的范围。"])
         if not self.inputs.get("clarification_answers") and not owner_choices:
             scope = category_scope_only(check_without_category_prefix(self.request, self.categories))
             if scope and any(scope["label"] in option["label"] for fields in self.fields.values() for field in fields
@@ -1891,29 +2008,33 @@ class SemanticAnalysis:
             return self.clarify(select_judgment["uncertainties"], select_judgment["unsupported_requirements"])
         proposal = selection.get("draft", selection if "rule_type" in selection or "plans" in selection else None)
         can_use_memory = remembered is not None and docs == [memory_table]
-        cached = None
-        if (self.inherited_checks and isinstance(proposal, dict) and proposal.get("rule_type") == "field_compare"
-                and (selection.get("target") or {}).get("table") == self.inputs["period_scope"]["table"]):
-            # Scope, types, joins and dictionary codes still pass through materialize against full metadata.
-            cached = proposal
-        elif not review_interpretations and (not examples or independent_draft or can_use_memory):
-            if self.ready_for_combined(selection, proposal, docs):
-                cached = proposal
-        if decision and cached is None:
-            decision = "fresh"
-        if self.document_review is not None:
-            cached = self.document_review
-            if decision:
-                decision = "fresh"
-        if not isinstance(cached, dict):
-            cached = None
-        if cached is None and isinstance(proposal, dict):
-            self.request_conditions = self.explicit_review_conditions(proposal, targets[0], docs)
         allowed = {t["id"] for t in docs}
-        raw = None
+        # The combined reply is already a rule draft. Its initial document checks can
+        # identify the same repairable issues as materialization of a later reply.
+        raw = proposal
         prompt = ""
+        preflight = True
         try:
+            cached = None
+            if (self.inherited_checks and isinstance(proposal, dict) and proposal.get("rule_type") == "field_compare"
+                    and (selection.get("target") or {}).get("table") == self.inputs["period_scope"]["table"]):
+                cached = proposal
+            elif not review_interpretations and (not examples or independent_draft or can_use_memory):
+                if self.ready_for_combined(selection, proposal, docs):
+                    cached = proposal
+            if decision and cached is None:
+                decision = "fresh"
+            if self.document_review is not None:
+                cached = self.document_review
+                if decision:
+                    decision = "fresh"
+            if not isinstance(cached, dict):
+                cached = None
+            if cached is None and isinstance(proposal, dict):
+                self.request_conditions = self.explicit_review_conditions(proposal, targets[0], docs)
+            preflight = False
             if cached is None:
+                raw = None
                 prompt = self.expanded_prompt(selection, docs, owner_choices)
                 if correction:
                     prompt += "\n" + correction
@@ -1974,7 +2095,12 @@ class SemanticAnalysis:
                 if question:
                     return self.clarify([question])
                 raw = self.documented_peer_choice(selection, raw, owner_choices)
-                missing = [c for c in self.missing_interpretations(raw, targets, apply_choices=True) if self.required_interpretation(c, owner_choices)]
+                if preflight:
+                    raw, selection, targets, docs, missing = self.complete_interpretation_review(
+                        raw, selection, targets, docs, owner_choices, evidence_reviewed=True)
+                    allowed = {table["id"] for table in docs}
+                else:
+                    missing = [c for c in self.missing_interpretations(raw, targets, apply_choices=True) if self.required_interpretation(c, owner_choices)]
                 if any(c.get("confirmed") for c in missing):
                     raise _IncompleteDraft("修复后的规则仍遗漏用户已确认的字段", category="confirmed_field")
                 if missing:
@@ -2012,11 +2138,18 @@ class SemanticAnalysis:
         path = error.path
         plan = raw
         if path[:1] == ("plans",) and len(path) > 2:
-            plan = raw["plans"][path[1]]
+            plans = raw.get("plans")
+            if not isinstance(plans, list) or type(path[1]) is not int or not 0 <= path[1] < len(plans):
+                return None
+            plan = plans[path[1]]
             path = path[2:]
-        if len(path) != 4 or path[:2] != ("semantic_intent", "scopes"):
+        if not isinstance(plan, dict) or len(path) != 4 or path[:2] != ("semantic_intent", "scopes"):
             return None
-        scope = plan.get("semantic_intent", {}).get("scopes", [])[path[2]]
+        intent = plan.get("semantic_intent")
+        scopes = intent.get("scopes") if isinstance(intent, dict) else None
+        if not isinstance(scopes, list) or type(path[2]) is not int or not 0 <= path[2] < len(scopes):
+            return None
+        scope = scopes[path[2]]
         default = targets[0]
         category = plan.get("report_category", default.get("report_category"))
         try:
@@ -2440,6 +2573,7 @@ class SemanticAnalysis:
                        *(raw["ai_suggestions"] if isinstance(raw.get("ai_suggestions"), list) else [])]
         period_scope = self.inputs.get("period_scope")
         selected_adoption = bool((period_scope or {}).get("variants"))
+        original_adoption = bool(self.original_adoption_scope(self.owner_choices))
         materialized_plans = [(i, draft, None) for i, draft in enumerate(plans)]
         if period_scope:
             variants = (period_scope.get("variants") or period_scope.get("checks")
@@ -2473,6 +2607,10 @@ class SemanticAnalysis:
                 raise _IncompleteDraft("方案只能采用本轮已提供完整字段的独立主表及关联表")
             fields = self.fields[table["id"]]
             other = self.fields[related["id"]] if related else []
+            if selected_scope:
+                remove_adopted_scope_proposals(draft, table["table_name"], (related or {}).get("table_name"), period_scope,
+                                               include_inherited=original_adoption)
+                bind_adopted_check(draft, table["table_name"], (related or {}).get("table_name"), period_scope, fields, other)
             _normalize_documented_operands(draft, fields, other, self.request, self.inputs.get("clarification_answers") or [])
             if draft.get("rule_type") == "field_compare" and isinstance(draft.get("semantic_intent"), dict):
                 check_field = period_scope["fields"][0] if check else None
@@ -2515,16 +2653,21 @@ class SemanticAnalysis:
                     inherited = bind_period_filters(draft, table["table_name"], (related or {}).get("table_name"),
                                                     period_scope, inherited_group)
                 candidate = self.candidate(draft, table, category_code, fields, other, existing, judgment,
-                                           inherited_date=inherited_date)
+                                           inherited_date=inherited_date, plan_path=("plans", plan_index) if "plans" in raw else ())
                 if check:
                     candidate.pop("null_handling", None)
                     candidate.update(deepcopy(check))
                     candidate["semantic_intent"]["expected_null_policy"] = check["null_policy"]
                     candidate["semantic_intent"]["inherited_period_check"] = deepcopy(check)
+                    if original_adoption:
+                        candidate["description"] = f"沿用所选主方案的检查条件，{draft['violation_message']}时报告异常。"
                 if inherited_group is not None:
                     verify_bound_period_filters(candidate, inherited, period_scope["groups"])
                 if selected_scope:
                     verify_adopted_goal(candidate, table["table_name"], (related or {}).get("table_name"), period_scope)
+                    suggestion = period_scope["suggestion"]
+                    if not check and (suggestion.get("scope_replacements") or suggestion.get("check_target")):
+                        candidate.update(rule_name=suggestion["title"], violation_message=suggestion["title"])
                     adopted_join = draft.get("join") if selected_scope.get("join") else None
                     if (inherited_date and candidate.get("report_date_field") != inherited_date
                             or adopted_join and not adopted_join_matches(candidate.get("join"), adopted_join, inherited_date)):
@@ -2600,6 +2743,7 @@ class SemanticAnalysis:
             primary["candidate_options"] = options
             primary["comparison_suggestions"] = []
         def validate_suggestions(items):
+            items = self.normalize_suggestions(items, candidates)
             verified = build_ai_suggestions(
                 items, tables=self.inputs["tables"], fields_by_table=self.fields, candidates=candidates,
                 request_text=self.request,
@@ -2616,15 +2760,25 @@ class SemanticAnalysis:
         suggestion_candidates = [c for c in candidates if c.get("rule_type") and c.get("columns")]
         if include_suggestions and allow_supplement and suggestion_candidates:
             supplemental = self.supplement_suggestions(suggestion_candidates, primary["ai_suggestions"])
-            self.model_suggestions = deepcopy(supplemental or [])
-            primary["ai_suggestions"] = validate_suggestions(self.model_suggestions)
+            if supplemental is None:
+                # A failed optional review can retain only suggestions already grounded in this analysis.
+                retained = {item["id"] for item in primary["ai_suggestions"] if item.get("adoption")}
+                primary["ai_suggestions"] = [item for item in primary["ai_suggestions"] if item["id"] in retained]
+                self.model_suggestions = [deepcopy(item) for item in suggestions
+                                          if retained and any(s["id"] in retained for s in validate_suggestions([item]))]
+            else:
+                self.model_suggestions = deepcopy(supplemental)
+                primary["ai_suggestions"] = validate_suggestions(self.model_suggestions)
             raw["ai_suggestions"] = self.model_suggestions
             _discard_cached_plan_suggestion_copies(raw)
             if supplemental:
                 refreshed = defer_period_metric_choices(self, targets[0], raw, self.owner_choices)
                 if refreshed is not raw:
                     return self.materialize(refreshed, targets, allowed, existing, allow_supplement=False)
-            if supplemental is None or (supplemental and not primary["ai_suggestions"]):
+            scope_fields = confirmed_scope_fields(suggestion_candidates)
+            scope_incomplete = any(scope_declaration_missing(item, scope_fields) or check_target_missing(item)
+                                   or item.get("_scope_replacement_repeats_parent") for item in (supplemental or []))
+            if supplemental is None or scope_incomplete or (supplemental and not primary["ai_suggestions"]):
                 primary["ai_suggestions_status"] = "incomplete"
                 for card in [primary, *candidates]:
                     card["notices"] = merge(card.get("notices") or [], ["本次补充建议未完成，可重新分析以获取建议。"])
@@ -2653,6 +2807,17 @@ class SemanticAnalysis:
                                     "规则草稿仍需确认" if pending else "已完成规则草稿核实")
         return primary
 
+    def normalize_suggestions(self, items, candidates):
+        source_id = self.inputs.get("context", {}).get("source_id")
+        if not source_id:
+            return items
+        items = normalize_suggestion_check_targets(
+            items, tables=self.tables, fields_by_table=self.fields, candidates=candidates,
+            select_category_tables=lambda tables, codes: self.service._category_tables(tables, codes, self.categories),
+        )
+        return normalize_supplement_scope_replacements(items, self.prompts["business_scope"], source_id,
+                                                       self.tables, self.fields, candidates)
+
     def supplement_suggestions(self, candidates, previous=()):
         scope = self.prompts["business_scope"]
         defaults = set(DEFAULT_PROMPTS["business_scope"].splitlines())
@@ -2666,7 +2831,8 @@ class SemanticAnalysis:
                     pieces = ([summary] if supplemental_policy.search(summary)
                               else [s for s in re.split(r"(?<=[。！？])", summary) if s.strip()])
                     paragraphs.extend((entry["topic"] + "：" + s, s.split("。", 1)[0]) for s in pieces)
-        policy = [(p, anchor, set(re.findall(r"[a-z_][a-z0-9_]*", p.lower()))) for p, anchor in paragraphs]
+        policy = [(p, anchor, set(re.findall(r"[a-z_][a-z0-9_]*", p.lower())),
+                   [s.lower() for s in p.split("。") if supplemental_policy.search(s)]) for p, anchor in paragraphs]
 
         def mentions(column, line, identifiers):
             label = (column.get("field_cn") or column.get("comment") or "").lower()
@@ -2689,6 +2855,8 @@ class SemanticAnalysis:
             metrics = (candidate.get("semantic_intent") or {}).get("metrics") or []
             summary["main_metric_bindings"] = [{k: m[k] for k in ("condition_index", "side", "formula_path", "term", "fields")
                                                 if k in m} for m in metrics if isinstance(m, dict)]
+            bound_terms = {m["term"].strip().lower() for m in summary["main_metric_bindings"]
+                           if isinstance(m.get("term"), str) and len(m["term"].strip()) >= 2 and m.get("fields")}
             scopes = (candidate.get("semantic_intent") or {}).get("scopes") or []
             summary["main_scope_bindings"] = scopes
             refs = referenced_fields(candidate)
@@ -2699,11 +2867,13 @@ class SemanticAnalysis:
                     ("related", (candidate.get("join") or {}).get("table_name"), candidate.get("related_columns") or [])):
                 if not table:
                     continue
+                scope_fields = {f["field"] for f in candidate.get("filters") or [] if f.get("table", "base") == role}
                 measured = [c for c in columns if c["column_name"] in main[role]]
-                policies = [(p, ids) for p, anchor, ids in policy if any(mentions(c, anchor, ids) for c in measured)]
+                policies = [(p, clauses) for p, anchor, ids, clauses in policy if any(mentions(c, anchor, ids) for c in measured)
+                            or any(term in segment for term in bound_terms for segment in [anchor.lower(), *clauses])]
                 relevant.update(dict.fromkeys(p[0] for p in policies))
                 evidence_clauses = [(sentence, set(re.findall(r"[a-z_][a-z0-9_]*", sentence.lower())))
-                                    for p, _ in policies for sentence in p.split("。") if supplemental_policy.search(sentence)]
+                                    for _, clauses in policies for sentence in clauses]
                 for col in columns:
                     name = col["column_name"]
                     ref = {"table_name": table, "field_name": name, "label": col.get("field_cn") or col.get("comment", "")}
@@ -2714,8 +2884,8 @@ class SemanticAnalysis:
                             if col.get("logic"):
                                 ref["logic"] = col["logic"].split("\n\n", 1)[0]
                             seen_evidence.add(key)
-                        if col.get("dictionary") and any(s.get("table", "base") == role and name in s.get("fields", [])
-                                                         for s in scopes):
+                        if col.get("dictionary") and (name in scope_fields or any(
+                                s.get("table", "base") == role and name in s.get("fields", []) for s in scopes)):
                             ref["dictionary"] = col["dictionary"]
                         summary["references"].append(ref)
                     elif key not in seen_evidence and ((table, name) in previous_refs
@@ -2733,7 +2903,7 @@ class SemanticAnalysis:
         if self.round_number >= MAX_MODEL_ROUNDS or self.output_tokens_used >= SEMANTIC_TOTAL_OUTPUT_TOKENS:
             return None
         prior = [{k: s[k] for k in ("category", "kind", "title", "reason", "operations", "references", "preconditions",
-                                     "limitations") if k in s} for s in previous]
+                                     "limitations", "scope_replacements", "check_target") if k in s} for s in previous]
         prompt = ("当前数据来源：" + _json(self.inputs["source"]["name"]) +
                   "。\n本轮只提出独立补充校验建议。按当前来源、报送分类及原文，逐项核对适用的已确认业务口径与启用知识，"
                   "并用活动文档实际字段核实。输出最终完整清单；初步建议可能有错误，逐项纠正比较方向、类型和前提，"
@@ -2746,10 +2916,14 @@ class SemanticAnalysis:
                   "仅当口径和本次业务范围确实适用时采用，字段存在本身不能推出校验。"
                   "明确要求在另一适用期间独立检查单一指标时，给可采纳的category=period建议，kind按原检查选择；"
                   "references只填该项被检查的字段，期间依据和适用范围写reason，继承原谓词、阈值、异常方向与空值口径。"
+                  "PERIOD_APPLICABILITY 登记的条件是附加适用范围，系统会自动绑定。scope_replacements 不重复列该条件或原范围。"
                   "反向分类只能依已确认口径确定异常方向，不把状态取反机械地换成另一比较符。"
+                  "若已确认口径明确把某项主方案筛选改为另一范围，必须在 scope_replacements 声明该物理表字段及新的筛选谓词，"
+                  "用活动文档的完整字典核对新取值，并同步让标题及理由说清新范围；其余已选范围保持。"
                   "某状态下字段与常量比较采用field_compare_binary；只有实际跨粒度汇总才用aggregate_consistency。"
                   "field_compare_unary仅用于IS NULL或IS NOT NULL；上下限、区间等数值比较即使只涉及一个字段也用field_compare_binary。"
                   "口径明确要求跨粒度核对时保留比较双方、汇总方法、范围与容差，主方案分别与常量比较未覆盖双方一致性。"
+                  "汇总沿用主方案范围时，不在 scope_replacements 复述已有筛选。"
                   "不从多个同表备选推导求和，普通数值缺失不构成缺明细；仅在有应有明细的业务范围依据时才建议缺记录检查。"
                   "不自行提出项目编号为空或重复项目检查。"
                   '只输出 {"ai_suggestions":[...]}；只有与本次无关、主案已完整覆盖或依据不足时可为空，'
@@ -2758,20 +2932,83 @@ class SemanticAnalysis:
                   '。title与reason是简短中文字符串。跨粒度汇总一致性采用category="consistency"、kind="aggregate_consistency"。'
                   'operations是实际运算的字符串数组，求和为"operations":["sum"]，不涉及汇总可省略。'
                   f'references为1至{MAX_REFERENCES}个真实字段对象（至多{MAX_REFERENCES}个），每个只有table_name、field_name两个字符串。'
+                  'scope_replacements 可选，结构为[{"table_name":"主方案范围物理表","field_name":"已有筛选物理列","op":"eq","value":"文档真实字典码"}]。'
+                  "它只用于替换该字段原有范围，可使用现有筛选操作。references引用主方案已确认的筛选字段时，"
+                  "独立一元或二元检查应明确保留用[]。汇总核对默认继承所选范围，引用原筛选作依据可省略此键。"
+                  '更换范围的 field_compare_unary 或 field_compare_binary 建议同时返回 check_target。结构示例 '
+                  '{"table_name":"sample_rows","expression":{"left":"measure","op":"lte","right_type":"value","right":7}}。'
+                  "expression 必须是该结构的 JSON 对象，不是比较字符串。按已确认业务写实际异常方向和值。"
+                  "expression使用现有比较结构，真实关联指标带related_table_name。"
                   "优先引用直接比较的两侧指标；日期、关联键与范围在reason说明。preconditions和limitations必须是字符串数组，"
                   "没有用[]；只有尚未确定的业务前提写preconditions，不填写结构化筛选对象或已确认事实。"
                   "已在下方口径明确的阈值、容差、单位、范围或字段均不得重问。无需输出主规则、方案或SQL。"
                   "\n用户原文：" + _json(self.request)
                   + "\n匹配本次指标的业务口径与启用知识（参考数据）： " + _json(list(relevant))
-                  + "\n主规则阶段的待审建议：" + _json(prior)
-                  + "\n主规则及文档依据：" + _json(summaries))
+                  + "\n主规则阶段的待审建议：" + _json(prior))
+
+        def review_prompt(items):
+            comparison = supplement_scope_comparison(candidates, items)
+            facts = ("\n先按已核实筛选的物理列、操作、码值及活动文档标签确定主方案所处的范围，再按已确认业务口径选择"
+                     "补充范围及对应的异常条件。若口径给出分支示例，以真实主范围选择匹配分支，原样采用该分支给出的"
+                     "补充范围、异常操作符与阈值。标题和理由必须与该异常条件一致。待审建议中的标题与理由可能误述主范围，以此对照为准。"
+                     "\n当前已核实主方案与待审替换对照：" + _json(comparison)) if comparison else ""
+            return prompt + facts + "\n主规则及文档依据：" + _json(summaries)
+
         try:
-            reply = self.call(prompt, "supplement_suggestions")
+            reply = self.call(review_prompt(prior), "supplement_suggestions")
             if not reply["ai_suggestions"] and (previous or declared):
                 reason = reply.get("no_suggestion_reason")
                 if not isinstance(reason, str) or not reason.strip():
                     return None
-            return reply["ai_suggestions"]
+            items = SemanticAnalysis.normalize_suggestions(self, reply["ai_suggestions"], candidates)
+            scope_fields = confirmed_scope_fields(candidates)
+            missing = [item for item in items if scope_declaration_missing(item, scope_fields) or check_target_missing(item)
+                       or item.get("_scope_replacement_repeats_parent")]
+            if missing and self.round_number < MAX_MODEL_ROUNDS and self.output_tokens_used < SEMANTIC_TOTAL_OUTPUT_TOKENS:
+                try:
+                    checked = self.call(review_prompt(missing) + "\n以下已返回的建议尚缺明确范围或独立检查目标，或误将原范围写成更换。"
+                                        "只补齐缺失的 scope_replacements 及 check_target，按上方业务口径和完整字段字典核实。"
+                                        "如果这项建议保留原范围，明确返回[]；如果更换必须使用文档新取值。"
+                                        "仅补齐结构时保持 category、kind、title、references。"
+                                        "带 _scope_replacement_repeats_parent 的建议与真实主方案筛选相同。"
+                                        "对这些项，请根据已确认口径及上方主规则实际 filters 复核整条标题、理由、异常条件与范围，"
+                                        "保留 kind 及原有物理 references；只有独立检查目标才允许保留范围。其余建议无需重述。\n"
+                                        + _json(missing), "supplement_suggestions")
+                except AppError as exc:
+                    if exc.code in {"ANALYSIS_TIMEOUT", "ANALYSIS_OUTPUT_LIMIT"}:
+                        raise
+                else:
+                    checked_items = SemanticAnalysis.normalize_suggestions(self, checked["ai_suggestions"], candidates)
+                    keys = ("category", "kind", "title", "references")
+                    updates = {digest([item.get(key) for key in keys]): item for item in checked_items}
+                    def identity(item):
+                        refs = item.get("references") or []
+                        return digest([item.get("kind"), sorted((str(ref.get("table_name")), str(ref.get("field_name")))
+                                                                for ref in refs if isinstance(ref, dict))])
+
+                    for item in missing:
+                        if item.get("_scope_replacement_repeats_parent"):
+                            identity_key = identity(item)
+                            matches = [reply for reply in checked_items if identity(reply) == identity_key]
+                            if len(matches) == 1 and sum(identity(other) == identity_key for other in items) == 1:
+                                update = matches[0]
+                                target = update.get("check_target")
+                                repeated = valid_check_target_structure(target) and any(
+                                    definition.get("table_name") == target["table_name"] and definition.get("expression") == target["expression"]
+                                    for definition in ((c.get("preview") or {}).get("definition") or c for c in candidates))
+                                changes = update.get("scope_replacements")
+                                if isinstance(changes, list) and (changes or valid_check_target_structure(target) and not repeated):
+                                    item.clear()
+                                    item.update(update)
+                            continue
+                        key = digest([item.get(name) for name in keys])
+                        if key in updates:
+                            update = updates[key]
+                            if "scope_replacements" in update and "scope_replacements" not in item:
+                                item["scope_replacements"] = update["scope_replacements"]
+                            if "check_target" in update and check_target_missing(item):
+                                item["check_target"] = update["check_target"]
+            return SemanticAnalysis.normalize_suggestions(self, items, candidates)
         except AppError as exc:
             if exc.code in {"ANALYSIS_TIMEOUT", "ANALYSIS_OUTPUT_LIMIT"}:
                 raise
@@ -2792,12 +3029,22 @@ class SemanticAnalysis:
                 candidate["uncertainties"] = review["uncertainties"]
                 candidate["uncertainty_resolutions"] = [""] * len(review["uncertainties"])
             else:
+                definition = review["definition"]
+                expr = definition["expression"]
+                if expr.get("op") == "is_null" and not definition.get("join"):
+                    for row in definition.get("filters") or []:
+                        if (row.get("confirmed") and row.get("table", "base") == "base"
+                                and row["field"] == expr["left"] and row["op"] in ("eq", "in")):
+                            values = row["value"] if row["op"] == "in" else [row["value"]]
+                            if values and all(v is not None and str(v).strip() for v in values):
+                                raise _IncompleteDraft(f"筛选已限定 {row['field']} 为具体非空值，同一字段不可能再命中为空。"
+                                                       "请按原需求区分限定范围和需要检查的字段。", category="request_condition")
                 prepared.append(review)
         if len(prepared) == len(candidates):
             for candidate, review in zip(candidates, prepared):
                 self.service._apply_candidate_preview(candidate, compile_prepared_preview(review))
 
-    def candidate(self, draft, table, category_code, fields, other, existing, judgment, *, inherited_date=None):
+    def candidate(self, draft, table, category_code, fields, other, existing, judgment, *, inherited_date=None, plan_path=()):
         filters = draft.get("filters")
         if isinstance(filters, list) and any(isinstance(item, dict) and item.get("op") in ("regexp", "not_regexp") for item in filters):
             raise ScopeEvidenceRequired("当前支持按文字关键词包含或排除记录；该条件包含正则表达式，请明确需要匹配的文字。")
@@ -2842,7 +3089,7 @@ class SemanticAnalysis:
                 try:
                     _scope_options(scope, roles, {})
                 except _Unbound as exc:
-                    raise _IncompleteDraft(str(exc), ("semantic_intent", "scopes", index, "memberships"),
+                    raise _IncompleteDraft(str(exc), (*plan_path, "semantic_intent", "scopes", index, "memberships"),
                                            category="dictionary_partition") from exc
             raise _IncompleteDraft(candidate.get("preview_error") or "无法核实所声明的字段或完整字典分组")
         candidate["semantic_intent"].update(semantic_intent_snapshot(draft["semantic_intent"]))
@@ -2870,14 +3117,23 @@ class SemanticAnalysis:
         candidate["equality_policy"] = implied
         if candidate.get("null_policy") == "unresolved":
             candidate["questions"].append(self.service._null_policy_question())
-        if has_arithmetic(expression) and "project_driver" in candidate:
-            # For a new formula the document establishes whether its base holds the project or its detail.
-            # Keep the marked path strict if the unmarked document binding cannot prove a role.
+        formula = has_arithmetic(expression)
+        scalar_hint = None
+        if not formula and "project_driver" in candidate and not other and not candidate.get("join"):
+            try:
+                scalar_hint = normalize_project_driver(candidate["project_driver"])
+            except AppError:
+                pass
+        if (formula and "project_driver" in candidate) or scalar_hint is not None:
+            # Correct a model hint only when the document proves the unique driver.
+            # The original comparison, filters and relationship still go through regular grounding.
             probe = deepcopy(candidate)
             probe.pop("project_driver")
             resolution = self.service._bind_new_project_driver(probe, table, fields, self.tables, self.fields)
-            if resolution and not resolution[1] and not probe.get("unsupported_requirements") and probe.get("project_driver"):
-                candidate["project_driver"] = probe["project_driver"]
+            verified = probe.get("project_driver")
+            if verified and resolution and not resolution[1] and not probe.get("unsupported_requirements"):
+                if formula or verified["table_role"] != scalar_hint["table_role"]:
+                    candidate["project_driver"] = verified
         notes = self.service._document_candidate_details(candidate, table, fields, self.inputs["tables"], self.fields,
                                                          model_business_key=draft.get("business_key"))
         candidate["uncertainties"] = merge(candidate["uncertainties"], notes)

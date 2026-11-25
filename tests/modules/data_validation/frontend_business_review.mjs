@@ -320,6 +320,20 @@ await findButton(wb.element, "保存所选 4 条草稿").dispatch("click");
 assert.deepEqual([...savedRules.values()].slice(-4).map(({ name }) => name), namedDefinitions.map(({ name }) => name),
   "保存回读保留生成的中文范围名称");
 
+const fieldComparison = { left: "nav", op: "gt", right_type: "field", right: "total" };
+await start(null, { expression: fieldComparison, null_policy: "skip",
+  semantic_intent: { expected_expression: fieldComparison, scopes: [scope],
+    dictionary_snapshots: { base: { kind: dictionary, kind2: dictionary } } } }, true);
+await select(0); await select(1);
+await findButton(wb.element, "确认全部口径").dispatch("click");
+assert.deepEqual(calls.map(([action]) => action), ["review", "review", "sql", "sql"]);
+assert.deepEqual(calls.map(([, definition]) => definition.expression), Array(4).fill(fieldComparison),
+  "多选口径的复核与预览必须提交完整字段比较表达式");
+assert.deepEqual(calls.map(([, definition]) => definition.filters.map(({ field }) => field)),
+  [["kind"], ["kind2"], ["kind"], ["kind2"]], "两种范围按字段独立预览");
+assert.equal(cards(), 2);
+assert.equal(collectByClass(wb.element, "dv-business-question").length, 0, "完成预览后不重复确认相同口径");
+
 const differingChoices = [choices[0], { ...choices[1], selection: { ...choices[1].selection, value: ["A", "C"] } }];
 await start({ questions: [{ ...question, options: differingChoices }], semantic_intent: { scopes: [scope],
   dictionary_snapshots: { base: { kind: dictionary, kind2: otherDictionary } } } });
@@ -493,7 +507,9 @@ await findButton(wb.element, "保存草稿").dispatch("click");
 assert.deepEqual([...savedRules.values()].at(-1).definition.expression, bound);
 
 const relatedChoices = choices.map((choice) => ({ ...choice, selection: { ...choice.selection, table: "related" } }));
-await start(null, { semantic_intent: { scopes: [{ ...scope, table: "related" }] },
+const relatedComparison = { ...fieldComparison, right_table: "related" };
+await start(null, { expression: relatedComparison, null_policy: "skip",
+  semantic_intent: { expected_expression: relatedComparison, scopes: [{ ...scope, table: "related" }] },
   questions: [{ ...question, options: relatedChoices }],
   filters: [{ ...relatedChoices[0].selection, confirmed: false }],
   join: { table_name: "contracts", on: [{ left: "id", right: "id" }], report_date_field: "period",
@@ -504,4 +520,6 @@ await select(0); await select(1);
 await findButton(wb.element, "确认全部口径").dispatch("click");
 assert.deepEqual(calls.filter(([action]) => action === "sql").map(([, definition]) => definition.name),
   ["nav · 明细运行方式", "nav · 明细运行方式_原始"], "同名物理字段按所选表的元数据取中文名");
+assert.deepEqual(calls.map(([, definition]) => definition.expression), Array(4).fill(relatedComparison),
+  "跨表字段比较同时保留字段类型及关联表角色");
 runtime.destroy();

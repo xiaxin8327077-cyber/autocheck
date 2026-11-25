@@ -504,6 +504,27 @@ class DocumentEvidence:
                 return False
         return owners == [field_name]
 
+    def _qualified_date_owner(self, table, field):
+        """A shared date caption can name one entity when its table subject qualifies the date in the request."""
+        label = str(field.get("field_cn") or "").lower()
+        owners = {i for i, _ in self.document_names.get(label, ())}
+        if len(owners) < 2 or table["id"] not in owners:
+            return False
+        for owner in self.tables:
+            if owner["id"] not in owners:
+                continue
+            caption = str(owner.get("table_name_cn") or "").lower().split("（", 1)[0]
+            caption = re.sub(r"(?:明细|信息|记录|清单)?表$", "", caption)
+            subjects = [s.strip() for s in re.split(r"及(?:其他|其它)?|、|与", caption) if len(s.strip()) >= 2]
+            if not subjects:
+                return False
+            if owner["id"] == table["id"]:
+                if not any(s + label in self.request or s + "的" + label in self.request for s in subjects):
+                    return False
+            elif owner["id"] in self.named_tables or any(s in self.request for s in subjects):
+                return False
+        return True
+
     def competing_fields(self, table, names, term, tables, *, category=False, across_tables=False):
         """Find evidence to review, without deciding that matching labels are interchangeable."""
         tokens = (self.wanted if category else self.metric_tokens) & text_tokens(term)
@@ -553,6 +574,8 @@ class DocumentEvidence:
         if not specificity:
             return []
         families = {type_family(field.get("data_type")) for field in selected}
+        if across_tables and not category and families == {"date"} and len(selected) == 1 and self._qualified_date_owner(table, selected[0]):
+            across_tables = False
         owner_dimension = str(table.get("dimension") or "").strip().lower()
         if across_tables and not category and owner_dimension and re.search(
                 re.escape(owner_dimension) + r"(?:端|表)(?:中|内)?(?:的)?\s*" + re.escape(anchor), self.metric_request):

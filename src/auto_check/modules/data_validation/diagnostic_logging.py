@@ -31,6 +31,7 @@ _EVENTS = {
         ("code", "analysis", "round", "phase", "reference"),
     'Semantic JSON invalid reference=%s analysis=%s round=%d stage=%s chars=%d reason=%s line=%d column=%d':
         ('reference', 'analysis', 'round', 'stage', 'chars', 'reason', 'line', 'column'),
+    "Semantic JSON recovered early_root_close chars=%d": ("chars",),
 }
 _CODES = {"MODEL_TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_REQUEST_FAILED", "MODEL_RESPONSE_INVALID", "MODEL_OUTPUT_LIMIT",
           "ANALYSIS_TIMEOUT", "ANALYSIS_ROUND_LIMIT", "ANALYSIS_OUTPUT_LIMIT"}

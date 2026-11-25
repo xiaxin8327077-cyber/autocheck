@@ -5,11 +5,16 @@ import json
 import pytest
 from sqlalchemy import update
 
+from auto_check.app.language_model_platform import create_language_model_service
+from auto_check.app.language_model_settings import save_language_model
+from auto_check.app.module_system.services import ServiceRegistry
 from auto_check.modules.data_validation.contracts import AppError
+from auto_check.modules.data_validation.semantic_generation import _model_json_object
 from auto_check.modules.data_validation.storage import DOC_FIELDS
 from tests.modules.data_validation.support import user
 from tests.modules.data_validation.test_ai_service import _request, _rules_with_doc, _select_payload
 from tests.modules.data_validation.test_semantic_generation import FIELDS, draft
+from tests.mysql_config_test_support import MemoryApplicationDatabase
 
 
 def run(rules, text):
@@ -18,6 +23,46 @@ def run(rules, text):
 
 def combined(proposal):
     return {**_select_payload(), "draft": proposal}
+
+
+@pytest.mark.parametrize(("model_name", "display_name", "control"), [
+    ("LongCat-2.5", "DeepSeek", "thinking"),
+    ("deepseek-chat", "LongCat-2.5", "reasoning_effort"),
+    ("other-model", "LongCat-2.5", "reasoning_effort"),
+])
+def test_semantic_reasoning_controls_reach_http_for_the_selected_model(model_name, display_name, control):
+    database = MemoryApplicationDatabase()
+    selected = save_language_model(database, {
+        "name": display_name, "model_name": model_name, "base_url": "https://example.invalid/v1",
+        "api_key": "test-only", "enabled": True, "is_default": True,
+    })
+    sent = []
+
+    def post(_url, _headers, body, _timeout):
+        request = json.loads(body)
+        assert request.pop("messages")
+        sent.append(request)
+        return json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": json.dumps(combined(draft()))}}]})
+
+    rules, _ = _rules_with_doc([], fields=FIELDS)
+    registry = ServiceRegistry()
+    registry.register_platform(create_language_model_service(database, http_post=post))
+    services = registry.for_module("data_validation", service_dependencies={"platform.language_models": 2})
+    rules.model = services.resolve("platform.language_models", 2)
+    payload = _request(request_text="份额低于19要复核", analysis_protocol=2, model_id=selected["id"])
+    contexts = []
+    for enabled in (False, True):
+        request = {**payload, "reasoning_enabled": enabled}
+        result = rules.parse_rule_request(user(), request)
+        assert result["preview"]
+        contexts.append(result["analysis_context"])
+        expected = {"max_tokens": 3072, "temperature": 0, control: (
+            {"type": "enabled" if enabled else "disabled"} if control == "thinking" else ("low" if enabled else "none")
+        )}
+        assert sent[-1] == {"model": model_name, **expected}
+        assert rules._analysis_inputs(user(), request)["call_options"] == expected
+    assert contexts[0] != contexts[1]
+    assert len(sent) == 2
 
 
 def test_semantic_calls_use_low_reasoning_with_a_bounded_complete_result(monkeypatch):
@@ -149,6 +194,49 @@ def test_a_single_complete_json_fence_keeps_the_normal_one_call_path(monkeypatch
     monkeypatch.setattr(model, 'complete', response)
     assert run(rules, '份额低于19要复核')['preview']
     assert len(model.calls) == 1
+
+
+def test_model_json_keeps_every_member_after_an_early_root_close(caplog):
+    # Captured child reply from nav_original_accum_null, including the extra closing brace.
+    raw = ('{"target":{"table":"proj_info_dtl_pboc"},"draft":{"business_key":"c_projinnercode",'
+           '"project_driver":{"version":1,"table_role":"base"},"rule_name":"当期新发项目初始净值不得为空",'
+           '"rule_type":"field_compare","expression":{"left":"f_initial_nav","op":"is_null"},'
+           '"violation_message":"当期新发项目初始净值为空","null_policy":"violate","semantic_intent":'
+           '{"metrics":[{"side":"left","term":"当期新发项目初始净值","fields":["f_initial_nav"]}],'
+           '"scopes":[],"open_questions":[]},"filters":[{"table":"base","field":"c_is_newproj","op":"eq","value":"1"}]}},'
+           '"ai_suggestions":[]}')
+    intact, trailing = raw.split(',"ai_suggestions":')
+    expected = json.loads(intact[:-1] + ',"ai_suggestions":' + trailing)
+    with caplog.at_level("INFO", logger="auto_check.modules.data_validation"):
+        actual = _model_json_object(raw)
+    assert actual == expected
+    assert "Semantic JSON recovered" in caplog.text
+    assert "初始净值" not in caplog.text
+
+
+def test_model_json_recovers_a_fenced_reply_with_multiple_disjoint_members():
+    raw = '```json\n {"first":{"value":0}} , "second":[false,null], "third":"literal } {"}\n```'
+    assert _model_json_object(raw) == {"first": {"value": 0}, "second": [False, None], "third": "literal } {"}
+
+
+@pytest.mark.parametrize("raw", [
+    '{"target":{}}, "target":{}, "ai_suggestions":[]}',
+    '{"target":{}, "target":{}}, "ai_suggestions":[]}',
+    '{"target":{}}, "draft":{"op":"lt","op":"gt"}}',
+    '{"target":{}}, "draft":{}, "draft":{}}',
+    '{"target":{}}, {"ai_suggestions":[]}',
+    '{"target":{}} {"ai_suggestions":[]}',
+    '{"target":{}}, "ai_suggestions":[]} plus text',
+    '{"target":{}}, "draft":{"title":"unfinished',
+    '{"target":{}}, "ai_suggestions":[]',
+    '{"target":{}}, "ai_suggestions":[]} }',
+    '{"target":{}}, }',
+    '{"target":{}}, "draft":{"value":NaN}}',
+    '[{"target":{}}], "ai_suggestions":[]}',
+])
+def test_model_json_does_not_merge_ambiguous_or_incomplete_replies(raw):
+    with pytest.raises(AppError, match="VALIDATION_ERROR"):
+        _model_json_object(raw)
 
 
 def test_combined_cold_analysis_keeps_documented_tail_and_scope_and_exact_replay():

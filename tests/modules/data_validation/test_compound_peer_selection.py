@@ -69,6 +69,18 @@ def test_fields_explicitly_named_together_stay_separate_in_a_compound_check():
     assert result["expression"] == {"logic": "any", "conditions": rows}
 
 
+@pytest.mark.parametrize(("term", "count"), [("读数", 3), ("起点读数", 1)])
+def test_specific_model_label_cannot_narrow_a_generic_range_metric(term, count):
+    metrics = [{"term": "起点读数", "side": "left", "fields": [PEERS[0]], "condition_index": index}
+               for index in range(len(BOUNDS))]
+    result, _ = analyze(BOUNDS, f"常规项目的{term}不得大于19或小于2。", metrics)
+    assert prod(len(q["options"]) for q in result["questions"]) == count * 2
+    if count > 1:
+        question = next(q for q in result["questions"] if q["id"].startswith("expression."))
+        assert [o["value"] for o in question["options"]] == PEERS
+        assert question["targets"] == ["expression.conditions.0.left", "expression.conditions.1.left"]
+
+
 def test_all_measures_requested_are_not_turned_into_a_single_unary_expression():
     rows = [{"left": n, "op": "is_null"} for n in PEERS]
     metrics = [{"term": "读数", "side": "left", "fields": PEERS, "condition_index": i}

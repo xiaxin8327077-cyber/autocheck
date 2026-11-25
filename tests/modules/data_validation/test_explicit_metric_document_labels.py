@@ -28,6 +28,20 @@ def test_same_label_in_two_tables_still_has_two_possible_owners():
     assert {"reading", "other"} <= readings("累计采集量应大于0", duplicate=True)
 
 
+@pytest.mark.parametrize(("subject", "expected"), [
+    ("采购", {"purchase_rows"}), ("", {"purchase_rows", "lease_rows"}),
+    ("采购和租赁", {"purchase_rows", "lease_rows"}),
+])
+def test_same_date_label_honors_business_entity_named_in_the_table_caption(subject, expected):
+    tables = [{"id": 1, "table_name": "purchase_rows", "table_name_cn": "采购及其他订单明细表", "dimension": "项目＋订单"},
+              {"id": 2, "table_name": "lease_rows", "table_name_cn": "租赁明细表", "dimension": "项目＋协议＋序号"}]
+    fields = {i: [{"field_name": "expires", "field_cn": "合同到期日", "data_type": "date",
+                   "source_field": "end_day"}] for i in (1, 2)}
+    index = DocumentEvidence(tables, fields, f"{subject}合同到期日不应晚于预计日期")
+    hits = index.competing_fields(tables[0], ["expires"], "合同到期日", tables, across_tables=True)
+    assert {hit["table"] for hit in hits} == expected
+
+
 def test_a_label_inside_an_explicitly_longer_field_name_is_not_a_separate_binding():
     assert "opening" in readings("期初累计采集量应大于0")
 

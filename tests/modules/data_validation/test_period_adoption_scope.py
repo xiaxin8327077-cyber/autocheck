@@ -13,7 +13,8 @@ from tests.modules.data_validation.test_supplement_adoption import analyze_sugge
 
 
 def period_request(*, two_scopes=False, second_threshold=None, child_scope=None, joined=False, applicability=None,
-                   parent_filters=True, extra_references=(), configured_facts=(), metric_first=False):
+                   parent_filters=True, extra_references=(), configured_facts=(), metric_first=False, replacements=(),
+                   suggestion_title=None):
     rules, parent = analyze_suggestion()
     candidate = parent["candidate_options"][int(joined)]["candidate"]
     if not parent_filters:
@@ -40,20 +41,33 @@ def period_request(*, two_scopes=False, second_threshold=None, child_scope=None,
                                  "references": [{"table_name": "project_snapshot", "field_name": "project_received"}]}]
     if applicability:
         parent["ai_suggestions"][0]["applicability_filters"] = applicability
+    if suggestion_title:
+        parent["ai_suggestions"][0]["title"] = suggestion_title
     if joined:
         parent["ai_suggestions"][0]["references"] = [{"table_name": candidate["table_name"],
                                                    "field_name": candidate["expression"]["left"]}]
     references = parent["ai_suggestions"][0]["references"]
+    if extra_references:
+        parent["ai_suggestions"][0]["scope_replacements"] = []
     if metric_first:
         references.extend(extra_references)
     else:
         references[:0] = extra_references
     args = _request(request_text=parent["analysis_request_text"], analysis_protocol=2)
     if configured_facts:
-        from auto_check.modules.data_validation.adoption_scope import attach_period_applicability
+        from auto_check.modules.data_validation.adoption_scope import attach_period_applicability, normalize_supplement_scope_replacements
         inputs = rules._analysis_inputs(user(), args)
         source_id = parent["source_id"]
         settings = "\n".join("PERIOD_APPLICABILITY " + json.dumps({**fact, "source_id": source_id}) for fact in configured_facts)
+        if replacements:
+            from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions
+            raw = {**parent["ai_suggestions"][0], "kind": "field_compare_binary", "title": "按指定分类核查期初实收",
+                   "scope_replacements": list(replacements), "check_target": {"table_name": "project_snapshot",
+                       "expression": {"left": "project_received", "op": "lt", "right_type": "value", "right": 0}}}
+            candidates = [option["candidate"] for option in parent["candidate_options"]]
+            normalized = normalize_supplement_scope_replacements([raw], settings, source_id, inputs["tables"], inputs["fields_by_table"], candidates)
+            parent["ai_suggestions"] = build_ai_suggestions(normalized, tables=inputs["tables"], fields_by_table=inputs["fields_by_table"],
+                                                            candidates=candidates, model_only=True)
         attach_period_applicability(parent["ai_suggestions"], settings, source_id, inputs["tables"], inputs["fields_by_table"])
     job = rules.analyses.start(user(), args, worker=lambda *_: parent)
     for _ in range(100):
@@ -69,7 +83,7 @@ def period_request(*, two_scopes=False, second_threshold=None, child_scope=None,
                                                                               "exclude": ["1" if child_scope=="2" else "2"]}}}]
     rules.model.payloads += [{"target": {"table": "project_snapshot"}, "draft": draft}, draft, {"ai_suggestions": []}]
     context = {"parent_analysis_id": job["analysis_id"], "parent_context": parent["analysis_context"],
-               "suggestion_id": "opening-check",
+               "suggestion_id": parent["ai_suggestions"][0]["id"],
                "parents": [{"definition": p["definition"], "hash": p["content_sha256"]} for p in previews]}
     return rules, _request(request_text="期初实收不得小于0", analysis_protocol=2, adoption_context=context)
 
@@ -350,10 +364,26 @@ def test_adopted_period_distinguishes_names_for_distinct_scopes_only():
     assert {option["candidate"]["preview"]["definition"]["name"] for option in options} == {option["label"] for option in options}
 
 
+def test_inherited_period_definition_describes_the_bound_check_and_keeps_original_advice():
+    title = "项目实收非空检查"
+    rules, request = period_request(suggestion_title=title)
+    context = request["adoption_context"]
+    context.update(mode="inherit_selected")
+    request.update(request_text=title, include_suggestions=False)
+    result = rules.parse_rule_request(user(), request)
+    definition = result["preview"]["definition"]
+    assert definition["name"] == definition["violation_message"] == "项目实收小于0"
+    assert definition["description"] == "沿用所选主方案的检查条件，项目实收小于0时报告异常。"
+    parent = rules.analyses.completed_result(user(), context["parent_analysis_id"])
+    assert result["analysis_request_text"] == parent["ai_suggestions"][0]["title"] == title
+
+
 def sum_adoption_request(*, both_parents=False, extra_references=()):
     rules, parent = analyze_suggestion()
     [suggestion] = parent["ai_suggestions"]
     suggestion["references"] += list(extra_references)
+    if extra_references:
+        suggestion["scope_replacements"] = []
     args = _request(request_text=parent["analysis_request_text"], analysis_protocol=2)
     job = rules.analyses.start(user(), args, worker=lambda *_: parent)
     for _ in range(100):
@@ -596,3 +626,614 @@ def test_captured_period_reply_uses_confirmed_scope_without_reasking(case):
         definition = result["preview"]["definition"]
         assert {f["field"]: f["value"] for f in definition["filters"]} == {"c_oper_mode": ["1", "3"], "c_is_newproj": "1"}
         assert definition["semantic_intent"]["scopes"][0]["memberships"]["c_is_newproj"]["exclude"] == ["2"]
+
+
+@pytest.mark.parametrize("code", ["1", "2"])
+def test_captured_period_advice_keeps_a_registered_additional_filter_on_first_run_and_replay(code):
+    from auto_check.modules.data_validation.prompt_defaults import DEFAULT_PROMPTS
+    from tests.modules.data_validation.test_project_driver_binding import field, make_rules, table
+
+    owner = "proj_info_dtl_pboc"
+    advice = {"category": "period", "kind": "field_compare_binary",
+              "title": "非净值型当期新发项目初始净值不得大于1或小于0",
+              "reason": "初始净值仅适用于当期新发项目，按已确认口径以c_is_newproj='1'限定范围，作为独立期间建议补充核查。",
+              "references": [{"table_name": owner, "field_name": name} for name in ("f_initial_nav", "c_is_newproj")],
+              "preconditions": [], "limitations": [],
+              "scope_replacements": [{"table_name": owner, "field_name": "c_is_newproj", "op": "eq", "value": code}],
+              "check_target": {"table_name": owner, "expression": {"logic": "any", "conditions": [
+                  {"left": "f_initial_nav", "op": "gt", "right_type": "value", "right": 1},
+                  {"left": "f_initial_nav", "op": "lt", "right_type": "value", "right": 0}]}},
+              }
+    docs = [table(1, owner, "项目明细", "项目", [
+        field("c_projinnercode", "TCMP编号", pk="Y", source=("upstream.entity", "entity_id"),
+              logic="直接取项目主数据的项目编号[entity_id]。"), field("project_name", "项目名全称"),
+        field("d_cldate", "数据日期", "date"), field("f_netvalue", "单位净值", "numeric"),
+        field("f_initial_nav", "初始净值", "numeric"), field("c_is_newproj", "是否当期新增", dictionary="1-是\n2-否"),
+        field("c_oper_mode", "运行方式", dictionary="1-开放式净值型\n2-开放式非净值型\n3-封闭式净值型\n4-封闭式非净值型"),
+    ])]
+    def draft(metric, label, scopes):
+        conditions = [{**item, "left": metric} for item in advice["check_target"]["expression"]["conditions"]]
+        return {"target": {"table": owner}, "draft": {"business_key": "c_projinnercode",
+            "project_driver": {"version": 1, "table_role": "base"}, "rule_name": label + "范围检查",
+            "rule_type": "field_compare", "expression": {"logic": "any", "conditions": conditions},
+            "null_policy": "skip", "violation_message": label + "超出范围", "semantic_intent": {
+                "metrics": [{"condition_index": i, "side": "left", "term": label, "fields": [metric]} for i in range(2)],
+                "scopes": scopes, "open_questions": []}}}
+    main = draft("f_netvalue", "单位净值", [{"category": "非净值型", "fields": ["c_oper_mode"],
+                                            "memberships": {"c_oper_mode": {"include": ["2", "4"], "exclude": ["1", "3"]}}}])
+    main["ai_suggestions"] = [deepcopy(advice)]
+    rules, model = make_rules([main, {"ai_suggestions": [deepcopy(advice)]}], tables=docs)
+    fact = {"source_id": "src", "table": owner, "field": "f_initial_nav",
+            "filters": [{"field": "c_is_newproj", "op": "eq", "value": "1"}]}
+    rules.storage.save_prompt("business_scope", DEFAULT_PROMPTS["business_scope"] + "\nPERIOD_APPLICABILITY " + json.dumps(fact), "test")
+    args = _request(request_text="非净值型项目的单位净值不得大于1或小于0。", analysis_protocol=2)
+    parent = rules.parse_rule_request(user(), args)
+    [suggestion] = parent["ai_suggestions"]
+    assert bool(suggestion.get("adoption")) == (code == "1"), suggestion.get("limitations")
+    assert parent.get("preview")
+    retry = rules.parse_rule_request(user(), args)
+    assert retry["analysis_reused"] and retry["ai_suggestions"] == [suggestion]
+    if code == "2":
+        return
+
+    assert not suggestion["scope_replacements"]
+    assert suggestion["applicability_by_metric"] == [{"table": owner, "field": "f_initial_nav", "filters": [
+        {"table": owner, "field": "c_is_newproj", "op": "eq", "value": "1", "confirmed": True}]}]
+    job = rules.analyses.start(user(), args, worker=lambda *_: parent)
+    for _ in range(100):
+        if rules.analyses.completed_result(user(), job["analysis_id"]):
+            break
+        time.sleep(.01)
+    model.payloads.append(draft("f_initial_nav", "初始净值", []))
+    receipt = parent["preview"]
+    result = rules.parse_rule_request(user(), _request(request_text=suggestion["title"], analysis_protocol=2, include_suggestions=False,
+        adoption_context={"mode": "inherit_selected", "parent_analysis_id": job["analysis_id"], "parent_context": parent["analysis_context"],
+                          "suggestion_id": suggestion["id"], "parents": [{"definition": receipt["definition"], "hash": receipt["content_sha256"]}]}))
+    definition = result["preview"]["definition"]
+    assert definition["expression"] == advice["check_target"]["expression"]
+    assert {f["field"]: f["value"] for f in definition["filters"]} == {"c_oper_mode": ["2", "4"], "c_is_newproj": "1"}
+
+
+def test_captured_period_advice_repeating_one_parent_range_does_not_replace_the_other_ranges():
+    from auto_check.modules.data_validation.adoption_scope import normalize_supplement_scope_replacements
+
+    owner = "proj_info_dtl_pboc"
+    advice = {"category": "period", "kind": "field_compare_unary", "title": "当期新发项目初始净值非空检查",
+              "references": [{"table_name": owner, "field_name": name} for name in ("f_initial_nav", "c_is_newproj")],
+              "check_target": {"table_name": owner, "expression": {"left": "f_initial_nav", "op": "is_null"}},
+              "scope_replacements": [{"table_name": owner, "field_name": "c_oper_mode", "op": "in", "value": ["1", "3"]}]}
+    candidates = [{"table_name": owner, "filters": [{"field": name, "op": "in", "value": ["1", "3"], "confirmed": True}]}
+                  for name in ("c_oper_mode", "c_oper_mode_orig")]
+    fact = {"source_id": "src", "table": owner, "field": "f_initial_nav", "filters": [{"field": "c_is_newproj", "op": "eq", "value": "1"}]}
+    tables = [{"id": 1, "table_name": owner}]
+    fields = {1: [{"field_name": "f_initial_nav", "data_type": "numeric"},
+                  {"field_name": "c_is_newproj", "data_type": "varchar", "dictionary": "1-是\n2-否"}]}
+    [normalized] = normalize_supplement_scope_replacements([advice], "PERIOD_APPLICABILITY " + json.dumps(fact), "src", tables, fields, candidates)
+    assert normalized["scope_replacements"] == []
+    assert [c["filters"][0]["field"] for c in candidates] == ["c_oper_mode", "c_oper_mode_orig"]
+
+
+@pytest.mark.parametrize("repeated_field", ["mode", "original_mode"])
+def test_period_advice_can_restate_a_documented_scope_option_before_selection(repeated_field):
+    from auto_check.modules.data_validation.adoption_scope import normalize_supplement_scope_replacements
+
+    table = "projects"
+    options = [{"selection": {"table": "base", "field": field, "op": "in", "value": ["2", "4"], "confirmed": True}}
+               for field in ("mode", "original_mode")]
+    candidate = {"table_name": table, "filters": [{**options[0]["selection"], "confirmed": False}],
+                 "questions": [{"id": "filters.0", "options": options}]}
+    registered = {"field": "is_new", "op": "eq", "value": "1"}
+    fact = {"source_id": "src", "table": table, "field": "initial_nav", "filters": [registered]}
+    fields = {1: [{"field_name": "initial_nav", "data_type": "numeric"},
+                  {"field_name": "is_new", "data_type": "varchar", "dictionary": "1-是\n2-否"}]}
+    advice = {"category": "period", "kind": "field_compare_binary", "references": [{"table_name": table, "field_name": "initial_nav"}],
+              "scope_replacements": [{"table_name": table, "field_name": repeated_field, "op": "in", "value": ["2", "4"]},
+                                     {"table_name": table, "field_name": "is_new", "op": "eq", "value": "1"}]}
+    args = ("PERIOD_APPLICABILITY " + json.dumps(fact), "src", [{"id": 1, "table_name": table}], fields, [candidate])
+    assert normalize_supplement_scope_replacements([advice], *args)[0]["scope_replacements"] == []
+    changed = deepcopy(advice)
+    changed["scope_replacements"][0]["value"] = ["1", "3"]
+    assert normalize_supplement_scope_replacements([changed], *args)[0]["scope_replacements"] == changed["scope_replacements"][:1]
+    assert candidate["filters"][0]["confirmed"] is False
+
+
+@pytest.mark.parametrize("bad_inclusion", [False, True])
+def test_multi_plan_dictionary_grounding_attributes_the_partition_to_its_plan(bad_inclusion):
+    from tests.modules.data_validation.test_project_driver_binding import make_rules
+
+    seed, _ = analyze_suggestion()
+    args = _request(request_text="存续项目的实收不得小于0", analysis_protocol=2, include_suggestions=False)
+    inputs = seed._analysis_inputs(user(), args)
+    docs = [{**table, "fields": inputs["fields_by_table"][table["id"]]} for table in inputs["tables"]]
+    raw = deepcopy(seed.model.payloads[0])
+    for index, plan in enumerate(raw["plans"]):
+        partition = plan["draft"]["semantic_intent"]["scopes"][0]["memberships"]["transfer_flag"]
+        if bad_inclusion and index == 1:
+            partition["include"] = ["9"]
+        else:
+            partition["exclude"].extend(["3", "4", "5", "6", "7", "8", "9"])
+    invalid_patch = {"patch": {"memberships": {"transfer_flag": {"include": ["9"], "exclude": ["1", "2"]}}}}
+    rules, model = make_rules([raw, invalid_patch], docs)
+    result = rules.parse_rule_request(user(), args)
+    if bad_inclusion:
+        assert len(model.calls) == 2
+        assert result.get("preview") is None
+        assert result["questions"][0]["id"].startswith("dictionary/")
+        assert {option["value"] for option in result["questions"][0]["options"]} == {"transfer_flag=1", "transfer_flag=2"}
+    else:
+        assert len(model.calls) == 1
+        definitions = [option["candidate"]["preview"]["definition"] for option in result["candidate_options"]]
+        assert len(definitions) == 2
+        for definition in definitions:
+            assert definition["filters"][0]["value"] == "1"
+            assert definition["semantic_intent"]["scopes"][0]["memberships"]["transfer_flag"] == {"include": ["1"], "exclude": ["2"]}
+
+
+def test_period_advice_can_replace_different_values_on_the_same_parent_scope_field():
+    rules, request = period_request(two_scopes=True,
+        configured_facts=[{"table": "project_snapshot", "field": "project_received",
+                           "filters": [{"field": "project_name", "op": "neq", "value": "排除记录"}]}],
+        replacements=[{"table_name": "project_snapshot", "field_name": "transfer_flag", "op": "eq", "value": "2"}])
+    request["adoption_context"]["mode"] = "inherit_selected"
+    request["include_suggestions"] = False
+
+    result = rules.parse_rule_request(user(), request)
+    candidates = [option["candidate"] for option in result.get("candidate_options", [])] or [result]
+    definitions = [candidate["preview"]["definition"] for candidate in candidates]
+    assert len(definitions) == 1
+    assert {f["field"]: f["value"] for f in definitions[0]["filters"]} == {"transfer_flag": "2", "project_name": "排除记录"}
+    assert definitions[0]["name"] == definitions[0]["violation_message"] == result["period_scope"]["suggestion"]["title"]
+    assert "inherited_period_check" not in definitions[0]["semantic_intent"]
+
+
+@pytest.mark.parametrize("alternate_value", ["1", "2"])
+def test_captured_aggregate_advice_can_repeat_a_shared_parent_range_without_replacing_it(alternate_value):
+    from auto_check.modules.data_validation.adoption_scope import normalize_supplement_scope_replacements
+
+    project, funding = "proj_info_dtl_pboc", "raise_info_dtl_pboc"
+    advice = {"category": "consistency", "kind": "aggregate_consistency", "operations": ["sum"],
+              "title": "项目端4001余额与募集端期末份额跨维度差异核对",
+              "references": [{"table_name": table, "field_name": field} for table, field in (
+                  (project, "f_equity_total_4001_bal"), (funding, "f_end_share"), (project, "c_projinnercode"),
+                  (funding, "c_projinnercode"), (project, "d_cldate"), (funding, "d_cldate"))],
+              "scope_replacements": [{"table_name": project, "field_name": "c_is_over", "op": "eq", "value": "1"}]}
+    condition = {"field": "c_is_over", "op": "eq", "value": "1", "confirmed": True}
+    candidates = [{"table_name": project, "filters": [condition]}, {"table_name": funding, "join": {"table_name": project},
+                  "filters": [{**condition, "table": "related", "value": alternate_value}]}]
+    [normalized] = normalize_supplement_scope_replacements([advice], "", "src", [], {}, candidates)
+    assert normalized["scope_replacements"] == ([] if alternate_value == "1" else advice["scope_replacements"])
+
+
+def replacement_request(source_value="1", reply_scope="target", *, declare_change=True, target_value=None,
+                        scope_evidence=False, legacy_snapshot=False, selected_scopes=("matching",), scope_note=False,
+                        replacement_fields=None, contradictory_scope=False, child_goal="correct", declare_goal=True):
+    from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions
+    from auto_check.modules.data_validation.analysis_result_cache import model_snapshot
+
+    rules, parent = analyze_suggestion()
+    candidate = parent["candidate_options"][1]["candidate"]
+    definition = deepcopy(candidate["preview"]["definition"])
+    target_value = target_value or ("2" if source_value == "1" else "1")
+    intent = definition["semantic_intent"]
+    intent["scopes"][0]["memberships"] = {"transfer_flag": {"include": [source_value], "exclude": ["2" if source_value == "1" else "1"]}}
+    intent["scopes"][0]["category"] = "存续" if source_value == "1" else "终止"
+    definition["filters"][0]["value"] = source_value
+    extra = {"table": "related", "field": "project_name", "op": "neq", "value": "停用记录", "confirmed": True}
+    definition["filters"].append(extra)
+    intent["explicit_filters"].append(extra)
+    receipt = rules.preview_candidate(user(), {"definition": definition})
+    candidate.update(preview=receipt, semantic_intent=receipt["definition"]["semantic_intent"])
+    receipts = {"matching": receipt}
+    if "other" in selected_scopes:
+        other = deepcopy(definition)
+        other["filters"] = [extra]
+        other["semantic_intent"].update(scopes=[], dictionary_snapshots={})
+        alternate = rules.preview_candidate(user(), {"definition": other})
+        receipts["other"] = alternate
+        parent["candidate_options"].append({"id": "other", "candidate": {
+            **candidate, "preview": alternate, "semantic_intent": alternate["definition"]["semantic_intent"]}})
+    if "different" in selected_scopes:
+        other = deepcopy(definition)
+        state = "2" if source_value == "1" else "1"
+        next(f for f in other["filters"] if f["field"] == "transfer_flag")["value"] = state
+        other["semantic_intent"]["scopes"][0].update(category="终止" if state == "2" else "存续",
+            memberships={"transfer_flag": {"include": [state], "exclude": [source_value]}})
+        alternate = rules.preview_candidate(user(), {"definition": other})
+        receipts["different"] = alternate
+        parent["candidate_options"].append({"id": "different", "candidate": {
+            **candidate, "preview": alternate, "semantic_intent": alternate["definition"]["semantic_intent"]}})
+
+    raw = {"category": "coverage_gap", "kind": "field_compare_binary", "title": "补充核查另一项目状态的募集实收",
+           "references": [{"table_name": "funding_rows", "field_name": "funding_received"}]}
+    if scope_evidence:
+        raw["references"].append({"table_name": "project_snapshot", "field_name": "transfer_flag"})
+    if declare_change:
+        raw["scope_replacements"] = [{"table_name": "project_snapshot", "field_name": "transfer_flag", "op": "eq", "value": target_value,
+                                      **(replacement_fields or {})}]
+        if scope_note:
+            raw["scope_replacements"][0]["reason"] = "按已确认建议范围"
+        if contradictory_scope:
+            raw["scope_replacements"].append({**raw["scope_replacements"][0], "value": source_value})
+        if declare_goal:
+            raw["check_target"] = {"table_name": "funding_rows", "expression": {
+                "left": "funding_received", "op": "gt" if source_value == "1" else "lte", "right_type": "value", "right": 0}}
+    elif scope_evidence and not legacy_snapshot:
+        raw.update(title="在同一项目状态补充核查募集实收", scope_replacements=[])
+    elif not legacy_snapshot:
+        raw["title"] = "在原项目状态补充核查募集实收"
+    args = _request(request_text=parent["analysis_request_text"], analysis_protocol=2)
+    inputs = rules._analysis_inputs(user(), args)
+    replayable = model_snapshot({"ai_suggestions": [raw]})["selection"]["ai_suggestions"]
+    def review(items):
+        return build_ai_suggestions(items, tables=inputs["tables"], fields_by_table=inputs["fields_by_table"],
+                                    candidates=[candidate], model_only=True)
+    [suggestion] = review(replayable)
+    if scope_note:
+        assert review([raw]) == [suggestion]
+    if legacy_snapshot:
+        suggestion = {**raw, "id": "captured-legacy-scope", "adoption": {"operations": [], "preconditions": []}}
+    parent["ai_suggestions"] = [suggestion]
+    job = rules.analyses.start(user(), args, worker=lambda *_: parent)
+    for _ in range(100):
+        if rules.analyses.completed_result(user(), job["analysis_id"]):
+            break
+        time.sleep(.01)
+
+    draft = deepcopy(rules.model.payloads[0]["plans"][1]["draft"])
+    draft["rule_name"] = "补充状态下募集实收异常"
+    draft["expression"]["op"] = "gt" if source_value == "1" else "lte"
+    if child_goal == "parent":
+        draft["expression"]["op"] = "lt"
+    elif child_goal == "omit":
+        draft.pop("expression")
+        draft["semantic_intent"]["metrics"] = []
+    scopes = draft["semantic_intent"]["scopes"] = []
+    if reply_scope != "omit":
+        stated = {"target": target_value, "old": source_value, "unknown": "X"}[reply_scope]
+        scopes.append({"table": "related", "category": "补充分类", "fields": ["transfer_flag"],
+                       "memberships": {"transfer_flag": {"include": [stated], "exclude": [source_value]}}})
+    proposal = {"target": {"table": "funding_rows"}, "related_target": {"table": "project_snapshot"}, "draft": draft}
+    rules.model.payloads.extend([proposal, draft, draft])
+    request = _request(request_text=suggestion["title"], analysis_protocol=2, include_suggestions=False,
+                       adoption_context={"mode": "inherit_selected", "parent_analysis_id": job["analysis_id"],
+                                         "parent_context": parent["analysis_context"], "suggestion_id": suggestion["id"],
+                                         "parents": [{"definition": receipts[scope]["definition"], "hash": receipts[scope]["content_sha256"]}
+                                                     for scope in selected_scopes]})
+    return rules, request, suggestion, receipt
+
+
+@pytest.mark.parametrize(("source_value", "reply_scope"), [("1", "target"), ("2", "target"), ("1", "omit"), ("2", "old"), ("1", "unknown")])
+def test_adoption_replaces_only_the_confirmed_alternate_scope(source_value, reply_scope):
+    rules, request, suggestion, receipt = replacement_request(source_value, reply_scope)
+    target_value, expected_label = ("2", "终止") if source_value == "1" else ("1", "存续")
+
+    result = rules.parse_rule_request(user(), request)
+    assert result.get("preview"), result.get("uncertainties")
+    definition = result["preview"]["definition"]
+    assert expected_label in suggestion["title"]
+    assert definition["name"] == suggestion["title"]
+    assert definition["violation_message"] == suggestion["title"]
+    assert {f["field"]: f["value"] for f in definition["filters"]} == {"transfer_flag": target_value, "project_name": "停用记录"}
+    assert definition["join"] == receipt["definition"]["join"]
+    assert definition["report_date_field"] == receipt["definition"]["report_date_field"]
+    assert definition["expression"]["op"] == ("gt" if source_value == "1" else "lte")
+    assert receipt["definition"]["expression"]["op"] == "lt"
+    assert receipt["definition"]["violation_message"] == "实收小于零"
+    assert {f["field"]: f["value"] for f in receipt["definition"]["filters"]}["transfer_flag"] == source_value
+    with sqlite3.connect(":memory:") as db:
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE project_snapshot (day, project_key, project_name, transfer_flag, project_received)")
+        db.execute("CREATE TABLE funding_rows (day, funding_id, funding_owner, funding_received)")
+        day = "2026-11-25"
+        db.executemany("INSERT INTO project_snapshot VALUES (?, ?, ?, ?, 0)", [
+            (day, "old", "原范围", source_value), (day, "new", "替换后范围", target_value), (day, "omitted", "停用记录", target_value),
+        ])
+        amount = 1 if source_value == "1" else 0
+        db.executemany("INSERT INTO funding_rows VALUES (?, ?, ?, ?)", [(day, i, key, amount)
+                                                                       for i, key in enumerate(("old", "new", "omitted"))])
+        preview = result["preview"]
+        rows = db.execute(preview["sql_preview"], {**preview["sql_params"], "report_date": day}).fetchall()
+        assert [r["TCMP编号"] for r in rows] == ["new"]
+
+
+@pytest.mark.parametrize("edited", [False, True])
+def test_supplement_cannot_replace_a_confirmed_scope_by_its_own_draft(edited):
+    rules, request, _, _ = replacement_request(declare_change=False)
+    if edited:
+        request["request_text"] += "。另核实项目状态"
+    result = rules.parse_rule_request(user(), request)
+    if edited:
+        assert not result.get("preview")
+        assert any("transfer_flag" in item and "范围不同" in item for item in result["uncertainties"])
+    else:
+        assert [f["value"] for f in result["preview"]["definition"]["filters"] if f["field"] == "transfer_flag"] == ["1"]
+
+
+def test_invalid_advertised_replacement_does_not_fall_back_to_original_scope():
+    _, _, suggestion, _ = replacement_request(target_value="X")
+    assert not suggestion.get("adoption") and suggestion["limitations"]
+
+
+def test_scope_replacement_cannot_compile_an_empty_dictionary_intersection():
+    _, _, suggestion, _ = replacement_request(contradictory_scope=True)
+    assert not suggestion.get("adoption")
+    assert any("同时满足" in item for item in suggestion["limitations"])
+
+
+@pytest.mark.parametrize(("op", "value", "adoptable"), [
+    ("not_in", ["1", "2"], False), ("not_in", ["2"], True), ("is_null", None, True),
+])
+def test_single_scope_replacement_cannot_exclude_all_documented_codes(op, value, adoptable):
+    _, _, suggestion, _ = replacement_request(replacement_fields={"op": op, "value": value})
+    assert bool(suggestion.get("adoption")) == adoptable
+
+
+def test_single_scope_replacement_can_exclude_values_from_an_open_numeric_domain():
+    from auto_check.modules.data_validation.ai_suggestions import _possible_scope
+
+    assert _possible_scope([{"op": "not_in", "value": [1, 2]}], {"field_name": "priority", "data_type": "numeric"})
+
+
+@pytest.mark.parametrize("op,value", [("eq", "1"), ("in", ["1"])])
+def test_scope_replacement_requires_an_actual_change_to_a_selected_parent(op, value):
+    rules, request, _, _ = replacement_request(reply_scope="omit", replacement_fields={"op": op, "value": value})
+    calls = len(rules.model.calls)
+    result = rules.parse_rule_request(user(), request)
+    assert not result.get("preview") and len(rules.model.calls) == calls
+    assert any("范围相同" in item for item in result["uncertainties"])
+
+
+def test_scope_replacement_still_applies_when_only_one_of_multiple_selected_ranges_changes():
+    rules, request, _, _ = replacement_request(reply_scope="omit", target_value="1", selected_scopes=("matching", "different"))
+    definition = rules.parse_rule_request(user(), request)["preview"]["definition"]
+    assert next(f["value"] for f in definition["filters"] if f["field"] == "transfer_flag") == "1"
+
+
+@pytest.mark.parametrize(("lower", "upper", "adoptable"), [(3, 8, True), (8, 3, False), (4, 4, True)])
+def test_scope_replacement_keeps_supported_numeric_intervals(lower, upper, adoptable):
+    from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions
+
+    fields = [{"field_name": name, "data_type": "numeric"} for name in ("amount", "scope_value")]
+    base = {"table_name": "entries", "filters": [{"field": "scope_value", "op": "lt", "value": 3, "confirmed": True}]}
+    suggestion = {"title": "按另一数值范围检查金额", "category": "coverage_gap", "kind": "field_compare_binary",
+                  "references": [{"table_name": "entries", "field_name": "amount"}],
+                  "check_target": {"table_name": "entries", "expression": {"left": "amount", "op": "gt", "right_type": "value", "right": 7}},
+                  "scope_replacements": [{"table_name": "entries", "field_name": "scope_value", "op": op, "value": value}
+                                         for op, value in (("gte", lower), ("lte", upper))]}
+
+    [result] = build_ai_suggestions([suggestion], tables=[{"id": 1, "table_name": "entries"}], fields_by_table={1: fields},
+                                   candidates=[base], model_only=True)
+    assert bool(result.get("adoption")) == adoptable
+    if adoptable:
+        assert result["scope_replacements"] == suggestion["scope_replacements"]
+
+
+@pytest.mark.parametrize("child_goal", ["correct", "parent", "omit"])
+def test_adoption_executes_the_confirmed_supplement_goal(child_goal):
+    rules, request, _, parent = replacement_request(reply_scope="omit", child_goal=child_goal)
+    result = rules.parse_rule_request(user(), request)
+    assert result.get("preview"), result.get("uncertainties")
+    assert result["preview"]["definition"]["expression"] == {
+        "left": "funding_received", "op": "gt", "right_type": "value", "right": 0}
+    assert parent["definition"]["expression"]["op"] == "lt"
+
+
+def test_scope_replacement_requires_a_confirmed_supplement_goal():
+    _, _, suggestion, _ = replacement_request(declare_goal=False)
+    assert not suggestion.get("adoption") and suggestion["limitations"]
+
+
+@pytest.mark.parametrize("change", [{}, {"value": "X"}, {"op": "unsupported"},
+                                     {"table_name": "funding_rows", "field_name": "funding_id"}])
+def test_scope_replacement_annotations_do_not_change_the_result_on_cache_replay(change):
+    _, _, suggestion, _ = replacement_request(scope_note=True, replacement_fields=change)
+    assert bool(suggestion.get("adoption")) == (not change)
+    if not change:
+        assert suggestion["scope_replacements"] == [{"table_name": "project_snapshot", "field_name": "transfer_flag",
+                                                      "op": "eq", "value": "2"}]
+
+
+@pytest.mark.parametrize("selected", [("other",), ("matching", "other")])
+def test_scope_replacement_needs_the_original_predicate_on_each_selected_branch(selected):
+    rules, request, _, _ = replacement_request(reply_scope="omit", selected_scopes=selected)
+    len_before = len(rules.model.calls)
+
+    result = rules.parse_rule_request(user(), request)
+    assert len(rules.model.calls) == len_before
+    assert not result.get("preview") and not result.get("candidate_options")
+    assert "项目状态" in "".join(result["uncertainties"])
+    assert "未使用" in "".join(result["uncertainties"])
+
+
+def test_explicit_replacement_requires_the_same_parent_receipt():
+    rules, request, _, _ = replacement_request()
+    request["adoption_context"]["parents"][0]["definition"]["filters"][0]["value"] = "2"
+    with pytest.raises(AppError, match="ANALYSIS_CONTEXT_CHANGED"):
+        rules.parse_rule_request(user(), request)
+
+
+def test_explicit_replacement_requires_the_same_active_document():
+    rules, request, _, _ = replacement_request()
+    inputs = rules._analysis_inputs(user(), request)
+    replacements = [{**table, "fields": deepcopy(inputs["fields_by_table"][table["id"]])} for table in inputs["tables"]]
+    project = next(t for t in replacements if t["table_name"] == "project_snapshot")
+    state = next(f for f in project["fields"] if f["field_name"] == "transfer_flag")
+    state["dictionary"] = "1-存续\n3-终止"
+    rules.storage.create_document(name="同来源新范围字典", file_name="in-memory-doc", content_sha256="b" * 64,
+                                  table_count=len(replacements), field_count=sum(len(t["fields"]) for t in replacements),
+                                  warnings=[], imported_by="1", tables=replacements)
+    with pytest.raises(AppError, match="ANALYSIS_CONTEXT_CHANGED"):
+        rules.parse_rule_request(user(), request)
+
+
+@pytest.mark.parametrize("reply_scope", ["omit", "old"])
+def test_legacy_advice_missing_a_scope_declaration_cannot_preview_the_original_scope(reply_scope):
+    rules, request, _, _ = replacement_request(reply_scope=reply_scope, declare_change=False,
+                                              scope_evidence=True, legacy_snapshot=True)
+    with pytest.raises(AppError, match="ANALYSIS_CONTEXT_CHANGED"):
+        rules.parse_rule_request(user(), request)
+
+
+def test_advice_with_scope_evidence_can_explicitly_keep_the_original_scope():
+    rules, request, suggestion, _ = replacement_request(reply_scope="omit", declare_change=False, scope_evidence=True)
+    definition = rules.parse_rule_request(user(), request)["preview"]["definition"]
+    assert suggestion["scope_replacements"] == []
+    assert {f["field"]: f["value"] for f in definition["filters"]}["transfer_flag"] == "1"
+
+
+def test_suggestion_review_fills_missing_scope_declaration_using_the_existing_budget():
+    from types import SimpleNamespace
+    from auto_check.modules.data_validation.semantic_generation import SemanticAnalysis
+
+    _, parent = analyze_suggestion()
+    candidate = parent["candidate_options"][1]["candidate"]
+    from_candidate = {"table_name": "project_snapshot", "field_name": "transfer_flag"}
+    advice = {"category": "coverage_gap", "kind": "field_compare_binary", "title": "仅对另一分类补充检查",
+              "references": [{"table_name": "funding_rows", "field_name": "funding_received"}, from_candidate]}
+    same = {**advice, "title": "保持分类另查缺值", "scope_replacements": []}
+    replacement = [{**from_candidate, "op": "eq", "value": "2"}]
+    target = {"table_name": "funding_rows", "expression": {"left": "funding_received", "op": "gt", "right_type": "value", "right": 0}}
+    missing_target = {**advice, "title": "更换分类并保持阈值", "scope_replacements": replacement}
+    replies = iter([{"ai_suggestions": [advice, same, missing_target]}, {"ai_suggestions": [
+        {**advice, "scope_replacements": replacement, "check_target": target}, {**missing_target, "check_target": target}]}])
+    prompts = []
+    analysis = SimpleNamespace(prompts={"business_scope": "募集实收应按确认的分类另提建议。"},
+                               inputs={"source": {"name": "src"}}, request="存续项目的实收不得小于0",
+                               round_number=1, output_tokens_used=0)
+
+    def call(prompt, _):
+        prompts.append(prompt)
+        return next(replies)
+
+    analysis.call = call
+    assert SemanticAnalysis.supplement_suggestions(analysis, [candidate], [advice]) == [
+        {**advice, "scope_replacements": replacement, "check_target": target}, same, {**missing_target, "check_target": target}]
+    assert len(prompts) == 2 and "scope_replacements" in prompts[-1]
+
+
+def test_aggregate_reference_to_the_selected_scope_inherits_without_redeclaring_it():
+    from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions, scope_declaration_missing
+
+    rules, parent = analyze_suggestion()
+    candidate = parent["candidate_options"][1]["candidate"]
+    inputs = rules._analysis_inputs(user(), _request(request_text=parent["analysis_request_text"], analysis_protocol=2))
+    advice = {"category": "consistency", "kind": "aggregate_consistency", "title": "存续项目实收与募集实收合计一致",
+              "operations": ["sum"], "references": [*parent["ai_suggestions"][0]["references"],
+                  {"table_name": "project_snapshot", "field_name": "transfer_flag"}]}
+    verified, = build_ai_suggestions([advice], tables=inputs["tables"], fields_by_table=inputs["fields_by_table"],
+                                     candidates=[candidate], model_only=True)
+    assert verified["adoption"]["operations"] == ["sum"]
+    assert not scope_declaration_missing(verified, {("project_snapshot", "transfer_flag")})
+
+
+@pytest.mark.parametrize("fault", ["string_target", "unchanged_range", "keep_scope_for_new_check"])
+def test_captured_supplement_reply_is_reviewed_before_adoption(fault):
+    from types import SimpleNamespace
+    from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions
+    from auto_check.modules.data_validation.analysis_result_cache import model_snapshot
+    from auto_check.modules.data_validation.semantic_generation import SemanticAnalysis
+    from tests.modules.data_validation.test_project_driver_binding import field, table, document_parts
+
+    asset, project = "asset_income_right_dtl_pboc", "proj_info_dtl_pboc"
+    captured = {"category": "consistency", "kind": "field_compare_binary", "title": "收益转让标识为是时资产收益权余额应大于0",
+        "reason": "主规则当前筛选为否，补充建议将范围替换为是，检查余额应大于0。其余筛选、关联、数据日期均保留。",
+        "references": [{"table_name": asset, "field_name": "f_end_bal"}, {"table_name": project, "field_name": "c_benefittransfer"}],
+        "scope_replacements": [{"table_name": project, "field_name": "c_benefittransfer", "op": "eq", "value": "1"}],
+        "check_target": {"table_name": asset, "expression": "f_end_bal <= 0"}, "preconditions": [], "limitations": []}
+    correct = {"table_name": asset, "expression": {"left": "f_end_bal", "op": "lte", "right_type": "value", "right": 0}}
+    corrected = {**captured, "check_target": correct}
+    if fault != "string_target":
+        corrected = {**corrected, "title": "收益转让为是的项目资产收益权余额应为正"}
+        captured.update(title="收益转让标识为否的项目资产收益权余额不应大于0",
+            reason="主规则在收益转让标识为是（1）的范围检查资产收益权余额，已确认业务口径要求补充标识为否（2）的项目资产收益权余额不应大于0。",
+            scope_replacements=[{**captured["scope_replacements"][0], "value": "2"}],
+            check_target={"table_name": asset, "expression": {**correct["expression"], "op": "gt"}})
+    if fault == "keep_scope_for_new_check":
+        corrected.update(title="保持原范围另行核查低于指定值的项目余额", scope_replacements=[])
+    candidate = {"table_name": asset, "join": {"table_name": project}, "columns": [{"column_name": "f_end_bal", "field_cn": "资产收益权余额"}],
+                 "related_columns": [{"column_name": "c_benefittransfer", "dictionary": "1-是\n2-否", "data_type": "varchar"}],
+                 "expression": {**correct["expression"], "op": "gt"},
+                 "filters": [{"table": "related", "field": "c_benefittransfer", "op": "eq", "value": "2", "confirmed": True}]}
+    replies = iter([{"ai_suggestions": [deepcopy(captured)]}, {"ai_suggestions": [corrected]}])
+    calls = []
+
+    def call(prompt, stage):
+        calls.append((prompt, stage))
+        return next(replies)
+
+    analysis = SimpleNamespace(prompts={"business_scope": corrected["reason"]}, inputs={"source": {"name": "内存文档"}, "context": {"source_id": "src"}},
+                               request="收益转让为否的项目余额不应大于0", round_number=1, output_tokens_used=0,
+                               tables=[], fields={}, call=call)
+    items = SemanticAnalysis.supplement_suggestions(analysis, [candidate], [captured])
+    assert len(calls) == 2
+    for prompt, _ in calls:
+        comparison = json.loads(prompt.split("当前已核实主方案与待审替换对照：", 1)[1].split("\n", 1)[0])[0]
+        assert comparison["当前异常条件"] == {"table_name": asset, "expression": candidate["expression"]}
+        [current] = comparison["已核实筛选"]
+        assert (current["table_name"], current["field_name"], current["value"], current["文档码值"]) == (
+            project, "c_benefittransfer", "2", [{"value": "2", "label": "否"}])
+        [proposed] = current["待审替换"]
+        expected = captured["scope_replacements"][0]["value"]
+        assert proposed["文档码值"] == [{"value": expected, "label": {"1": "是", "2": "否"}[expected]}]
+    tables, columns = document_parts([table(1, asset, "资产收益权明细", "资产", [field("f_end_bal", "期末余额", "numeric")]),
+                                     table(2, project, "项目", "项目", [field("c_benefittransfer", "收益转让标识", dictionary="1-是\n2-否")])])
+    options = {"tables": tables, "fields_by_table": columns, "candidates": [candidate], "model_only": True}
+    [suggestion] = build_ai_suggestions(items, **options)
+    assert suggestion.get("adoption") and suggestion["check_target"] == correct
+    assert suggestion["scope_replacements"] == corrected["scope_replacements"]
+    assert suggestion["title"].startswith(corrected["title"])
+    replay = model_snapshot({"ai_suggestions": items})["selection"]["ai_suggestions"]
+    assert build_ai_suggestions(replay, **options) == [suggestion]
+
+
+@pytest.mark.parametrize("target_shape", ["missing", "malformed", "ambiguous"])
+def test_captured_supplement_typed_expression_binds_only_one_documented_owner(target_shape):
+    from types import SimpleNamespace
+    from auto_check.modules.data_validation.ai_suggestions import build_ai_suggestions
+    from auto_check.modules.data_validation.analysis_result_cache import model_snapshot
+    from auto_check.modules.data_validation.semantic_generation import SemanticAnalysis
+    from tests.modules.data_validation.test_project_driver_binding import field, table, document_parts
+
+    asset, project = "asset_income_right_dtl_pboc", "proj_info_dtl_pboc"
+    captured = {"category": "consistency", "kind": "field_compare_binary", "title": "收益转让标识为否的项目资产收益权余额不应大于0",
+        "reason": "已确认业务口径要求：主规则在收益转让标识为是范围检查资产收益权余额时，应补充标识为否的项目资产收益权余额不应大于0的独立建议。本建议替换收益转让标识范围为否，其余条件（项目状态、关联对象、匹配键、数据日期等）保留主方案。",
+        "references": [{"table_name": asset, "field_name": "f_end_bal"}, {"table_name": project, "field_name": "c_benefittransfer"}],
+        "scope_replacements": [{"table_name": project, "field_name": "c_benefittransfer", "op": "eq", "value": "2"}],
+        "expression": {"left": "f_end_bal", "op": "gt", "right_type": "value", "right": 0},
+        "operations": [], "preconditions": [], "limitations": []}
+    target = {"table_name": asset, "expression": captured["expression"]}
+    if target_shape == "malformed":
+        captured["check_target"] = {"table_name": asset, "expression": "f_end_bal > 0"}
+    amount = field("f_end_bal", "期末余额", "numeric")
+    project_fields = [field("c_benefittransfer", "收益转让标识", dictionary="1-是\n2-否")]
+    if target_shape == "ambiguous":
+        project_fields.append(amount)
+        captured["references"].append({"table_name": project, "field_name": "f_end_bal"})
+    tables, columns = document_parts([table(1, asset, "资产收益权明细", "资产", [amount]),
+                                     table(2, project, "项目", "项目", project_fields)])
+    candidate = {"table_name": asset, "join": {"table_name": project}, "columns": [{"column_name": "f_end_bal", "field_cn": "资产收益权余额"}],
+                 "expression": {**captured["expression"], "op": "neq"},
+                 "filters": [{"table": "related", "field": "c_benefittransfer", "op": "eq", "value": "1", "confirmed": True}]}
+    calls = []
+
+    def call(prompt, stage):
+        calls.append(stage)
+        return {"ai_suggestions": [deepcopy(captured)]}
+
+    analysis = SimpleNamespace(prompts={"business_scope": captured["reason"]}, inputs={"source": {"name": "内存文档"}, "context": {"source_id": "src"}},
+                               request="收益转让标识为是的项目资产收益权余额应为0", round_number=1, output_tokens_used=0,
+                               tables=tables, fields=columns, call=call)
+    items = SemanticAnalysis.supplement_suggestions(analysis, [candidate], [captured])
+    ambiguous = target_shape == "ambiguous"
+    assert calls == ["supplement_suggestions"] * (2 if ambiguous else 1)
+    options = {"tables": tables, "fields_by_table": columns, "candidates": [candidate], "model_only": True}
+    [suggestion] = build_ai_suggestions(items, **options)
+    if ambiguous:
+        assert suggestion["support_level"] == "needs_confirmation" and "adoption" not in suggestion
+    else:
+        assert items[0]["check_target"] == target
+        assert suggestion.get("adoption") and suggestion["check_target"] == target
+        assert suggestion["scope_replacements"] == captured["scope_replacements"]
+    assert build_ai_suggestions([captured], **options) == [suggestion]
+    replay = model_snapshot({"ai_suggestions": [captured]})["selection"]["ai_suggestions"]
+    assert build_ai_suggestions(replay, **options) == [suggestion]

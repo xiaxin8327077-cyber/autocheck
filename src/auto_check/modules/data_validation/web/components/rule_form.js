@@ -47,6 +47,8 @@ export function createRuleForm({
   let relationshipConfirmed = false;
   let relatedColumns = [];
   let rightTable = "base";
+  let rightFieldTypeExplicit = false;
+  let rightBaseExplicit = false;
   let projectContext = null;
   let projectDriver = null;
   let comparisonEvidence = {};
@@ -66,6 +68,8 @@ export function createRuleForm({
 
   function clearRelationEvidence() {
     if (simpleFormula) setGroup(null);
+    rightFieldTypeExplicit = false;
+    rightBaseExplicit = false;
     comparisonEvidence = {};
     semanticReview = {};
     filters = [];
@@ -173,6 +177,8 @@ export function createRuleForm({
       .map((key) => [key, value[key]]));
     setGroup(expression);
     rightTable = expression.right_table === "related" ? "related" : "base";
+    rightFieldTypeExplicit = expression.right_type === "field";
+    rightBaseExplicit = expression.right_table === "base";
     projectContext = value.project_context && typeof value.project_context === "object"
       ? JSON.parse(JSON.stringify(value.project_context))
       : null;
@@ -625,8 +631,9 @@ export function createRuleForm({
       comparison.right_type = "value";
       comparison.right = rightType.value === "text" ? rightNumber.value : finiteNumber(rightNumber.value);
     } else {
+      if (rightFieldTypeExplicit) comparison.right_type = "field";
       comparison.right = right.value;
-      if (rightTable === "related") comparison.right_table = "related";
+      if (rightTable === "related" || rightBaseExplicit) comparison.right_table = rightTable;
     }
     return comparison;
   }

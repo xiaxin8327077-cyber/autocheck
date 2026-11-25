@@ -56,9 +56,16 @@ def _pick(value, fields):
 
 def _suggestion_snapshot(item):
     result = _pick(item, ("category", "title", "reason", "references", "preconditions", "limitations", "kind",
-                          "requires_aggregation", "operations", "ops", "requires"))
+                          "requires_aggregation", "operations", "ops", "requires", "scope_replacements", "check_target"))
     if isinstance(result.get("references"), list):
         result["references"] = [_pick(ref, ("table_name", "field_name")) for ref in result["references"]]
+    if isinstance(result.get("scope_replacements"), list):
+        result["scope_replacements"] = [_pick(change, ("table_name", "field_name", "op", "value"))
+                                         for change in result["scope_replacements"]]
+    if isinstance(result.get("check_target"), dict):
+        result["check_target"] = _pick(result["check_target"], ("table_name", "related_table_name", "expression"))
+    if isinstance(item.get("expression"), dict):
+        result["expression"] = deepcopy(item["expression"])
     if item.get("sql") not in (None, ""):
         # Preserve the existing rejected-SQL notice without storing its contents.
         result["sql"] = True

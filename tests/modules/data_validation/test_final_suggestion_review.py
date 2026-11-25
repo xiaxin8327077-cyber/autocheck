@@ -29,6 +29,33 @@ def test_special_review_uses_relevant_policy_paragraph_and_knowledge_entry_only(
     assert other_rule not in prompt and "十八个词" not in prompt
 
 
+def test_bound_request_metric_retrieves_policy_when_document_label_differs():
+    candidate = {"table_name": "cargo", "expression": {"left": "mass", "op": "is_null"},
+                 "semantic_intent": {"metrics": [{"term": "装载率", "side": "left", "fields": ["mass"]}]},
+                 "columns": [{"column_name": "mass", "field_cn": "期末载荷"}]}
+    calls = []
+    policy = "业务确认如下，按实际登记分类选择对应分支。分支A在相反范围对装载率另提建议。"
+    analysis = SimpleNamespace(request="装载率不能为空", prompts={"business_scope": policy},
+        inputs={"source": {"name": "运输"}}, round_number=1, output_tokens_used=0,
+        call=lambda prompt, stage: calls.append(prompt) or {"ai_suggestions": [], "no_suggestion_reason": "当前范围已覆盖。"})
+    assert SemanticAnalysis.supplement_suggestions(analysis, [candidate]) == []
+    assert len(calls) == 1 and policy in calls[0]
+
+
+def test_unexplained_empty_review_keeps_bound_initial_target_and_marks_incomplete():
+    plan = draft()
+    target = {"table_name": "test_table", "expression": {"left": "amount", "op": "gt", "right_type": "value", "right": 99}}
+    advice = {"category": "consistency", "kind": "field_compare_binary", "title": "另核份额上限",
+              "reason": "已有独立上限检查要求", "scope_replacements": [], "check_target": target,
+              "references": [{"table_name": "test_table", "field_name": "amount"}]}
+    plan["ai_suggestions"] = [advice]
+    rules, model = _rules_with_doc([combined(plan), {"ai_suggestions": []}], fields=FIELDS)
+    result = run(rules, "份额小于19")
+    assert result["ai_suggestions_status"] == "incomplete" and len(model.calls) == 2
+    item, = result["ai_suggestions"]
+    assert item["adoption"] and item["check_target"] == target and item["references"] == advice["references"]
+
+
 @pytest.mark.parametrize("outcome", ["corrected", "unsupported", "not_applicable"])
 def test_final_list_replaces_wrong_kind_wrong_direction_and_cached_input(outcome):
     plan = draft()

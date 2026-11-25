@@ -108,10 +108,28 @@ def test_signature_preserves_literal_types_exact_values_and_group_logic():
     def signature(value):
         return _execution_signature({"expression": {"left": "reading", "op": "eq", "right": value}})
     assert signature(1) == signature(1.0)
-    assert len({signature(v) for v in [1, True, "1", "01", 10**32, 10**32 + 1]}) == 6
+    assert len({signature(v) for v in [1, True, "1", "01", 10**32, 10**32 + 1, 0, False, ""]}) == 9
     parts = [{"left": field, "op": "is_null"} for field in ("reading", "threshold")]
     assert _execution_signature({"expression": {"logic": "any", "conditions": parts}}) != (
         _execution_signature({"expression": {"logic": "all", "conditions": parts}}))
+
+
+def test_verified_signature_treats_absent_execution_defaults_as_empty():
+    original = {"expression": {"left": "d_begdate", "op": "gt", "right_type": "field", "right": "d_preddate"},
+                "null_policy": "skip", "uncertainties": ["采用哪个日期字段？"],
+                "uncertainty_resolutions": ["采用系统预计结束日期"]}
+    adopted = {**original, "uncertainties": [], "uncertainty_resolutions": [], "filters": [],
+               "null_handling": None, "null_evidence": []}
+    signature = _execution_signature(original)
+    assert signature == _execution_signature(adopted)
+    assert signature == _execution_signature({**adopted, "filters": None, "null_handling": {}, "null_evidence": None})
+    assert signature != _execution_signature({**adopted, "null_handling": {"left": "review"}})
+    assert signature != _execution_signature({**adopted, "null_evidence": [
+        {"side": "left", "field": "d_begdate", "source": "已核实的口径"}]})
+    assert signature != _execution_signature({**adopted, "filters": [
+        {"table": "base", "field": "category", "op": "eq", "value": "0", "confirmed": True}]})
+    assert signature != _execution_signature({**adopted, "new_execution_flag": False})
+    assert "filters" not in original and adopted["filters"] == []
 
 
 @pytest.mark.parametrize("op", ["in", "not_in"])

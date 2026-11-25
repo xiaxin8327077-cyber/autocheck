@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import json
 
-SEMANTIC_CALL_OPTIONS = {"reasoning_effort": "low", "max_tokens": 3072, "temperature": 0}
-SEMANTIC_ANALYSIS_REVISION = 29
+SEMANTIC_CALL_OPTIONS = {"max_tokens": 3072, "temperature": 0}
+SEMANTIC_ANALYSIS_REVISION = 40
 SEMANTIC_MAX_BUDGET_UNITS = 3
 SEMANTIC_MAX_PLANS = 8
 SEMANTIC_TOTAL_OUTPUT_TOKENS = 10000
+
+
+def semantic_call_options(model_name: str, reasoning_enabled: bool) -> dict:
+    if model_name.strip().casefold() == "longcat-2.5":
+        return {**SEMANTIC_CALL_OPTIONS, "thinking": {"type": "enabled" if reasoning_enabled else "disabled"}}
+    return {**SEMANTIC_CALL_OPTIONS, "reasoning_effort": "low" if reasoning_enabled else "none"}
 
 
 def semantic_budget_instruction(max_tokens, remaining_tokens, stage):
@@ -176,7 +182,11 @@ RULE_OUTPUT_CONTRACT = (
     "列出有文档依据的不同候选，同时保留已确定的规则和筛选；证据明确或只有一个有效选项时直接采用。"
     "选表阶段暂缺的字段或字典，在本阶段已核实后不再提出。"
     "可在同一个JSON对象顶层返回ai_suggestions数组（最多3条），用于独立的补充校验建议，不是当前规则定义或未决事项。"
-    "每条结构为{category,title,reason,references:[{table_name,field_name}],preconditions:[],limitations:[],kind}，"
+    "每条结构为{category,title,reason,references:[{table_name,field_name}],preconditions:[],limitations:[],kind,可选scope_replacements}，"
+    "确认要替换主方案某项筛选时，scope_replacements写[{table_name,field_name,op,value}]，op和value为新谓词的真实文档操作与取值。"
+    "一元或二元建议引用主方案已确认的筛选字段时须提交此键，明确保持原范围填[]；汇总建议默认继承所选范围。"
+    "PERIOD_APPLICABILITY 已登记的期间附加范围由系统绑定，不放进 scope_replacements，也不在其中重复原筛选。"
+    "更换范围的独立一元或二元检查同时返回 check_target:{table_name,expression,可选related_table_name}，按现有 expression 结构声明异常谓词。"
     "只能引用本次给定文档中真实的表字段，reason是简短业务依据，不输出推理过程；kind仅作建议类别提示，支持性由后端复核。"
     "建议应由字段定义、类型、必填/字典/主键、范围、期间或明确关系事实推出，与已有规则去重；不限定任何业务名词。"
     "不能看到数值就一律要求非负，也不能看到两个日期就规定先后；相近指标不自动等价，同名字段不自动证明关联。"
@@ -271,6 +281,9 @@ relationship_confirmed表示你对关联关系是否已明确的分析结论；�
 每条为{category:"consistency/coverage_gap/integrity/period/dictionary/type_semantics/unsupported_requirement之一",
 kind:"aggregate_consistency/two_table_exists/field_compare_unary/field_compare_binary/review等",title:中文业务检查,
 reason:文档依据与新增核查目的,references:[{table_name:真实表名,field_name:真实物理列}],preconditions:[尚需核实的业务事实],limitations:[限制]}。
+若已确认口径明确改用某项主方案筛选的另一范围，必须声明 scope_replacements:[{table_name,field_name,op,value}]，填写原筛选的物理表字段及新谓词，按活动文档字典填码值，同步说明标题与理由。其他筛选继续保留。一元或二元检查引用主方案已确认的筛选字段时应给出此键，保留原范围填[]；汇总核对默认继承所选范围。
+更换范围的 field_compare_unary 或 field_compare_binary 建议须给 check_target:{table_name,expression,可选related_table_name}。expression沿用既有比较结构，明确建议自身的异常方向、真实指标、比较值。使用关联表指标时注明 related_table_name。
+PERIOD_APPLICABILITY 是期间指标的已登记附加范围，由系统与原筛选叠加。scope_replacements 不填写此类附加范围或重复原方案的范围。
 建议由本次需求和文档含义推导，不机械扫描主键或字典，不把已经明确的筛选取值再作为确认建议，不重复主规则。
 不同维度指标可考虑按对应业务编号、同一期间汇总后的一致性核对，但指标相关或都非负不证明应相等；核实定义、单位、收益等统计范围及允许差额，未证实的写preconditions。其他适用的新增业务核查也可提出。
 已生成同一业务概念的多个独立维度、且当前文档或启用知识明确它们按同一业务编号及期间对应时，优先给出一条跨维度差异核对建议；口径、单位或换算未完全确定的前提写在该建议中，不阻塞各自成立的主校验，也不把它直接当成已证明的相等关系。

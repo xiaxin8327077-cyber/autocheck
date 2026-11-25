@@ -19,6 +19,33 @@ def reply(field='caption', term='标题', expression=None):
                             'scopes': [], 'open_questions': []}}}
 
 
+@pytest.mark.parametrize("repeat_fault", [False, True])
+def test_combined_draft_missing_the_outcome_gets_bounded_review(repeat_fault):
+    from sqlalchemy import update
+    from auto_check.modules.data_validation.storage import DOC_FIELDS
+
+    text = '客户名称包含“商会|协会”且不包含“有限公司|有限责任公司”时客户类型未归为“广义政府”，请确认'
+    fields = [*FIELDS[:2], ('caption', '客户名称', 'varchar', ''), ('kind', '客户类型', 'varchar', '')]
+    predicates = [('contains_any', ['商会', '协会']), ('not_contains_any', ['有限公司', '有限责任公司'])]
+    wrong = reply(term='客户名称', expression={'logic': 'any', 'conditions': [
+        {'left': 'caption', 'op': op, 'right_type': 'value', 'right': values} for op, values in predicates]})
+    correct = reply('kind', '客户类型', {'left': 'kind', 'op': 'neq', 'right_type': 'value', 'right': '2'})
+    correct['draft']['filters'] = [{'field': 'caption', 'op': op, 'value': values} for op, values in predicates]
+    rules, model = _rules_with_doc([wrong, wrong if repeat_fault else correct], fields=fields)
+    with rules.storage.database.begin() as conn:
+        conn.execute(update(DOC_FIELDS).where(DOC_FIELDS.c.field_name == 'kind').values(dictionary="1-其他\n2-广义政府"))
+    result = rules.parse_rule_request(user(), _request(request_text=text, analysis_protocol=2, include_suggestions=False))
+    assert len(model.calls) == 2
+    if repeat_fault:
+        assert not result.get('preview') and result['uncertainties']
+    else:
+        assert result.get('preview'), result.get('uncertainties')
+        definition = result['preview']['definition']
+        assert definition['expression'] == correct['draft']['expression']
+        assert [(f['field'], f['op'], f['value']) for f in definition['filters']] == [
+            ('caption', op, values) for op, values in predicates]
+
+
 @pytest.mark.parametrize('request_text,op,words', [
     ('标题不能包含%或‰', 'contains_any', ['%', '‰']),
     ('标题必须包含“center”或“X_Y”', 'not_contains_any', ['center', 'X_Y']),

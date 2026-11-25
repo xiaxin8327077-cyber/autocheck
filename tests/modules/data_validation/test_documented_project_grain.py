@@ -43,7 +43,7 @@ def analyze_project_metric(detail_key, model_role="base"):
     detail["semantic_intent"]["scopes"][0]["table"] = "related"
     rules, model = make_rules([reply, {"plans": [model_draft, detail]}], tables=[project, funding])
     result = rules.parse_rule_request(user(), _request(request_text="存续项目的实收不得小于0", analysis_protocol=2))
-    assert len(model.calls) == (2 if model_role == "base" else 1)
+    assert len(model.calls) == 2
     return result
 
 
@@ -72,7 +72,15 @@ def test_documented_second_grain_rebinds_project_driver_and_business_key(detail_
         assert evaluate_case_with_kind(detail, {"report_date": DAY, "project": project, "details": rows}) == expected
 
 
-def test_model_declared_wrong_driver_on_original_grain_still_blocks_sql():
-    result = analyze_project_metric("project_key", model_role="related")
-    assert result["uncertainties"] and not result.get("preview")
-    assert all(not o["candidate"].get("preview") for o in result.get("candidate_options", []))
+def test_documented_driver_correction_preserves_both_metric_grains():
+    expected = analyze_project_metric("project_key", model_role="base")
+    actual = analyze_project_metric("project_key", model_role="related")
+    expected_previews = {o["candidate"]["table_name"]: o["candidate"]["preview"]
+                         for o in expected["candidate_options"]}
+    actual_previews = {o["candidate"]["table_name"]: o["candidate"]["preview"]
+                       for o in actual["candidate_options"]}
+    assert set(actual_previews) == {"project_snapshot", "funding_rows"}
+    for table_name, preview in actual_previews.items():
+        assert preview["definition"] == expected_previews[table_name]["definition"]
+        assert preview["sql_preview"] == expected_previews[table_name]["sql_preview"]
+        assert preview["content_sha256"] == expected_previews[table_name]["content_sha256"]

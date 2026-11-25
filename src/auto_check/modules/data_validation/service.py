@@ -1958,18 +1958,20 @@ class DataValidationService:
         # Batch reads are shared with grounding; the prompt still receives only its bounded selection.
         source_rules = [(r["sheet_prefix"], r["data_source_name"]) for r in self.list_source_rules()]
         protocol_contracts = []
+        call_options = {}
         if semantic:
             from .prompt_defaults import (
-                SEMANTIC_CALL_OPTIONS, SEMANTIC_MAX_BUDGET_UNITS, SEMANTIC_TOTAL_OUTPUT_TOKENS, SEMANTIC_ANALYSIS_REVISION,
-                SEMANTIC_SELECTION_CONTRACT, SEMANTIC_OUTPUT_CONTRACT, SEMANTIC_COMBINED_EXAMPLE, semantic_budget_instruction,
+                SEMANTIC_MAX_BUDGET_UNITS, SEMANTIC_TOTAL_OUTPUT_TOKENS, SEMANTIC_ANALYSIS_REVISION,
+                SEMANTIC_SELECTION_CONTRACT, SEMANTIC_OUTPUT_CONTRACT, SEMANTIC_COMBINED_EXAMPLE,
+                semantic_budget_instruction, semantic_call_options,
             )
             from .semantic_generation import SEMANTIC_MEMORY_CONTRACT
+            call_options = semantic_call_options(current_model.get("model_name", ""), reasoning_enabled)
             protocol_contracts = [SEMANTIC_SELECTION_CONTRACT, SEMANTIC_OUTPUT_CONTRACT, SEMANTIC_MEMORY_CONTRACT, SEMANTIC_COMBINED_EXAMPLE,
-                                  {**SEMANTIC_CALL_OPTIONS, "reasoning_effort": "low" if reasoning_enabled else "none",
-                                   "max_budget_units": SEMANTIC_MAX_BUDGET_UNITS,
+                                  {**call_options, "max_budget_units": SEMANTIC_MAX_BUDGET_UNITS,
                                    "question_output_limit": SEMANTIC_TOTAL_OUTPUT_TOKENS},
                                   {"analysis_revision": SEMANTIC_ANALYSIS_REVISION},
-                                  *[semantic_budget_instruction(SEMANTIC_CALL_OPTIONS["max_tokens"],
+                                  *[semantic_budget_instruction(call_options["max_tokens"],
                                                                SEMANTIC_TOTAL_OUTPUT_TOKENS, stage)
                                     for stage in ("select_and_generate", "generate_rule")]]
         if clarification_answers:
@@ -1989,7 +1991,7 @@ class DataValidationService:
                 "project_target": project_target, "fields_by_table": fields_by_table, "prompts": prompts,
                 "knowledge_prefix": knowledge_prefix, "knowledge_context": knowledge_context, "context": memory_context,
                 "reasoning_enabled": reasoning_enabled, "clarification_answers": clarification_answers, "period_scope": period_scope,
-                "include_suggestions": include_suggestions}
+                "include_suggestions": include_suggestions, "call_options": call_options}
 
     def _analyze_request(self, user, payload, inputs, progress, cancel_event, *, cache_writes=None):
         source, document, tables = inputs["source"], inputs["document"], inputs["tables"]
